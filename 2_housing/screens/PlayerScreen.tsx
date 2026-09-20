@@ -1120,8 +1120,10 @@ export default function PlayerScreen({ route, navigation }: any) {
               <TouchableOpacity onPress={handlePrev} style={styles.miniSkipBtn} accessibilityLabel="이전 곡">
                 <Feather name="skip-back" size={16} color={colors.text.primary} />
               </TouchableOpacity>
+              {/* v3.196: 대형 재생 버튼(채움 도형) 기준으로 채움형 MCI play/pause로 통일 — MCI play 글리프는
+                  em 중앙보다 우측 배치(자체 광학 보정)라 marginLeft 불요. 채움 글리프 크기 보정 14→16. */}
               <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlayPause} accessibilityLabel={isPlaying ? '일시정지' : '재생'}>
-                <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.text.primary} />
+                <MaterialCommunityIcons name={isPlaying ? 'pause' : 'play'} size={16} color={colors.text.primary} />
               </TouchableOpacity>
               <TouchableOpacity onPress={handleNext} style={styles.miniSkipBtn} accessibilityLabel="다음 곡">
                 <Feather name="skip-forward" size={16} color={colors.text.primary} />

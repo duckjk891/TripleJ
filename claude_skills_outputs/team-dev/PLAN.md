@@ -2752,3 +2752,80 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 1. 사용자에게 B 표 제시 → 남길 곡(벚꽃피는 날 중 1곡 권장)·QA 곡·Cherry Blossom Day 중복 처리 확인 후 삭제 실행.
 2. 카카오 콘솔 계정은 사용자 본인 확인(developers.kakao.com 프로필).
 3. 관리자 페이지 + 착장 자동화는 별도 세션 발제.
+
+## v3.196 — 2026-09-21 — 하단 시트 안전영역(제스처 바) 가림 + 텍스트 입력 키보드 가림 전면 정비
+
+> 사용자 원본 요청: "차트 ⋮ / NowPlaying 담기의 하단 팝업이 모바일 UI(제스처 바)에 가려짐. 텍스트 입력 시 입력창이 키보드 위로 와야 함. 전체적으로 수정." (냥냥냥 데이터 수정은 오케스트레이터가 서버 직접 처리 — 본 계획 제외)
+> 환경 전제: Expo SDK 54, `app.json` android `edgeToEdgeEnabled: true` + `softwareKeyboardLayoutMode: "resize"` 확인(app.json:35-36). RN `Modal`은 **별도 window라 루트 safe-area 패딩·adjustResize를 상속하지 않음** — v3.191 queueSheet 주석(PlayerScreen.tsx:1348)과 동일한 원리가 이번 이슈 전체의 원인.
+
+### 0단계 분석 결과 (파일 직접 확인 완료)
+
+**A. 하단 시트형 Modal 전수 (justifyContent:'flex-end' + Modal 기준 grep 전수)**
+
+| 시트 | 파일:라인 | 하단 인셋 | 판정 |
+|---|---|---|---|
+| 곡 ⋮ 액션 시트 (차트·검색·플레이리스트 공용) | components/TrackActionSheet.tsx:89 (styles :158-159) | 없음 — sheet padding: spacing.xl 고정 | ❌ 수정 (사용자 지목 1) |
+| 플레이리스트 담기 시트 | components/PlaylistPickerSheet.tsx:84 (styles :122-123) | 없음 | ❌ 수정 (사용자 지목 2) |
+| SNS 공유/다운로드 시트 | components/TrackShareDownloadSheet.tsx:157 (styles :188-189) | 없음 — paddingBottom: spacing.xxl 고정 | ❌ 수정 |
+| 착장 아이템 선택 시트 | screens/ArtistCodyScreen.tsx:761 (styles :1086-1090, modalOverlay flex-end + modalBox maxHeight 80%) | 없음 | ❌ 수정 |
+| 재생목록(큐) 시트 | screens/PlayerScreen.tsx:1346-1349 | `insets.bottom + spacing.xxl` (v3.191) | ✓ 기준 사례 — 재수정 금지(이중 적용 주의) |
+| 스타 구매 모달 | components/PurchaseModal.tsx:43 (:123 flex-end) | `16 + insets.bottom` | ✓ 유지 |
+
+- 센터 배치(fade+center) 모달은 인셋 무관으로 제외: ConfirmDialog, GuestQueueNoticeModal, AttendanceModal, StarGuideModal, AppShareModal, ReportModal, AppealModal, AlbumCreateModal, AppDialogHost, MapScreen 팝업, Settings·PlaylistScreen·AlbumDetail·ArtistResult 각 모달.
+- 부수 발견: screens/ChartScreen.tsx:445-447 `sheetBackdrop`/`sheet` 스타일은 TrackActionSheet 공용화 후 **미사용 잔존(죽은 코드)** — 삭제 대상. ChartScreen 검색 모달(:315-362) FlatList는 contentContainerStyle 하단 패딩 없음 → 마지막 행이 제스처 바에 걸림(보조 수정).
+- **공용화 판단**: 수정 대상 시트가 4곳(+이미 적용 2곳)뿐이고 해법이 "스타일 한 줄"이므로 공용 BottomSheet 래퍼/훅 도입은 과대설계로 **기각**. v3.191 queueSheet 패턴(각 시트에 `useSafeAreaInsets` → `paddingBottom: insets.bottom + 기존패딩`)을 그대로 복제한다.
+
+**B. TextInput 키보드 처리 전수**
+
+정상(수정 금지 — 기준 패턴):
+- PlayerScreen 상세패널 KAV(:1096, v3.182) + TrackComments 댓글 입력 — **기준 사례**
+- 입력 화면군 KAV+offset: LyricsInput(:243), ComposerInput(:160), MusicGeneration(:1492), CoverGeneration(:993,:1157), ArtistInput(:719), LyricsPromptReview(:201), FeedCompose(:276), DmChat(:158), LyricsResult(:129)
+- ScrollView `automaticallyAdjustKeyboardInsets`(iOS)+resize(Android): TrackUpload(:243), VoiceCloneWizard(:652), ArtistCody(:624), Settings 프로필편집(:715 부근)
+- 입력창이 화면 상단이라 가림 없음: ChartScreen 검색(:321, paddingTop 아래 고정), SearchScreen(:209), DmInbox 새 메시지(:221)
+
+문제/불명 (Modal 내부 = resize 미적용 위험):
+| 위치 | 파일:라인 | 현황 | 판정 |
+|---|---|---|---|
+| 담기 시트 "새 플레이리스트" 입력 | PlaylistPickerSheet.tsx:86,105 | KAV behavior **iOS만 padding, Android undefined** | ❌ 핵심 — 사용자 지목. 하단 시트+입력이라 가림 최다 재현 지점 |
+| 이름 변경 모달 | screens/PlaylistScreen.tsx:269-291 | KAV 없음 + autoFocus | ❌ |
+| 앨범 정보 수정 모달 | screens/AlbumDetailScreen.tsx:447-475 | KAV 없음 (multiline 포함) | ❌ |
+| 프로필 수정 모달 | screens/ArtistResultScreen.tsx:1406-1460 (TextInput :1421,:1429,:1451) | KAV 없음 | ❌ |
+| 회원탈퇴 확인 모달 | screens/SettingsScreen.tsx:645-671 | KAV 없음 | ❌ (센터 배치라 경미) |
+| 신고/이의 모달 | ReportModal.tsx:77 / AppealModal.tsx:95 / AlbumCreateModal.tsx:90 | KAV 있으나 **iOS만 padding** | △ Android 실기기 검증 후 동일 패턴 통일 |
+| 피드 댓글 인라인 입력 | components/feed/FeedCard.tsx (FeedScreen 리스트 내) | 화면 KAV 없음 — 리스트 하단 카드에서 가림 가능 | △ 검증 후 판단 |
+| DM 입력바 | DmChatScreen.tsx:219-233 (inputBar :266) | KAV 있음. 단 하단 insets.bottom 미반영(margin으로만 이격) | △ 보조 |
+
+- edge-to-edge 상호작용: Android 15+/edgeToEdge에서 일반 Activity는 resize가 동작하나(위 "정상"군이 증거 — v3.182 댓글 입력 작동), **RN Modal 내부는 별도 window로 resize 보장이 없음** → Modal 안에서는 KAV를 플랫폼 공통 `behavior="padding"`으로 거는 것이 표준 해법. iOS 기존 동작은 동일하므로 회귀 없음.
+
+### 1. app-dev 작업 지시 (우선순위순, 코드 수정은 app-dev가 수행)
+
+**P1 — 사용자 지목 2곳 시트 인셋 (v3.191 queueSheet 패턴 복제)**
+1) components/TrackActionSheet.tsx: `useSafeAreaInsets` import → Modal 내 `styles.sheet`에 `{ paddingBottom: insets.bottom + spacing.xl }` 병합(:91). 주석에 "Modal은 루트 인셋 미상속" 명시.
+2) components/PlaylistPickerSheet.tsx: 동일 — `styles.sheet`에 `{ paddingBottom: insets.bottom + spacing.xl }`(:88).
+
+**P2 — 사용자 지목 키보드: Modal 내부 KAV 플랫폼 공통화**
+3) PlaylistPickerSheet.tsx:86 `behavior={Platform.OS === 'ios' ? 'padding' : undefined}` → `behavior="padding"` (양 플랫폼). 키보드 열림 시 인셋 이중 여백이 어색하면 키보드 표시 중 insets.bottom 가산 생략(선택 최적화 — Android 실기기 확인 후).
+4) 같은 패턴으로 ReportModal.tsx:77 / AppealModal.tsx:95 / AlbumCreateModal.tsx:90도 `behavior="padding"` 통일 — 단 **Android 실기기에서 3)이 가림 해소됨을 확인한 뒤** 일괄 적용.
+
+**P3 — 나머지 하단 시트 인셋**
+5) components/TrackShareDownloadSheet.tsx: `styles.sheet` paddingBottom을 `insets.bottom + spacing.xxl`로.
+6) screens/ArtistCodyScreen.tsx: 아이템 선택 modalBox(:1087)에 `paddingBottom: insets.bottom` 보강(insets는 :150에서 이미 존재).
+
+**P4 — KAV 없는 입력 모달 4곳: ReportModal과 동일한 래핑(KAV flex:1, behavior="padding", pointerEvents="box-none")**
+7) PlaylistScreen.tsx 이름변경(:269) / 8) AlbumDetailScreen.tsx 앨범수정(:447) / 9) ArtistResultScreen.tsx 프로필수정(:1406) / 10) SettingsScreen.tsx 회원탈퇴(:645).
+
+**P5 — 보조(시간 남으면, 각 1줄 수준)**
+11) ChartScreen.tsx:445-447 미사용 sheet 스타일 삭제. 12) ChartScreen 검색 FlatList에 `contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }}`. 13) DmChatScreen inputBar 하단 `marginBottom: spacing.lg + insets.bottom` (키보드 열림 시 이중 여백 확인). 14) FeedCard 댓글 입력 가림은 Android 실기기 재현 시에만 FeedScreen KAV 추가.
+
+**금지/주의**: PlayerScreen queueSheet(:1349)·PurchaseModal(:43)은 이미 적용 — 손대지 말 것(이중 적용 금지). 웹(insets.bottom=0)에서는 전부 no-op이므로 웹 회귀 없음. v3.193 담기 시트 진입 경로(NowPlaying 담기→PlaylistPickerSheet)와 v3.194 아이콘 벡터화 파일들과 충돌 없음(스타일 라인만 변경).
+
+### 2. test-designer 테스트 항목
+- [P1] Android 실기기(제스처 내비): 차트 ⋮ 시트·담기 시트 마지막 항목/버튼이 제스처 바 위로 완전 노출. 3버튼 내비 모드에서도 확인. iOS(홈 인디케이터 기기)도 동일.
+- [P2] 담기 시트에서 "플레이리스트 이름" 입력 탭 → 입력창+만들기 버튼이 키보드 바로 위 노출(Android/iOS 각각), 입력·생성·닫기 정상.
+- [P3] 공유/다운로드 시트 mp3 항목, 착장 아이템 시트 하단 행 가림 없음.
+- [P4] 이름변경·앨범수정·프로필수정·회원탈퇴 모달에서 키보드가 입력창을 가리지 않음(특히 앨범 설명 multiline·프로필 3필드 최하단 필드).
+- [정상군 무회귀] 댓글 입력(PlayerScreen 상세, v3.182)·DM 채팅·가사/작곡 입력 화면 키보드 동작 그대로.
+- [무회귀 v3.191~195] NowPlaying 상·하단 안전영역(3.191 queueSheet 이중 패딩 없는지 육안 확인), VBR 진행바·marquee(3.192), 좋아요 서버연동·담기 플로우(3.193), 소셜 로그인 복귀·아이콘 벡터화 화면(3.194). 웹 빌드에서 시트/모달 표시 동일(인셋 0).
+
+### 3. 기록
+- PLAN.md v3.196 append 완료 (본 섹션).

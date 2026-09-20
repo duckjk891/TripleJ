@@ -341,6 +341,7 @@ export default function ChartScreen() {
               data={searchResults}
               keyExtractor={(item) => item.id}
               keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }} // v3.196: 마지막 행 제스처 바 가림 방지
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.searchResult} activeOpacity={0.7} onPress={() => handleSearchTrackPress(item)}>
                   <Cover track={item} />
@@ -442,16 +443,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
-  // playlist sheet
-  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl, padding: spacing.xl, maxHeight: '60%' },
-  sheetTitle: { marginBottom: spacing.lg },
-  sheetList: { marginBottom: spacing.lg },
-  sheetItem: { paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
-  sheetLabel: { marginBottom: spacing.sm },
-  sheetCreateRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'stretch' },
-  sheetInput: {
-    flex: 1, backgroundColor: colors.bg.deepest, borderRadius: radius.md, padding: spacing.md,
-    color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle,
-  },
+  // v3.196: 미사용 playlist sheet 스타일 삭제(TrackActionSheet 공용화 후 잔존 죽은 코드)
 });

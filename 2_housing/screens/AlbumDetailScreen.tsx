@@ -10,7 +10,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   View, ScrollView, Image, TouchableOpacity, ActivityIndicator,
-  Modal, TextInput, Switch, StyleSheet,
+  Modal, TextInput, Switch, StyleSheet, KeyboardAvoidingView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -445,6 +445,8 @@ export default function AlbumDetailScreen() {
 
       {/* 정보 수정 모달 (앱 내 Modal — 시스템 팝업 금지) */}
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
+        {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <AppText variant="subtitle" style={{ marginBottom: spacing.md }}>앨범 정보 수정</AppText>
@@ -472,6 +474,7 @@ export default function AlbumDetailScreen() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 트랙 추가 모달 — 내 발매 트랙 중 앨범에 없는 곡만 (서버: 본인 트랙만 허용) */}

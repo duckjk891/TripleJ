@@ -10,6 +10,7 @@ import {
   ScrollView,
   Switch,
   Modal,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
@@ -648,6 +649,8 @@ export default function SettingsScreen({ navigation }: any) {
           animationType="fade"
           onRequestClose={closeWithdraw}
         >
+          {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
               <AppText style={styles.modalTitle}>회원탈퇴</AppText>
@@ -700,6 +703,7 @@ export default function SettingsScreen({ navigation }: any) {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* 프로필 편집 모달 */}

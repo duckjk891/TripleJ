@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -36,6 +37,7 @@ interface Props {
 
 export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged, extraItems }: Props) {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
   const likedMap = useLikesStore((s) => s.liked);
   const toggleLikeStore = useLikesStore((s) => s.toggle);
@@ -88,7 +90,8 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
       {/* 곡 더보기(⋮) 액션 시트 */}
       <Modal visible={!!track} transparent animationType="slide" onRequestClose={onClose}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
-          <View style={styles.sheet}>
+          {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]}>
             {track ? (
               <>
                 <View style={styles.actionSheetHead}>

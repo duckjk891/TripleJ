@@ -9,6 +9,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText } from './ui';
@@ -39,6 +40,7 @@ const SNS_UPLOAD_URLS: Record<string, string> = {
 };
 
 export default function TrackShareDownloadSheet({ visible, mode, track, onClose }: Props) {
+  const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
   const [busy, setBusy] = useState<string | null>(null); // 진행 중 항목 key
 
@@ -156,7 +158,8 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => !busy && onClose()}>
-        <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
+        {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
+        <TouchableOpacity style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xxl }]} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>
             {mode === 'share' ? 'SNS 공유' : '다운로드'}
           </AppText>

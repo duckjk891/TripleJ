@@ -11,6 +11,7 @@ import {
   Image,
   Modal,
   TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
@@ -267,6 +268,8 @@ export default function PlaylistScreen({ navigation }: any) {
       )}
       {/* 이름 변경 모달 */}
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
+        {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowRenameModal(false)}>
           <View style={{ backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 20, width: '80%' }}>
             <AppText style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>플레이리스트 이름 변경</AppText>
@@ -288,6 +291,7 @@ export default function PlaylistScreen({ navigation }: any) {
             </View>
           </View>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 곡 더보기(⋮) — 차트·검색과 동일한 공용 시트 + 이 화면 고유의 '플레이리스트에서 제거' */}

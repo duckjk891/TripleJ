@@ -15,6 +15,7 @@ import {
   PanResponder,
   Linking,
   TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
@@ -1409,6 +1410,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         animationType="fade"
         onRequestClose={() => setEditVisible(false)}
       >
+        {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.pickerBackdrop}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
@@ -1474,6 +1477,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 에러 알림 (단일 확인 버튼) */}

@@ -1,6 +1,6 @@
 import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
 import { loadAndPlayTrack, invalidatePlayback } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
@@ -91,9 +91,11 @@ export default function MiniPlayer() {
           <Feather name="skip-back" size={16} color={colors.text.primary} style={!hasPrev ? { opacity: 0.3 } : undefined} />
         </TouchableOpacity>
 
-        {/* 재생/정지 */}
+        {/* 재생/정지 — v3.196: 플레이어 대형 버튼(채움 도형) 기준으로 채움형 MCI play/pause로 통일.
+            MCI play 글리프(bbox x8~19, 중심 13.5)는 em 중앙보다 이미 우측 배치 = 자체 광학 보정 → marginLeft 불요.
+            MCI 채움 글리프가 Feather 대비 작게 보여 16→20으로 상향(36px 원 기준 시각 균형). */}
         <TouchableOpacity onPress={togglePlay} style={styles.playButton}>
-          <Feather name={isPlaying ? 'pause' : 'play'} size={16} color={colors.text.primary} />
+          <MaterialCommunityIcons name={isPlaying ? 'pause' : 'play'} size={20} color={colors.text.primary} />
         </TouchableOpacity>
 
         {/* 다음곡 */}

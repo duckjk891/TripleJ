@@ -2163,3 +2163,39 @@ v38 설계 문서 기반 Phase 1 MVP 전체 구현.
 - 원오프 스크립트 파일이 컨테이너 `/tmp/cleanup_v3195.py`에 잔존(비루트 유저라 삭제 불가, 민감정보 없음, 컨테이너 재생성 시 소멸).
 - 서버 소스는 읽기 전용 준수 — 코드 수정·재시작 없음. 이번 사이클 커밋 대상은 산출물 문서뿐.
 - 민감정보 미기록(OAuth 키 값·DB 접속 정보는 출력·기록하지 않음, 302 상태코드 확인만).
+
+## v3.196 — 2026-09-21 — 하단 시트 안전영역(제스처 바) 가림·텍스트 입력 키보드 가림 전면 정비 + 미니 재생 아이콘 채움형 통일 + 냥냥냥 duration 서버 데이터 근본 수정
+
+### 요청 원문
+- "차트에서 맨 오른쪽 점 세개 눌렀을때랑 nowplaying에서 플레이리스트 담기 버튼 누르면 하단에 팝업이 뜨는데, 모바일 UI에 팝업 하단이 가려져서 안 보임. 하단 팝업이 뜰 때 이 부분을 생각해서 수정. 텍스트 입력 시 텍스트 입력창이 모바일 키보드 UI 위로 위치해야 함. 해당 부분 전체적으로 수정."
+- 추가 지시(작업 중): 미니플레이어·플레이어 축소 미니바의 재생/일시정지 아이콘을 대형 버튼과 같은 채움형으로 통일(P6).
+- 별건(오케스트레이터 서버 직접 처리): 냥냥냥 곡 duration 데이터 근본 수정.
+
+### 원인 진단 (planner 0단계 분석)
+RN `Modal`은 별도 window라 **루트 safe-area 패딩과 Android adjustResize(softwareKeyboardLayoutMode resize)를 상속하지 않음** — 시트 하단 가림(A)과 Modal 내 입력창 키보드 가림(B)이 모두 같은 원인. v3.191 queueSheet(paddingBottom: insets.bottom 보강)가 기준 패턴. 전수 조사 결과 하단 시트형 6곳 중 4곳 인셋 미적용, Modal 내 TextInput 8곳 중 KAV 부재 4곳·iOS 전용 KAV 4곳.
+
+### 수행 결과 (app-dev, 콘텐츠 변경 11파일, tsc 0건 — planner diff 검토 완료·PLAN 대비 편차 없음)
+- **P1 (사용자 지목 시트 인셋)**: components/TrackActionSheet.tsx(⋮ 시트), components/PlaylistPickerSheet.tsx(담기 시트) — `useSafeAreaInsets` 도입, 시트에 `paddingBottom: insets.bottom + spacing.xl` 인라인 보강(v3.191 queueSheet 패턴 복제, 주석 명시).
+- **P2 (담기 시트 키보드)**: PlaylistPickerSheet KAV `behavior`를 iOS 전용 → 양 플랫폼 공통 `"padding"`으로 확장 — "새 플레이리스트 이름" 입력창이 Android에서도 키보드 위로. (기존 ReportModal·AppealModal·AlbumCreateModal 3곳의 동일 통일 = P2-4는 PLAN 게이트대로 **실기기 검증 후 적용 보류**.)
+- **P3 (나머지 시트 인셋)**: components/TrackShareDownloadSheet.tsx(`insets.bottom + spacing.xxl`), screens/ArtistCodyScreen.tsx 착장 아이템 시트(`insets.bottom` 보강).
+- **P4 (KAV 부재 입력 모달 4곳)**: PlaylistScreen 이름변경 / AlbumDetailScreen 앨범수정 / ArtistResultScreen 프로필수정 / SettingsScreen 회원탈퇴 — ReportModal 패턴(KAV flex:1, behavior="padding", pointerEvents="box-none") 래핑.
+- **P5 (보조)**: ChartScreen 미사용 playlist sheet 스타일 8종 삭제(공용화 잔존 죽은 코드) + 검색 FlatList `paddingBottom: insets.bottom + spacing.xl`. P5-13(DM 입력바 인셋)·P5-14(피드 댓글)는 실기기 재현 확인 전제로 보류.
+- **P6 (추가 지시, PLAN 외 — 사용자 직접 지시로 수용)**: components/MiniPlayer.tsx(:98) Feather 스트로크 → MCI 채움형 play/pause, 16→20px / screens/PlayerScreen.tsx 축소 미니바(:1126) 동일 교체 14→16px. MCI play 글리프의 내장 광학 보정(bbox 우측 배치) 확인 → marginLeft 보정 불요 판단. 대형 재생 버튼(기준)은 무변경.
+- **무수정 확인**: PlayerScreen queueSheet(:1349)·PurchaseModal(이미 인셋 적용, 이중 적용 금지) 준수. 웹은 insets=0으로 전부 no-op.
+
+### 냥냥냥 duration 서버 데이터 수정 (오케스트레이터 직접 처리, 별건)
+- 오디오 재먹싱으로 헤더 duration 복구(실측 162.84s), 원본은 `.bak_pre_v3196` 백업. Mongo `duration_sec` 91→163 갱신 + 캐시·ES 재색인. 백엔드_요청_트랙duration.md 항목 1 완료 처리. (v3.192 클라이언트 방어 보정은 다른 VBR 곡 대비로 유지.)
+
+### 테스트 요약 (tester)
+- **PASS 17 / FAIL 0 / N/A 1** (U-9: P2-4가 게이트 보류 상태라 조건부 정상). API-1로 duration_sec=163 실측 확인.
+- 기록 2건: ① TrackShareDownloadSheet 정적 스타일의 paddingBottom 표기 잔존(인라인이 항상 덮어써 동작 무해 — 차기 정리 후보) ② PlayerScreen "diff 0" 가드 해제됨(P6로 실변경 발생, 의도된 것).
+- **실기기 잔여 6건**: Android 제스처/3버튼 내비 각각의 시트 하단 노출, 담기 시트 키보드 위 입력창(Android/iOS), P4 모달 4곳 키보드, v3.191 queueSheet 이중 패딩 없음 육안, 미니바 아이콘 시각 균형. **P2-4 게이트**: 담기 시트 Android 실기기에서 가림 해소 확인 후 ReportModal·AppealModal·AlbumCreateModal behavior="padding" 일괄 통일.
+
+### 특이사항
+- behavior="padding" 적용처는 전부 Modal 내부라 Android resize와의 이중 시프트 위험 없음(일반 화면 KAV는 미변경).
+- 키보드 열림 중 insets.bottom 가산으로 담기 시트에 약간의 추가 여백 가능 — PLAN상 선택 최적화로, 실기기 확인 후 필요 시 조정.
+
+### 판정: **승인** (커밋 가능)
+- 커밋 메시지 제안:
+  `fix: v3.196 하단 시트 안전영역·키보드 가림 전면 정비 — 시트 4곳 insets.bottom 보강(v3.191 패턴)·담기 시트 KAV 양플랫폼 padding·입력 모달 4곳 KAV 래핑 + ChartScreen 죽은 스타일 정리 + 미니 재생 아이콘 MCI 채움형 통일 (team-dev)`
+- 스테이징 11파일(2_housing/ 기준): components/{MiniPlayer,PlaylistPickerSheet,TrackActionSheet,TrackShareDownloadSheet}.tsx, screens/{AlbumDetailScreen,ArtistCodyScreen,ArtistResultScreen,ChartScreen,PlayerScreen,PlaylistScreen,SettingsScreen}.tsx — mode-only/바이너리 무관 변경 파일은 제외할 것.

@@ -765,7 +765,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         onRequestClose={() => setPickerCat(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+          {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
+          <View style={[styles.modalBox, { paddingBottom: insets.bottom }]}>
             <View style={styles.modalHeader}>
               <AppText style={styles.modalTitle}>
                 {pickerCat ? `${pickerCat} 고르기` : ''}

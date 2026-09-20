@@ -793,3 +793,153 @@
 
 ## v3.195 — 수정일 2026-09-20
 해당 없음 — 분석·DB 정리 전용 사이클(코드 수정 없음). DB 실행분 검증은 REPORT v3.195 사후 검증 항목으로 갈음.
+
+## v3.196 — 수정일 2026-09-21
+
+> 대상: (A) 하단 시트 안전영역 인셋 4곳 신규(TrackActionSheet·PlaylistPickerSheet·TrackShareDownloadSheet·ArtistCodyScreen 착장 시트) + 기적용 2곳(PlayerScreen queueSheet·PurchaseModal) **이중 패딩 금지** · (B) PlaylistPickerSheet KAV behavior 양 플랫폼 padding + KAV 없는 입력 모달 4곳 신규(PlaylistScreen 이름변경·AlbumDetailScreen 앨범수정·ArtistResultScreen 프로필수정·SettingsScreen 회원탈퇴) · (참고) 냥냥냥 duration은 서버 데이터 수정으로 기해결 — API 실측 1건으로 확인.
+> 실행 환경 관행(v3.191~194 계승): 에뮬레이터/adb/maestro 부재 → [e2e]는 각 항목에 "정적 대체 검증"을 병기하고 실기기 실측은 확인 요청으로 이관. 코드 경로는 `/Users/pearl/TripleJ/2_housing` 기준. 라인 번호는 **변경 전** 워킹트리 실측 기준(적용 후 ±수 라인 이동 허용).
+> 변경 허용 파일(격리 기준): `components/TrackActionSheet.tsx`, `components/PlaylistPickerSheet.tsx`, `components/TrackShareDownloadSheet.tsx`, `screens/ArtistCodyScreen.tsx`, `screens/PlaylistScreen.tsx`, `screens/AlbumDetailScreen.tsx`, `screens/ArtistResultScreen.tsx`, `screens/SettingsScreen.tsx` 8개. P2-4·P5 보조 착수 시에만 `ReportModal.tsx`/`AppealModal.tsx`/`AlbumCreateModal.tsx`/`ChartScreen.tsx`/`DmChatScreen.tsx`/`FeedScreen.tsx` 추가 허용(U-9). **PlayerScreen.tsx·PurchaseModal.tsx는 diff 0 필수**(U-6). 그 외 diff는 FAIL(v3.194 U-14에서 지적된 app.json 등 기왕 잔존분은 제외 판단 계승).
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.196 변경이 적용된 워킹트리.
+- When: `cd 2_housing && npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. (KAV import 추가·insets 배선이 전 파일에서 타입 통과. 단 미사용 import 잔존은 tsc가 못 잡을 수 있음 — noUnusedLocals 미설정, U-7에서 grep 별도 판정.)
+
+**U-2. (A) TrackActionSheet 인셋 배선 [unit]**
+- Given: 변경 전 `components/TrackActionSheet.tsx:91` `<View style={styles.sheet}>`, styles.sheet(:158) `padding: spacing.xl` 고정(하단 인셋 없음).
+- When: ① `grep -n "useSafeAreaInsets" components/TrackActionSheet.tsx` — import(react-native-safe-area-context)+컴포넌트 내 `const insets = useSafeAreaInsets()` 선언, ② 시트 View의 style이 배열 병합 `[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]` 형태, ③ "Modal은 루트 인셋 미상속" 취지 주석 존재(PlayerScreen:1348 관행).
+- Then: ①~③ 전부 존재. **인라인 병합만 인정** — StyleSheet.create 안에 insets를 넣는 형태는 렌더 시점 값이라 불가능(발견 시 FAIL). static `padding: spacing.xl`은 shorthand이므로 배열 뒤 인라인 paddingBottom이 override — 병합 순서(인라인이 뒤) 확인. 시트 내부 액션 행·헤드 스타일(:159-176) diff 무접촉.
+
+**U-3. (A) PlaylistPickerSheet 인셋 배선 [unit]**
+- Given: 변경 전 `components/PlaylistPickerSheet.tsx:88` 시트 TouchableOpacity `style={styles.sheet}`, styles.sheet(:122) 하단 인셋 없음.
+- When: U-2와 동일 3점 확인(`paddingBottom: insets.bottom + spacing.xl`).
+- Then: 3점 충족. **v3.193 접촉 파일 — 라인 단위 격리**: 이 파일의 diff가 (인셋 1개소 + U-7 behavior 1개소)에 한정되고, trackIds POST 루프(`/playlists/{id}/tracks`, :40 인근)·새 플레이리스트 생성·성공/실패 안내 로직·prop 시그니처(`visible/trackIds/onClose`) 무접촉.
+
+**U-4. (A) TrackShareDownloadSheet 인셋 배선 [unit]**
+- Given: 변경 전 `components/TrackShareDownloadSheet.tsx:158` 시트 `style={styles.sheet}`, styles.sheet(:189) `paddingBottom: spacing.xxl ?? spacing.xl` 고정.
+- When: U-2와 동일 확인, 단 가산 기준은 `insets.bottom + spacing.xxl`(PLAN P3-5).
+- Then: 배선 존재 + static paddingBottom과 인라인이 **중복 가산되지 않는 구조**(인라인 override 또는 static 제거 중 택일 — 둘 다 남아도 override라 시각 결과는 동일하나, static의 `?? spacing.xl` 표기가 함께 정리됐는지 기록). busy 중 backdrop 닫기 차단(:157 `!busy && onClose()`) 무접촉.
+
+**U-5. (A) ArtistCodyScreen 착장 시트 인셋 [unit]**
+- Given: `screens/ArtistCodyScreen.tsx` — insets는 :150에 **기존재**(신규 import 아님), 착장 아이템 선택 Modal(:761)의 modalBox(:1087)는 maxHeight '80%'만 있고 하단 인셋 없음.
+- When: 아이템 선택 Modal 내 modalBox 사용처의 style 배열에 `paddingBottom: insets.bottom`(+기존 내부 패딩 유지) 병합 확인. `grep -c "useSafeAreaInsets" screens/ArtistCodyScreen.tsx` = import 1·호출 1(중복 훅 호출 신설 금지).
+- Then: 병합 존재. 같은 파일의 ScrollView `automaticallyAdjustKeyboardInsets`(:624, v3.182 정상군) 라인 무접촉. modalBox 내부 FlatList/그리드가 있다면 마지막 행 가림은 paddingBottom으로 해소되는 구조(contentContainerStyle 별도 필요 여부 열람 기록).
+
+**U-6. (A·핵심 경계) 기적용 2곳 이중 패딩 금지 — diff 0 [unit]**
+- Given: PlayerScreen queueSheet(:1346-1349)는 v3.191에서 `paddingBottom: insets.bottom + spacing.xxl` 기적용, PurchaseModal(:43)은 `16 + insets.bottom` 기적용. PLAN 명시 "손대지 말 것".
+- When: `git diff -- screens/PlayerScreen.tsx components/PurchaseModal.tsx`.
+- Then: **diff 0건이 기준**. diff 발견 시 즉시 FAIL이 원칙이나, 사유 확인 후 아래 라인 단위 검증으로 승격 판정: queueSheet 인셋 라인(:1348-1349)·PurchaseModal(:43) **변경은 무조건 FAIL**(이중 적용/재수정 금지 명령 위반). PlayerScreen은 v3.191(인셋)·v3.192(marquee·duration 방어)·v3.193(하트 :1030-1034·담기 :806-811·actionIconBox)·v3.194(아이콘 벡터) 4개 버전 접촉 파일 — 그 외 라인이라도 접촉 시 해당 버전 회귀 재검증 필요로 승격(U-11과 연동).
+
+**U-7. (B) PlaylistPickerSheet KAV behavior 양 플랫폼 공통화 [unit]**
+- Given: 변경 전 :86 `behavior={Platform.OS === 'ios' ? 'padding' : undefined}` (v3.182 — Android는 Modal 별도 window라 resize 미보장인데 undefined).
+- When: ① `grep -n "behavior=" components/PlaylistPickerSheet.tsx` → 플랫폼 삼항 **0건**, `behavior="padding"` 존재(KAV `style={{flex:1}}`·`pointerEvents="box-none"` 유지), ② `Platform` import가 다른 사용처 없이 잔존하면 제거됐는지 grep(잔존 시 경미 — 기록만).
+- Then: ① 충족. iOS 동작은 기존과 동일(padding 유지)이므로 iOS 회귀 없음이 정적으로 보장됨.
+
+**U-8. (B) 입력 모달 4곳 KAV 신규 구조 [unit]**
+- Given: 기준 패턴 = ReportModal.tsx:77 `<KeyboardAvoidingView style={{ flex: 1 }} behavior=... pointerEvents="box-none">`가 Modal 직하를 감싸고 :140에서 닫힘. 신규 4곳은 현재 KAV 전무 — ① PlaylistScreen 이름변경(:269, autoFocus 있음·센터 배치), ② AlbumDetailScreen 앨범수정(:447, multiline 포함), ③ ArtistResultScreen 프로필수정(:1406, TextInput 3필드 :1421/:1429/:1451), ④ SettingsScreen 회원탈퇴(:645, 센터 배치).
+- When: 4파일 각각 해당 Modal 직하에 `KeyboardAvoidingView` — `flex:1`+`behavior="padding"`(신규는 처음부터 플랫폼 공통, 삼항 금지)+`pointerEvents="box-none"` — 로 기존 backdrop/card 전체를 감싸고 닫는 태그가 Modal 닫기 직전에 위치하는지 구조 확인. 같은 파일의 **다른** Modal(예: ArtistResultScreen :1229 시트·ZoomModal :1592, SettingsScreen :706 프로필편집)은 무접촉.
+- Then: 4곳 전부 충족. PlaylistScreen `autoFocus`·backdrop 탭 닫기(TouchableOpacity onPress) 유지, AlbumDetail multiline TextInput 속성 무변경, SettingsScreen 탈퇴 확인 로직(비밀번호/문구 입력·버튼 핸들러) diff 무접촉 — **KAV 래핑 외 내부 diff 0**.
+
+**U-9. (조건부) P2-4 KAV 통일·P5 보조 [unit]**
+- Given: PLAN상 ReportModal/AppealModal/AlbumCreateModal의 `behavior="padding"` 통일은 "Android 실기기에서 P2-3 가림 해소 확인 후", P5(ChartScreen 죽은 스타일 삭제·검색 FlatList 패딩·DmChat inputBar 인셋·FeedCard)는 "시간 남으면".
+- When: 각 파일 `git diff` 유무 확인.
+- Then: **미적용이면 N/A(FAIL 아님)** — 잔여 목록으로 기록. 적용됐다면: ⓐ 3개 모달은 behavior 삼항→"padding" 1줄 diff 한정(각 파일 그 외 diff 0), ⓑ ChartScreen은 :445-447 `sheetBackdrop`/`sheet` 스타일 삭제 시 `grep -n "styles.sheet" screens/ChartScreen.tsx` 사용처 0건 재확인(살아있는 참조 삭제 금지) + 검색 FlatList `contentContainerStyle` paddingBottom에 insets 가산, ⓒ DmChat은 inputBar 하단 여백 1개소 한정.
+
+**U-10. diff 범위 격리 [unit]**
+- Given: 변경 허용 파일 목록(전문 헤더) + v3.194 U-14 잔존 diff(app.json bundleId·eas.json·metro.config.js 등)는 7f1c245에서 커밋 정리됨.
+- When: `git status --short` + `git diff --stat` (2_housing 스코프).
+- Then: 허용 목록(+U-9 조건부 파일) 외 diff 0. 바이너리·에셋·설정 파일 diff 0. 커밋 시 v3.196 스코프 파일만 스테이징.
+
+**U-11. v3.191~195 무회귀 라인 검사 [unit]**
+- Given: 이번 접촉 파일과 기왕 버전의 중첩 — PlaylistPickerSheet(v3.193 담기 대상)·PlayerScreen(v3.191/192/193/194)·SettingsScreen(v3.182 프로필편집 ScrollView)·ArtistCodyScreen(v3.182 키보드 정상군·v3.195 착장 분석 대상).
+- When: ① v3.191: PlayerScreen 인셋 라인 diff 0(U-6과 동일 근거 재사용), ② v3.192: `git diff -- services/playback.ts components/Marquee.tsx`(또는 marquee 소재 파일) 0건, ③ v3.193: `git diff -- stores/likesStore.ts App.tsx` 0건 + PlaylistPickerSheet diff가 U-3/U-7 2개소 한정(라인 단위 — POST 루프·안내 로직 무접촉), ④ v3.194: `git diff -- components/SocialLoginButtons.tsx components/AuthPanel.tsx screens/SplashScreen.tsx` 0건, ⑤ v3.182 정상군: PlayerScreen 상세패널 KAV(:1096)·SettingsScreen 프로필편집 ScrollView(:715 인근)·ArtistCodyScreen :624 무접촉.
+- Then: ①~⑤ 전부 충족. 위반 시 해당 버전 TESTPLAN 항목 재실행으로 승격.
+
+**U-12. 웹 무회귀 정적 근거 [unit]**
+- Given: 웹에서 `useSafeAreaInsets().bottom === 0` → 전 변경이 no-op, KAV behavior="padding"은 웹에서 무동작(RN Web KAV는 사실상 pass-through).
+- When: 신규 훅 호출 4곳이 모두 컴포넌트 함수 본문 최상위(조건부/콜백 내 훅 호출 금지 — lint 규칙 위반 여부)이고, SafeAreaProvider(App.tsx 루트, v3.191 기존재) 하위에서만 렌더되는 컴포넌트인지 확인.
+- Then: 훅 규칙 위반 0건. 웹 전용 분기 코드 신설 **없음**(인셋 0으로 자연 no-op이 스펙 — Platform.OS==='web' 분기 발견 시 과대설계로 기록).
+
+### [api] 실측 검증
+
+**API-1. 냥냥냥 duration_sec 서버 수정 확인 [api]**
+- Given: v3.195에서 서버 데이터 직접 수정 완료(duration_sec 91→163, 파일 재먹싱 — 코드 변경 아님). 무인증 공개 엔드포인트.
+- When: `curl -s https://api.maidol.ai.kr/api/tracks/6aa3ec295f11b57ba518f5e8 | jq .` — **GET 1회만**, 쓰기·재시도 금지.
+- Then: 200 + 응답의 `duration_sec === 163`(91 잔존 시 FAIL — 서버 수정 미반영). 파일 재먹싱 자체(실제 오디오 길이)는 API로 판정 불가 — 스트림 실측은 E-5 ②로 이관(v3.192 방어 보정이 있어 duration_sec만 맞으면 진행바는 정상). 응답의 다른 필드(제목·아티스트) 상식 점검만 기록.
+
+### [e2e] 핵심 여정 (실기기 이관 + 정적 대체 병기)
+
+**E-1. 차트 ⋮ 시트 하단 노출 [e2e]**
+- Given: Android 실기기 **제스처 내비게이션** 모드, 차트 화면.
+- When: 임의 곡의 ⋮ 탭 → TrackActionSheet 오픈.
+- Then: 마지막 액션 행이 제스처 바 위로 완전 노출·오탭 없이 탭 가능. 이어서 시스템 설정에서 **3버튼 내비**로 전환 후 재확인 — 3버튼은 insets.bottom이 내비바 높이(~48dp)로 커지므로 가림 0 + 여백 과다가 극단적이지 않은지(가림만 없으면 PASS, 과다 여백은 기록). iOS 홈 인디케이터 기기 동일 확인. 검색·플레이리스트 진입 경로의 같은 시트도 스팟 1회(공용 컴포넌트라 대표성 있음).
+- 정적 대체: U-2(배선)+U-6(기준 사례 queueSheet와 동일 패턴임을 diff로 확인). 실기기 미가용 시 정적 대체로 PASS 판정 가능.
+
+**E-2. 담기 시트 + 새 플레이리스트 입력 [e2e]**
+- Given: Android 실기기 제스처 내비, 로그인 상태, NowPlaying(또는 ⋮→담기).
+- When: ① 담기 → PlaylistPickerSheet 오픈 — 마지막 항목/버튼 가림 확인, ② "새 플레이리스트" 입력 탭 → 키보드 오픈.
+- Then: ① 하단 버튼 제스처 바 위 완전 노출, ② **입력창+만들기 버튼이 키보드 바로 위 노출**(이번 버전 핵심 — 변경 전 Android는 behavior undefined로 가림 재현 지점), 입력·생성·닫기(backdrop 탭 포함) 정상, 생성된 플레이리스트에 곡 담김. 키보드 열림 중 insets.bottom 가산이 겹쳐 여백이 어색하면 기록(PLAN의 선택 최적화 판단 자료 — FAIL 아님). iOS에서 기존과 동일 동작(회귀 없음) 1회.
+- 정적 대체: U-3+U-7. **P2-4 확산(ReportModal 등 3곳)은 본 항목 실측 PASS가 선행 조건** — 실측 불가 시 P2-4는 착수 보류가 정답(U-9 N/A).
+
+**E-3. 공유/다운로드 시트·착장 시트 하단 노출 [e2e]**
+- Given: Android 실기기 제스처 내비.
+- When: ① 곡 공유/다운로드 시트 오픈 → mp3 항목(최하단), ② ArtistCody 착장 카테고리 탭 → 아이템 선택 시트 최하단 행.
+- Then: 두 시트 모두 최하단 요소 가림 0. 착장 시트는 maxHeight 80% 상태에서 스크롤 끝까지 내렸을 때 마지막 행 완전 노출.
+- 정적 대체: U-4+U-5.
+
+**E-4. 입력 모달 4곳 키보드 [e2e]**
+- Given: Android 실기기(키보드 가림이 재현되는 환경), 각 화면 진입 가능한 계정 상태.
+- When/Then: ① PlaylistScreen 이름변경 — autoFocus로 즉시 키보드 오픈, 입력창+변경/취소 버튼 미가림(autoFocus+KAV 조합의 첫 프레임 점프가 있으면 기록), ② AlbumDetailScreen 앨범수정 — **multiline 설명 필드(최하단)** 포커스 시 미가림, ③ ArtistResultScreen 프로필수정 — **3필드 중 최하단(:1451)** 포커스 시 미가림, ④ SettingsScreen 회원탈퇴 — 입력 포커스 시 모달이 위로 밀려 미가림, 단 위로 밀린 상태에서 **탈퇴(위험 액션) 버튼 위치가 직전 탭 위치와 겹쳐 오탭 유발하지 않는지** 확인. 4곳 모두 키보드 닫기(뒤로가기) 후 모달 원위치·취소/확인 정상.
+- 정적 대체: U-8. 센터 배치 모달(①④)은 behavior="padding"로 전체가 위로 이동하는 방식 — 가림 잔존 시 필드별 scrollTo 필요로 승격 기록.
+
+**E-5. 정상군·v3.191~195 무회귀 스팟 [e2e]**
+- Given: v3.196 빌드.
+- When/Then: ① **queueSheet 이중 패딩 육안**: NowPlaying 재생목록 시트 하단 여백이 v3.191 당시와 동일(과다 여백 = 이중 적용 신호 → U-6 재검), PurchaseModal 동일, ② **냥냥냥 재생**: 진행바가 2:43(163s) 기준으로 자연 진행·조기 고정 없음(API-1과 정합 — v3.192 방어 보정 위에서 실측), ③ 키보드 정상군: PlayerScreen 댓글 입력(v3.182)·DM 채팅·가사/작곡 입력 화면 기존 동작 그대로, ④ v3.193 담기 플로우(로그인 담기→시트·비로그인→GuestQueueNoticeModal)·좋아요 유지, ⑤ v3.194 소셜 로그인 버튼 표시·스플래시, ⑥ 웹 빌드 1회: 시트 4곳+입력 모달 4곳 표시·닫기 동일(인셋 0 no-op 확인).
+- 정적 대체: U-6+U-11+U-12+API-1. 실기기 확인 요청 이관.
+
+### 태그 집계
+- [unit] 12건 (U-1~U-12: A 인셋 4(U-2~U-5)+이중 패딩 경계 1(U-6) / B KAV 2(U-7·U-8) / 조건부 1(U-9, 미적용 시 N/A) / 격리·무회귀·웹 4(U-1·U-10·U-11·U-12))
+- [api] 1건 (API-1 — 무인증 공개 GET 1회, duration_sec=163 실측. 쓰기·콜백 전면 스킵)
+- [e2e] 5건 (E-1 차트 ⋮ 시트(제스처/3버튼 구분) / E-2 담기 시트+입력(P2-4 선행 조건) / E-3 공유·착장 시트 / E-4 입력 모달 4곳 / E-5 무회귀 스팟 — 전 항목 정적 대체 병기)
+
+### 설계 주의점 (tester·app-dev 참고)
+1. **StyleSheet 병합 방향만 인정**: insets는 렌더 시점 값 — `StyleSheet.create` 안에 넣는 코드는 성립 불가. 반드시 `[styles.sheet, { paddingBottom: insets.bottom + ... }]` 인라인 병합(배열 뒤가 우선이라 static `padding` shorthand를 override). static에 paddingBottom을 남겨둬도 시각 결과는 동일하나 이중 표기라 기록 대상.
+2. **이중 패딩의 두 얼굴**: ⓐ 기적용 2곳(PlayerScreen·PurchaseModal) 재수정 = 무조건 FAIL(U-6), ⓑ PlaylistPickerSheet에서 키보드 열림 중 KAV padding+insets 가산이 **겹치는 것은 스펙상 허용**(PLAN의 "선택 최적화" 미적용 상태) — E-2에서 어색함 관찰 기록만, FAIL 아님. 둘을 혼동해 ⓑ를 FAIL로 찍지 말 것.
+3. **3버튼 내비 판정 기준**: 3버튼 모드는 insets.bottom이 커져 여백이 과다해 보일 수 있으나 판정은 "가림 0"만 — 여백 미학은 기록. 제스처/3버튼 두 모드를 반드시 구분 실측(E-1).
+4. **PlayerScreen은 diff 0이 기준**: v3.191~194 4개 버전 접촉 파일이라 이번에 파일 단위 diff 0 가드를 **쓸 수 있는 마지막 기회** — diff가 하나라도 있으면 U-6/U-11의 라인 단위 검사로 승격되고 판정 비용이 급증. app-dev는 이 파일을 열지도 말 것.
+5. **P2-4는 실측 게이트 뒤에 있음**: ReportModal 3종 behavior 통일은 E-2 Android 실측 PASS가 선행 조건(PLAN 명시). 실기기 미가용 사이클에서는 U-9를 N/A로 두고 잔여 목록으로 이월 — 정적 대체만으로 P2-4를 착수/판정하지 말 것. Android Modal+edgeToEdge에서 behavior="padding"이 기기별 이중 이동(과잉 점프)을 일으키는 변형 사례가 알려져 있어 실측 근거가 필요.
+6. **입력 모달 4곳은 "래핑 외 diff 0"**: KAV는 Modal 직하 1겹 래핑이 전부 — 내부 backdrop 탭 닫기·autoFocus·multiline·탈퇴 확인 로직에 diff가 침투하면 FAIL. 특히 SettingsScreen 회원탈퇴는 위험 액션이라 핸들러 라인 무접촉을 라인 단위로 확인(U-8).
+7. **같은 파일의 다른 모달 오염 주의**: ArtistResultScreen(:1229 시트·:1592 ZoomModal)·SettingsScreen(:706 프로필편집)에는 이번 대상이 아닌 Modal이 공존 — grep 히트를 대상 모달로 오인해 엉뚱한 곳에 KAV를 감았는지 라인 범위로 교차 확인.
+8. **API-1 한계**: duration_sec=163은 메타데이터 검증일 뿐, 재먹싱된 실제 오디오 길이는 스트림 실측(E-5 ②)에서만 확인 가능. 단 v3.192 방어 보정(엔진값·위치·API 최대값)이 살아 있으므로(U-11 ②) 메타만 맞으면 진행바 회귀 위험은 낮음 — API 1회로 게이트 통과 처리하고 실측은 이관.
+
+### 실행 결과 — 2026-09-21 (tester)
+
+> 실행 환경: 에뮬레이터/adb/maestro 부재 → [e2e] 전 항목 정적 대체 검증(관행 계승). 코드 기준 `/Users/pearl/TripleJ/2_housing` 워킹트리. 콘텐츠 변경 파일 11개 실측(앱-dev 보고와 일치): TrackActionSheet·PlaylistPickerSheet·TrackShareDownloadSheet·MiniPlayer / ArtistCody·Playlist·AlbumDetail·ArtistResult·Settings·Chart·PlayerScreen. 그 외 M 표시는 전부 100644→100755 모드 변경(바이너리 콘텐츠 diff 0 — 기왕 잔존분 계승, 제외 판단).
+
+| 항목 | 판정 | 근거 요약 |
+|------|------|-----------|
+| U-1 타입 무결성 | PASS | `npx tsc --noEmit` exit 0, 오류 0건 |
+| U-2 TrackActionSheet 인셋 | PASS | import :7·훅 :40(주석 포함)·인라인 배열 병합 :94 `[styles.sheet, {paddingBottom: insets.bottom + spacing.xl}]`. StyleSheet.create 내 insets 0건. 액션 행/헤드 스타일 무접촉 |
+| U-3 PlaylistPickerSheet 인셋 | PASS | 3점 충족(:5/:19/:87-88). diff가 인셋 1+behavior 1(+import 정리)에 한정 — trackIds POST 루프·생성/안내 로직·prop 시그니처 무접촉 |
+| U-4 TrackShareDownloadSheet 인셋 | PASS(기록) | 인라인 `insets.bottom + spacing.xxl`(:162) 배선. **기록**: static styles.sheet(:192) `paddingBottom: spacing.xxl ?? spacing.xl` 표기 잔존 — 인라인 override로 시각 동일(이중 가산 아님), 차기 정리 후보. busy backdrop(:160) 무접촉 |
+| U-5 ArtistCodyScreen 착장 시트 인셋 | PASS(기록) | modalBox 배열 병합 `paddingBottom: insets.bottom`(:769). useSafeAreaInsets = import 1(:19)+호출 1(:150), 중복 훅 신설 없음. :624 정상군 무접촉. **열람 기록**: 내부 FlatList(2열, :814)는 박스 패딩으로 마지막 행 해소되는 구조 — contentContainerStyle 별도 불요 판단 |
+| U-6 기적용 2곳 이중 패딩 금지 | PASS(승격 경유) | PurchaseModal diff 0. PlayerScreen은 파일 diff 존재(P6 미니바 아이콘 :1120-1129 한정)로 라인 단위 승격 — queueSheet 인셋 라인(:1348-1351)·상세패널 KAV(:1096) 무접촉 확인. 무조건 FAIL 조건(기적용 라인 변경) 미해당. 접촉 사유는 U-P6에서 별도 판정 |
+| U-7 KAV behavior 공통화 | PASS | 플랫폼 삼항 0건, `behavior="padding"`(:88), `style={{flex:1}}`·`pointerEvents="box-none"` 유지. Platform import 제거 완료(잔존 0건) |
+| U-8 입력 모달 4곳 KAV | PASS | 4곳(Playlist :270, AlbumDetail :448, ArtistResult :1413, Settings :652) Modal 직하 KAV `flex:1`+`behavior="padding"`+`box-none` 래핑, 닫는 태그 Modal 닫기 직전. 래핑 외 내부 diff 0(autoFocus·multiline·탈퇴 핸들러 무접촉). 같은 파일 타 모달(ArtistResult :1229 시트/ZoomModal, Settings 프로필편집) 무접촉 |
+| U-9 조건부 P2-4·P5 | N/A + PASS(부분) | P2-4(ReportModal·AppealModal·AlbumCreateModal)·DmChat·FeedCard: diff 0 = **미적용 → N/A(정상, E-2 실측 선행 조건 미충족)**. P5 중 ChartScreen만 착수: ⓑ 판정 — 삭제된 sheet 스타일 12줄의 사용처 `grep styles.sheet` 0건(죽은 코드 확인), 검색 FlatList `contentContainerStyle paddingBottom: insets.bottom + spacing.xl` 가산(:344), insets 기존재(:63). ChartScreen 그 외 diff 0 |
+| U-10 diff 범위 격리 | PASS(조건부) | 허용 8파일 중 6 + ChartScreen(U-9 허용) 접촉. **목록 외 2파일(MiniPlayer·PlayerScreen)은 P6 신규 스코프** — U-P6 임시 편성으로 판정 이관(아래). 바이너리·에셋·설정 콘텐츠 diff 0(모드 변경만, 기왕 잔존). 커밋 시 11파일 명시 스테이징 필요 |
+| U-11 v3.191~195 무회귀 | PASS | ① queueSheet 인셋 라인 diff 0 ② playback.ts·marquee 0 ③ likesStore·App.tsx 0 + PlaylistPickerSheet 2개소 한정 ④ SocialLoginButtons·AuthPanel·SplashScreen 0, v3.194 벡터화 라인(:1030·:1259) 무접촉 ⑤ :1096 KAV·Settings 프로필편집 ScrollView·ArtistCody :624 무접촉 |
+| U-12 웹 무회귀 정적 근거 | PASS | 신규 훅 4곳 전부 컴포넌트 본문 최상위(조건부/콜백 내 0건). SafeAreaProvider(App.tsx :512) 하위 렌더. 웹 전용 분기 신설 0건(TrackShareDownloadSheet :98은 기존재 코드) |
+| **U-P6 (임시 편성) 미니바 MCI 전환** | PASS | MiniPlayer: MCI import(:3)·play/pause size 20(:98), 대형 아님(36px 원 유지). PlayerScreen: MCI import 기존재(:25)·:1126 size 16. marginLeft 조건부 스타일 잔존 **0건**(양 파일 grep — 주석 언급만). 대형 버튼 playTriangle `marginLeft: 4`(:1580) 무변경. 광학 보정 근거(MCI 글리프 bbox) 주석 병기됨. 시각 균형은 실기기 육안 이관 |
+| API-1 냥냥냥 duration_sec | PASS | GET 1회, 200. `duration_sec: 163`(91 아님). 제목 "냥냥냥"·artist_name "진주"·bpm 120 상식 정합. beats 배열 끝 161.15s로 163s와 정합 |
+| E-1 차트 ⋮ 시트 | PASS(정적 대체) | U-2+U-6 — queueSheet(v3.191)와 동일 패턴 확인. 제스처/3버튼 실측 이관 |
+| E-2 담기 시트+입력 | PASS(정적 대체) | U-3+U-7. Android 실측 PASS 전까지 P2-4 착수 보류 유지(U-9 N/A와 정합) |
+| E-3 공유/착장 시트 | PASS(정적 대체) | U-4+U-5 |
+| E-4 입력 모달 4곳 키보드 | PASS(정적 대체) | U-8. 센터 모달(①④) 첫 프레임 점프·탈퇴 버튼 오탭 여부는 실측 이관 |
+| E-5 무회귀 스팟 | PASS(정적 대체) | U-6+U-11+U-12+API-1 |
+
+**집계**: PASS 17 / FAIL 0 / N/A 1(U-9 P2-4분 — 조건부 규칙상 정상). **게이트: PASS(머지 가능)**.
+
+**실기기 잔여(이관)**: ① E-1 제스처/3버튼 내비 시트 하단 노출 ② E-2 Android 키보드 위 입력창 노출(→PASS 시 P2-4 착수 게이트 해제) ③ E-3 두 시트 최하단 행 ④ E-4 4개 모달 키보드+탈퇴 버튼 오탭 ⑤ E-5 ① 이중 패딩 육안·② 냥냥냥 2:43 진행바 실측·③~⑥ 정상군/웹 1회 ⑥ U-P6 미니바 아이콘 시각 균형(20px/16px) 육안.
