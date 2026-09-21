@@ -1415,3 +1415,197 @@
 - 커밋 시 mode-only 75건 제외, 콘텐츠 9파일 명시 스테이징 권고.
 
 **게이트 판정: PASS** — [unit] 9/9 PASS, [api] 0건, [e2e] 4건 정적 대체 전부 PASS(실기기 실측 이관). 머지(커밋) 진행 가능.
+
+## v3.200 — 수정일 2026-09-21
+
+> 대상: PLAN.md v3.200 — Phase 0 창작 기록 계층 1차 슬라이스 + ② 창작 모드 분기. 요구사항 원문 `/Users/pearl/Downloads/Phase0_창작기록계층_개발요구사항.md`(§15 E2E·§3.4/§4.4/§5.6/§6.4/§7.5 수용 기준·부록 B). **백엔드는 이미 서버 배포 완료**(creation_log.py 해시 체인 자기검증 통과·sessions.py·suno_generator 전문/SHA-256·generate.py 하위호환·tracks.py FINALIZE 훅·PG `creation_log` 스키마 lifespan 멱등 생성 — 배포 로그 확인됨). 앱은 10파일: 신규 `services/creationLogService.ts`(272줄) + `stores/musicStore.ts`(creationSessionId·creationMode) + `services/musicService.ts`(session_id/lyrics_version_id 동봉) + `screens/MusicResultScreen.tsx`(LISTEN/CANDIDATE_SELECT 계측·track_type·flush 3지점·발매 고지) + `screens/LyricsResultScreen.tsx`·`screens/MusicGenerationScreen.tsx`(가사 버전 커밋) + `components/TrackShareDownloadSheet.tsx`·`constants/consentTexts.ts`·`screens/SettingsScreen.tsx`(F6 고지) + `screens/DialogueScreen.tsx`(②모드 토글 — **구현이 PLAN §3 1안(MusicResult 카드)에서 작사 디렉터 모드 토글로 변경 확정**, copyright_ready 실선택 가능).
+> 실행 환경 관행: 에뮬레이터/maestro 부재 → [e2e] 실기기 이관+정적 대체 병기. **실사용 스모크는 실제 곡 생성 = Suno 실과금이라 사용자 실기기 테스트로 이관**(A-3에 검증 SQL/명령 명시 — 생성 1회면 충분). [unit-서버]는 **오케스트레이터가 배포 서버 ssh 읽기로만** 실행(코드 수정·재시작 금지, 9004만). **중대 실측: 로컬 백엔드 워크트리 `/Users/pearl/TripleJ-backend/0_platform_music/backend_9004`에는 v3.200 파일이 없다**(app/services/creation_log.py·app/routes/sessions.py 부재, tracks.py track_type 부재) — 서버 코드로만 검증하고, 서버→git 동기화 잔무를 결과에 기록할 것. 라인 번호는 diff 실측 기준(적용 후 이동 허용 — 앵커 문자열 재탐색). 증적에 실계정·토큰·개인정보 금지.
+> 변경 허용 파일(격리 기준): 위 10파일(9 tracked M + creationLogService.ts untracked ??). 그 외 2_housing 콘텐츠 diff 0 — 대량 M은 mode-only/바이너리 잡음(v3.199 U-8 관행: 분리 판정, 커밋 명시 스테이징). backend 로컬 워크트리 무접촉.
+
+### [unit] 앱 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- When: `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: exit 0. (creationLogService 신규 모듈 export 4종 시그니처, musicStore creationMode 리터럴 유니언 `'standard'|'copyright'`, QueuedEvent target 옵셔널 스프레드, SettingsScreen policy 유니언 `'ai'` 확장 전부 통과.)
+
+**U-2. 이벤트 계약 — 6필드 고정·봉투형·500 분할·순서 보존 [unit]**
+- Given: 배포 서버 §12 엄격 검증(미정의 필드 400·배열 직송 400)이므로 **앱이 보내는 형태가 계약의 전부**다. 필드 하나만 새어도 이벤트 전량 폐기된다.
+- When/Then (`services/creationLogService.ts` 실측):
+  - ① **6필드 고정**: `QueuedEvent`(:26-33)가 `event_id, client_seq, type, client_ts, target?, payload` 정확히 6종 — `actor`/`seq`/`server_ts`/해시류 **부재**(서버 부여 — :25 주석). enqueue(:217-224)의 스프레드가 `...(target ? { target } : {})` — target 없을 때 `target: undefined` 키 자체가 안 실리는지(undefined 키 직렬화는 axios가 제거하나, null 전송은 400 위험 — null 대입 발견 시 FAIL).
+  - ② **봉투형**: `sendBatch`(:157) body가 `{ events }` — 배열 직송·`{data:...}` 등 다른 키 0건. lyrics(:255-259)는 `source, text, prev_version_id` **3필드 정확히**(여분 필드 400 — trimmed 텍스트·prev null 처리 확인). sessions(:96-107)는 관대 스키마 전제라 5필드+주석(creation_mode 미전송 근거 :103-106 주석 실존 — 전송 발견 시 400 리스크 FAIL).
+  - ③ **500 분할**: `MAX_BATCH_SIZE = 500`(:144), 초과 시 재귀 분할(:148-154)이 **순차 for-await**(병렬 Promise.all이면 순서 붕괴 FAIL)이고 slice 경계가 무손실(0..500, 500..1000)인지.
+  - ④ **client_seq 단조·순서**: `++clientSeq`(:219) enqueue 시점 부여 — 세션 생성 성공 시 0 리셋(:111)·endCreationSession 리셋(:133). 세션 미확보 중 연속 logCreationEvent 호출은 동일 `sessionStartPromise`(:93)의 `.then(enqueue)`(:231)로 등록 순서대로 실행 — **enqueue가 promise 등록 순서를 보존**하는 구조인지(각 호출이 독자적으로 ensureCreationSession을 새로 만들면 경합 FAIL). flush 경합: `flushCreationEvents`(:177-192)가 진행 중 `flushing`을 먼저 await(:179) 후 새 배치 전송 — 배치 간 역전 불가 구조 확인.
+  - ⑤ **재시도**: `MAX_SEND_ATTEMPTS=3`(:47) 백오프 1s/2s(:170), **400·409는 즉시 폐기**(:165-168 — FINALIZED 세션·스키마 거부에 재시도는 무의미+서버 부하), 소진 시 폐기(:173 — 오프라인 영속 큐 후속 명시 주석).
+- Then: ①~⑤ 전부 충족.
+
+**U-3. no-op 게이트 — 기록이 기능을 절대 막지 않는다 [unit]**
+- Given: 문서 원칙(§3.4 취지)+PLAN A1 — 서버 미배포(404)/비로그인(401)이면 이번 실행 동안 무해 no-op. **기록 코드가 재생·생성·발매 경로에서 예외를 전파하면 그 자체가 이번 슬라이스 최악 결함**(기록하려다 본기능 파괴).
+- When/Then:
+  - ① `gateIfUnavailable`(:66-72): 404·401만 `disabled=true` — 5xx/네트워크 오류는 게이트하지 않음(일시 오류 — 재시도로). 게이트 후 전 진입점(:90 ensure·:213 logEvent·:245 commitLyrics) 즉시 return.
+  - ② 비로그인 사전 차단: `useAuthStore.getState().token` 부재 시 **요청 없이** null(:92) — 401 왕복으로 게이트를 태우지 않음(로그인 후 같은 실행에서 기록 재개 가능 여부와 직결 — ①의 401 게이트는 "토큰 있는데 401"인 이상 상태만).
+  - ③ **호출부 전수 비차단 감사**: 계측·커밋 호출 11지점 전부 (a) fire-and-forget `.catch()` — MusicResult flush cleanup(:287-293)·LyricsResult 3지점·MusicGeneration 2지점, 또는 (b) try/catch 삼킴 — musicService(:253-262)·MusicResult 발매 전 flush 2곳("발매는 계속" 주석), 또는 (c) 동기 void — logCreationEvent. **await가 catch 없이 본기능 경로에 노출된 지점 0건**(1건이라도 있으면 FAIL). 특히 musicService의 `await ensureCreationSession()`이 try 블록 안(:250-262)인지 — 밖이면 세션 API 500에서 곡 생성 자체가 죽는다.
+  - ④ 발매 전 `await flushCreationEvents()`(:432-437·커버 경유 동일)의 타임아웃 상한: api 15s×최대 3회 백오프 = 최악 ~51s 발매 지연 가능 — sendBatch 실패 경로가 발매를 잡아두는 시간을 실측 산정해 기록(설계 주의점 5 — FAIL 아님, 수치 기록).
+- Then: ①~③ 충족, ④ 기록.
+
+**U-4. 세션 생명주기 — idempotent·종료 2경로·store 동기화 [unit]**
+- When/Then (`creationLogService.ts` + 호출부):
+  - ① **idempotent**: `ensureCreationSession` — `sessionId` 존재 시 즉시 반환(:91), 동시 호출은 단일 `sessionStartPromise` 공유(:93-126, finally에서 null 복원). MusicGeneration mount(:154-159)와 LyricsResult ai_draft 커밋이 겹쳐도 POST /sessions 1회.
+  - ② **종료 2경로**: MusicResult 발매 성공 직후 `endCreationSession()` — handleSave(:459-460)와 커버 경유(:521-524) **양쪽 모두**(한쪽 누락 시 다음 곡이 FINALIZED 세션에 이벤트 → 409 폐기 연쇄). 종료가 `lyricsStore.reset()`과 같은 성공 블록 안(실패 시 세션 유지 — 재시도 발매 가능)인지.
+  - ③ **store 동기화**: 세션 확보 시 `useMusicStore.setCreationSessionId(id)`(:114), 종료 시 null(:138) — MusicResult 발매 payload가 읽는 `store.creationSessionId`(:426)와 모듈 상태 `sessionId`가 어긋나는 경로 없음(둘 다 같은 지점에서만 쓰기).
+  - ④ **알려진 한계 기록(FAIL 아님)**: 발매 없이 새 곡을 시작하면 이전 세션이 이어진다(모듈 상태 잔존 — ABANDONED 30일 배치는 후속, PLAN §2). 곡 경계 혼입 가능성을 결과에 기록하고 실기기 스모크 SQL(A-3)에서 세션-곡 대응을 확인.
+- Then: ①~③ 충족, ④ 기록.
+
+**U-5. 가사 버전 커밋 지점·dedupe·생성 동봉 [unit]**
+- Given: §7.4 커밋 시점(키 입력마다 금지) + §7.5 "FINALIZE.lyrics_version_id 텍스트 = 생성 요청 가사" — 커밋 지점 누락은 소급 불가 유실, dedupe 부재는 버전 오염.
+- When/Then:
+  - ① **커밋 5지점 실존**: (a) LyricsResult mount `ai_draft`(:49-59, hasError 가드·빈 가사 스킵) (b) LyricsResult '완료' 토글 `user_edit`(:208-218 — `isEditingLyrics`일 때만) (c) LyricsResult 작곡 진입 handleSaveAndCompose `user_edit`(:106-110) (d) MusicGeneration 가사 확인 `user_edit`(:338-343, trim) (e) musicService 생성 직전 `user_edit`(:250-257) + `lyricsVersionId || getLastLyricsVersionId()` 폴백.
+  - ② **dedupe**: `lastLyricsText === trimmed`면 서버 호출 없이 기존 id 반환(:248-251) — 무수정 사용자의 (b)~(e) 연쇄가 버전 1개(ai_draft)로 수렴하는지 논리 확인. 체인: `prev_version_id: lastLyricsVersionId || null`(:258) — ai_draft가 루트(prev null), 이후 순차 연결.
+  - ③ **생성 body 동봉**: musicService body에 `session_id`·`lyrics_version_id`(:295-297, undefined 시 키 생략) — 발매 payload에도 동일 쌍+`getLastLyricsVersionId()`(:427-428). Wondera 경로(generateWithWondera)는 이번 미계측 — 동봉 코드가 Suno 경로에만 있는지(있어야 정상 — Wondera 확장은 후속 기록).
+  - ④ **엣지 기록**: mount 시 generatedLyrics 공백이면 ai_draft 미커밋 → 첫 user_edit이 루트가 됨(:247 빈 텍스트는 기존 id 반환) / 보관함 가사(lyricsSource) 직행 시 source가 'user_edit'으로 기록됨 — 둘 다 FAIL 아닌 알려진 한계로 기록(origin 태깅 후속).
+- Then: ①~③ 충족, ④ 기록.
+
+**U-6. MusicResult 계측 — LISTEN/CANDIDATE_SELECT/flush [unit]**
+- Given: §6.2/§6.3/§6.4 — "A 전체·B 10초·A select" 재구성 가능해야 하고, 명시적 선택만 기록한다.
+- When/Then (`screens/MusicResultScreen.tsx`):
+  - ① **candidate_id 규약**: `candidateId(index) = "${store.generationId}:v${index}"`(:138-140) — 백엔드 GEN_RESPONSE `f"{gen_id}:v{index}"`와 문자열 규약 일치. **주석 자인 리스크**(:137 "generationId가 트랙 id로 덮인 경우"): 폴링 완료 후 generationId가 result_track_id로 치환되는 경로가 실존하는지 grep(`setGenerationId` 호출처 전수) — 치환 후 계측 이벤트의 candidate_id는 서버 후보와 불일치(FINALIZE 훅은 경고만이라 발매는 통과) → 실존 시 **알려진 결함으로 기록**하고 A-3 SQL에 대조 항목 포함(수정은 후속 사이클 — 이번 게이트 FAIL 아님, 단 결과 보고 필수).
+  - ② **LISTEN 4지점**: 재생 toggle play/pause(:328-337, position 동봉), 자연 종료 ended(:206-208 — didJustFinish 분기), variant 전환 시 재생 중이던 후보 pause(:348)+전환 후 자동 재생 play(:220-222, 위치 0), seek 미기록(진행바 비인터랙티브 — :143-145 주석 근거 확인). **stale closure 검사**: ended를 기록하는 onPlaybackStatusUpdate 콜백의 봉인 effect가 selectedVariant 변화에 재등록되는지(deps 확인 — 재등록 없으면 B 청취 종료가 A로 기록되는 오귀속, FAIL).
+  - ③ **CANDIDATE_SELECT**: `action:'select'`만(:159 — reject/unselect 미기록 주석 §6.3 정합, rating류 예약 필드 미전송). 기록 지점 2종: 카드 탭 handleVariantSelect(:358-360)+발매 직전(:431·커버 경유) — 중복 select 허용(마지막이 최종, §6.3 위반 아님 — 기록).
+  - ④ **flush 3지점**: 화면 이탈 cleanup(:287-293), 발매 직전 await(:432-437), 커버 경유 발매 직전(:505-510) — 발매 flush가 **upload-from-generation POST보다 앞**(청취·선택이 체인에서 FINALIZE 앞에 놓임 — 순서 역전 시 §6.4 재구성 훼손 FAIL).
+  - ⑤ **track_type**: `store.creationMode === 'copyright' ? 'copyright_ready' : 'standard'`(:423·커버 경유 :502) — 서버 화이트리스트 2값과 정합. `grep -rn "copyright_intent" /Users/pearl/TripleJ/2_housing --include="*.ts" --include="*.tsx"` **0건**(초안 값 잔존 검사), `grep -rn "track_type" 2_housing` 결과가 위 2지점+주석뿐.
+- Then: ①은 grep 결과에 따라 기록/통과, ②~⑤ 충족.
+
+**U-7. ② 모드 토글 — lyricist 한정·문구 금지선 [unit]**
+- Given: 구현은 PLAN §3 1안이 아닌 **작사 디렉터 대화 상단 토글**(2안 조기 반영 — 사용자 원구상 "생성 시점부터 분기"). copyright_ready가 실선택 가능해졌으므로 **문구 금지선(F7 §9)이 유일한 법적 가드**다.
+- When/Then (`screens/DialogueScreen.tsx`):
+  - ① **lyricist 한정**: modeBar 렌더 조건 `directorType === 'lyricist'`(:440) — 작곡·아티스트·영상 등 타 디렉터 대화에 미노출. handleCreationModeSelect(:208-219)는 동일 모드 재탭 no-op.
+  - ② **1회 안내**: `copyrightModeNoticeShown` 모듈 플래그(:74) — copyright 최초 선택 시만 showAlert(**앱 내 다이얼로그 — 시스템 Alert 발견 시 즉시 FAIL**, app-popup-design-rule). 본문(:214-216)이 사실 서술만: "과정이 기록됩니다"·"증빙 자료 생성 기능은 정식 프로모션 때 제공 예정".
+  - ③ **문구 금지선 grep(핵심 게이트)**: `grep -rn "등록 가능\|등록을 보장\|등록 보장\|등록이 보장\|등록이 인정\|등록 인정\|특허" screens/DialogueScreen.tsx screens/MusicResultScreen.tsx constants/consentTexts.ts components/TrackShareDownloadSheet.tsx screens/SettingsScreen.tsx stores/musicStore.ts` → **노출 문자열 0건**(주석 내 존재는 허용 — 노출 여부로 판정). "저작권 등록 모드" 라벨 자체는 단정 표현이 아니라 통과시키되, 사용자 카피 리뷰 대상으로 기록(설계 주의점 8).
+  - ④ **칩·간섭**: copyright 모드에서만 recChip(:463-468) — 점은 벡터 View(이모지 금지 준수), modeBar `pointerEvents="box-none"`(:441)+zIndex 30 — 대화 탭 전진·v3.199 headerLeft(부모 스택 헤더)와 히트 영역 비간섭(정적: 절대배치 top 12가 헤더 밖·오버레이 탭 영역과 분리 구조 확인, 실측은 E-3).
+  - ⑤ **sticky 기록**: creationMode는 리셋 없음(musicStore 주석 :43-44 자인) — 한 번 copyright 선택 후 **다음 곡도 조용히 copyright_ready로 발매**됨. 토글 UI는 작사 대화에만 있어 작곡 직행 흐름에선 되돌릴 접점이 없다 — FAIL 아닌 **UX 리스크 기록**(설계 주의점 7, 실기기 E-3 ⑤에서 확인).
+- Then: ①~④ 충족(③ 0건 필수), ⑤ 기록.
+
+**U-8. F6 고지 3지점 [unit]**
+- When/Then:
+  - ① **공유/다운로드 시트**: TrackShareDownloadSheet 타이틀 아래 "이 곡의 음성은 AI로 합성되었습니다."(caption·muted — 전 곡 공통 근거 주석 v3.171 뱃지 전제) + styles.sub 마진 xs 조정이 레이아웃 회귀 없는지(aiNotice가 marginBottom md 승계).
+  - ② **발매 완료**: handleSave 성공 showAlert가 `store.vocal` 분기(:461-466) — 보컬 곡만 2줄째 고지(§8 "보컬 포함 곡" 요건 정합·inst 곡 불필요 고지 억제). 커버 경유 발매 완료 알림에도 동일 분기 존재 여부 확인 — 부재 시 경로 간 고지 불일치 **기록**(법정 고지 커버리지 갭 — 후속 수정 권고).
+  - ③ **설정 상시 확인**: SettingsScreen policy 유니언 'ai' + 앱 정보 섹션 "AI 생성 고지" 행(:601-608) → PolicySheet 재사용, title/body 삼항이 로그인·비로그인 **양쪽 PolicySheet 인스턴스 모두** 확장됨(:875-880·:893-899 — 한쪽만이면 시트 열린 채 상태 전환 시 잘못된 본문). consentTexts `AI_GENERATION_NOTICE`(:216-225)가 `CONSENTS.overseas.body` 전문 재사용 + 신설 요약 2줄이 사실 서술만.
+- Then: ①·③ 충족, ② 분기 확인+커버 경유 기록.
+
+**U-9. diff 격리 [unit]**
+- When: ① `cd /Users/pearl/TripleJ/2_housing && git diff --stat -- .` — **콘텐츠 diff가 허용 9 tracked 파일뿐**(그 외 전부 `| 0` mode-only 또는 바이너리 — v3.199 관행대로 분리 판정, v3.200 위반 아님). ② `git status --porcelain -- . | grep '^??'`에 `services/creationLogService.ts` — **커밋 스테이징에 반드시 포함**(untracked라 diff에 안 잡혀 누락되기 쉬움 — 누락 커밋 = 앱 전 화면 import 깨짐 즉시 FAIL급). ③ 백엔드: 로컬 `/Users/pearl/TripleJ-backend` 콘텐츠 diff 0(v3.200 백엔드는 서버 직배포 — 로컬 접촉 시 발산 오염). ④ 커밋은 허용 10파일 명시 스테이징(mode-only 제외).
+- Then: ①~④ 충족.
+
+**U-10. v3.191~199 무회귀 — 접촉 파일 라인 단위 [unit]**
+- Given: 이번 접촉 파일들의 이력 중첩 — MusicResultScreen(v3.93 A/B·v3.104 커버 보관함·BUG-3 보상 가드), DialogueScreen(v3.199 headerLeft 주입/복원), SettingsScreen(v3.199 seedColor·v3.92 아바타), LyricsResult(v3.127 서버 가사 자산), MusicGeneration(v3.94 피로도), TrackShareDownloadSheet(v3.196 insets), musicService(v3.177 V6 기본 모델·v3.91 참고 음악).
+- When/Then (앵커 재탐색):
+  - ① **v3.93/v3.104/BUG-3**: MusicResult A/B 비교 조건·variants 조회·pendingPlayRef 전환 로직·libraryCover 소비·grantReleaseRewards 호출 위치 diff 0(계측은 삽입만 — 기존 라인 수정 발견 시 FAIL). 발매 payload 기존 필드(variant_index·lyrics_id·cover_object_name) diff 0.
+  - ② **v3.199 B**: DialogueScreen useFocusEffect headerLeft 주입+cleanup 쌍 diff 0(이번 diff는 import showAlert+모드 토글 블록+styles뿐인지 hunk 전수). LyricsInput·ComposerInput 무접촉(허용 파일 밖).
+  - ③ **v3.199 A**: SettingsScreen seedColor import·아바타 폴백 diff 0 — 이번 diff는 policy 유니언+행 1개+PolicySheet 삼항 2곳뿐.
+  - ④ **v3.127/v3.94**: LyricsResult handleSaveToBook·중복 저장 가드 diff 0 / MusicGeneration 피로도 게이트·대화 시퀀스 diff 0(세션 useEffect·가사 커밋 삽입만).
+  - ⑤ **v3.177/v3.91**: musicService suno_model V6 기본·reference_audio_* 필드 diff 0(session_id 2필드 추가만). generateWithWondera 무변경.
+  - ⑥ **v3.196**: TrackShareDownloadSheet KAV/insets 구조 diff 0(고지 1줄+마진뿐).
+  - 위반 시 해당 버전 TESTPLAN 항목 재실행 승격.
+
+### [unit-서버] 배포 서버 정적 검증 — 오케스트레이터 ssh 읽기 전용
+
+> 실행 주체: 오케스트레이터(기존 서버 접속 절차·backend_9004만·읽기 전용 — cat/grep/python 검증 스크립트만, 재시작·수정 금지). 로컬 워크트리엔 해당 파일이 없으므로 반드시 원격에서 읽는다.
+
+**S-1. 해시 체인 구현 = 부록 B 문자 그대로 [unit-서버]**
+- When: 서버 `app/services/creation_log.py` 열람 — ① `canonical`: `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")` **파라미터 3종 문자 일치**(ensure_ascii=True로 바꾸면 한글 payload 해시가 문서 참조 구현과 달라져 외부 검증기와 영구 불일치 — 1글자 게이트). ② `event_hash`: material이 `"\n".join([session_id, str(seq), type, actor, server_ts, payload_hash, prev_hash])` — **7항 순서·구분자 `\n` 고정**, server_ts 직렬화 형식(ISO 문자열)이 저장값과 동일 소스인지(재직렬화 경로가 둘이면 검증 불일치). ③ 첫 이벤트 prev_hash `"0"*64`, 세션 FINALIZE 시 root_hash = 마지막 event_hash. ④ `user_id_hash = SHA256(user_id + salt)` — salt는 `CREATION_LOG_SALT` env 참조(하드코딩 fallback 값이 있으면 기록 — 배포 .env 설정 여부는 A-2 인용과 대조). ⑤ 자기검증(배포 시 통과 보고됨)이 코드에 어떤 형태로 있는지 인용 확보(재해시 왕복 함수 — A-3 검증 스크립트가 이것을 재사용 가능한지 확인).
+- Then: ①~③ 문자 일치 필수, ④·⑤ 확인·인용.
+
+**S-2. append 직렬화·불변 보장 [unit-서버]**
+- When: ① append 경로에 **세션 단위 PG advisory lock**(`pg_advisory_xact_lock` 계열, 키=세션 id 해시) — seq 부여·prev_hash 읽기·INSERT가 한 락 구간 안(락 밖 seq 계산이면 동시 배치에서 UNIQUE 충돌 또는 체인 분기). ② DDL: events `UNIQUE(session_id, seq)`+§5.4 최소 컬럼 전부, sessions·lyrics_versions 컬럼 §5.4/§7.3 대비(criteria_version·parent_session_id 예약 필드 포함), lifespan `CREATE ... IF NOT EXISTS` 멱등. ③ `event_id` 중복 수신 무시(idempotent) 구현 — ON CONFLICT 또는 사전 SELECT. ④ UPDATE/DELETE 권한 분리(§5.4)는 이번 비범위(PLAN 후속) — 미구현이 정상, 구현 시도 흔적이 있으면 오히려 prod 승인 규칙 위반으로 기록.
+- Then: ①~③ 충족, ④ 비범위 확인.
+
+**S-3. API 계약 — 관대/엄격 이원화·409·FINALIZE 검증 이원화 [unit-서버]**
+- When: 서버 `app/routes/sessions.py` — ① POST /sessions: 관대 스키마(구버전·확장 수용 — extra 허용), import_blocked **false 고정**(§4.3 실측 근거: 참고 음악 업로드 존재 — true 하드코딩 발견 시 허위 플래그 FAIL). ② POST /sessions/{id}/events: 봉투형 `{"events":[...]}` 필수, 이벤트 모델 **extra forbid**(Pydantic `model_config`/`Config` extra 금지 확인), type 화이트리스트(LISTEN/CANDIDATE_SELECT/LYRIC_EDIT — 앱이 SESSION_START류를 보내면 400), 배치 ≤500 검증, **FINALIZED 세션 409**(§15-5), client_seq 기준 서버 seq 부여. ③ POST /sessions/{id}/lyrics: `source·text·prev_version_id` 3필드, origin_summary NULL(후속). ④ **FINALIZE 검증 이원화**: sessions.py(또는 finalize API)의 candidate 존재 검증은 엄격(§4.4), tracks.py upload-from-generation **훅은 경고 기록 후 발매 진행**(구버전 호환 — 발매 차단 코드 발견 시 하위호환 FAIL). ⑤ tracks.py track_type 화이트리스트 `{'standard','copyright_ready'}` — 그 외 값 거부 또는 standard 폴백 어느 쪽인지 인용(앱 U-6 ⑤와 대조), 미전송(구버전) 시 기본 'standard'.
+- Then: ①~⑤ 충족·인용.
+
+**S-4. generate/suno_generator — 전문·해시·실패 기록 [unit-서버]**
+- When: ① generate.py create가 session_id optional — 무세션 요청 시 **서버 자동 세션 생성**(SESSION_START 서버 기록, 구버전 앱 정상 — §4.4 "세션 없이 거부"의 의도적 완화 근거 주석 확인). ② 엔진 호출 직전 GEN_REQUEST(request_body_hash — seed·callBackUrl·시각류 제외 canonical, is_regeneration_of 소급용), 폴링 완료 후 generations doc에 `suno_request_body`·`suno_response_raw`·variant별 `audio_sha256`·`requested_at/responded_at` $set. ③ **audio_sha256이 MinIO put 직전 원본 bytes 기준**(재인코딩·변환 경로 부재 — §3.1 재인코딩 금지 유지). ④ **실패·타임아웃도 GEN_RESPONSE(status=failed)**(§3.3 — 성공 경로에만 이벤트가 있으면 FAIL). candidates `candidate_id = f"{gen_id}:v{index}"` — 앱 U-6 ① 규약과 문자 일치. ⑤ 오디오 저장 실패 시 응답 보류·재시도(§3.3 "앱에는 갔는데 원본은 없는 상태 금지") 처리 여부 — 미구현이면 기록(후속 후보).
+- Then: ①~④ 충족, ⑤ 확인·기록.
+
+### [api] — 오케스트레이터 실행 명시 + 실사용 스모크 이관
+
+**A-1. 무인증 401 [api] — 완료(재확인만)**
+- 배포 직후 오케스트레이터 실측 완료 보고 인용: 무인증 POST /api/sessions → 401. 재확인 1회: `curl -s -o /dev/null -w '%{http_code}' -X POST https://<9004 베이스>/api/sessions -H 'Content-Type: application/json' -d '{}'` → 401(토큰 없이 절대 기록 불가 확증).
+
+**A-2. 스키마 배포 확인 [api] — 완료(인용)**
+- 배포 로그 인용으로 갈음: lifespan에서 PG `creation_log` 스키마(sessions·events·lyrics_versions) 멱등 생성 확인됨. 결과표에 해당 로그 라인 인용을 남길 것 + `CREATION_LOG_SALT` env 설정 확인(S-1 ④ 대조 — salt 미설정 fallback 가동이면 기록).
+
+**A-3. 실사용 스모크 — 실기기 이관(Suno 실과금) + 검증 SQL/명령 [api]**
+- **이관 사유**: 곡 생성 1회 = Suno 실비용. 오케스트레이터가 곡을 굽지 않는다 — 사용자 실기기에서 생성 1회(작사→작곡→A/B 청취→발매) 후, 오케스트레이터가 아래를 서버에서 실행해 체인을 검증한다.
+- **검증 절차(생성·발매 1회 후)**:
+  1. 세션·체인 존재: `SELECT session_id, status, root_hash, final_candidate_id, final_lyrics_version_id, import_blocked FROM creation_log.sessions ORDER BY started_at DESC LIMIT 3;` → 최신 세션 status=FINALIZED·root_hash NOT NULL·import_blocked=false.
+  2. 이벤트 시퀀스: `SELECT seq, type, actor, left(prev_hash,8) AS prev8, left(event_hash,8) AS hash8, client_ts, server_ts FROM creation_log.events WHERE session_id='<위 id>' ORDER BY seq;` → seq 1..N 무결점(구멍 0), 순서: SESSION_START(1, prev8='00000000') → GEN_REQUEST → GEN_RESPONSE → LISTEN들 → CANDIDATE_SELECT → (LYRIC_EDIT들 산재) → FINALIZE(마지막), 각 행 prev8 = 직전 행 hash8.
+  3. 재해시 대조(부록 B): `SELECT json_agg(row_to_json(e) ORDER BY seq) FROM creation_log.events e WHERE session_id='<id>';` 출력을 부록 B `verify_chain` 스크립트(문서 :400-421 그대로, 또는 S-1 ⑤에서 확보한 서버 자기검증 함수 재사용)에 투입 → `(True, None)` + 마지막 event_hash == sessions.root_hash. **주의: server_ts는 저장된 문자열 표현 그대로 투입**(재포맷 시 거짓 불일치 — S-1 ② 확인 사항).
+  4. 가사 체인: `SELECT lyrics_version_id, prev_version_id, source, left(md5(text),8), created_at FROM creation_log.lyrics_versions WHERE session_id='<id>' ORDER BY created_at;` → 루트 source='ai_draft'(prev NULL)·이후 user_edit 연결, FINALIZE payload의 lyrics_version_id가 마지막 버전과 일치(§7.5).
+  5. Mongo 전문: `mongosh aimu --eval 'db.generations.find({session_id:"<id>"},{suno_request_body:1,suno_response_raw:1,"variants.audio_sha256":1,requested_at:1,responded_at:1,track_type:1}).pretty()'` → 전문 2종·variant별 sha256·타임스탬프 존재. tracks doc의 track_type이 앱 선택 모드와 일치.
+  6. **candidate_id 대조(U-6 ① 연동)**: LISTEN/CANDIDATE_SELECT payload의 candidate_id들이 GEN_RESPONSE candidates[].candidate_id 집합에 전부 포함되는지 — 불일치 발견 시 U-6 ①의 generationId 치환 결함 실증(결과 보고·후속 수정 발제).
+- 실패 생성(엔진 실패·타임아웃) 케이스: 실기기에서 의도 유발이 어려우므로 **자연 발생 대기**(발생 시 GEN_RESPONSE status=failed 행 확인) — S-4 ④ 정적 확인으로 갈음.
+
+### [e2e] §15 시나리오 축약판 — 실기기 이관 + 정적 대체 병기
+
+**E-1. §15 시나리오 1 축약판 — 청취·선택·가사·발매 전 과정 재구성 [e2e] — 실기기+서버 검증 조합**
+- 원문 축약(과금 최소화 — 생성 3회→1회, 재생성 생략): 새 곡(작사 디렉터) → AI 가사 초안 → 가사 3행 이상 수정('완료' 토글) → 작곡 대화 → 생성 1회(후보 2개) → **후보 A 끝까지 청취 → B 10초만 청취 → A 카드 선택** → 발매.
+- 기대(서버 A-3 절차로 판정): 세션 1개 FINALIZED, 이벤트 대략 10~20건, 가사 버전 ≥2(ai_draft→user_edit), LISTEN 재구성 "A 전체(play→ended), B 부분(play→pause ~10s), A select"(§6.4), FINALIZE.candidate_id=A·trigger='publish', 체인 재해시 전량 일치. 재청취 시 play~ended 구간 2개로 구분.
+- 정적 대체: U-2·U-5·U-6 + S-1~S-4(계측 지점·체인 구현의 코드 실존으로 갈음). **§15-2(오프라인 큐)·§15-3/4(변조 검출 F9)는 이번 슬라이스 비범위**(메모리 큐 유실 허용·F9 후속 — PLAN §2) — 시도하지 말고 후속 이월 명기.
+
+**E-2. §15 시나리오 5 — FINALIZED 세션 409 [e2e] — 서버 단독 실행 가능**
+- When: E-1 완료 후 오케스트레이터가 FINALIZED 세션에 이벤트 업로드: `curl -X POST .../api/sessions/<id>/events -H 'Authorization: Bearer <테스트 계정 토큰>' -d '{"events":[{"event_id":"<uuid>","client_seq":999,"type":"LISTEN","client_ts":"<now>","payload":{"candidate_id":"x","action":"play","position_ms":0}}]}'` (토큰은 사용자 제공 테스트 계정 — 증적에 마스킹).
+- Then: **409** + 체인 불변(A-3 ③ 재실행 시 동일 root_hash). 앱 측 대응: U-2 ⑤(409 즉시 폐기·재시도 없음)로 앱이 409 폭주를 만들지 않음을 정적 확인. 발매 후 화면 잔류 중 pause 등 늦은 이벤트가 409로 소실되는 것은 알려진 한계(endCreationSession이 큐를 비워 실제 발생 희박 — 기록).
+
+**E-3. ② 모드 토글 여정 [e2e] — 실기기 이관 + 정적 대체 병기**
+- When/Then: ① 작사 디렉터 진입 — 상단 토글(일반/저작권 등록) 노출·기본 '일반', **타 디렉터(작곡·영상 등) 대화엔 미노출** ② 저작권 등록 탭 — 앱 내 다이얼로그 1회 안내(문구가 U-7 ③ 금지선 준수·재탭 시 안내 재출현 없음)·"창작 과정 기록 중" 칩 점등 ③ 토글이 대화 진행·v3.199 뒤로가기 화살표와 히트 간섭 없음(대화 탭 전진 정상) ④ 그 상태로 발매 → A-3 ⑤에서 track_type='copyright_ready' 확인, 일반 모드 곡은 'standard' ⑤ **sticky 실측**: 발매 후 새 곡 시작 — 모드가 copyright로 남아 있는지 확인하고 사용자에게 의도 부합 여부 질의(U-7 ⑤ 연동 — 비의도면 후속 리셋 정책 발제) ⑥ F6: 공유 시트 고지 1줄·보컬 곡 발매 완료 고지·설정>앱 정보>AI 생성 고지 열람.
+- 정적 대체: U-7·U-8 전 항목.
+
+### 태그 집계
+- [unit] 10건 (U-1 tsc / U-2 이벤트 계약 6필드·봉투·500분할·순서 / U-3 no-op 게이트·기능 비차단 전수 / U-4 세션 생명주기 / U-5 가사 커밋 5지점·dedupe / U-6 MusicResult 계측·candidate_id·flush / U-7 모드 토글·문구 금지선 / U-8 F6 고지 3지점 / U-9 diff 격리·untracked 스테이징 / U-10 v3.191~199 무회귀)
+- [unit-서버] 4건 (S-1 부록 B 문자 일치·salt / S-2 advisory lock·DDL·idempotent / S-3 API 관대·엄격·409·FINALIZE 이원화·track_type / S-4 generate 전문·SHA-256·실패 기록) — 전부 오케스트레이터 ssh 읽기 전용
+- [api] 3건 (A-1 무인증 401 완료+재확인 / A-2 스키마 배포 인용 / A-3 실사용 스모크 — Suno 과금으로 실기기 이관, 검증 SQL 6단계 명시)
+- [e2e] 3건 (E-1 §15 시나리오 1 축약 — 실기기+서버 SQL 조합 / E-2 §15 시나리오 5 — 409, 서버 단독 / E-3 모드 토글 여정 — 실기기 이관+정적 대체)
+
+### 설계 주의점 (tester·오케스트레이터·사용자 참고)
+1. **로컬 백엔드 워크트리에 v3.200 코드가 없다(실측)**: `/Users/pearl/TripleJ-backend/.../backend_9004`에 creation_log.py·sessions.py 부재, tracks.py에 track_type 부재. [unit-서버] 전 항목은 **배포 서버 원격 읽기**로만 유효하고, 로컬 diff·grep으로 대신하면 전부 거짓 통과가 된다. 서버 편집분의 git 반영(backend 브랜치 동기화) 잔무를 결과 보고에 반드시 포함할 것.
+2. **canonical 1글자가 전체를 가른다**: S-1 ①의 `ensure_ascii=False`·separators가 부록 B와 다르면 한글 payload에서 해시가 갈려 "구현은 일관되게 틀린" 상태가 된다 — 자기검증은 통과하면서 외부(문서 기준) 검증기와는 영구 불일치. 판정은 반드시 **문서 부록 B 원문과의 문자 대조**로, 서버 자기검증 통과 보고를 근거로 삼지 말 것. server_ts 문자열 표현도 동일 원리(저장값 그대로 재해시 — A-3 ③ 주의).
+3. **candidate_id 치환 리스크는 이번 사이클의 1순위 관찰 대상**: 앱 주석이 스스로 "generationId가 트랙 id로 덮인 경우"를 인정한다(U-6 ①). 덮인 뒤의 LISTEN/SELECT는 서버 후보 집합과 불일치하고, FINALIZE 훅이 경고만 하므로 **아무 에러 없이 재구성만 조용히 깨진다**. 정적(setGenerationId 호출처 grep)과 실측(A-3 ⑥ 대조)을 반드시 둘 다 수행하고, 불일치 실증 시 후속 수정(계측용 원본 gen_id 별도 보관)을 발제할 것.
+4. **"기록이 기능을 막지 않는다"가 제1 불변식**: U-3 ③의 호출부 전수 감사가 이번 계획의 핵심 게이트다. 이번 diff는 재생·발매·가사 편집이라는 대표 수익 경로 한복판에 11개 계측점을 심었다 — catch 없는 await 1개가 곧 "기록하려다 발매를 죽이는" 사고다(hot-reload 가사 유실 사고의 교훈: 사용자 생성물 경로는 방어 우선).
+5. **발매 전 flush의 최악 지연 ~51초**: await flush(15s 타임아웃×3회+백오프)가 발매 버튼과 스피너 사이에 있다. 서버 장애 시 발매가 이만큼 늦어질 수 있다 — FAIL 기준은 아니나(발매 자체는 결국 진행) 수치를 결과에 남겨 후속(타임아웃 단축 또는 비동기화) 판단 근거로 삼을 것.
+6. **§15의 2·3·4번 시나리오는 의도적 비범위**: 오프라인 영속 큐(§15-2)는 메모리 큐 슬라이스라 유실 허용이 확정 사양이고, 변조 검출(§15-3/4)은 F9(후속)의 몫이다. 이걸 이번에 검증하려 들면 사양에 없는 FAIL을 만든다 — E-1에 명기해 둔 이유. 반대로 **§15-5(409)는 이번 범위**이고 서버 단독으로 싸게 실측 가능하다(E-2).
+7. **creationMode sticky는 설계 선택이지만 접점이 비대칭**: 켜는 토글은 작사 대화에만 있는데 효과(track_type)는 모든 발매에 미친다. 작사 없이 작곡 직행하는 곡도 이전 선택을 승계한다 — E-3 ⑤에서 사용자 의도를 확인하고, 비의도면 "발매 시 유형 표시/변경" 후속(PLAN §3 1안의 카드 UI)을 발제.
+8. **문구 금지선은 노출 문자열 기준으로 판정**: 주석·변수명의 '저작권'은 무해하다. grep 히트를 노출/비노출로 분류해 판정할 것. "저작권 등록 모드"라는 라벨 자체는 단정 표현이 아니라 통과시키되, '등록'이라는 단어가 주는 기대 수준을 사용자 카피 리뷰 대상으로 기록(안내 팝업이 "제공 예정"으로 눌러주고 있는 구조까지 세트로 인용).
+9. **untracked 신규 파일이 커밋 누락 1순위**: creationLogService.ts는 `git diff`에 안 잡힌다(U-9 ②). 9파일만 스테이징하면 앱이 import 실패로 전면 깨진 채 커밋된다 — frontend 자동 push 규칙과 결합하면 깨진 코드가 즉시 원격에 올라간다. 커밋 전 `git status --porcelain -- 2_housing | grep '^??'` 확인을 절차화할 것.
+10. **테스트 비용 경계**: 곡 생성이 곧 과금이므로 [api]/[e2e]의 생성 횟수는 총 1~2회로 설계했다(E-1 축약이 A-3 스모크를 겸함 — 별도 생성 금지). is_regeneration_of(§3.4 "3회 생성" 수용 기준)는 request_body_hash가 이번부터 쌓이므로 **소급 판정 가능** — 실측은 후속 사이클로 미루고 이번엔 해시 저장 존재(S-4 ②)만 본다.
+
+### v3.200 테스트 결과 (tester, 2026-09-21)
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 타입 무결성 | PASS | `npx tsc --noEmit` exit 0, 오류 출력 0줄 |
+| U-2 이벤트 계약(앱 측 형태) | PASS* | 6필드 정확(QueuedEvent :26-33, actor/seq/server_ts 부재)·target 조건부 스프레드(:222, null 대입 없음)·봉투형 `{events}`(:157)·lyrics 3필드(:255-259, trim+prev null)·sessions 5필드+creation_mode 미전송 주석(:103-106)·500 분할 순차 for-await 무손실(:148-153)·`++clientSeq`(:219)+리셋 2곳(:111/:133)·단일 sessionStartPromise 공유(:93)로 등록 순서 보존·flush 선행 배치 await(:179)·재시도 3회 백오프 1s/2s(:170)·400/409 즉시 폐기(:164-168). *단 서버 대조에서 X-1 계약 불일치 발견(아래) — 앱 측 형태 자체는 계획 명세와 일치 |
+| U-3 no-op 게이트 | PASS | 404/401만 게이트(:66-72)+진입점 3곳 즉시 return·비로그인 사전 차단(:92, 요청 없이 null)·**호출부 11지점 전수: catch 없는 await 0건** — (a) fire-and-forget .catch 6곳(LyricsResult 3·MusicGeneration 2·MusicResult cleanup) (b) try/catch 3곳(musicService :252-260 — `await ensureCreationSession()` try 안, MusicResult 발매 flush 2곳) (c) 동기 void 2곳. ④ 발매 전 flush 최악 지연 실측 산정: 1배치 = 15s×3회+백오프 1+2s = **~48s**, 선행 배치 진행 중이면 이론상 ~96s (설계 주의점 5 — 수치 기록, FAIL 아님) |
+| U-4 세션 생명주기 | PASS | idempotent(:91 즉시 반환·:93 promise 공유)·종료 2경로 모두 성공 블록 안(handleSave :458-460, 커버 경유 :523-525 — 실패 시 세션 유지)·store 동기화 쓰기 2지점뿐(:114/:138). ④ 기록: 발매 없이 새 곡 시작 시 이전 세션 승계(ABANDONED 배치 후속) — A-3 ①에서 세션-곡 대응 확인 |
+| U-5 가사 커밋 | PASS | 5지점 실존: ai_draft mount(:51-58, hasError·빈 가사 가드)/완료 토글(:211-216, isEditingLyrics 시만)/handleSaveAndCompose(:107-110)/MusicGeneration 확인(:340-343, trim)/musicService 직전(:253-257)+getLastLyricsVersionId 폴백. dedupe(:248-251)·체인 prev(:258)·생성 body 동봉(:296-297, undefined 생략)·발매 payload 동일 쌍(:425-426/:504-505). Wondera 미계측(Suno 경로만 — 정상). ④ 엣지 2건 기록(빈 초안 시 user_edit 루트/보관함 가사 source 문제 — origin 태깅 후속) |
+| U-6 MusicResult 계측 | PASS(① 결함 기록) | ① **generationId 치환 실존 확정**: MusicLoadingScreen :139·:278 `if (trackId) store.setGenerationId(trackId)` — status.result_track_id 존재 시 트랙 id로 덮임 → 이후 candidate_id가 서버 후보 집합과 불일치(발매는 FINALIZE 훅 경고만으로 통과). 신규 생성 직후엔 result_track_id 부재라 정상 경로 무손상 — **알려진 결함 기록, A-3 ⑥ 대조 필수, 후속: 계측용 원본 gen_id 별도 보관**. ② LISTEN 4지점(:328-337/:205-208/:349·:359 pause/:217-223 자동 play)+seek 미기록 주석(:145-146)+stale closure 없음(effect deps :246에 selectedVariant 포함, mounted 가드 :201) ③ select만(:159)·2지점(:360/:432·:508) ④ flush 3지점, 발매 flush가 upload POST(:440/:514)보다 선행 ⑤ track_type 2지점뿐(:423/:503)·copyright_intent 0건 |
+| U-7 모드 토글 | PASS | lyricist 한정(:440)·재탭 no-op(:209)·1회 안내 모듈 플래그(:74)+showAlert(utils/appAlert — 앱 내 다이얼로그 ✓)·본문 사실 서술만(:214-216)·**금지선 grep 히트 1건 = :73 주석(비노출) → 노출 문자열 0건 PASS**·recChip 벡터 점(:464-467)·modeBar box-none+zIndex 30, top 12 절대배치(헤더는 부모 스택 — 간섭 없음, 실측은 E-3). ⑤ sticky 기록: musicStore :45 주석 자인 — 작곡 직행 시 되돌릴 접점 없음(E-3 ⑤ 사용자 질의) |
+| U-8 F6 고지 | PASS(② 갭 기록) | ① 시트 고지 1줄(:170-171 caption/muted)+sub 마진 md→xs·aiNotice md(레이아웃 회귀 없음 — 순수 삽입+마진 1건) ② handleSave vocal 분기(:462-466) ✓ / **커버 경유 발매는 완료 알림 자체가 없어 고지 부재 — 법정 고지 커버리지 갭 기록(후속 수정 권고)** ③ policy 'ai' 유니언(:435)+행(:601-607)+PolicySheet 양쪽 삼항(:877-879/:898-900)·AI_GENERATION_NOTICE = overseas.body 전문 재사용+요약 2줄 사실 서술(:217-225) |
+| U-9 diff 격리 | PASS | ① 콘텐츠 diff = 허용 9 tracked 파일뿐(그 외 75건 전부 mode-only `|0`/바이너리 — v3.199 관행 분리 판정) ② `?? 2_housing/services/creationLogService.ts` 확인(untracked 총 668건 중 커밋 대상은 이 1건 — **명시 스테이징 필수**) ③ 로컬 TripleJ-backend `git status --porcelain` 콘텐츠 변경 0 ④ 커밋 시 10파일 명시 스테이징 절차 확인 |
+| U-10 무회귀 | PASS | 3화면 diff에서 삭제/수정 기존 라인 3건뿐: LyricsResult import 확장·완료 토글 onPress 계측 래핑(setIsEditingLyrics 토글 보존)·MusicResult showAlert vocal 분기(F6 의도 변경). v3.93/104/BUG-3(A/B·variants·pendingPlayRef·libraryCover·grantReleaseRewards·기존 payload 필드)·v3.199 A/B(headerLeft·seedColor)·v3.127/94·v3.177/91(suno_model·reference_audio_* 무접촉, generateWithWondera 무변경)·v3.196(KAV/insets) 전부 diff 0 |
+| S-1 부록 B 문자 대조 | PASS | ① canonical `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")` — 부록 B :404와 **문자 일치** ② event_hash material 7항 `"\n".join([session_id, str(seq), etype, actor, server_ts, payload_hash, prev_hash])` 순서·구분자 일치, server_ts는 `ts_str()`(UTC `%Y-%m-%dT%H:%M:%S.%fZ` μs 6자리 고정) 단일 소스 — 기록·검증 왕복 바이트 동일 설계 ③ GENESIS `"0"*64`·finalize root_hash=마지막 event_hash ④ salt = settings.creation_log_salt(.env `CREATION_LOG_SALT=` **설정 확인됨** — jwt_secret 폴백 코드는 존재하나 미가동) ⑤ verify_chain(events)이 모듈에 참고 구현 그대로 존재(호출처 없음 — 배포 자기검증은 1회성 스크립트였던 것으로 보임). **A-3 ③ 주의 보강: server_ts는 TIMESTAMPTZ 저장이므로 SQL 출력 문자열이 아니라 서버 `ts_str(dt)` 재변환으로 투입할 것**(PG 텍스트 표기와 해시용 표기가 다름 — 서버측 python에서 creation_log.verify_chain 재사용 권장) |
+| S-2 직렬화·불변 | PASS | ① `pg_advisory_xact_lock(hashtext($1), hashtext('creation_log'))` 세션 키 — append_event/append_batch/finalize/commit_lyrics/create_session 전부 트랜잭션+락 구간 안에서 seq 계산·prev 읽기·INSERT ② DDL: events UNIQUE(session_id,seq)+§5.4 13컬럼 전부, sessions에 parent_session_id·criteria_version 예약 포함, lyrics_versions §7.3 대비, CREATE IF NOT EXISTS 멱등 ③ event_id 사전 SELECT dup 체크(락 안 — idempotent) ④ UPDATE/DELETE 권한 분리 미구현 확인(주석으로 후속 명시 — 정상, prod 승인 규칙 준수. events엔 INSERT만, sessions UPDATE는 finalize 설계 범위) |
+| S-3 API 계약 | PASS | ① POST /sessions 관대(CreateSessionBody extra 기본 ignore — 앱의 import_blocked/criteria_version 여분 필드 무해 흡수)·import_blocked FALSE 리터럴 INSERT(§4.3 실측 근거 주석) ② events 봉투 필수+EventItem `model_config={"extra":"forbid"}`+raw dict 엄격 검증·타입 화이트리스트 4종(SESSION_START류 400)·≤500·FINALIZED 409 선행·client_seq 정렬 후 서버 seq ③ lyrics 3필드+client_ts 옵션, origin_summary null ④ FINALIZE 이원화: sessions.py `strict_candidate=True` / tracks.py 훅 `strict_candidate=False`+전체 try/except(발매 절대 비차단) ⑤ track_type 화이트리스트 `("standard","copyright_ready")` 그 외 **standard 폴백**(tracks.py :2185), 미전송 기본 standard(:1897) — 앱 2값과 정합 |
+| S-4 generate 전문·해시 | PASS(⑤ 기록) | ① session_id optional(:115)+ensure_session 자동 생성(:667-676/:829-834, FINALIZED면 parent 연결 새 세션 — §4.4 완화 근거 주석) ② 엔진 전송 직전 GEN_REQUEST(request_body_hash — REQUEST_HASH_EXCLUDE={"callBackUrl"}, is_regeneration_of·lyrics_input_version_id 동봉)+suno_request_body/hash/requested_at $set·응답 후 suno_response_raw/responded_at/variant별 audio_sha256 $set ③ audio_sha256 = 엔진 수신 바이트 그대로 MinIO put 직전 계산(재인코딩 없음 주석 §16-2) ④ 실패·타임아웃 GEN_RESPONSE status=failed(generate.py :375-392)·candidate_id `f"{generation_id}:v{index}"` 앱 규약과 문자 일치 ⑤ 오디오 다운로드/저장 실패 시 raise → 생성 자체가 failed 처리(스트림 URL 미발급이라 "앱엔 갔는데 원본 없음" 불성립) — 보류·재시도 로직은 미구현, 후속 후보 기록 |
+| **X-1 앱↔서버 이벤트 계약 대조** | **FAIL** | **LISTEN/CANDIDATE_SELECT의 candidate_id 위치 불일치 — 이벤트 전량 400 폐기 확정.** 앱(MusicResultScreen :147-151/:159)은 payload에 `candidate_id`를 넣고 target을 아예 안 보냄. 서버(sessions.py)는 ALLOWED_PAYLOAD_KEYS에 candidate_id가 없어 "unknown fields" 400 + `target.candidate_id is required`. 400은 앱이 즉시 폐기(U-2 ⑤)하므로 **기능 무손상·조용한 계측 전멸**(문서 §5.2 정본은 target.candidate_id — 서버가 옳고 앱이 위반). 수정 지시 아래 |
+| A-1 무인증 401 | PASS | `POST https://api.maidol.ai.kr/api/sessions` (무인증, `{}`) → **401** 재확인 실측 |
+| A-2 스키마 배포 | PASS | docker `maidol-app` 로그 인용: `[migration] creation_log schema ensured`. `.env`에 `CREATION_LOG_SALT=` 존재 확인(값 비출력) — S-1 ④ 폴백 미가동 |
+| A-3 실사용 스모크 | 실기기 이관 | 검증 SQL/명령 6단계는 계획에 완전 — 단 ③ 재해시는 위 S-1 판정대로 **서버측 python에서 creation_log.verify_chain+ts_str 재사용**으로 실행할 것(SQL 문자열 직투입 시 거짓 불일치). ⑥ candidate_id 대조는 U-6 ①·X-1 수정 후 실측 필수 |
+| E-1 §15-1 축약 | 실기기 이관 | 정적 대체(U-2·U-5·U-6·S-1~S-4) 완료 — 단 **X-1 수정 전에는 LISTEN/SELECT가 서버에 한 건도 안 남아 §6.4 재구성이 성립 불가**. 수정 커밋 후 실기기 1회 생성 진행. §15-2/3/4는 비범위 이월 명기 |
+| E-2 §15-5 409 | 부분 실측+정적 | 서버 코드: FINALIZED 체크가 검증·기록보다 선행(sessions.py upload_events) → 409 반환 확정. 무인증·임의 세션 안전 실측: events 엔드포인트 401(인증 선행) 확인. 실세션 409 실측은 E-1 완료 후(테스트 계정 토큰 필요 — 프로덕션 데이터 조작 금지 원칙 준수, 이번 미실행). 앱 409 즉시 폐기(:165-168) 정적 확인 — 409 폭주 없음 |
+| E-3 모드 토글 여정 | 실기기 이관 | 정적 대체(U-7·U-8) 완료. 실기기에서 ①~⑥ + sticky 의도 질의(⑤) 수행 |
+
+**게이트 판정: FAIL(조건부) — X-1 수정(앱 2함수, ~4줄) 후 U-2·U-6 해당부 재판정 시 PASS 전환 가능. X-1 미수정 커밋 금지(계측 목적 전멸 상태로 배포됨).**
+
+**X-1 수정 지시(developer)**: `2_housing/screens/MusicResultScreen.tsx` — ① logListen(:142-152): `logCreationEvent('LISTEN', { action, position_ms: ... }, { candidate_id: cid })` — candidate_id를 payload에서 제거하고 3번째 인자 target으로 이동 ② logCandidateSelect(:154-160): `logCreationEvent('CANDIDATE_SELECT', { action: 'select' }, { candidate_id: cid })` 동일 이동. creationLogService의 target 스프레드(:222)·서버 ALLOWED_TARGET_KEYS(candidate_id/segment/item)와 즉시 정합. 수정 후 `npx tsc --noEmit` + U-2 ①(target 조건부 스프레드) 재확인만으로 충분.
+
+**잔여·후속 기록**: ① 서버 v3.200 코드(creation_log.py·sessions.py·generate.py·suno_generator.py·tracks.py·main.py·config.py)가 로컬 TripleJ-backend 워크트리/backend 브랜치에 미반영 — **서버→git 동기화 잔무**(배포 실코드가 유일본인 상태) ② U-6 ① generationId 치환 결함(계측용 원본 gen_id 별도 보관 후속) ③ 커버 경유 발매 F6 고지 부재 ④ creationMode sticky UX(E-3 ⑤ 질의) ⑤ 발매 전 flush 최악 ~48s(선행 배치 시 ~96s) — 타임아웃 단축/비동기화 후속 판단 ⑥ 오디오 저장 실패 보류·재시도(S-4 ⑤) ⑦ "저작권 등록 모드" 라벨 카피 리뷰(설계 주의점 8).

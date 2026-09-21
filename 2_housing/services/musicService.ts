@@ -1,6 +1,12 @@
 import { Platform } from 'react-native';
 import api, { BACKEND_BASE_URL } from './api';
 import { useAuthStore } from '../stores/authStore';
+// v3.200: 창작 기록 계층 — 생성 요청에 session_id·최종 가사 버전 id 동봉(실패 무해)
+import {
+  ensureCreationSession,
+  commitLyricsVersion,
+  getLastLyricsVersionId,
+} from './creationLogService';
 import {
   GenerationItem,
   GenerationListResult,
@@ -238,6 +244,21 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
   const title = params.title
     || (params.genre && params.mood ? `${params.genre} - ${params.mood}` : params.genre || params.mood || undefined);
 
+  // v3.200: 생성 요청 직전 창작 기록 연동(문서 §7.4 "가사로 생성 요청" 커밋 시점) —
+  // 최종 가사 버전 커밋 후 session_id·lyrics_version_id를 body에 동봉한다.
+  // 서버 미배포·비로그인·실패 시 둘 다 null → 기존 흐름 그대로(서버가 세션 자동 생성 — PLAN B2).
+  let creationSessionId: string | null = null;
+  let lyricsVersionId: string | null = null;
+  try {
+    creationSessionId = await ensureCreationSession();
+    if (creationSessionId && (params.lyrics || '').trim()) {
+      lyricsVersionId = await commitLyricsVersion('user_edit', params.lyrics || '');
+    }
+    lyricsVersionId = lyricsVersionId || getLastLyricsVersionId();
+  } catch (err: any) {
+    console.error('[CreationLog] 생성 직전 세션/가사 커밋 실패(생성은 계속):', err?.message);
+  }
+
   const body = {
     prompt,
     title,
@@ -271,6 +292,9 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     reference_audio_url: params.referenceData?.upload_url || undefined,
     reference_audio_name: params.referenceData?.filename || undefined,
     reference_audio_duration: params.referenceData?.duration_sec || undefined,
+    // v3.200: 창작 기록 세션 연동 — 없으면 서버가 자동 생성(구버전 앱 호환, PLAN B2/B1)
+    session_id: creationSessionId || undefined,
+    lyrics_version_id: lyricsVersionId || undefined,
   };
   console.log('[Suno] API 호출:', JSON.stringify({
     title: body.title, genre: body.genre, mood: body.mood, vocal: body.vocal, style: body.style,

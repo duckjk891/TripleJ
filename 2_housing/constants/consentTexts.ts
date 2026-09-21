@@ -211,3 +211,15 @@ export const BEHAVIOR_NOTICE =
 
 export const REQUIRED_CONSENT_KEYS = ['terms', 'privacy', 'overseas', 'age14'];
 export const SIGNUP_CONSENT_KEYS = ['terms', 'privacy', 'overseas', 'age14', 'marketing'];
+
+// v3.200(F6): 설정 > 앱 정보 "AI 생성 고지" 상시 항목 — 가입 시 동의문(국외 이전 고지) 재사용.
+// 앞머리 요약 2줄만 신설(사실 서술) — 문구 서버 설정화는 후속.
+export const AI_GENERATION_NOTICE = {
+  label: 'AI 생성 고지',
+  body: `MAIDOL 의 음악·가사·이미지·영상·캐릭터는 생성형 AI 를 통해 만들어집니다.
+곡에 포함된 음성은 AI 로 합성된 것입니다.
+
+아래는 회원 가입 시 동의하신 AI 처리 관련 고지 전문입니다.
+
+${CONSENTS.overseas.body}`,
+};

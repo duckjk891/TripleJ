@@ -19,6 +19,7 @@ import { DialogueNode } from '../types';
 import lyricistDialogue from '../dialogues/lyricist.json';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 
 const MAP_IMAGE = require('../assets/map_rendered.png');
@@ -67,6 +68,10 @@ type StudioStackParamList = {
 };
 
 type Props = NativeStackScreenProps<StudioStackParamList, 'Dialogue'>;
+
+// v3.200(②): 저작권 등록 모드 최초 선택 안내 — 앱 실행당 1회(모듈 플래그, rewardedGenerationIds 관행).
+// 문구 금지선(Phase0 F7 §9): "저작권 등록 가능/보장/인정" 단정·"특허 기술" 언급 금지 — 사실 서술만.
+let copyrightModeNoticeShown = false;
 
 export default function DialogueScreen({ route, navigation }: Props) {
   const { directorType, directorName, directorRole, directorY, hasArtist } = route.params;
@@ -196,6 +201,22 @@ export default function DialogueScreen({ route, navigation }: Props) {
 
   const dialogue = getDialogue();
   const currentNode = dialogue[currentIndex];
+
+  // v3.200(②): 창작 모드 토글 — 작사 디렉터 대화(새 곡 시작 지점)에서만 노출.
+  // 선택은 musicStore.creationMode에 저장 → 발매 track_type('copyright_ready',
+  // 서버 화이트리스트)에 반영(MusicResultScreen). 세션 payload 반영은 백엔드 후속.
+  const handleCreationModeSelect = (mode: 'standard' | 'copyright') => {
+    if (mode === musicStore.creationMode) return;
+    if (__DEV__) console.log('[CreationLog] 창작 모드 전환:', musicStore.creationMode, '->', mode);
+    musicStore.setCreationMode(mode);
+    if (mode === 'copyright' && !copyrightModeNoticeShown) {
+      copyrightModeNoticeShown = true;
+      showAlert(
+        '저작권 등록 모드',
+        '작사·작곡 전 과정(수정·선택 이력)이 기록됩니다. 저작권 등록 증빙 자료 생성 기능은 정식 프로모션 때 제공 예정이에요.'
+      );
+    }
+  };
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -412,6 +433,41 @@ export default function DialogueScreen({ route, navigation }: Props) {
           )}
         </View>
       </TouchableOpacity>
+
+      {/* v3.200(②): 창작 모드 토글 — 작사 디렉터 전용, 헤더 아래·대화 영역 위 상단 고정.
+          v3.199(B) 뒤로가기는 부모 스택 헤더(headerLeft)에 있어 간섭 없음.
+          % 게이지는 후속(origin 태깅 선행 필요) — 이번엔 상태 칩 1개만. */}
+      {directorType === 'lyricist' && (
+        <View style={styles.modeBar} pointerEvents="box-none">
+          <View style={styles.modeToggle}>
+            {([
+              { key: 'standard', label: '일반 모드' },
+              { key: 'copyright', label: '저작권 등록 모드' },
+            ] as const).map(({ key, label }) => {
+              const active = musicStore.creationMode === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.modeSegment, active && styles.modeSegmentActive]}
+                  onPress={() => handleCreationModeSelect(key)}
+                  accessibilityLabel={label}
+                >
+                  <AppText style={[styles.modeSegmentText, active && styles.modeSegmentTextActive]}>
+                    {label}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {/* 저작권 등록 모드 상태 칩 — record 점(벡터 View, 이모지 금지) + 은은한 secondary 톤 */}
+          {musicStore.creationMode === 'copyright' && (
+            <View style={styles.recChip}>
+              <View style={styles.recDot} />
+              <AppText style={styles.recChipText}>창작 과정 기록 중</AppText>
+            </View>
+          )}
+        </View>
+      )}
     </Animated.View>
   );
 }
@@ -424,6 +480,63 @@ const styles = StyleSheet.create({
   tapArea: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  // v3.200(②): 창작 모드 토글 바 — 맵 오버레이(zIndex 2)·초상(10) 위, 탭 영역과 분리
+  modeBar: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    right: 16,
+    zIndex: 30,
+    alignItems: 'flex-start',
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 20,
+    padding: 3,
+  },
+  modeSegment: {
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  modeSegmentActive: {
+    backgroundColor: colors.accent.primary,
+  },
+  modeSegmentText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.secondary,
+  },
+  modeSegmentTextActive: {
+    color: colors.text.primary,
+    fontWeight: '700',
+  },
+  // 저작권 등록 모드 상태 칩 — 은은한 secondary 톤(과정 기록 사실 표시만)
+  recChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  recDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.status.error,
+  },
+  recChipText: {
+    fontSize: 11,
+    color: colors.text.secondary,
   },
   overlay: {
     backgroundColor: 'rgba(0,0,0,0.65)',

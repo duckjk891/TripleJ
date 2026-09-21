@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -22,6 +22,9 @@ import { useAuthStore } from '../stores/authStore';
 import { saveLyricsAsset } from '../services/lyricsService';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+// v3.200: 창작 기록 계층 — 가사 버전 커밋(문서 §7.4: 진입 시 AI 초안, 에디터 닫기 시 수정본).
+// 실패 무해(서버 미배포/비로그인 시 no-op) — 가사 편집·작곡 진행을 절대 막지 않는다.
+import { commitLyricsVersion } from '../services/creationLogService';
 import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
@@ -42,6 +45,18 @@ export default function LyricsResultScreen({ navigation }: Props) {
   const hasLyrics = editedLyrics.trim().length > 0;
   // 동일 내용 연속 저장 가드 (중복 저장 자체는 허용)
   const lastSavedSignatureRef = useRef<string | null>(null);
+
+  // v3.200: 진입 시 AI 초안 버전 커밋(source:'ai_draft') — 초안 원문은 지금 안 남기면 소급 불가.
+  // 동일 텍스트 재커밋은 서비스가 중복 제거. 재생성으로 재진입해도 새 초안이면 새 버전이 남는다.
+  useEffect(() => {
+    if (!hasError && store.generatedLyrics?.trim()) {
+      commitLyricsVersion('ai_draft', store.generatedLyrics)
+        .catch((err: any) => {
+          console.error('[CreationLog] AI 초안 가사 커밋 실패(진행 무영향):', err?.message);
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // v3.127 (B-2): 로그인 시 서버 가사 자산(/api/lyrics)에 저장 — 재설치·타기기 유지.
   // 서버 실패·비로그인은 기존 로컬 보관함으로 폴백 (기능 무손실).
@@ -88,6 +103,11 @@ export default function LyricsResultScreen({ navigation }: Props) {
   const handleSaveAndCompose = () => {
     store.setGeneratedTitle(editedTitle);
     store.setGeneratedLyrics(editedLyrics);
+    // v3.200: 작곡 진입 = '적용' 시점 커밋(§7.4) — 편집 중이던 내용까지 확정본으로 기록
+    commitLyricsVersion('user_edit', editedLyrics)
+      .catch((err: any) => {
+        console.error('[CreationLog] 작곡 진입 가사 커밋 실패(진행 무영향):', err?.message);
+      });
     // Pre-fill music store with lyrics params
     musicStore.setLyrics(editedLyrics);
     musicStore.setGenre(store.genre);
@@ -185,7 +205,18 @@ export default function LyricsResultScreen({ navigation }: Props) {
         <View style={styles.lyricsSection}>
           <View style={styles.lyricsTitleRow}>
             <AppText style={styles.sectionTitle}>생성된 가사</AppText>
-            <TouchableOpacity onPress={() => setIsEditingLyrics(!isEditingLyrics)}>
+            <TouchableOpacity
+              onPress={() => {
+                // v3.200: '완료'(에디터 닫기) = 가사 버전 커밋 시점(§7.4) — 수정 없으면 서비스가 중복 제거
+                if (isEditingLyrics) {
+                  commitLyricsVersion('user_edit', editedLyrics)
+                    .catch((err: any) => {
+                      console.error('[CreationLog] 가사 수정본 커밋 실패(진행 무영향):', err?.message);
+                    });
+                }
+                setIsEditingLyrics(!isEditingLyrics);
+              }}
+            >
               <AppText style={styles.editButton}>{isEditingLyrics ? '완료' : '수정'}</AppText>
             </TouchableOpacity>
           </View>

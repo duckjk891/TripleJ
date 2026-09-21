@@ -23,6 +23,14 @@ import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { getGenerationStatus, generationStreamUrl } from '../services/musicService';
+// v3.200: 창작 기록 계층 — 후보 청취(LISTEN)·선택(CANDIDATE_SELECT) 계측 + 발매 시 flush.
+// 실패 무해(서버 미배포/비로그인 시 no-op) — 기록이 재생·발매를 절대 막지 않는다.
+import {
+  logCreationEvent,
+  flushCreationEvents,
+  endCreationSession,
+  getLastLyricsVersionId,
+} from '../services/creationLogService';
 // v3.104(B-5): 커버 보관함 재사용 — 선택 결과는 store 경유(CoverLibrary가 쓰고 goBack)
 import { useCoverLibraryStore, PickedCover } from '../stores/coverLibraryStore';
 import { showAlert } from '../utils/appAlert';
@@ -125,6 +133,33 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
   const composerName = store.selectedModel === 'suno' ? 'Suno 작곡가' : 'Wondera 작곡가';
+
+  // v3.200: candidate_id = "{gen_id}:v{index}" (백엔드 GEN_RESPONSE candidates[]와 동일 규약 — PLAN B1).
+  // generationId가 트랙 id로 덮인 경우(폴링 완료 후 result_track_id)도 동일 문자열 규약으로 기록.
+  const candidateId = (index: number): string | null =>
+    store.generationId ? `${store.generationId}:v${index}` : null;
+
+  const logListen = (action: 'play' | 'pause' | 'ended', index: number, positionMs: number) => {
+    const cid = candidateId(index);
+    if (!cid) return;
+    // seek: 진행바가 비인터랙티브(탭 시킹 UI 없음)라 seek 이벤트는 현재 발생 지점이 없다 —
+    // 시킹 UI 도입 시 from_ms/to_ms와 함께 기록(문서 §6.2).
+    // v3.200(X-1): candidate_id는 §5.2 정본대로 target에 — payload에 넣으면 서버 400.
+    logCreationEvent(
+      'LISTEN',
+      { action, position_ms: Math.max(0, Math.round(positionMs || 0)) },
+      { candidate_id: cid }
+    );
+  };
+
+  const logCandidateSelect = (index: number) => {
+    const cid = candidateId(index);
+    if (!cid) return;
+    // §6.3: 명시적 선택만 기록 — 비선택 variant의 자동 reject는 기록하지 않는다.
+    // rating/favorite/reject_reason은 Phase 2 예약 필드(현 UI 없음 — 미전송).
+    // v3.200(X-1): candidate_id는 §5.2 정본대로 target에 — payload에 넣으면 서버 400.
+    logCreationEvent('CANDIDATE_SELECT', { action: 'select' }, { candidate_id: cid });
+  };
   const hasError = !!store.error;
   const hasResult = !!store.resultUrl;
   // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
@@ -171,6 +206,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               setDuration(status.durationMillis || 0);
               if (status.didJustFinish) {
                 setIsPlaying(false);
+                // v3.200: 자연 종료 — LISTEN ended (재청취 구분은 play~ended 구간으로 재구성, §6.4)
+                logListen('ended', selectedVariant, status.positionMillis || status.durationMillis || 0);
               }
             }
           }
@@ -184,6 +221,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             try {
               await newSound.playAsync();
               setIsPlaying(true);
+              // v3.200: variant 전환 직후 자동 재생 — 새 후보의 LISTEN play (위치 0부터)
+              logListen('play', selectedVariant, 0);
             } catch (err: any) {
               console.error('[MusicResult] variant 자동 재생 실패:', err?.message);
             }
@@ -247,6 +286,15 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     };
   }, [sound]);
 
+  // v3.200: 화면 이탈 시 이벤트 큐 flush — 청취·선택 기록 유실 최소화(오프라인 영속 큐는 후속)
+  useEffect(() => {
+    return () => {
+      flushCreationEvents().catch((err: any) => {
+        console.error('[CreationLog] 이탈 flush 실패:', err?.message);
+      });
+    };
+  }, []);
+
   // v3.104(B-5): 커버 보관함 선택 모드에서 돌아왔을 때 결과 소비.
   // 이미 저장된 트랙이면 즉시 PUT /tracks/{id} cover_image_url 적용, 미저장이면 발매 body에 실어 보냄.
   useFocusEffect(
@@ -282,9 +330,13 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     if (isPlaying) {
       await sound.pauseAsync();
       setIsPlaying(false);
+      // v3.200: LISTEN pause — 청취 구간(커버리지) 재구성 근거 (§6.2)
+      logListen('pause', selectedVariant, position);
     } else {
       await sound.playAsync();
       setIsPlaying(true);
+      // v3.200: LISTEN play — 현재 위치부터 재생 시작
+      logListen('play', selectedVariant, position);
     }
   };
 
@@ -295,6 +347,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       return;
     }
     console.log('[MusicResult] variant 미리듣기 전환:', selectedVariant, '->', index);
+    // v3.200: 전환 = 기존 후보 pause 기록(재생 중이었을 때만) — 새 후보 play는 자동 재생 지점에서 기록
+    if (isPlaying) logListen('pause', selectedVariant, position);
     pendingPlayRef.current = true;
     setSelectedVariant(index);
   };
@@ -303,6 +357,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const handleVariantSelect = (index: number) => {
     if (index === selectedVariant) return;
     console.log('[MusicResult] variant 선택:', index);
+    // v3.200: 카드 탭 = 명시적 선택(CANDIDATE_SELECT select) + 재생 중이면 기존 후보 pause 기록
+    if (isPlaying) logListen('pause', selectedVariant, position);
+    logCandidateSelect(index);
     pendingPlayRef.current = isPlaying;
     setSelectedVariant(index);
   };
@@ -363,8 +420,23 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
       // v3.104(B-5): 보관함 커버 재사용 — 본인 세션 산출물만 서버 검증 통과
       ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
+      // v3.200(②): 트랙 유형 기록 — 작사 디렉터 토글의 창작 모드 반영.
+      // 배포 서버 화이트리스트 'standard' | 'copyright_ready'와 정합. 증빙 발급은 프로모션 때.
+      track_type: store.creationMode === 'copyright' ? 'copyright_ready' : 'standard',
+      // v3.200: 창작 기록 세션 — 서버가 FINALIZE(trigger:'publish') 훅으로 확정 기록(PLAN B2/B3)
+      ...(store.creationSessionId ? { session_id: store.creationSessionId } : {}),
+      ...(getLastLyricsVersionId() ? { lyrics_version_id: getLastLyricsVersionId() } : {}),
     };
     console.log('[Save] 저장 요청:', JSON.stringify(payload));
+
+    // v3.200: 발매 확정 = 선택 variant CANDIDATE_SELECT select 기록 후 큐 flush —
+    // FINALIZE(서버 훅)보다 청취·선택 이벤트가 체인 앞에 놓이도록 한다. 실패해도 발매는 계속.
+    logCandidateSelect(selectedVariant);
+    try {
+      await flushCreationEvents();
+    } catch (flushErr: any) {
+      console.error('[CreationLog] 발매 전 flush 실패(발매는 계속):', flushErr?.message);
+    }
 
     try {
       const res = await api.post('/tracks/upload-from-generation', payload);
@@ -386,7 +458,15 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       // BUG-3 픽스: 발매 보상은 트랙 저장 성공 직후에만 지급 (같은 generation 재지급 가드)
       grantReleaseRewards(String(payload.generation_id), trackId);
       lyricsStore.reset();
-      showAlert('저장 완료', '마이뮤직에서 확인할 수 있어요!');
+      // v3.200: 발매 확정 — 창작 세션 종료(다음 곡은 새 세션)
+      endCreationSession();
+      // v3.200(F6): 보컬 포함 곡 발매 완료 시 AI 음성 합성 고지 1줄(법정 고지 — 문구 서버 설정화는 후속)
+      showAlert(
+        '저장 완료',
+        store.vocal
+          ? '마이뮤직에서 확인할 수 있어요!\n\n이 곡의 음성은 AI로 합성되었습니다.'
+          : '마이뮤직에서 확인할 수 있어요!'
+      );
     } catch (err: any) {
       const status = err?.response?.status;
       const data = err?.response?.data;
@@ -421,7 +501,18 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
           // v3.104(B-5): 보관함 커버 재사용 — handleSave와 동일
           ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
+          // v3.200: handleSave와 동일 — 창작 모드 track_type(화이트리스트 정합) + 창작 세션 동봉(서버 FINALIZE 훅)
+          track_type: store.creationMode === 'copyright' ? 'copyright_ready' : 'standard',
+          ...(store.creationSessionId ? { session_id: store.creationSessionId } : {}),
+          ...(getLastLyricsVersionId() ? { lyrics_version_id: getLastLyricsVersionId() } : {}),
         };
+        // v3.200: 커버 경유 발매도 동일 — 선택 기록 + 발매 전 flush(실패해도 발매는 계속)
+        logCandidateSelect(selectedVariant);
+        try {
+          await flushCreationEvents();
+        } catch (flushErr: any) {
+          console.error('[CreationLog] 커버 경유 발매 전 flush 실패(발매는 계속):', flushErr?.message);
+        }
         const res = await api.post('/tracks/upload-from-generation', payload);
         const trackId = res.data?.id;
         if (trackId) {
@@ -432,6 +523,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         // BUG-3 픽스: 커버 경유 저장도 동일하게 저장 성공 직후 지급 (중복 가드 공유)
         grantReleaseRewards(String(payload.generation_id), trackId);
         lyricsStore.reset();
+        // v3.200: 발매 확정 — 창작 세션 종료 (handleSave와 동일)
+        endCreationSession();
       } catch (err: any) {
         console.error('[MusicResult] 커버 경유 저장 실패:', err?.response?.status, err?.message);
         showAlert('저장 실패', err?.response?.data?.error || '곡 저장에 실패했습니다.');

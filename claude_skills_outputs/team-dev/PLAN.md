@@ -3096,3 +3096,185 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 
 ### 6. 기록
 - PLAN.md v3.199 append 완료 (본 섹션). 코드 수정 없음 — app-dev 착수 대기.
+
+## v3.200 (2026-09-21) — Phase 0 창작 기록 계층 1차 슬라이스 + "일반/저작권 등록 트랙" UI 분기(coming soon)
+
+### 0. 범위·전제
+- 요구사항 원문: /Users/pearl/Downloads/Phase0_창작기록계층_개발요구사항.md (v1.0, 7종 이벤트·해시 체인·append-only·F1~F9). 사용자 의도 두 갈래: ① 기록 계층을 이번 테스트 배포에 반영(소급 불가 — 지금부터 쌓여야 함) ② UI에 일반/저작권 등록 트랙 분기 노출(저작권 등록 트랙 = "정식 프로모션 출시 예정").
+- 대상: 앱 /Users/pearl/TripleJ/2_housing + 백엔드 maidol-ec2 backend_9004(이번 사이클은 계획만 — 코드 수정 없음, 서버 읽기 전용 확인 완료). 배포는 오케스트레이터 기존 절차.
+- 파일 변경 규모: 앱 ~6파일 신설/수정, 백엔드 ~5파일 — 40% 미만, 사용자 확인 플래그 불필요.
+
+### 1. 현재 아키텍처 실측 (파일:라인)
+
+**F1 §3.4 "앱은 엔진을 직접 호출하지 않는다" — 이미 충족.**
+- 앱에 Suno API 키·엔드포인트 직접 참조 없음(전 소스 grep — voiceService.ts:44 주석, constants/consentTexts.ts:108 고지 문구뿐). 작곡 요청은 `services/musicService.ts:279 api.post('/generate/', body)` → 백엔드 `routes/generate.py:588 create_generation` → `services/suno_generator.py:61 generate_music_suno`(SUNO_API_KEY 서버 전용 :87). Wondera 경로(musicService.ts:295)도 동일하게 프록시.
+
+**요청·응답 저장 현황 — 전문(全文)은 미저장 (F1 최대 갭).**
+- 요청: generate.py:641-693이 generations(Mongo `aimu`.generations) doc에 파라미터를 **필드별로** 저장(prompt·genre·mood·lyrics·persona_id·suno_model·lyrics_source(v214) 등). 그러나 suno_generator.py:139-171에서 조립되는 **엔진 전송 body JSON 전문은 버려짐**. canonical 해시도 없음 → is_regeneration_of 판정 불가.
+- 응답: 폴링 record-info 전문(status_data)은 미저장. 추출 필드만 — `suno_task_id`(:222 `result["data"]["taskId"]`), variant별 `suno_audio_id`(:296·:340 `sunoData[].id`), MinIO object_name, timestamps(suno_generator.py:333-430).
+- 오디오: audioUrl에서 받은 mp3 바이트를 **재인코딩 없이 그대로** MinIO `generated/{gen_id}/suno_output.mp3`(+2번째 variant)에 저장(:316-330·:364) — §16-2 요건 이미 충족. 단 SHA-256 미계산.
+- 후보 2개(2-variant) 모두 저장됨(v74) — "기각 후보 포함 전 후보 저장" 요건 충족.
+
+**후보 청취·선택 UI (LISTEN/CANDIDATE_SELECT 계측 지점).**
+- `screens/MusicResultScreen.tsx` v3.93 A/B 비교: variants 조회 :211-232, 재생/정지 :144-209(expo-av), variant 전환 미리듣기 :293-305, 선택 variant로 발매 :358(`variant_index`). 여기가 유일한 후보 비교 화면 — play/pause/전환/선택 핸들러에 계측 삽입.
+
+**FINALIZE 지점.**
+- 발매 = MusicResultScreen handleSave(:331-») → `POST /tracks/upload-from-generation`(tracks.py:1866-1945, variant_index 검증 :1925-1945, 원본 object 복사). 다운로드/공유 = `components/TrackShareDownloadSheet.tsx`. 서버측 훅 1곳(upload-from-generation)으로 FINALIZE 기록 가능.
+
+**가사 흐름 — 버전·diff 개념 없음.**
+- 작사 디렉터 → `POST /generate/lyrics/`(lyricsService.ts:20, generate.py:509) → `LyricsResultScreen.tsx` 초안 편집(:38-92, '수정' 토글 :189) → `MusicGenerationScreen.tsx` 추가 편집(:89-90·:311-324) → 생성 요청 lyrics 필드. 가사는 store 단일 문자열 — 중간본 유실. lyrics_source 스냅샷(v214)은 출처 id뿐. **AI 초안 원문과 사용자 수정본의 구분이 현재 데이터로는 소급 불가 → 버전 캡처가 이번 슬라이스 필수.**
+
+**DB.**
+- Mongo(motor, aimu) generations·tracks — 앱 계정 full RW. PG(asyncpg pool, app/database/postgres.py) 이미 운용중: face_verify·admin_notices/cs/issues·track_embeddings(tracks.py related). → append-only 이벤트는 **PG 별도 스키마**가 적합(§16-4 답 참조).
+- 실측 규모: generations 총 69건, 최근 30일 5건, 2-variant 12건, tracks 26건 — 이벤트 볼륨 부담 전무.
+
+**F6 현황.**
+- 생성물 표시: `screens/PlayerScreen.tsx:988-996` "AI 생성" 뱃지(v3.171, 전 곡 공통) — 곡 상세·플레이어 충족.
+- 사전 고지: 가입 동의문(constants/consentTexts.ts — AI 생성 콘텐츠 권리 :40-43, 국외이전·프롬프트 전송 :95-119). "생성형 AI로 음악을 생성합니다" 취지 포함.
+- 미비: ① 보컬 음향 합성 별도 고지(공유·발매 화면) ② 설정에서 상시 확인 ③ 다운로드 파일 ID3 메타 ④ 문구 서버 설정화.
+
+**F7·② 배치 관련.**
+- 설정 앱 정보 섹션 존재(SettingsScreen.tsx:580-583) — 특허 표기 자리.
+- ComposerSelectScreen은 v3.127부터 자동 skip(WONDERA_ENABLED=false :53-57, 사용자에게 미노출) — "생성 시작 시점" 배치 후보로 부적합.
+- 주의 실측: 참고 음악 업로드(`/generate/upload-reference/`, v3.91, musicService.ts:116-152)가 존재 → 문서 §4.3의 `import_blocked=true` 전제가 **현재 앱에는 성립하지 않음**. SESSION_START에 `import_blocked:false` + 참고음악 사용 시 request 기록에 reference_audio_url이 남는 구조로 기록해야 함(허위 플래그 금지).
+
+### 2. 슬라이싱 — v3.200(이번 테스트 배포) vs 후속
+
+원칙: **소급 불가능한 "원천 데이터 확보"는 전부 이번에, 소급 계산 가능한 "가공·검증·강화"는 후속에.**
+
+**v3.200 포함 (이번):**
+| 항목 | 이유 | 규모 |
+|---|---|---|
+| B1. F1 보강 — 엔진 요청 body 전문·응답 record-info 전문·audio SHA-256·requested_at/responded_at·request_body_hash(canonical, seed류 제외)를 generations doc+이벤트에 저장 | 전문·해시는 생성 시점에만 확보 가능. suno_generator.py 국소 수정 | 백 소(1파일 ~50줄) |
+| B2. F2/F3 골격 — PG `creation_log` 스키마(sessions·events, §5.4 컬럼 전부+UNIQUE(session_id,seq)) + **해시 체인 서버 계산 포함**(부록 B ~20줄, seq·server_ts·해시 전부 서버 부여라 지금 넣는 게 소급 계산보다 싸다) + `POST /sessions`·`POST /sessions/{id}/events`(배치, event_id idempotent) + generate create가 session_id optional 수용(없으면 서버 자동 생성 — 구버전 앱 요청도 기록) + SESSION_START/GEN_REQUEST/GEN_RESPONSE 서버 기록 + upload-from-generation 내부 FINALIZE 훅(candidate 존재 검증 §4.4) | 이벤트 스키마 §5.2 완전 준수로 시작해야 체인·검증이 뒤에 붙음 | 백 중(신규 라우터+서비스 ~400줄) |
+| B3. 가사 버전 저장 `POST /sessions/{id}/lyrics`(전문+prev_version_id+source) + LYRIC_EDIT 이벤트 | AI 초안/사용자 수정 중간본은 지금 안 남기면 영원히 소실. **토큰 diff·origin_summary 계산은 후속** — 버전 전문 체인만 있으면 §7.3 규칙이 결정적이라 소급 계산 가능 | 백 소 |
+| A1. 앱 세션 연동 + LISTEN/CANDIDATE_SELECT 계측(MusicResultScreen 4지점) + FINALIZE trigger 전달 | 청취·선택 사실은 앱에서만 발생 | 앱 중(신규 creationLogService+계측) |
+| A2. 앱 가사 버전 커밋 3지점 — LyricsResult 진입 시 ai_draft, 편집 '완료' 시, 생성 요청 직전 | 위 B3의 원천 | 앱 소 |
+| A3. F6 경량 — 공유/다운로드 시트·발매 완료에 "이 곡의 음성은 AI로 합성되었습니다" 1줄 + 설정>앱 정보에 AI 생성 고지 상시 항목 | 법정 의무(P0)인데 작업량이 작음. 뱃지·가입고지는 기존 충족 | 앱 소 |
+| A4. ② UI 트랙 유형 분기(§3) + 발매 payload `track_type:"standard"` 기록(B: tracks doc 저장) | 사용자 요청. 기록 관점에서도 FINALIZE에 유형이 남는 게 프로모션 분기 소급 근거 | 앱 소·백 미 |
+
+**후속 (v3.201+):**
+- 오프라인 SQLite 큐 §5.5 완전판(이번엔 메모리 큐+배치 전송·지수 백오프 — 강제종료 시 유실 허용. 수용기준 §5.6-3은 후속에서 달성): 테스트 배포 사용자 규모에서 유실 리스크 < 구현 지연 비용.
+- F5 토큰 origin 태깅·origin_summary·붙여넣기 감지: 버전 전문에서 소급 계산 가능.
+- §5.4 DB 권한 분리(이벤트 UPDATE/DELETE 불가 계정)·MinIO 객체 잠금·F8 보존 정책: 운영 변경이라 prod 승인 필요(maidol-admin-web 메모 규칙) — 별도 사이클.
+- F9 검증 API/CLI·일 배치: 체인이 이번부터 쌓이므로 언제든.
+- ID3 메타 기입·F6 문구 서버 설정화.
+- F7 특허 표기: 출원번호 확보 전 표기는 허위표시 위험 — 출원 접수 후.
+- is_regeneration_of 소급 판정(request_body_hash가 이번부터 저장되므로 가능)·ABANDONED 30일 배치·parent_session_id 재편집 세션.
+
+### 3. ② "일반 트랙 / 저작권 등록 트랙" UI 분기 설계 (사용자 확인용 제안)
+
+**배치 — 이번 배포는 발매 확정 화면(MusicResultScreen) 권장, 프로모션 때 시작 시점으로 승격.**
+- 1안(권장, v3.200): MusicResultScreen 발매(저장) 버튼 위 "트랙 유형" 섹션. 근거: ① 현재 저작권 등록 트랙은 선택 불가(coming soon)라 시작 시점에 두면 실질 선택지 1개짜리 마찰만 추가 ② 생성 시작부(ComposerSelect)는 자동 skip 화면이라 자리가 없고 MusicGeneration은 대화 시퀀스라 개편 비용이 큼 ③ 발매 직전은 "이 곡을 어떤 트랙으로 낼까"가 자연스러운 의사결정 지점.
+- 2안(프로모션 정식판): 작곡 디렉터 진입 직후 첫 선택 스텝으로 승격 — 사용자 원래 구상("생성 시점부터 분기")대로. 그 시점엔 SESSION_START payload에 track_type이 남아 전 과정 분기 근거가 된다. v3.200 기록 계층이 깔리므로 승격은 UI 작업만.
+
+**UI 스펙(1안).**
+- 카드 2개 세로 배치, 기존 카드 톤(theme/colors) 준수.
+  - [일반 트랙] 기본 선택·체크 표시. 부제: "지금 바로 발매하는 기본 트랙이에요."
+  - [저작권 등록 트랙] dim 처리 + 우상단 배지 "정식 프로모션 출시 예정". 부제: "작사·작곡 전 과정을 기록해 저작권 등록 증빙 자료 생성(준비 중)을 지원하는 트랙이에요."
+- 저작권 등록 트랙 탭 시 showAlert(앱 내 다이얼로그 규칙, 시스템 Alert 금지): 제목 "저작권 등록 트랙", 본문 "정식 프로모션 때 출시될 예정이에요. 지금 만드는 곡도 작사·작곡 과정이 기록되고 있어요." — 사실 서술만.
+- **문구 금지선(F7 §9 준수)**: "저작권 등록 가능/보장/인정" 단정 금지, "특허 기술" 언급 금지. 허용: "창작 과정을 기록합니다", "저작권 등록 증빙 자료 생성 기능(준비 중)".
+- 발매 payload에 `track_type: 'standard'` 포함(서버 tracks doc 저장) — 프로모션 때 'copyright_ready' 값 추가만 하면 됨.
+
+### 4. 작업 지시
+
+**backend-dev (maidol-ec2 backend_9004 — 이번 사이클 실작업 시 브랜치 확인·보고 후 진행, 9004만)**
+1. [B2] PG `creation_log` 스키마: `sessions`(session_id PK, user_id_hash, status, parent_session_id, started_at, finalized_at, root_hash, final_candidate_id, final_lyrics_version_id, app_version, import_blocked, criteria_version) · `events`(§5.4 컬럼 전부, UNIQUE(session_id,seq)) · `lyrics_versions`(lyrics_version_id PK, session_id, prev_version_id, source, text, origin_summary NULL 허용, created_at). init은 앱 기동 시 CREATE IF NOT EXISTS(기존 postgres.py 관례).
+2. [B2] `app/services/creation_log.py` 신설: canonical JSON(부록 B — RFC 8785 수준은 sort_keys+separators로 시작, 명시 주석), payload_hash·event_hash·prev_hash 체인, append(session_id, type, actor, target, payload, client_ts) — 세션당 PG advisory lock으로 seq 직렬화. user_id_hash = SHA256(user_id+서버 salt), salt는 .env 신설 키.
+3. [B2] `app/routes/sessions.py` 신설: POST /sessions(SESSION_START — app_version·platform·engine_list·user_id_hash·**import_blocked:false**(§1 실측 — 참고음악 업로드 존재)·criteria_version:null), POST /sessions/{id}/events(배치, event_id 중복 무시, FINALIZED 세션 409, 스키마 엄격 검증 400), POST /sessions/{id}/lyrics(전문 저장+LYRIC_EDIT 기록, origin 계산은 생략 — NULL), GET /sessions/{id}.
+4. [B1] generate.py·suno_generator.py: create_generation이 body.session_id optional 수용(무세션이면 서버가 세션 자동 생성 후 doc에 session_id 저장) → 엔진 호출 직전 GEN_REQUEST(request_id=gen_id, request_body_hash — seed·callBackUrl·시각류 제외 canonical) → 폴링 완료 후 `suno_request_body`·`suno_response_raw`(최종 record-info 전문)·variant별 `audio_sha256`(MinIO put 직전 bytes로 계산)·requested_at/responded_at을 generations doc $set → GEN_RESPONSE(candidates[]: candidate_id=f"{gen_id}:v{index}", engine_clip_id=suno_audio_id, audio_sha256, duration). 실패·타임아웃도 status:failed로 GEN_RESPONSE(§3.3). 원본 오디오 재인코딩 금지 유지.
+5. [B3+FINALIZE] tracks.py upload-from-generation: body에 track_type(기본 'standard')·session_id 수용 → tracks doc 저장 + FINALIZE 이벤트(candidate_id·audio_sha256·lyrics_version_id·trigger:'publish') + 세션 FINALIZED·root_hash 확정. candidate_id가 해당 세션 GEN_RESPONSE에 없으면 이벤트만 경고 기록(발매 자체는 막지 않음 — 구버전 앱 호환, 완전 검증은 후속).
+6. 금지: 기존 이벤트/컬렉션 삭제·변경, 9005 접촉, prod 운영 설정(권한 분리·Object Lock)은 이번에 하지 않음.
+
+**app-dev (2_housing, v3.200 주석 태깅)**
+1. [A1] `services/creationLogService.ts` 신설: startSession(작곡 플로우 진입 — MusicGenerationScreen mount 시 1회, session_id를 musicStore에 보관), logEvent(메모리 큐+2s 디바운스 배치 전송, 실패 지수 백오프 3회, event_id=uuid·client_seq 로컬 단조), commitLyrics. 비로그인·서버 미배포 시 무해 no-op(404/401 삼킴 — 기능 게이트).
+2. [A1] MusicResultScreen 계측: 재생 toggle(:144-209) → LISTEN play/pause(position_ms), variant 전환(:293-305) → LISTEN pause+play, 발매 variant 확정(:358 경로) → CANDIDATE_SELECT select(비선택 variant는 자동 reject 기록하지 않음 — §6.3 명시 기각만), handleSave 성공 시 FINALIZE는 서버 훅이 기록하므로 앱은 session_id·track_type만 payload에 추가.
+3. [A2] 가사 버전 커밋 3지점: LyricsResultScreen 진입(generatedLyrics → source:'ai_draft'), '수정→완료'(:189)·MusicGenerationScreen 가사 편집 완료(:318-324) → source:'user_edit', 생성 요청 직전(musicService.generateWithSuno 호출부) 최종본 커밋 후 lyrics_version_id를 생성 body에 동봉.
+4. [A3] TrackShareDownloadSheet 상단·발매 완료 showAlert 본문에 "이 곡의 음성은 AI로 합성되었습니다" 1줄, SettingsScreen 앱 정보에 "AI 생성 고지" 행(탭 → PolicySheet 재사용, consentTexts 기반).
+5. [A4] §3 스펙대로 MusicResultScreen 트랙 유형 카드 + payload track_type. 문구 금지선 엄수.
+6. 금지: 엔진 직접 호출 추가 금지(F1), 시스템 Alert 금지, 미커밋 병행 파일 접촉 주의.
+
+**test-designer**
+- 기록: 생성 1회 → PG events에 SESSION_START·GEN_REQUEST·GEN_RESPONSE 체인(seq 1..N, prev_hash 연결) + generations doc에 suno_request_body/suno_response_raw/audio_sha256 존재. 부록 B verify_chain 스크립트로 재해시 일치. 실패 생성(잔액 402 아닌 엔진 실패) → GEN_RESPONSE failed 기록.
+- 청취·선택: 후보 A 전체·B 10초 청취 후 A 발매 → §6.4 재구성 가능(LISTEN 시퀀스+CANDIDATE_SELECT+FINALIZE candidate 일치). 재청취 구분.
+- 가사: AI 초안 → 2회 수정 → 생성 → lyrics_versions 체인 3개+LYRIC_EDIT 이벤트, FINALIZE.lyrics_version_id 최종본 일치.
+- 하위호환: 구버전 앱(session_id 미전송) 생성·발매 정상 + 서버 자동 세션 기록. 비로그인 흐름 무영향. no-op 게이트(서버 미배포 상태에서 앱만 배포) 시 기능 무영향.
+- F6/②: 공유 시트·발매 완료 고지 문구 노출, 트랙 유형 카드 — 일반 선택 고정·저작권 등록 dim+배지+팝업 문구(금지 표현 부재 확인), 발매 track_type 저장.
+- 무회귀: v3.93 A/B 비교·발매, v3.171 AI 뱃지, v3.197~199 스팟.
+
+### 5. §16 열린 질문 — 실측 기반 답
+1. **Suno 식별자**: 생성 응답 `data.taskId`(suno_generator.py:222) + record-info `data.response.sunoData[].id`(:296·:340, 이미 suno_audio_id로 저장 중) + audioUrl. → `engine_clip_id = sunoData[].id`, 작업 단위 taskId 병행 저장으로 확정. seed는 현 API 응답에 없음 — 미저장(문서 "반환하면 저장" 조건 불성립).
+2. **오디오 포맷**: 현행 코드가 이미 mp3 바이트 무변환 저장(:316-330) — 그대로 확정, SHA-256만 추가. 저장 키는 기존 `generated/{gen_id}/…` 유지(이벤트에 URI 기록으로 §5.4 키 체계 갈음 — 마이그레이션 불요).
+3. **가사 토큰 단위**: 어절(공백) 확정 — 편집 UI가 전문 TextInput이라 형태소 분석은 재현성만 해침. 단 이번 슬라이스는 전문 버전 저장까지, 토큰화는 후속 소급 계산.
+4. **이벤트 저장소**: PG 별도 스키마 `creation_log` + (후속) 전용 INSERT/SELECT 계정. 근거: PG 이미 운용중(face_verify·admin·embeddings), Mongo는 앱 계정 full RW라 append-only 권한 분리 부적합, 현 규모(월 생성 5건)에 별도 DB는 과함.
+5. **5년 보존 비용**: 실측 — 총 69건·최근 30일 5건·2-variant 12건. 월 1,000건 성장 가정에도 1,000×2×4MB=8GB/월, 5년 누적 480GB ≈ S3 표준 $11/월(콜드 ~$2). 현 규모는 사실상 0 — 보존 정책이 비용 제약을 받을 일 없음.
+
+### 6. 기록
+- PLAN.md v3.200 append 완료 (본 섹션). 코드 수정 없음 — ② UI 배치안(§3)은 사용자 확인 후 app-dev 착수.
+
+## v3.201 (2026-09-21) — 담기 시트 입력 중 키보드 가림(A) · 재선택 팝업 자유 입력(B) · 디렉터 대화 뒤로가기 미표시 원인·견고화(C)
+
+### 0. 전제 — 워킹트리 상태
+워킹트리에 **v3.200 미커밋 변경**이 있음(`services/creationLogService.ts` 신설, `screens/DialogueScreen.tsx` +113줄 모드 토글, `stores/musicStore.ts` +15, `services/musicService.ts` +24). 본 계획의 분석은 **현 워킹트리 기준**이며, **구현은 v3.200 커밋 후 착수**한다. 특히 C가 수정하는 DialogueScreen은 v3.200 변경과 같은 파일 — 라인 번호는 커밋 후 재확인.
+
+### 1. [A] PlaylistPickerSheet — 입력 중 TextInput 키보드 가림 (Android, 근본 원인 확정)
+
+**레이아웃 체인** (`components/PlaylistPickerSheet.tsx`):
+- :101 `Modal(transparent)` → :104 `KAV flex:1`(behavior: **iOS만 'padding'**, Android undefined) → :105 backdrop(`styles.backdrop` :142, `flex:1, justifyContent:'flex-end'`) → :108 sheet(`styles.sheet` :143 + `paddingBottom: insets.bottom + spacing.xl + kbPad`)
+- **sheet는 `maxHeight: '60%'`** (:143), 내부는 스크롤 없는 `View` 목록(:113–122) 뒤에 라벨(:123)·`createRow`(입력행, :124–133)가 **맨 마지막**.
+- kbPad: :27–38, Android에서 `keyboardDidShow` 시 `kbHeight - insets.bottom`, hide 시 0 (v3.198).
+
+**근본 원인**: Android edge-to-edge에서 키보드는 창을 리사이즈하지 않고 위에 덮는다(그래서 v3.198이 수동 kbPad를 도입). 그런데 kbPad를 **paddingBottom에 합산**하면 "시트 콘텐츠 전체 높이가 kbPad만큼 커져야" 입력행이 위로 올라가는데, 시트에는 `maxHeight: '60%'` 클램프가 있다. 키보드 높이가 화면의 ~35–40%이므로 `콘텐츠 높이 + kbPad`는 거의 항상 60%를 초과 → **시트 높이가 60%에서 고정**되고, 스크롤 불가 View 구조에서 맨 아래 자식인 createRow(입력행)가 시트 하단 경계 밖으로 밀려 **키보드 뒤에 그대로 남는다**. 플레이리스트 목록이 길수록(비스크롤 View) 즉시 재현. "키보드 닫은 후 간격 잔존"은 hide→0 리셋으로 해결됐지만(v3.198 목표), "열림 중 가림"은 이 클램프 경로 때문에 미해결이 맞다.
+
+**수정안 (근본: "입력 중 input은 항상 키보드 위")**:
+1. **kbPad 적용 위치를 paddingBottom → 시트 `marginBottom`으로 이동** — 시트 *전체*를 키보드 위로 들어올린다. 콘텐츠 높이가 변하지 않으므로 maxHeight 클램프와 무관하게 입력행이 항상 키보드 위. paddingBottom은 `insets.bottom + spacing.xl` 원복(제스처 바 보강 목적 유지). hide 시 kbPad=0 → marginBottom 0이라 **v3.198의 '잔존 간격 구조적 불가' 보장 그대로 유지**. iOS는 KAV padding 경로 무변경(kbPad는 Android에서만 >0).
+   - 엣지: 키보드(~40%) + 시트(≤60%) = 최대 100% — 화면 상한에 정확히 걸리는 극단만 존재. 보강으로 kbPad>0일 때 sheet maxHeight를 `winH - kbHeight - 24px` 이하로 동적 클램프(useWindowDimensions).
+2. **목록 스크롤화**: 플레이리스트 목록(:113–122)을 `ScrollView`(maxHeight ~240) 전환 — 키보드와 무관하게 목록이 많으면 입력행이 밀리는 기존 잠재 결함 동시 해소.
+3. **공용 훅 추출**: `hooks/useAndroidKeyboardLift.ts` 신설(현 :27–38 로직 그대로 — visible 게이트·리스너 쌍 해제 포함) — A와 B(재선택 모달 2곳)가 공용. Modal 내 KAV 재시도는 하지 않는다(v3.196→198에서 Android Modal KAV 잔존 간격으로 이미 기각된 경로 — 재퇴행 금지).
+
+### 2. [B] 재선택 팝업 자유 입력 — 두 화면 설계
+
+**현 구조**: LyricsInputScreen 재선택 모달 :432–452(선택지 ScrollView + 취소만), 반영 경로 `handleReselectChoice` :219–248(store 스텝 매핑 + chatHistory의 해당 user 메시지 텍스트 교체). ComposerInputScreen 이식본 :338–356 + `handleReselectChoice` :185–209(동일 패턴, 로컬 state+store). 모달 오픈 가드: 선택지 있는 스텝만(`handleReselect` — Lyrics :213–217, Composer :174–182).
+
+**설계**:
+1. **모달 내 자유 입력 행 추가**(두 화면 공통): `reselectContainer` 안, 선택지 ScrollView 아래·취소 버튼 위에 "직접 입력..." TextInput + 확인 버튼(메인 플로우 inputRow :394–427 스타일 재사용, 로컬 state `reselectInput`). 확인 시 `handleReselectChoice(reselectInput.trim())` — **기존 선택지 탭과 완전히 동일한 검증·반영 경로**(trim·빈값 disabled는 `handleCustomSubmit` :254–258과 동일 규칙, store 매핑·chatHistory 교체·모달 닫기 모두 기존 함수 재사용, 신규 분기 없음). 모달 닫을 때 `reselectInput` 리셋.
+2. **노출 조건 = 메인 플로우 자유입력 허용 스텝과 동치**:
+   - LyricsInput: 메인 플로우가 step 2(듀엣)·8(랩)·9(길이)에서 직접 입력을 숨김(:393) — enum 매핑 스텝(`choice==='듀엣'`, `'포함'`, durationMap)이라 자유 텍스트가 무의미. **재선택 모달도 reselectStep ∉ {2, 8, 9}일 때만 입력 행 노출**(불일치 시 boolean 오매핑 버그).
+   - ComposerInput: 메인 플로우 입력행은 전 스텝 노출(제한 없음, :300대) — 재선택 대상 스텝 0·1·2 모두 입력 행 노출.
+3. **키보드 회피(A와 같은 함정)**: 모달은 중앙 정렬(`reselectOverlay` justifyContent:'center') + `maxHeight:'60%'` — Android edge-to-edge Modal이라 화면 하단 절반에 걸치면 가려질 수 있음. §1-3의 `useAndroidKeyboardLift` 적용: `reselectContainer`에 `marginBottom: kbPad` (중앙 정렬이라 kbPad>0이면 컨테이너가 위로 밀림) + iOS는 모달 내부 KAV(behavior 'padding') 래핑 — v3.196 입력 모달 KAV 관행. autoFocus는 주지 않는다(모달 오픈 즉시 키보드 팝업 방지 — 선택지 탭이 1차 UX).
+4. edit-2 어포던스(:349–351)·안내 문구는 변경 없음(대상 스텝 불변 — 자유입력 스텝의 말풍선은 여전히 재선택 비대상, v3.199 "거짓 어포던스 금지" 유지).
+
+### 3. [C] 디렉터 대화 3화면 뒤로가기 — 원인 확정 + 수정 + 사용자 설명
+
+**네비게이터 트리 확정** (App.tsx): `RootStack(:532 MainTabs)` → `Tab(:302 MainTabs)` → Studio 탭 스크린 = `StudioNavigator(:169, StudioStack, screenOptions headerShown:false :174)` → Map/Dialogue(:180 transparentModal)/LyricsInput/ComposerInput. **화면에 보이는 헤더는 StudioStack 헤더가 아니라 Tab 헤더**(:379 `titleHeader` headerShown:true). 따라서 3화면의 `navigation.getParent()` = **Tab 네비게이터가 맞고**, setOptions는 Studio 탭 라우트에 적용된다 — 타게팅 자체는 정상(MapScreen :267–296이 v3.75부터, ArtistInputScreen :196–214가 v46부터 같은 경로로 헤더를 성공적으로 덮어온 실증 있음). 즉 **v3.199 화살표의 의도된 위치 = 상단 탭 헤더 맨 왼쪽(기획사명 왼편) ← 아이콘, 3화면 포커스 중에만**.
+
+**안 보이는/유실되는 원인 — 같은 `headerLeft` 키를 4곳이 경합 작성**:
+1. **(주 원인) 화면 전환 클로버**: Dialogue→LyricsInput 전환 시 native-stack은 이전 화면을 트랜지션 종료까지 유지 — DialogueScreen blur cleanup(:104–106, `headerLeft: undefined`)이 LyricsInput의 focus 주입(:128–146) **이후에 실행될 수 있다**(React Navigation focus/blur 이펙트 순서 비보장 — 공유 리소스를 cleanup으로 지우는 패턴의 알려진 경합). 결과: 화면 진입 직후 화살표 소실. ComposerInput(:85–103)도 동일.
+2. **(부 원인) MapScreen 와이프**: MapScreen setOptions payload에 `headerLeft: undefined` 키가 포함(:292)되고 deps에 `user` **객체 identity**(:296) — Dialogue는 transparentModal이라 Map이 아래에 마운트 유지되므로, user 갱신(SettingsScreen setUser 등) 시 대화 도중에도 화살표가 지워진다.
+3. **(iOS 한정, 실기기 Android라 이번 보고와 무관하나 검증 필요)**: Dialogue의 `presentation:'transparentModal'`(:184)은 iOS에서 부모 헤더·탭바를 덮는 전체화면 프레젠테이션 — 탭 헤더 자체가 안 보일 수 있음. Android는 컨테이너 내 렌더라 헤더 노출.
+
+**수정안 — "focused-screen-writes-only" 불변식**(쓰기를 전부 focus 이벤트로 일원화 → 포커스 화면은 항상 1개이므로 경합 원천 차단):
+1. 3화면(Dialogue·LyricsInput·ComposerInput)의 useFocusEffect에서 **cleanup의 `headerLeft: undefined` 제거** — focus 시 set만 한다.
+2. MapScreen: setOptions payload에서 `headerLeft: undefined` 키 삭제(:292) + **자체 useFocusEffect 추가로 Map 포커스 시 `headerLeft: undefined` 클리어** — 기존 cleanup의 목적(Map 복귀 후 화살표 잔존 방지, v3.199 주석의 우려)을 focus 기반으로 승계. 쓰기 지점: 3화면 focus(set) + Map focus(clear) 뿐.
+3. **iOS 검증 항목**: iOS에서 Dialogue 중 탭 헤더가 안 보이면 — DialogueScreen 컨테이너 배경이 불투명(`colors.bg.deepest` :477–478)이라 transparentModal일 필요가 낮으므로 `presentation:'card'`+fade 전환을 1안으로 검토(제스처·뒤로가기 동작 확인 필수), 불가 시 iOS 한정 화면 내 back 오버레이(v3.200 modeBar가 top:12/left:16 점유 — 오버레이는 좌상단 back, modeBar를 우측 시프트해 간섭 회피).
+4. ArtistInput/ArtistResult/ArtistCody의 구패턴(useLayoutEffect+unmount cleanup)은 이번 스코프 밖(3화면과 교차 전환 흐름 없음 — 경로상 항상 Map 경유) — 동일 불변식으로의 통일은 후속 백로그.
+
+**사용자 설명문(안)**: "v3.199의 뒤로가기는 대화 화면 안이 아니라 **화면 최상단 탭 헤더의 맨 왼쪽**(기획사 이름 바로 왼편)에 ← 화살표로 들어가도록 만든 것이었어요. 다만 여러 화면이 같은 헤더 자리를 번갈아 쓰는 구조여서, 화면을 오가는 타이밍에 따라 화살표가 지워져 실기기에서 안 보일 수 있는 결함을 확인했습니다. v3.201에서 '지금 보고 있는 화면만 헤더를 쓴다' 방식으로 바꿔 3화면(디렉터 대화·작사·작곡) 모두에서 항상 보이게 고칩니다."
+
+### 4. app-dev 작업 지시 (v3.200 커밋 후 착수)
+0. **선행**: v3.200 커밋 완료 확인 후 시작. **v3.200 접촉 라인 주의 목록**: `screens/DialogueScreen.tsx` — 모드 토글 useFocusEffect 인근(:72–108)·modeBar JSX(:437–470)·modeBar 스타일(:484–530대)은 v3.200 산출물, C-1 수정은 :90–108의 cleanup 3줄만 접촉(라인 번호는 커밋 후 재확인). `stores/musicStore.ts`·`services/musicService.ts`·`services/creationLogService.ts`는 이번 버전 비접촉.
+1. [공통] `hooks/useAndroidKeyboardLift.ts` 신설 — PlaylistPickerSheet :27–38 로직 이동(visible 게이트, show: `max(0, kbHeight - insets.bottom)`, hide: 0, 리스너 쌍 해제).
+2. [A] `components/PlaylistPickerSheet.tsx`: kbPad를 :108 paddingBottom에서 빼고 sheet `marginBottom`으로 이동, kbPad>0 시 maxHeight 동적 클램프(§1-1), 목록 ScrollView 전환(§1-2), 훅 사용으로 교체. iOS 경로(KAV padding) 무변경.
+3. [B] `screens/LyricsInputScreen.tsx` 재선택 모달(:432–452): 자유 입력 행 추가(reselectStep ∉ {2,8,9} 조건), 제출=`handleReselectChoice(trim)` 재사용, 모달에 iOS KAV + Android kbPad(marginBottom) 적용, 닫기 시 입력 리셋.
+4. [B] `screens/ComposerInputScreen.tsx` 재선택 모달(:338–356): 동일 이식(전 재선택 스텝 0·1·2 입력 행 노출).
+5. [C] 3화면 cleanup의 `headerLeft: undefined` 제거 + `screens/MapScreen.tsx` :292 키 삭제·focus 클리어 추가(§3 수정안 1·2). iOS 시뮬레이터에서 Dialogue 헤더 노출 검증 후 §3-3 필요 시 적용(적용 시 커밋 메시지에 명기).
+6. 금지: 시스템 Alert 금지, Modal 내 Android KAV padding 재도입 금지(v3.198 퇴행), v3.200 미커밋… → 커밋 선행이므로 해당 없음(단 v3.200 주석·로직 삭제 금지).
+
+### 5. test-designer 항목 (v3.191~200 무회귀 포함)
+- [A] Android 실기기/에뮬: 담기 시트에서 새 플레이리스트 입력 탭 → **입력행이 키보드 위에 완전 노출**(플레이리스트 0개·10개 두 케이스), 키보드 닫기 → 간격 잔존 없음(v3.198 무회귀), 홈버튼/백 제스처로 키보드 해제·시트 재오픈 반복 시 패딩 누적 없음. iOS: 기존 KAV 동작 무회귀. 목록 10개 시 스크롤로 전 항목 접근 + 입력행 상시 노출.
+- [B] 두 화면: 답변 말풍선 탭 → 모달에 선택지+직접 입력 노출(LyricsInput 듀엣·랩·길이 스텝은 입력 행 없음 확인), 자유 텍스트 제출 → 말풍선 텍스트 교체·최종 프롬프트에 반영(LyricsPromptReview/작곡 요약에서 확인), 빈값 제출 불가, 취소 시 미반영·입력 리셋, 모달 입력 중 키보드가 입력창을 가리지 않음(Android).
+- [C] Android: Map→디렉터 대화→작사→(작곡 플로우도) 각 진입 직후·체류 중 헤더 ← 상시 노출, ← 탭 동작(Dialogue→Map, LyricsInput→Dialogue), Map 복귀 시 화살표 소멸(잔존 무), 대화 중 설정에서 프로필 변경 후 복귀해도 화살표 유지(§3 원인 2 회귀 확인), Studio 탭 재진입(tabPress 리셋) 후 화살표 무. iOS: Dialogue 중 탭 헤더 노출 여부 보고. ArtistInput ‹ 무회귀.
+- 무회귀 스팟: v3.196 시트 4곳 인셋, v3.198 미니플레이어 sessionActive, v3.199 아바타/마퀴/edit-2, v3.200 모드 토글·저작권 안내 1회 노출.
+
+### 6. 기록
+- PLAN.md v3.201 append 완료. 코드 수정 없음(계획 전용). 구현은 v3.200 커밋 후 app-dev가 착수.

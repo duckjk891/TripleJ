@@ -29,6 +29,9 @@ import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
 import { getFatigueStatus, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+// v3.200: 창작 기록 계층 — 작곡 플로우 진입 시 세션 확보 + 가사 편집 확정 시 버전 커밋(§7.4).
+// 실패 무해(서버 미배포/비로그인 시 no-op) — 작곡 대화·생성을 절대 막지 않는다.
+import { ensureCreationSession, commitLyricsVersion } from '../services/creationLogService';
 import { FatigueStatus } from '../types';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -143,6 +146,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // store에 남아 새 곡에 오염되지 않도록 초기화 (musicStore.reset()은 호출처가 없음).
   useEffect(() => {
     useMusicStore.getState().setArtistCharacterId(null);
+  }, []);
+
+  // v3.200: 작곡 플로우 진입 시 창작 세션 확보(1회, idempotent) — 가사 화면에서 이미
+  // 시작된 세션이 있으면 그대로 잇는다(같은 곡 흐름). 실패해도 무해 — 생성 요청 시
+  // 서버가 세션을 자동 생성한다(구버전 앱 호환, PLAN B2).
+  useEffect(() => {
+    ensureCreationSession().catch((err: any) => {
+      console.error('[CreationLog] 작곡 진입 세션 확보 실패(진행 무영향):', err?.message);
+    });
   }, []);
 
   // v3.94: 디렉터 피로/쿨다운 — GET /fatigue/status (사다리: 그날 1곡 2h/2곡 4h/3곡 8h/4곡+ 12h, 자정 리셋)
@@ -323,6 +335,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
     lyricsStore.setGeneratedLyrics(editedLyrics.trim());
     musicStore.setLyrics(editedLyrics.trim());
+    // v3.200: 가사 확인('적용') = 버전 커밋 시점(§7.4) — 수정 없으면 서비스가 중복 제거.
+    // 최종본은 생성 요청 직전(musicService.generateWithSuno)에서 한 번 더 커밋·동봉된다.
+    commitLyricsVersion('user_edit', editedLyrics.trim())
+      .catch((err: any) => {
+        console.error('[CreationLog] 작곡 대화 가사 커밋 실패(진행 무영향):', err?.message);
+      });
     const preview = editedLyrics.trim().split('\n').slice(0, 2).join(' ');
     const displayText = preview.length > 40 ? preview.substring(0, 40) + '...' : preview;
 

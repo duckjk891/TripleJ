@@ -2322,3 +2322,65 @@ RN `Modal`은 별도 window라 **루트 safe-area 패딩과 Android adjustResize
 - 커밋 메시지 제안:
   `feat: v3.199 작업실 UX 4종 — 기획사 이니셜 아바타 통일(seed 팔레트 export·설정/기획사프로필/채널)·디렉터 대화 3화면 헤더 뒤로가기 주입/복원·엔터명 maxWidth+마퀴(ⓘ 고정)·선택 답변 edit-2 아이콘+작곡 재선택 이식 (team-dev)`
 - 스테이징(2_housing/): components/ui/Avatar.tsx, components/ui/index.ts, screens/SettingsScreen.tsx, screens/AgencyProfileScreen.tsx, screens/UserChannelScreen.tsx, screens/DialogueScreen.tsx, screens/LyricsInputScreen.tsx, screens/ComposerInputScreen.tsx, screens/MapScreen.tsx + 산출물(PLAN/REPORT/TESTPLAN) — v3.198 사이클 3파일은 제외할 것.
+
+---
+
+## v3.200 (2026-09-21) — Phase 0 창작 기록 계층 1차 슬라이스 + 일반/저작권 등록 트랙 분기
+
+### 1. 요청 원문
+- 요구사항 문서: /Users/pearl/Downloads/Phase0_창작기록계층_개발요구사항.md (v1.0 — 7종 이벤트·해시 체인·append-only·F1~F9).
+- 사용자 원문: "이번 테스트 배포에서는 위 phase 0 번에 대한 내용이 반영되야하는데. 배포후에 정식 프로모션때 음악에 대한 전 파이프라인 즉 음악을 생성하는 시점부터 마무리하는 시점까지(작사, 작곡) 일반트랙으로 갈껀지 저작권 등록 트랙으로 갈껀지 선택을 해서 분기를 하려고해. 그래서 작사, 작곡에 대한 로그가 남아있어야하고. 프로모션때 저작권 등록 트랙에 대한 작업을 할꺼긴 하지만 ui 상으로 일반 트랙, 저작권 등록 트랙을 두고 저작권 등록 트랙은 프로모션 때 출시 예정으로 보일 수 있도록 작업을 조금 해두면 어떨까 싶은데"
+
+### 2. 슬라이스 범위 (원칙: 소급 불가한 원천 데이터는 전부 이번, 가공·검증·강화는 후속)
+**v3.200 반영**: F1 엔진 요청/응답 전문·audio SHA-256·canonical 해시 저장 / PG creation_log(sessions·events·lyrics_versions, §5.2 스키마·해시 체인 서버 계산) / POST /sessions·events(배치 idempotent)·lyrics API / generate session_id 하위호환(무세션 시 서버 자동 생성) / tracks FINALIZE 훅+track_type / 앱 SDK(creationLogService)·LISTEN/CANDIDATE_SELECT 계측·가사 버전 커밋 3+1지점 / F6 고지 3지점 / ② 모드 토글 UI.
+**후속(v3.201+)**: 오프라인 SQLite 영속 큐(§5.5 완전판 — 이번엔 메모리 큐, 강제종료 유실 허용), F5 토큰 origin 태깅·origin_summary·paste 감지(버전 전문 체인에서 소급 계산 가능), §5.4 DB 권한 분리·MinIO Object Lock·F8 보존 정책(prod 운영 변경 — 사용자 승인 필요), F9 검증 API·일 배치, ID3 메타·문구 서버 설정화, F7 특허 표기(출원번호 확보 후), is_regeneration_of 소급 판정, ABANDONED 배치, SESSION_START creation_mode 스키마 확장.
+
+### 3. 수행 결과
+**backend-dev (backend_9004 — 배포 완료)**
+- `app/services/creation_log.py` 신설: canonical JSON+payload_hash/event_hash/prev_hash 체인(문서 부록 B와 문자 일치 — tester 확증), 세션당 advisory lock seq 직렬화, user_id_hash=SHA256(user_id+CREATION_LOG_SALT — .env 기입).
+- `app/routes/sessions.py` 신설: POST /sessions(SESSION_START — import_blocked:false 실측 반영), POST /sessions/{id}/events(봉투형 {"events":[...]}, 배치 ≤500, event_id idempotent, FINALIZED 409, §12 엄격 검증 400), POST /sessions/{id}/lyrics(전문+prev_version_id+source, LYRIC_EDIT 기록), GET /sessions/{id}. 전부 401 인증 게이트.
+- generate.py·suno_generator.py: session_id/lyrics_version_id optional 수용(구버전 앱 하위호환 — 무세션 시 자동 생성), GEN_REQUEST/GEN_RESPONSE(실패 포함) 기록, suno_request_body·suno_response_raw 전문·variant별 audio_sha256·requested_at/responded_at 저장. 원본 mp3 무변환 저장 유지.
+- tracks.py upload-from-generation: track_type 화이트리스트('standard'|'copyright_ready')·session_id 수용, FINALIZE(trigger:'publish') 훅+root_hash 확정.
+- PG 스키마 3종 lifespan CREATE IF NOT EXISTS — 배포 후 스키마 생성 로그·테이블 실측, 기존 API 무회귀 확인.
+
+**app-dev (2_housing — 9수정 + 1신설, +334/-10, tsc 0건)**
+- `services/creationLogService.ts` 신설(272줄): 세션 lazy 확보(idempotent)·메모리 큐+2s 디바운스 배치·지수 백오프 3회·500 분할·순서 보존 flush·404/401 no-op 게이트(기록 실패가 기능을 절대 막지 않음)·가사 버전 커밋(동일 텍스트 중복 제거).
+- 계측: MusicResultScreen LISTEN play/pause/ended·variant 전환 pause·CANDIDATE_SELECT(명시 선택만, §6.3)·발매 직전 select+flush(FINALIZE보다 체인 앞 보장)·발매 성공 시 세션 종료. 가사 버전: LyricsResult 진입 ai_draft / '완료'·작곡 진입·작곡 대화 '적용' user_edit / 생성 요청 직전 최종 커밋+lyrics_version_id 동봉(musicService).
+- F6 3지점: TrackShareDownloadSheet 고지 1줄(전 곡 공통 — v3.171 뱃지와 동일 전제), 발매 완료 팝업(보컬 곡 한정), 설정>앱 정보 "AI 생성 고지" 상시 항목(PolicySheet 재사용, consentTexts.AI_GENERATION_NOTICE).
+- ② UI: DialogueScreen 작사 디렉터 한정 "일반 모드/저작권 등록 모드" 세그먼트 토글 + "창작 과정 기록 중" 상태 칩(벡터 점 — 이모지 금지 준수) + 최초 선택 시 showAlert 안내(앱 다이얼로그 규칙). musicStore.creationMode → 발매 track_type 반영.
+
+**② UI 결정 경위**: planner 초안은 MusicResultScreen 발매 카드(§3 1안)였으나, **사용자가 재선택** — 작사 디렉터 대화 화면 토글로 확정(생성 시작 시점부터 분기 의도 반영). % 게이지(기여도 표시류)는 origin 태깅 선행이 필요해 후속. 문구 금지선(F7 §9) 준수: "저작권 등록 가능/보장/인정"·"특허" 표현 전무, "증빙 자료 생성 기능은 정식 프로모션 때 제공 예정" 사실 서술만.
+
+### 4. 테스트·픽스 이력
+- tester: unit 10/10 PASS + unit-서버 4/4 PASS, api/e2e는 실기기·스테이징 이관 처리.
+- **X-1 (유일 FAIL → 픽스 루프 1회)**: LISTEN/CANDIDATE_SELECT의 candidate_id를 payload에 실어 §5.2 정본(target.candidate_id) 위반 — 서버 엄격 검증 400 위험. → target 배선으로 수정, 오케스트레이터 재검 통과(target 배선 확인·payload 잔존 0·tsc 0). 코드에 `v3.200(X-1)` 주석 2곳 실존 확인(planner).
+- planner 최종 diff 검수(10파일 전량): ① 봉투형·6필드·500분할·no-op 게이트 스펙 정합 ② 발매 경로 2곳(handleSave·커버 경유) 모두 select→flush→업로드→세션 종료 순서 동일 ③ didJustFinish 클로저는 effect deps(selectedVariant)로 stale 아님 ④ SESSION_START에 creation_mode 미전송(서버 엄격 검증 400 방어 — 주석 명시) ⑤ 금지선 문구 준수 — **지적 사항 없음**. 전환/발매의 select 중복 기록은 event_id 별개·§6.4 재구성에 무해(기록은 사실 나열, 판정은 Phase 1).
+
+### 5. 실기기 스모크 절차 (배포 전 확인 조건 — 오케스트레이터 실행)
+생성 1회(작사→작곡→A/B 청취→발매) 후 서버 PG에서 6단계 확인:
+1. sessions 1행(status=FINALIZED, root_hash NOT NULL) 2. events seq 1..N 연속·SESSION_START→GEN_REQUEST→GEN_RESPONSE→LISTEN*→LYRIC_EDIT*→CANDIDATE_SELECT→FINALIZE 순서 3. 체인 재해시 일치(부록 B verify — creation_log.py 함수 재사용) 4. generations doc에 suno_request_body/suno_response_raw/audio_sha256 존재 5. lyrics_versions prev 체인 연결·FINALIZE.lyrics_version_id 일치 6. tracks doc track_type 저장. 추가: 저작권 등록 모드 토글 상태에서 발매 → track_type='copyright_ready' / 비로그인·구버전(플래그 없는 요청) 흐름 무영향 / 공유 시트·발매 팝업·설정 고지 노출.
+
+### 6. 후속 기록 7건 (tester)
+1. MusicResultScreen generationId가 폴링 완료 후 result_track_id로 치환되는 경로에서 candidate_id 규약 오염 가능 — gen_id 별도 보관으로 교정.
+2. 커버 경유 발매 완료 팝업에 F6 음성 합성 고지 누락(handleSave에만 반영) — 갭 보완.
+3. creationMode sticky UX: 다음 곡에도 유지되는 동작의 안내 부재 — 새 곡 시작 시 칩 재노출 등 검토.
+4. 화면 이탈 flush가 2s 디바운스와 겹칠 때 지연 여지 — 이탈 시 즉시 flush 우선순위 조정.
+5. 오디오 로드 실패 시 LISTEN 재시도 이벤트 미기록 — 필요성 검토.
+6. 서버 코드 git 동기화 잔무(backend_9004 반영분의 TripleJ-backend 워크트리 커밋).
+7. 토글·안내 카피 최종 리뷰(법무 문구 관점 — F7 금지선 재확인 포함).
+
+### 7. 특이사항
+- 민감정보 미기록(salt 값·키 미표기), 서버 스키마 변경은 CREATE IF NOT EXISTS 한정 — 기존 데이터 무접촉.
+- v3.199까지 전부 커밋됨 — 이번 diff는 v3.200 단독(병행 미커밋 사이클 없음).
+
+### 판정: **승인** (커밋 가능 — §5 실기기 스모크 6단계는 배포 전 확인 조건)
+- 커밋 메시지 제안:
+```
+feat: v3.200 Phase0 창작 기록 계층 1차 — 창작 세션·LISTEN/CANDIDATE_SELECT 계측·가사 버전 커밋(creationLogService 신설) + 작사 디렉터 모드 토글→발매 track_type 분기·F6 AI 고지 3지점 (team-dev)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+```
+- 스테이징(frontend 브랜치 — 커밋 시 자동 push 유의):
+  - 앱 10파일(2_housing/): **services/creationLogService.ts(untracked — git add 필수)**, services/musicService.ts, stores/musicStore.ts, screens/MusicResultScreen.tsx, screens/DialogueScreen.tsx, screens/LyricsResultScreen.tsx, screens/MusicGenerationScreen.tsx, screens/SettingsScreen.tsx, components/TrackShareDownloadSheet.tsx, constants/consentTexts.ts
+  - 산출물 3종: claude_skills_outputs/team-dev/{PLAN.md, REPORT.md, TESTPLAN.md}
+  - 그 외 장기 미커밋 파일(assets·scripts·타 프로젝트 등)은 이번 커밋에서 제외할 것.

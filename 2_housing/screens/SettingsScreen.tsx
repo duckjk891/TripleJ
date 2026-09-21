@@ -31,7 +31,7 @@ import {
 } from '../services/authService';
 import AuthPanel from '../components/auth/AuthPanel';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
-import { CONSENTS, CONSENT_VERSION } from '../constants/consentTexts';
+import { CONSENTS, CONSENT_VERSION, AI_GENERATION_NOTICE } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
 import { AppText, seedColor } from '../components/ui';
 
@@ -431,7 +431,8 @@ export default function SettingsScreen({ navigation }: any) {
 
   const [notifySongComplete, setNotifySongComplete] = useState(true);
   const [notifyChartUpdate, setNotifyChartUpdate] = useState(true);
-  const [policy, setPolicy] = useState<null | 'terms' | 'privacy'>(null); // 정책 문서 시트
+  // v3.200(F6): 'ai' = AI 생성 고지 상시 항목(앱 정보 섹션) — 가입 동의문 재사용(consentTexts)
+  const [policy, setPolicy] = useState<null | 'terms' | 'privacy' | 'ai'>(null); // 정책 문서 시트
   const [authTitle, setAuthTitle] = useState('로그인'); // 비로그인 헤더 타이틀(AuthPanel 모드 연동)
 
   // 닫기 버튼 + 제목 row (양쪽 분기 공통)
@@ -595,6 +596,14 @@ export default function SettingsScreen({ navigation }: any) {
           onPress={() => setPolicy('privacy')}
         >
           <AppText style={styles.settingLabel}>개인정보 처리방침</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
+        </TouchableOpacity>
+        {/* v3.200(F6): AI 생성 고지 상시 확인 항목 — 가입 시 동의문 언제든 재열람(법정 고지 P0) */}
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => setPolicy('ai')}
+        >
+          <AppText style={styles.settingLabel}>AI 생성 고지</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
@@ -866,8 +875,8 @@ export default function SettingsScreen({ navigation }: any) {
         </View>
         <PolicySheet
           visible={!!policy}
-          title={policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
-          body={policy ? (CONSENTS as any)[policy].body : ''}
+          title={policy === 'ai' ? AI_GENERATION_NOTICE.label : policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
+          body={policy === 'ai' ? AI_GENERATION_NOTICE.body : policy ? (CONSENTS as any)[policy].body : ''}
           onClose={() => setPolicy(null)}
         />
       </ScrollView>
@@ -884,10 +893,11 @@ export default function SettingsScreen({ navigation }: any) {
           onModeChange={(m) => setAuthTitle(m === 'login' ? '로그인' : '회원가입')}
         />
         <CompanyFooter onOpenPolicy={setPolicy} />
+        {/* v3.200: 'ai' 항목은 로그인 뷰 전용이지만, 시트 열린 채 로그아웃되는 엣지 방어 */}
         <PolicySheet
           visible={!!policy}
-          title={policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
-          body={policy ? (CONSENTS as any)[policy].body : ''}
+          title={policy === 'ai' ? AI_GENERATION_NOTICE.label : policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
+          body={policy === 'ai' ? AI_GENERATION_NOTICE.body : policy ? (CONSENTS as any)[policy].body : ''}
           onClose={() => setPolicy(null)}
         />
       </View>

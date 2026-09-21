@@ -164,6 +164,12 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
             {mode === 'share' ? 'SNS 공유' : '다운로드'}
           </AppText>
           {track ? <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.sub}>{track.title}</AppText> : null}
+          {/* v3.200(F6): AI 음성 합성 고지 — 공유·다운로드 시 법정 고지(P0).
+              곡별 보컬 유무는 시트에 전달되지 않아 전 곡 공통 표기(MAIDOL 곡은 전부 AI 생성 — v3.171 뱃지와 동일 전제).
+              문구 서버 설정화·다운로드 파일 ID3 메타 기입은 후속. */}
+          <AppText variant="caption" tone="muted" style={styles.aiNotice}>
+            이 곡의 음성은 AI로 합성되었습니다.
+          </AppText>
 
           {mode === 'share' ? (
             <>
@@ -191,6 +197,8 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl, padding: spacing.xl, paddingBottom: spacing.xxl ?? spacing.xl },
   title: { marginBottom: spacing.xs },
-  sub: { marginBottom: spacing.md },
+  sub: { marginBottom: spacing.xs },
+  // v3.200(F6): AI 음성 합성 고지 줄
+  aiNotice: { marginBottom: spacing.md },
   item: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
 });

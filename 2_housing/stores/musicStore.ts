@@ -35,6 +35,15 @@ interface MusicState {
   coverCharacterObjectName: string | null;
   generationId: string | null;
   savedTrackId: string | null;
+  /** v3.200: 창작 기록 세션(Phase 0) id — creationLogService가 관리, 생성/발매 body에 동봉.
+   *  서버 미배포·비로그인 시 null 유지(기록 없이 기존 흐름 그대로 — 실패 무해). */
+  creationSessionId: string | null;
+  /** v3.200(②): 창작 모드 — 작사 디렉터 대화 화면 토글로 선택.
+   *  'standard'=일반(현행 동일), 'copyright'=저작권 등록 모드(과정 기록 강조 —
+   *  발매 track_type:'copyright_ready'(서버 화이트리스트)에 반영. 세션 payload 반영은
+   *  백엔드 SESSION_START 스키마 확장 후속).
+   *  사용자가 고른 모드는 다음 곡에도 유지(sticky) — reset() 호출처 없음(v3.156a 주석 참조). */
+  creationMode: 'standard' | 'copyright';
   status: GenerationStatus;
   resultUrl: string | null;
   isLoading: boolean;
@@ -65,6 +74,8 @@ interface MusicState {
   setCoverCharacterObjectName: (v: string | null) => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
+  setCreationSessionId: (id: string | null) => void;
+  setCreationMode: (mode: 'standard' | 'copyright') => void;
   setStatus: (status: GenerationStatus) => void;
   setResultUrl: (url: string | null) => void;
   setIsLoading: (loading: boolean) => void;
@@ -100,6 +111,8 @@ const initialState = {
   coverCharacterObjectName: null,
   generationId: null,
   savedTrackId: null,
+  creationSessionId: null,
+  creationMode: 'standard' as const,
   status: 'idle' as GenerationStatus,
   resultUrl: null,
   isLoading: false,
@@ -135,6 +148,8 @@ export const useMusicStore = create<MusicState>((set) => ({
   setCoverCharacterObjectName: (coverCharacterObjectName) => set({ coverCharacterObjectName }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
+  setCreationSessionId: (creationSessionId) => set({ creationSessionId }),
+  setCreationMode: (creationMode) => set({ creationMode }),
   setStatus: (status) => set({ status }),
   setResultUrl: (resultUrl) => set({ resultUrl }),
   setIsLoading: (isLoading) => set({ isLoading }),
