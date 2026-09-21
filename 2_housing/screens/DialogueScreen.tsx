@@ -85,8 +85,11 @@ export default function DialogueScreen({ route, navigation }: Props) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // v3.199(B): 대화 중 상단 명시적 뒤로가기 — Studio 탭 헤더(headerLeft)에 back 주입.
-  // 아이콘·마진·사이즈는 stackHeader 관행(App.tsx) 동일. blur/unmount 시 반드시 undefined 복원 —
-  // MapScreen useLayoutEffect는 deps 불변이면 재실행되지 않아, 미복원 시 Map 복귀 후 화살표가 잔존한다.
+  // 아이콘·마진·사이즈는 stackHeader 관행(App.tsx) 동일.
+  // v3.201(C): blur cleanup(headerLeft: undefined) 제거 — Dialogue→LyricsInput 전환 시 이 화면의
+  // cleanup이 다음 화면 focus 주입 뒤에 실행될 수 있어(focus/blur 순서 비보장) 진입 직후 화살표가
+  // 소실되는 경합의 주 원인이었다. "포커스 화면만 헤더에 쓴다" 불변식: 3화면 focus(set) +
+  // MapScreen focus(clear)만 쓰기 지점 — 화살표 잔존 방지는 MapScreen 쪽 focus 클리어가 승계.
   useFocusEffect(
     useCallback(() => {
       const parent = navigation.getParent();
@@ -101,9 +104,6 @@ export default function DialogueScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         ),
       });
-      return () => {
-        parent?.setOptions({ headerLeft: undefined });
-      };
     }, [navigation])
   );
 

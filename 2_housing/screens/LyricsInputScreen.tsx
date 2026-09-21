@@ -16,6 +16,7 @@ import {
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { colors } from '../theme/colors';
 import {
@@ -121,10 +122,16 @@ export default function LyricsInputScreen({ navigation }: Props) {
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
   useEffect(() => { store.setStyle(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const [reselectStep, setReselectStep] = useState<number | null>(null);
+  // v3.201(B): 재선택 모달 자유 입력 — 제출은 handleReselectChoice(trim) 그대로 재사용(신규 분기 없음)
+  const [reselectInput, setReselectInput] = useState('');
+  // v3.201(B): 재선택 모달도 Android edge-to-edge Modal — 키보드 열림 시 컨테이너를 위로 리프트(§1 훅 공용)
+  const reselectKbPad = useAndroidKeyboardLift(reselectStep != null);
 
   // v3.199(B): "디렉터와 이야기하는 중"의 연장 — Studio 탭 헤더에 back 주입(DialogueScreen 동일 패턴).
   // goBack만 수행(확인 팝업은 과설계 — chatHistory는 로컬 state라 이탈 시 초기화됨을 아는 동작).
-  // cleanup 필수: 미복원 시 Map 복귀 후에도 화살표 잔존(MapScreen useLayoutEffect deps 불변).
+  // v3.201(C): blur cleanup(headerLeft: undefined) 제거 — 화면 전환 시 이전 화면 cleanup이 다음 화면
+  // focus 주입 뒤에 실행될 수 있어(focus/blur 순서 비보장) 진입 직후 화살표가 소실되는 경합의 주 원인.
+  // "포커스 화면만 헤더에 쓴다" 불변식: 3화면 focus(set) + MapScreen focus(clear)만 쓰기 지점.
   useFocusEffect(
     useCallback(() => {
       const parent = navigation.getParent();
@@ -139,9 +146,6 @@ export default function LyricsInputScreen({ navigation }: Props) {
           </TouchableOpacity>
         ),
       });
-      return () => {
-        parent?.setOptions({ headerLeft: undefined });
-      };
     }, [navigation])
   );
 
@@ -245,6 +249,22 @@ export default function LyricsInputScreen({ navigation }: Props) {
       )
     );
     setReselectStep(null);
+    setReselectInput(''); // v3.201(B): 모달 닫힘 시 자유 입력 리셋(선택지 탭·자유 입력 제출 공통)
+  };
+
+  // v3.201(B): 취소·백드롭·백버튼 공통 닫기 — 미반영 + 입력 리셋
+  const closeReselect = () => {
+    setReselectStep(null);
+    setReselectInput('');
+  };
+
+  // v3.201(B): 자유 입력 제출 — 검증(trim·빈값 disabled)은 handleCustomSubmit과 동일 규칙,
+  // 반영은 기존 handleReselectChoice(store 매핑·chatHistory 교체·모달 닫기) 완전 재사용
+  const handleReselectInputSubmit = () => {
+    const text = reselectInput.trim();
+    if (!text) return;
+    if (__DEV__) console.info('[LyricsInput] 재선택 자유 입력 제출', { reselectStep });
+    handleReselectChoice(text);
   };
 
   const handleChoicePress = (choice: string) => {
@@ -428,27 +448,56 @@ export default function LyricsInputScreen({ navigation }: Props) {
           )}
         </View>
       )}
-      {/* 재선택 모달 */}
-      <Modal visible={reselectStep != null} transparent animationType="fade" onRequestClose={() => setReselectStep(null)}>
-        <TouchableOpacity style={styles.reselectOverlay} activeOpacity={1} onPress={() => setReselectStep(null)}>
-          <View style={styles.reselectContainer}>
-            <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
-            <ScrollView style={{ maxHeight: 300 }}>
-              {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
-                <TouchableOpacity
-                  key={idx}
-                  style={styles.reselectOption}
-                  onPress={() => handleReselectChoice(choice)}
-                >
-                  <AppText style={styles.reselectOptionText}>{choice}</AppText>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity style={styles.reselectClose} onPress={() => setReselectStep(null)}>
-              <AppText style={styles.reselectCloseText}>취소</AppText>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
+      {/* 재선택 모달 — v3.201(B): 자유 입력 행 추가 + 키보드 회피(iOS KAV padding / Android kbPad 리프트) */}
+      <Modal visible={reselectStep != null} transparent animationType="fade" onRequestClose={closeReselect}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          pointerEvents="box-none"
+        >
+          <TouchableOpacity style={styles.reselectOverlay} activeOpacity={1} onPress={closeReselect}>
+            {/* Android: 중앙 정렬 + marginBottom(kbPad)으로 키보드 열림 중 컨테이너 상향 — Modal 내 KAV padding 재도입 금지(v3.198) */}
+            <View style={[styles.reselectContainer, { marginBottom: reselectKbPad }]}>
+              <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
+              <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+                {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.reselectOption}
+                    onPress={() => handleReselectChoice(choice)}
+                  >
+                    <AppText style={styles.reselectOptionText}>{choice}</AppText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {/* v3.201(B): 자유 입력 — 노출 조건은 메인 플로우와 동치(듀엣 2·랩 8·길이 9는 enum 매핑
+                  스텝이라 자유 텍스트가 boolean/duration 오매핑을 유발 → 비노출). autoFocus 금지(선택지 탭이 1차 UX). */}
+              {reselectStep != null && reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9 && (
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="직접 입력..."
+                    placeholderTextColor={colors.text.muted}
+                    value={reselectInput}
+                    onChangeText={setReselectInput}
+                    returnKeyType="send"
+                    onSubmitEditing={handleReselectInputSubmit}
+                  />
+                  <TouchableOpacity
+                    style={[styles.sendButton, !reselectInput.trim() && styles.sendButtonDisabled]}
+                    onPress={handleReselectInputSubmit}
+                    disabled={!reselectInput.trim()}
+                  >
+                    <AppText style={styles.sendButtonText}>확인</AppText>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <TouchableOpacity style={styles.reselectClose} onPress={closeReselect}>
+                <AppText style={styles.reselectCloseText}>취소</AppText>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
     </KeyboardAvoidingView>
   );

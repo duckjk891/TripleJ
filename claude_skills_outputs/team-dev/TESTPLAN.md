@@ -1609,3 +1609,160 @@
 **X-1 수정 지시(developer)**: `2_housing/screens/MusicResultScreen.tsx` — ① logListen(:142-152): `logCreationEvent('LISTEN', { action, position_ms: ... }, { candidate_id: cid })` — candidate_id를 payload에서 제거하고 3번째 인자 target으로 이동 ② logCandidateSelect(:154-160): `logCreationEvent('CANDIDATE_SELECT', { action: 'select' }, { candidate_id: cid })` 동일 이동. creationLogService의 target 스프레드(:222)·서버 ALLOWED_TARGET_KEYS(candidate_id/segment/item)와 즉시 정합. 수정 후 `npx tsc --noEmit` + U-2 ①(target 조건부 스프레드) 재확인만으로 충분.
 
 **잔여·후속 기록**: ① 서버 v3.200 코드(creation_log.py·sessions.py·generate.py·suno_generator.py·tracks.py·main.py·config.py)가 로컬 TripleJ-backend 워크트리/backend 브랜치에 미반영 — **서버→git 동기화 잔무**(배포 실코드가 유일본인 상태) ② U-6 ① generationId 치환 결함(계측용 원본 gen_id 별도 보관 후속) ③ 커버 경유 발매 F6 고지 부재 ④ creationMode sticky UX(E-3 ⑤ 질의) ⑤ 발매 전 flush 최악 ~48s(선행 배치 시 ~96s) — 타임아웃 단축/비동기화 후속 판단 ⑥ 오디오 저장 실패 보류·재시도(S-4 ⑤) ⑦ "저작권 등록 모드" 라벨 카피 리뷰(설계 주의점 8).
+
+## v3.201 — 수정일 2026-09-21
+
+> 대상: PLAN.md v3.201(:3215-3281) — (A) `components/PlaylistPickerSheet.tsx` 입력 가림 근본 수정: kbPad를 paddingBottom(:108)→sheet **marginBottom**(시트 전체 리프트)으로 이동, kbPad>0 시 `maxHeight` 동적 클램프(`winH - kbHeight - 24` 이하, useWindowDimensions), 목록(:113-122) ScrollView(maxHeight ~240) 전환, kbPad 로직(:27-38)을 `hooks/useAndroidKeyboardLift.ts` 공용 훅으로 추출. (B) 재선택 모달 자유 입력: `screens/LyricsInputScreen.tsx` 모달(:432-452)·`screens/ComposerInputScreen.tsx` 모달(:338-356)에 입력 행 추가, 제출은 **기존 `handleReselectChoice(trim)`(Lyrics :219-248 / Composer :185-209) 재사용**(신규 분기 금지), Lyrics 노출 제외 스텝 {2,8,9}(:393 메인 플로우와 동치), autoFocus 금지, A 훅으로 키보드 리프트. (C) 헤더 뒤로가기 경합: 3화면(Dialogue :104-106·LyricsInput :143·ComposerInput :100) blur cleanup의 `headerLeft: undefined` 제거 → "focused-screen-writes-only" 불변식, `screens/MapScreen.tsx` :292 `headerLeft: undefined` payload 키 삭제 + :296 deps의 `user` identity 제거 + 자체 useFocusEffect focus 클리어 신설. iOS transparentModal(App.tsx :184) 검증 항목화.
+> **전제(계획 §0)**: 구현은 **v3.200 커밋 후 착수** — 본 계획의 라인 번호는 계획 시점 워킹트리 실측(앵커 병기, 커밋 후 이동 허용 — 앵커 문자열 재탐색). 특히 DialogueScreen은 v3.200(+113줄 모드 토글)과 같은 파일이라 커밋 후 라인 전면 이동 확실 — **라인이 아니라 앵커로만 판정**.
+> 실행 환경 관행(v3.191~200 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 정적 대체 병기 + 실기기 실측 이관. 앱 코드 경로 `/Users/pearl/TripleJ/2_housing`. 백엔드 무접촉 — [api] 0건. 증적에 실계정 토큰·개인 식별 정보 기재 금지.
+> 변경 허용 파일(격리 기준): `hooks/useAndroidKeyboardLift.ts`(**신설** — hooks/ 디렉토리 자체가 신설), `components/PlaylistPickerSheet.tsx`, `screens/LyricsInputScreen.tsx`, `screens/ComposerInputScreen.tsx`, `screens/DialogueScreen.tsx`, `screens/MapScreen.tsx` 6개. `App.tsx`(§3-3 iOS 대응 적용 시에만 :184 presentation 1건 허용 — 적용 시 커밋 메시지 명기 필수, 미적용이면 diff 0). 그 외 콘텐츠 diff는 FAIL.
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 선행 게이트 — v3.200 커밋 확인 + 타입 무결성 [unit]**
+- Given: 계획 §0 — v3.200 미커밋 상태에서 착수하면 diff 격리(U-10)가 성립 불가.
+- When: ① 착수 전 `git log --oneline -1` + `git status --short`(2_housing 스코프)로 **v3.200 커밋 완료·클린 기준선** 확인(v3.200 4파일 — creationLogService·DialogueScreen·musicStore·musicService — 이 워킹트리에 미커밋으로 남아 있으면 **착수 금지, 오케스트레이터 반려**). ② 완료 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: ① 클린 기준선 확증 ② exit 0, 오류 0건(훅 시그니처, ScrollView 전환, reselectInput state, useFocusEffect 콜백 전부 통과).
+
+**U-2. [공통] useAndroidKeyboardLift 훅 추출 — 로직 문자 동일성 + 배선 교체 [unit]**
+- Given: 추출 원본은 PlaylistPickerSheet :27-38(앵커 `keyboardDidShow`/`v3.197 U-7 교훈` 주석). **추출 과정에서 1글자라도 로직이 변형되면 v3.198 합격 형상이 조용히 깨진다** — 이 항목이 v3.198 무회귀의 본체.
+- When: `hooks/useAndroidKeyboardLift.ts` 신설분과 원본 대조 —
+  - ① **4요소 문자 대조**: ⓐ `Platform.OS !== 'android' || !visible` 게이트(비충족 시 `setKbPad(0); return`) ⓑ show: `setKbPad(Math.max(0, e.endCoordinates.height - insets.bottom))` — **`Math.max(0, …)` 하한과 `- insets.bottom` 이중 계상 해소 항 보존**(어느 한쪽 탈락 = FAIL) ⓒ hide: `setKbPad(0)` ⓓ cleanup: `showSub.remove(); hideSub.remove(); setKbPad(0)` **3요소 전부**(리스너 쌍 해제 + 언마운트 리셋 — v3.197 U-7 교훈 주석 승계 확인).
+  - ② **hide→0 리셋 보존(v3.198 무회귀 핵심 FAIL 게이트)**: `keyboardDidHide` 리스너가 무조건 0으로 리셋하는지 — 조건부 리셋·디바운스·애니메이션 지연 등 어떤 변형이든 발견 시 **즉시 FAIL**(v3.198 "잔존 간격 구조적 불가" 보장 파괴).
+  - ③ **deps**: `[visible, insets.bottom]` 동치(훅 인자로 받는 형태면 해당 인자 — insets를 훅 내부 useSafeAreaInsets로 흡수해도 허용, 단 deps 누락은 FAIL).
+  - ④ **배선 교체**: PlaylistPickerSheet에서 인라인 :27-38 블록 **삭제** + `useAndroidKeyboardLift(visible)` 호출로 대체 — 인라인 로직과 훅이 **공존**하면(이중 리스너) FAIL. iOS에서 훅 반환값 항상 0(KAV 소관 불변) 확인.
+- Then: ①~④ 전부 충족.
+
+**U-3. [A] kbPad 적용 위치 — paddingBottom→marginBottom 이동 [unit]**
+- Given: 근본 원인(계획 §1)은 paddingBottom 합산이 maxHeight '60%' 클램프에 걸려 입력행이 시트 경계 밖으로 밀리는 것 — 위치 이동이 수정의 본질.
+- When: sheet 스타일 배선 판정(앵커 `styles.sheet`) —
+  - ① **paddingBottom에서 kbPad 제거**: `paddingBottom: insets.bottom + spacing.xl` **원복**(kbPad 항 잔존 시 이중 리프트 FAIL — 제스처 바 보강 목적은 유지).
+  - ② **marginBottom: kbPad** 적용(sheet 인라인 style) — kbPad=0이면 marginBottom 0 = 기존 형상과 픽셀 동일(hide 시 잔존 간격 구조적 불가 유지, U-2 ②와 교차).
+  - ③ **iOS 경로 무변경**: KAV `behavior: Platform.OS === 'ios' ? 'padding' : undefined`(:104) diff 0 + Modal 내 **Android KAV padding 재도입 금지**(v3.196→198 기각 경로 — behavior 삼항에 android 분기가 생기면 즉시 FAIL, 계획 §1-3 명시 금지).
+  - ④ backdrop `justifyContent:'flex-end'`(:142)·`onPress={onClose}`·sheet 내부 TouchableOpacity 전파 차단 diff 0.
+- Then: ①~④ 전부 충족.
+
+**U-4. [A] maxHeight 동적 클램프 — 수식·경계 [unit]**
+- Given: 키보드(~40%) + 시트(≤60%) = 화면 상한 100% 극단 보강(계획 §1-1 엣지). 수식이 틀리면 두 가지 역결함 — 과소 클램프(여전히 가림) 또는 과대 클램프(시트가 비정상 축소).
+- When: ① `useWindowDimensions()` 도입 + kbPad>0일 때 sheet `maxHeight`가 `winH - kbHeight - 24`(±8px 동등 상수 허용) **이하**로 클램프되는 인라인 style — kbHeight는 훅이 노출하는 원시 키보드 높이 또는 `kbPad + insets.bottom` 동치식(kbPad 단독 사용이면 insets.bottom만큼 과대 허용 — 기록, 실기기 E-1 최종). ② **kbPad=0(키보드 닫힘) 시 기존 `maxHeight: '60%'` 복원** — 클램프가 상시 적용돼 '60%'를 대체해버리면 키보드 없는 평시 시트가 길어지는 회귀(FAIL). ③ 수식 검산(정적): winH=800, kbHeight=320 가정 → 클램프 456 = 60%(480)보다 작아 유효 발동; winH=640, kbHeight=256 → 360 < 384 발동 — 두 케이스 모두 `클램프값 + kbHeight + 24 ≤ winH` 항등 성립 확인.
+- Then: ①~③ 충족(① kbPad 단독식은 기록 허용).
+
+**U-5. [A] 목록 ScrollView 전환 — 키·성능·구조 [unit]**
+- Given: 비스크롤 View(:113-122)가 길면 키보드 무관하게 입력행이 밀리는 잠재 결함 동시 해소(계획 §1-2). RN에서 map 렌더 전환 시 key 소실·중첩 터치 충돌이 상투적 회귀 지점.
+- When: ① `styles.list` View → `ScrollView`(maxHeight ~240, ±40 허용) 전환 — **`key={pl.id}` 보존**(index 키로 바뀌면 담기 직후 목록 갱신 시 재사용 오류 — FAIL). ② 항목 TouchableOpacity `disabled={busy}`·`onPress={() => handlePick(pl.id)}` diff 0. ③ ScrollView가 backdrop TouchableOpacity 내부라 스크롤 제스처가 시트 닫기로 오전파되지 않는 구조(`keyboardShouldPersistTaps` 지정 여부 확인 — 미지정 시 입력 중 항목 탭이 키보드만 닫는 2탭 문제, **`handled` 이상 권장** — 부재는 기록·실기기 E-1 확인). ④ 성능: 목록 상한이 사용자 플레이리스트 수(수십 규모)라 FlatList 불요 — FlatList로 과잉 전환했으면 범위 초과 기록(FAIL 아님). ⑤ createRow(라벨 :123 + 입력행 :124-133)는 **ScrollView 밖** 시트 하단 고정 — 스크롤 내부로 들어가면 "목록 길 때 입력행 접근에 스크롤 필요" 재발(FAIL).
+- Then: ①~⑤ 충족(③④ 기록 허용).
+
+**U-6. [B] 자유입력 제출 경로 동일성 — 신규 분기 금지 [unit]**
+- Given: 계획 §2-1 — 제출은 기존 선택지 탭과 **완전히 동일한 검증·반영 경로**여야 한다. 별도 핸들러를 신설하면 store 매핑·chatHistory 교체·모달 닫기 3동작 중 하나가 어긋나는 순간 v3.110 매핑 회귀면이 열린다.
+- When: 두 화면 각각 —
+  - ① **제출 배선**: 확인 버튼 onPress가 `handleReselectChoice(reselectInput.trim())` **직접 호출** — 래퍼 함수는 trim+호출+리셋만 허용. `handleReselectChoice`와 별개로 store를 만지거나 chatHistory를 직접 조작하는 **신규 핸들러 신설 = 즉시 FAIL**(grep으로 `handleReselectSubmit|reselectCustom` 류 신설 함수의 본문에 setState(store)·chatHistory 조작이 있는지 검사).
+  - ② **기존 함수 무변경**: `handleReselectChoice`(Lyrics :219-248 / Composer :185-209 앵커)·`handleReselect` 오픈 가드(Lyrics :213-217 / Composer :174-182) **diff 0** — 자유입력 수용을 위해 기존 함수에 분기를 추가했으면 FAIL(기존 함수는 이미 임의 문자열 수용 구조).
+  - ③ **빈값 규칙**: 확인 버튼 disabled 조건이 `!reselectInput.trim()` — `handleCustomSubmit`(Lyrics :254-258)과 동일 규칙. 공백만 입력 후 제출 불가.
+  - ④ **리셋**: 모달 닫힘 경로 **전부**(제출 성공·취소 버튼·backdrop 탭·onRequestClose)에서 `reselectInput` 리셋 — 한 경로라도 누락 시 다음 오픈에 이전 입력 잔존(FAIL). `setReselectStep(null)` 지점 grep으로 전수 확인.
+- Then: ①~④ 두 화면 전부 충족.
+
+**U-7. [B] 노출 제외 스텝 집합 — boolean 오매핑 방지 진리표 [unit]**
+- Given: Lyrics step 2(듀엣)·8(랩)·9(길이)는 enum 매핑(`choice==='듀엣'`, `'포함'`, durationMap) — 자유 텍스트가 들어가면 **항상 false/기본값으로 조용히 오매핑**된다(컴파일·렌더 전부 통과하는 최악 유형). 메인 플로우 :393(`step !== 2 && step !== 8 && step !== 9`)과의 동치가 유일한 방어선.
+- When: ① **LyricsInput**: 입력 행 노출 조건이 `reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9`(또는 Set 동치) — **:393과 집합 문자 동일**(:393의 `v3.129 인덱스 시프트` 주석 근거 — 상수화해 양쪽이 한 소스를 참조하면 최선, 각자 리터럴이면 집합 일치 확인). 진리표 4행: ⓐ step 0(주제 등 자유 허용) → 입력 행 표시 ⓑ step 2 → **미표시**(표시 시 FAIL) ⓒ step 8·9 → 미표시 ⓓ 선택지 ScrollView는 전 스텝 표시 유지. ② **ComposerInput**: 재선택 대상 스텝 0(genre)·1(mood)·2(vocal) **전부 입력 행 노출**(제외 없음 — 계획 §2-2, 메인 입력행 전 스텝 노출과 동치). Lyrics의 제외 집합을 복붙해 Composer에 남기면 vocal(2) 스텝 입력이 사라지는 오이식 — 발견 시 FAIL. ③ 제외 판정이 `STEPS[reselectStep]?.choices` 존재 여부 같은 **간접 조건으로 대체됐으면 FAIL**(세 스텝 모두 choices가 있어 판별 불가 — 명시 집합만 유효).
+- Then: ①~③ 충족(진리표 전 행).
+
+**U-8. [B] autoFocus 금지 + 모달 키보드 리프트 [unit]**
+- Given: 계획 §2-3 — 선택지 탭이 1차 UX(모달 오픈 즉시 키보드 팝업 방지). 모달은 중앙 정렬이라 시트(A)와 리프트 적용면이 다르다.
+- When: 두 화면 각각 — ① 재선택 TextInput에 `autoFocus` **부재**(존재 시 FAIL). ② `reselectContainer`에 `marginBottom: kbPad`(useAndroidKeyboardLift 반환값 — 중앙 정렬이라 kbPad>0 시 위로 밀림). 훅 인자 visible = `reselectStep != null`(모달 열림과 게이트 동기 — `visible` prop 오전달로 상시 리스너면 기록). ③ iOS: 모달 내부 KAV(`behavior:'padding'`) 래핑 — v3.196 입력 모달 관행(Android는 kbPad 담당·KAV behavior undefined, U-3 ③ 금지 규칙과 교차). ④ 입력 행 위치: 선택지 ScrollView **아래**·취소 버튼 **위**(계획 §2-1 배치), 메인 inputRow(:394-427) 스타일 재사용(신규 스타일 전면 정의는 기록). ⑤ edit-2 어포던스·안내 문구 diff 0(계획 §2-4 — 자유입력 스텝 말풍선은 여전히 재선택 비대상, v3.199 "거짓 어포던스 금지" 유지).
+- Then: ①~⑤ 두 화면 전부 충족(②게이트·④스타일은 기록 허용).
+
+**U-9. [C] focused-screen-writes-only — cleanup 제거 + Map focus 클리어 [unit]**
+- Given: 주 원인은 blur cleanup(`headerLeft: undefined`)이 다음 화면의 focus 주입 **이후에** 실행되는 경합(계획 §3 원인 1). 수정 후 불변식: **쓰기 지점 = 3화면 focus(set) + Map focus(clear) 정확히 4곳뿐**. 단 cleanup을 제거하면 v3.199 U-4가 FAIL로 규정했던 "잔존 화살표"의 방어 주체가 Map focus 클리어로 **이관**된다 — 이관이 완결됐는지가 본 항목의 핵심.
+- When: `grep -n "headerLeft" screens/DialogueScreen.tsx screens/LyricsInputScreen.tsx screens/ComposerInputScreen.tsx screens/MapScreen.tsx` 전수 판정 —
+  - ① **3화면 cleanup 제거**: 각 useFocusEffect의 return cleanup에서 `headerLeft: undefined` **부재** — cleanup 자체가 다른 정리(리스너 등)를 하면 유지 허용, headerLeft 키만 금지. 잔존 발견 = 경합 미해소 FAIL. focus 시 set(arrow-left·size 22·getParent 경로)은 v3.199 형상 유지.
+  - ② **잔존 방지 논리 완결(핵심 FAIL 게이트)**: MapScreen에 **useFocusEffect 신설** + 콜백에서 `navigation.getParent()?.setOptions({ headerLeft: undefined })` — 3화면 어디서든 Map으로 복귀하면 Map이 focus를 받으므로 클리어가 **반드시 실행**됨(경로 논증: Studio 스택 내 3화면→Map 복귀는 전부 pop/navigate로 Map focus 발화; 탭 이탈 후 재진입도 Map focus 발화 — v3.199 U-4의 "deps 불변이면 useLayoutEffect 재실행 안 됨" 함정을 focus 이벤트가 우회). 클리어가 useLayoutEffect 안에만 있고 useFocusEffect가 없으면 **FAIL**(이관 미완 — 화살표 영구 잔존 경로 부활). 클리어 값은 `undefined` 문자 그대로(`null`이면 v3.199 U-4 ② 판정 준용 FAIL).
+  - ③ **쓰기 지점 전수 = 4곳**: grep 결과에서 setOptions payload에 headerLeft를 넣는 지점이 3화면 focus set + Map focus clear 외 **0건**(주석·타입 제외). 5곳 이상이면 불변식 위반 FAIL.
+- Then: ①~③ 전부 충족.
+
+**U-10. [C] MapScreen — payload 키 삭제 + deps 와이프 제거 [unit]**
+- Given: 부 원인(계획 §3 원인 2) — useLayoutEffect payload의 `headerLeft: undefined`(:292)와 deps의 `user` 객체 identity(:296)가 결합해, transparentModal 아래 마운트 유지 중인 Map이 user 갱신 시 대화 도중 화살표를 지운다.
+- When: ① useLayoutEffect setOptions payload에서 `headerLeft` **키 자체 삭제**(:292 앵커 — `headerLeft: undefined,` 라인 부재; 키를 남기면 U-9 ②의 focus 클리어와 무관하게 와이프 경로 존속 FAIL). ② deps 배열(:296 앵커 `v3.199(C): 회전/폭 변화 반영` 주석)에서 **`user` 단독 identity 제거** — `user?.company_name`(헤더 타이틀 실사용 값)은 유지, `nameMaxWidth`·`showTutorial`·`navigation` 유지. `user` 잔존 시 FAIL. ③ 헤더 타이틀 렌더가 user의 company_name 외 필드를 참조하면 해당 파생 프리미티브를 deps에 개별 추가했는지 확인(lint 경고 무음 처리로 때웠으면 기록). ④ v3.199(C) 형상 무회귀: nameMaxWidth `Math.max(90, …)` 하한·Marquee 명시 폭 View·ⓘ 형제 노드·headerRight HomeHeaderActions diff 0(U-13 교차).
+- Then: ①~④ 충족(③ 기록 허용).
+
+**U-11. [C] iOS transparentModal 검증 항목화 [unit]**
+- Given: 계획 §3 원인 3·수정안 3 — iOS에서 Dialogue의 `presentation:'transparentModal'`(App.tsx :184)이 탭 헤더를 덮으면 화살표 이전에 헤더 자체가 안 보인다. 이번 커밋의 기본 스코프는 **검증 항목화**(코드 변경은 조건부).
+- When: ① App.tsx :184 diff 판정 — **무변경이 기본**. 변경됐다면 `presentation:'card'`+fade 전환(계획 1안)인지 + 커밋 메시지에 iOS 검증 근거 명기됐는지(명기 없는 변경 = 계획 편차 FAIL). ② 변경 시 추가 판정: Android 동작 무회귀 전제(transparentModal→card는 Map 언마운트 여부가 바뀜 — MapScreen 상태 유실·U-9 ② focus 클리어 타이밍 재검토 필요, 해당 커밋에서 본 절 전체 재판정). ③ 오버레이 대안(계획 2안) 적용 시: iOS 한정 분기 + v3.200 modeBar(top:12/left:16)와 간섭 회피(우측 시프트) 확인. ④ 미변경(기본)이면: E-3에 "iOS 시뮬레이터에서 Dialogue 중 탭 헤더 노출 여부 보고" 항목 이관 명기로 충족.
+- Then: ①(+해당 시 ②③) 또는 ④ 충족.
+
+**U-12. diff 격리 — 허용 6파일 + hooks/ 신설 [unit]**
+- Given: v3.200 커밋 선행(U-1 ①)으로 이번엔 클린 기준선에서 출발 — v3.199 U-8 같은 스냅숏 판정 불요, 순수 diff 판정 가능.
+- When: ① `git status --short` + `git diff --stat`(2_housing 스코프): 콘텐츠 diff가 허용 6파일뿐(App.tsx는 U-11 ① 조건부). ② untracked에 `hooks/useAndroidKeyboardLift.ts` 확인 — **신설 디렉토리라 명시 스테이징 필수**(v3.200 U-9 ② 교훈 승계: `git add hooks/useAndroidKeyboardLift.ts` 누락 시 훅 없는 커밋 = 빌드 깨짐). ③ v3.200 산출물 무접촉: `services/creationLogService.ts`·`stores/musicStore.ts`·`services/musicService.ts` diff 0. ④ backend 디렉토리 무접촉. ⑤ 커밋 시 6(+1 조건부)파일 명시 스테이징.
+- Then: ①~⑤ 전부 충족.
+
+**U-13. v3.191~200 무회귀 — 접촉 파일 라인 단위 [unit]**
+- Given: 접촉 파일 이력 중첩 — PlaylistPickerSheet(v3.196 인셋·v3.198 kbPad), LyricsInput(v3.110 스텝 매핑·v3.129 인덱스·v3.199 D edit-2), ComposerInput(v3.199 D 이식), DialogueScreen(**v3.199 B + v3.200 모드 토글 — 같은 파일 2이력 접촉**), MapScreen(v3.75 헤더·v3.199 C).
+- When/Then (앵커 재탐색):
+  - ① **v3.196**: PlaylistPickerSheet `insets.bottom + spacing.xl` 보강 유지(U-3 ①) + 시트 4곳 중 나머지 3곳(queueSheet 등) diff 0.
+  - ② **v3.198**: kbPad hide→0 리셋(U-2 ②로 포섭) + `stores/playerStore.ts`·`components/MiniPlayer.tsx` diff 0(sessionActive 미니플레이어 무접촉).
+  - ③ **v3.110/129**: LyricsInput STEPS 정의·:393 제외 집합 원본·`handleReselectChoice` 스텝→store 매핑 diff 0(U-6 ② 교차).
+  - ④ **v3.199 B/D**: 3화면 focus 주입부(arrow-left·size 22) 형상 유지(cleanup 3줄 제거 외 diff 0 — U-9 ①), edit-2 조건식·VideoDirectorScreen diff 0.
+  - ⑤ **v3.200(같은 파일 정밀 판정)**: DialogueScreen diff가 **useFocusEffect cleanup 내 `headerLeft: undefined` 라인 제거뿐**인지 — v3.200 산출물인 모드 토글 useFocusEffect 인근·modeBar JSX·modeBar 스타일·저작권 고지 1회 노출 로직에 diff가 1줄이라도 걸리면 FAIL(계획 §4-0 "v3.200 주석·로직 삭제 금지"). 같은 useFocusEffect 블록에 두 이력이 공존할 수 있으므로 hunk 단위가 아니라 **라인 단위**로 귀속 판정.
+  - ⑥ **v3.199 A/C**: Avatar/seedColor 무접촉(허용 파일 밖 diff 0으로 포섭), MapScreen v3.199 C 형상은 U-10 ④.
+
+### [e2e] 실기기 실측 이관 + 정적 대체
+
+**E-1. [A] 담기 시트 입력 키보드 위 노출 [e2e]** — Android 실기기: ① 플레이리스트 0개·10개 두 케이스에서 새 플레이리스트 입력 탭 → **입력행+만들기 버튼이 키보드 위에 완전 노출**(10개 케이스가 종전 재현 경로 — 시트 60% 클램프 확인) ② 키보드 닫기 → 간격 잔존 없음, 백 제스처 키보드 해제→시트 재오픈 반복 ×5 패딩 누적 없음(v3.198 무회귀) ③ 목록 10개 스크롤로 전 항목 접근 + 입력행 상시 노출 + 입력 중 항목 탭 1회 반응(U-5 ③) ④ iOS: 기존 KAV 동작 무회귀. **정적 대체**: U-2~U-5(위치 이동·클램프 수식 검산·ScrollView 구조) 완료로 갈음, 실측은 이관.
+
+**E-2. [B] 재선택 자유입력 여정 [e2e]** — 실기기: ① LyricsInput — 답변 말풍선 탭 → 선택지+직접 입력 노출, **듀엣·랩·길이 스텝은 입력 행 없음**(U-7 진리표 실측), 자유 텍스트 제출 → 말풍선 텍스트 교체 + LyricsPromptReview 최종 프롬프트 반영 ② ComposerInput — 스텝 0·1·2 전부 입력 행 노출, 제출 → 말풍선+작곡 요약 반영 ③ 빈값·공백만 제출 불가, 취소/backdrop 닫기 → 미반영·재오픈 시 입력 비어 있음(U-6 ④ 실측) ④ 모달 입력 중 키보드가 입력창을 가리지 않음(Android, 중앙 모달 리프트) + 오픈 즉시 키보드 미팝업(autoFocus 부재). **정적 대체**: U-6~U-8 완료로 갈음.
+
+**E-3. [C] 대화 3화면 back 왕복 + 잔존 없음 [e2e]** — Android 실기기: ① Map→디렉터 대화→작사(→별도로 작곡 플로우) 각 **진입 직후·체류 중** 헤더 ← 상시 노출(경합 수정의 본체 — 진입 직후 소실 재현 여부가 판정) ② ← 탭 동작: Dialogue→Map, LyricsInput→Dialogue ③ Map 복귀 시 화살표 소멸·잔존 무(U-9 ② focus 클리어 실측) ④ 대화 중 설정에서 프로필 변경 후 복귀 → 화살표 유지(원인 2 회귀 확인 — deps 와이프 제거 실측) ⑤ Studio 탭 이탈→재진입(tabPress 리셋) 후 Map 화살표 무 ⑥ 왕복 ×5 반복 잔존/소실 무 ⑦ ArtistInput ‹ 무회귀 ⑧ **iOS 시뮬레이터: Dialogue 중 탭 헤더 노출 여부 보고**(U-11 ④ 이관 — 미노출 시 계획 §3-3 후속 발동). **정적 대체**: U-9~U-11(쓰기 지점 4곳 전수·이관 완결 논증) 완료로 갈음.
+
+**게이트**: U-1~U-13 전부 PASS 시 머지 허용(E-1~E-3은 실기기 이관 — 정적 대체 완료를 조건으로 비차단). U-2 ②(hide 0 리셋)·U-6 ①(신규 핸들러)·U-7 ①(제외 집합)·U-9 ②(focus 클리어 이관)·U-13 ⑤(v3.200 라인 침범) 중 1건이라도 FAIL이면 커밋 금지.
+
+### v3.201 테스트 결과 (tester, 2026-09-21)
+
+기준선: HEAD d8f0b4a(v3.200 커밋 완료) + 워킹트리 v3.201 변경분. 콘텐츠 diff 5파일(PlaylistPickerSheet 27/20·ComposerInput 69/22·Dialogue 5/5·LyricsInput 74/25·Map 15/2) + untracked `hooks/useAndroidKeyboardLift.ts`. 그 외 M 표시 다수는 전부 mode-only(100644→100755, 콘텐츠 0/0) — 기존 워킹트리 상태, 이번 커밋 스테이징 제외.
+
+#### [unit] 판정 표 (머지 게이트)
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 선행 게이트 + tsc | **PASS** | ① HEAD d8f0b4a=v3.200 커밋, creationLogService·musicStore·musicService·DialogueScreen v3.200분 콘텐츠 diff 0 ② `npx tsc --noEmit` exit 0 |
+| U-2 훅 추출 문자 동일성 | **PASS** | ① ⓐ`Platform.OS !== 'android' \|\| !visible` 게이트+`setKbPad(0); return` ⓑshow `Math.max(0, e.endCoordinates.height - insets.bottom)` 이중 계상 해소 항 보존 ⓒhide 무조건 `setKbPad(0)` ⓓcleanup `showSub.remove(); hideSub.remove(); setKbPad(0)` 3요소+v3.197 U-7 교훈 주석 승계 ② **hide→0 무조건 리셋 확인(게이트)** — 조건부/디바운스 변형 없음 ③ deps `[visible, insets.bottom]`(insets는 훅 내부 useSafeAreaInsets 흡수 — 허용형) ④ 인라인 :27-38 블록 삭제+`useAndroidKeyboardLift(visible)` 단독(공존 없음), `Keyboard` import 제거, iOS 반환 항상 0 |
+| U-3 kbPad 위치 이동 | **PASS** | ① `paddingBottom: insets.bottom + spacing.xl` 원복(kbPad 항 제거) ② sheet 인라인 `marginBottom: kbPad` ③ KAV `behavior: ios ? 'padding' : undefined` 무변경, Android padding 재도입 없음 ④ backdrop flex-end(:149)·onPress={onClose}·내부 TouchableOpacity 전파 차단 diff 0 |
+| U-4 maxHeight 동적 클램프 | **PASS** | ① `kbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (kbPad + insets.bottom) - 24) }` — kbHeight=`kbPad+insets.bottom` 동치식(과대 허용 없음, kbPad 단독식 아님) ② kbPad=0 시 조건 false → styles.sheet `maxHeight:'60%'`(:150) 복원 ③ 검산: 800/320→min(480,456)=456 발동, 640/256→min(384,360)=360 발동, 항등 `클램프+kbHeight+24≤winH` 성립 |
+| U-5 목록 ScrollView | **PASS** | ① `ScrollView style={[styles.list, {maxHeight: 240}]}`·`key={pl.id}` 보존 ② `disabled={busy}`·`onPress={() => handlePick(pl.id)}` diff 0 ③ `keyboardShouldPersistTaps="handled"` 지정(권장 충족), sheet TouchableOpacity(onPress noop) 내부라 backdrop 오전파 차단 ④ FlatList 과잉 전환 없음 ⑤ label+createRow는 ScrollView 밖 시트 하단 고정 |
+| U-6 제출 경로 동일성 | **PASS(주석)** | ① 두 화면 `handleReselectInputSubmit` = trim→빈값 가드→`handleReselectChoice(text)` 직접 호출 — store/chatHistory 직접 조작 0건(`__DEV__` console.info 1줄은 로깅뿐, 허용 범위 판단) ② `handleReselect` 오픈 가드 diff 0; `handleReselectChoice` 매핑·chatHistory 교체 로직 diff 0, 단 말미에 무조건 `setReselectInput('')` 1줄 추가 — 자유입력 수용 분기 아님, ④ 제출 성공 경로 리셋 요구의 유일한 충족 수단이라 허용 판정(아래 편차 주석) ③ `disabled={!reselectInput.trim()}` 두 화면 일치 ④ 리셋 전수: 제출 성공/선택지 탭(handleReselectChoice 말미)·취소·backdrop·onRequestClose(전부 closeReselect) — setReselectStep(null) 지점 grep 전수 대응 확인 |
+| U-7 제외 집합 진리표 | **PASS** | ① Lyrics 입력 행 조건 `reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9` — 메인 플로우(현 :413, 앵커 이동) `step !== 2 && step !== 8 && step !== 9`와 집합 문자 동일(각자 리터럴, 일치 확인). 진리표: step0 표시/step2 미표시/step8·9 미표시/선택지 ScrollView 전 스텝 표시 ② Composer 전 스텝(0·1·2) 노출 — 제외 집합 오이식 없음 ③ 간접 조건(choices 존재 판별) 아님, 명시 리터럴 |
+| U-8 autoFocus·모달 리프트 | **PASS** | ① autoFocus 부재(두 화면) ② `reselectContainer`에 `marginBottom: reselectKbPad`, 훅 인자 `reselectStep != null`(모달 열림 동기) ③ Modal 내부 KAV `behavior: ios ? 'padding' : undefined` 래핑(Android는 kbPad 담당) ④ 입력 행 = 선택지 ScrollView 아래·취소 위, styles.inputRow/textInput/sendButton(Disabled) 메인 스타일 재사용 ⑤ edit-2 조건식·안내 문구 diff 0 |
+| U-9 focused-writes-only | **PASS** | ① 3화면 cleanup의 headerLeft 라인 제거(return cleanup 자체 삭제 — 다른 정리 없던 블록) ② **Map useFocusEffect 신설 + `navigation.getParent()?.setOptions({ headerLeft: undefined })`(게이트)** — 3화면→Map 복귀·탭 재진입 전부 Map focus 발화로 클리어 보장, 값 `undefined` 문자 그대로 ③ grep 전수: headerLeft 쓰기 지점 = Dialogue:97·Lyrics:139·Composer:96(set) + Map:307(clear) 정확히 4곳, 나머지는 주석 |
+| U-10 MapScreen 와이프 제거 | **PASS(기록)** | ① payload `headerLeft: undefined,` 라인 부재(키 삭제) ② deps `[navigation, user?.company_name, !!user, showTutorial, nameMaxWidth]` — user 단독 identity 제거 ③ 클로저의 user 사용은 truthiness(ⓘ 노출)+company_name뿐 → `!!user`로 충족; **기록**: deps 내 `!!user` 표현식은 react-hooks/exhaustive-deps 경고 대상(무음 처리 주석은 없음 — 경고 발생 시 CI lint 정책 확인 요) ④ nameMaxWidth `Math.max(90, …)`·Marquee 명시 폭·ⓘ 형제·headerRight diff 0 |
+| U-11 iOS transparentModal | **PASS** | ① App.tsx diff 0(무변경 기본 경로) ④ E-3 ⑧ "iOS 시뮬레이터 Dialogue 중 탭 헤더 노출 여부 보고" 이관 명기로 충족 |
+| U-12 diff 격리 | **PASS** | ① 콘텐츠 diff = 허용 5파일뿐(App.tsx 무변경) ② untracked `hooks/useAndroidKeyboardLift.ts`(hooks/ 내 유일 파일) — **명시 스테이징 필수** ③ v3.200 산출물 3파일 콘텐츠 diff 0 ④ backend 무접촉 ⑤ 스테이징 목록 아래 확정(mode-only 파일 다수는 제외) |
+| U-13 무회귀 라인 단위 | **PASS** | ① queueSheet 등 타 시트 diff 0 ② playerStore·MiniPlayer diff 0 ③ STEPS·메인 제외 집합(:413)·handleReselectChoice 스텝 매핑 diff 0(말미 리셋 1줄만 — U-6 ② 주석 참조) ④ 3화면 focus 주입부 arrow-left·size 22 유지, edit-2·VideoDirectorScreen diff 0 ⑤ **DialogueScreen 5/5 라인 전수 귀속(게이트)**: 삭제 5 = v3.199(B) 주석 2 + cleanup 3, 추가 5 = v3.201(C) 주석 — 전부 v3.199(B) useFocusEffect 블록(:85-107) 내, v3.200 산출물(모드 토글 :205·modeBar :441/:485·저작권 고지 :72) 침범 0줄 ⑥ Avatar/seedColor 무접촉 |
+
+#### 편차 판정 (app-dev 신고 3건)
+
+1. **iOS transparentModal 미적용**: 계획 기본 스코프(검증 항목화)와 일치 — App.tsx diff 0 확인, U-11 ④ 경로 PASS. E-3 ⑧로 이관.
+2. **재선택 모달 중앙정렬 리프트 절반**: 정적 확인 결과 실재하는 제약 — reselectOverlay `justifyContent:'center'`에서 컨테이너 `marginBottom: kbPad`는 유효 상향이 약 kbPad/2. 최악 케이스(컨테이너 maxHeight 60% 만재 + 소형 기기)에서 하단 ~24px 겹침 가능 수식상 존재. 코드 FAIL 아님(가림 대상은 입력 행이 아닌 취소 버튼 하단 여백부터) — **E-2 ④ 실기기 실측 필수 항목으로 명기**. 미흡 시 후속: overlay justifyContent를 kbPad>0 시 'flex-end'+여백 전환 또는 marginBottom 2배 보정.
+3. **keyboardShouldPersistTaps="handled" 보강(PLAN 미명시)**: U-5 ③이 "handled 이상 권장"으로 이미 요구 — 계획 정합 판정, 편차 아님. 재선택 모달 선택지 ScrollView에도 동일 적용(입력 중 선택지 탭 1회 반응) — 이득 방향.
+
+추가 주석(신규 발견, FAIL 아님): U-6 ②의 "기존 함수 diff 0" 대비 `handleReselectChoice` 말미 `setReselectInput('')` 1줄 추가 — U-6 ④(제출 성공 경로 리셋)와의 상충을 리셋 쪽으로 해소한 구현. 무조건 실행·매핑/검증/chatHistory 로직 무변경이라 "자유입력 수용 분기" 금지 취지 위반 아님으로 판정.
+
+#### [e2e] 정적 대체 + 실기기 이관
+
+| 항목 | 정적 대체 | 실기기 잔여 |
+|---|---|---|
+| E-1 담기 시트 키보드 | U-2~U-5 PASS로 갈음 | ① 목록 0/10개 입력행 키보드 위 노출 ② 닫기 잔존 무·재오픈 ×5 누적 무 ③ 목록 스크롤+입력 중 항목 1탭 반응 ④ iOS KAV 무회귀 |
+| E-2 재선택 자유입력 | U-6~U-8 PASS로 갈음 | ① Lyrics 듀엣·랩·길이 입력행 부재+제출 반영(LyricsPromptReview) ② Composer 0·1·2 전부 노출+요약 반영 ③ 빈값 불가·닫기 미반영·재오픈 공백 ④ **중앙 모달 리프트 절반 이슈(편차 2)**: Android에서 키보드 열림 중 입력행 가림 여부 — 소형 기기(≤640dp)+선택지 만재 케이스 우선 |
+| E-3 헤더 back 왕복 | U-9~U-11 PASS로 갈음 | ①~⑦ 진입 직후 소실 무·Map 복귀 잔존 무·프로필 변경 유지·탭 재진입·×5 왕복·ArtistInput ⑧ **iOS 시뮬레이터 Dialogue 탭 헤더 노출 보고(U-11 ④ 이관)** |
+
+#### 게이트 판정
+
+**U-1~U-13 전 항목 PASS — 머지 허용.** 5대 게이트(U-2 ② hide 0 리셋 / U-6 ① 신규 핸들러 금지 / U-7 ① 제외 집합 / U-9 ② focus 클리어 이관 / U-13 ⑤ v3.200 라인 침범) 전부 통과. E-1~E-3은 정적 대체 완료로 비차단, 실기기 이관.
+
+**커밋 스테이징 확정(6파일 — mode-only 변경 파일 스테이징 금지)**
+```
+git add 2_housing/hooks/useAndroidKeyboardLift.ts \
+        2_housing/components/PlaylistPickerSheet.tsx \
+        2_housing/screens/LyricsInputScreen.tsx \
+        2_housing/screens/ComposerInputScreen.tsx \
+        2_housing/screens/DialogueScreen.tsx \
+        2_housing/screens/MapScreen.tsx
+```
+App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).

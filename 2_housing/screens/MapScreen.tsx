@@ -289,11 +289,24 @@ export default function MapScreen({ navigation }: Props) {
           )}
         </View>
       ),
-      headerLeft: undefined,
+      // v3.201(C): headerLeft: undefined 작성 제거 — Dialogue는 transparentModal이라 Map이 아래에
+      // 마운트 유지되는데, user 객체 갱신 등으로 이 이펙트가 재실행되면 대화 도중 3화면이 주입한
+      // 화살표를 와이프했다(부 원인). headerLeft 클리어는 아래 useFocusEffect(Map 포커스 시)로 일원화.
       // v3.75: 우측 액션은 차트와 동일한 공용 컴포넌트(별·출석·초대·알림·메시지·마이페이지)로 통일
       headerRight: () => <HomeHeaderActions navigation={parent} />,
     });
-  }, [navigation, user?.company_name, user, showTutorial, nameMaxWidth]); // v3.199(C): 회전/폭 변화 반영
+    // v3.201(C): deps의 user 객체 identity 제거(→ !!user) — 클로저는 user truthiness와 company_name만
+    // 사용하므로 충분. identity 유지 시 setUser류 갱신마다 불필요 재실행(와이프 트리거)됐다.
+  }, [navigation, user?.company_name, !!user, showTutorial, nameMaxWidth]); // v3.199(C): 회전/폭 변화 반영
+
+  // v3.201(C): "포커스 화면만 헤더에 쓴다" 불변식의 clear 담당 — Map으로 돌아왔을 때만 화살표 제거.
+  // 3화면(Dialogue/LyricsInput/ComposerInput)의 blur cleanup을 제거한 대신(경합 주 원인),
+  // Map 복귀 후 화살표 잔존 방지(v3.199 우려)를 focus 기반으로 승계한다.
+  useFocusEffect(
+    useCallback(() => {
+      navigation.getParent()?.setOptions({ headerLeft: undefined });
+    }, [navigation])
+  );
 
   // 다음 액션 디렉터 펄스 애니메이션
   useEffect(() => {

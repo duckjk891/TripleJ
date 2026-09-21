@@ -2384,3 +2384,40 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
   - 앱 10파일(2_housing/): **services/creationLogService.ts(untracked — git add 필수)**, services/musicService.ts, stores/musicStore.ts, screens/MusicResultScreen.tsx, screens/DialogueScreen.tsx, screens/LyricsResultScreen.tsx, screens/MusicGenerationScreen.tsx, screens/SettingsScreen.tsx, components/TrackShareDownloadSheet.tsx, constants/consentTexts.ts
   - 산출물 3종: claude_skills_outputs/team-dev/{PLAN.md, REPORT.md, TESTPLAN.md}
   - 그 외 장기 미커밋 파일(assets·scripts·타 프로젝트 등)은 이번 커밋에서 제외할 것.
+
+## v3.201 (2026-09-21) — 담기 시트 입력 가림 수정 + 재선택 팝업 자유 입력 + 디렉터 대화 뒤로가기 견고화
+
+### 요청 원문
+"담기 시트 키보드 닫은 후 간격 잔존 해결 <- 이부분은 해결되었지만, 텍스트를 입력하려고 하면 모바일 ui(키보드)에 텍스트 input이 가려져. 그리고 디렉터와의 대화에서 내 답변을 눌러서 다시 선택하기 팝업이 뜨면 거기서 자유롭게 입력하는 창도 있어야해. 디렉터 대화 3화면 상단 뒤로가기 <- 이게 어디에 반영된건지 모르겠는데. 설명해줘"
+
+### A. 담기 시트 — 입력 중 키보드 가림 (버그, 수정 완료)
+- **원인(확정)**: v3.198의 kbPad를 시트 **paddingBottom에 합산**한 것이 문제. 시트에 `maxHeight: '60%'` 클램프가 있어 Android(edge-to-edge, 키보드가 창을 리사이즈하지 않음)에서 콘텐츠+kbPad가 60%를 넘는 순간 시트 높이가 고정되고, 스크롤 없는 목록 뒤 **맨 아래 자식인 입력행이 시트 경계 밖 = 키보드 뒤에 남았다**. "닫은 후 잔존"과 "열림 중 가림"은 서로 다른 경로 — v3.198은 전자만 고친 것이 맞다.
+- **수정**: kbPad를 **시트 marginBottom(시트 전체 리프트)**으로 이동 — 콘텐츠 높이가 안 변해 클램프와 무관하게 입력행이 항상 키보드 위. paddingBottom은 `insets.bottom + spacing.xl` 원복. 키보드 열림 중 maxHeight를 남는 화면 안으로 동적 클램프. 목록은 ScrollView(maxHeight 240, persistTaps) 전환 — 목록이 길면 입력행이 밀리던 잠재 결함도 해소. hide 시 0 리셋이라 **v3.198 '잔존 간격 불가' 보장 유지**(무회귀). kbPad 로직은 공용 훅 `hooks/useAndroidKeyboardLift.ts`로 추출.
+
+### B. 재선택 팝업 자유 입력 (기능, 완료)
+- 작사(LyricsInput)·작곡(ComposerInput) 두 화면의 "다시 선택하기" 모달에 선택지 아래 **"직접 입력..." + 확인** 행 추가. 제출은 기존 `handleReselectChoice(trim)` 완전 재사용 — store 매핑·말풍선 텍스트 교체·최종 프롬프트 반영 경로가 선택지 탭과 동일(신규 분기 없음). 빈값 비활성, 닫기(취소·백드롭·백버튼) 시 입력 리셋.
+- **노출 조건 = 메인 플로우와 동치**: 작사의 듀엣(2)·랩(8)·길이(9)는 enum 매핑 스텝이라 자유 텍스트가 오매핑을 유발 → 입력 행 비노출. 작곡은 전 재선택 스텝(장르·분위기·보컬) 노출.
+- 모달 키보드 회피: iOS KAV(padding) + Android 공용 훅 리프트(A와 동일 패턴, Modal 내 Android KAV 재도입 금지 준수).
+
+### C. 디렉터 대화 3화면 상단 뒤로가기 — 사용자 설명 + 원인·수정
+- **어디에 반영됐었나(v3.199 의도)**: 대화 화면 안이 아니라 **화면 최상단 탭 헤더의 맨 왼쪽 — 기획사 이름 바로 왼편의 ← 화살표**입니다. 작업실 화면들은 자체 헤더가 없고 상단 탭 헤더를 공유하는 구조라, 3화면(디렉터 대화·작사·작곡)이 포커스일 때 그 자리에 화살표를 주입하는 방식이었습니다.
+- **왜 안 보였나(원인 확정)**: 같은 헤더 자리(headerLeft)를 4곳이 경합 작성. ① (주 원인) 화면 전환 시 **이전 화면의 blur cleanup(화살표 삭제)이 다음 화면의 focus 주입 뒤에 실행될 수 있어**(React Navigation focus/blur 순서 비보장) 진입 직후 화살표가 지워짐. ② (부 원인) MapScreen이 setOptions에 `headerLeft: undefined`를 항상 포함 + deps에 user 객체 identity — 대화 중 user 갱신 시 화살표 와이프.
+- **수정("포커스 화면만 헤더에 쓴다" 불변식)**: 3화면의 blur cleanup 제거(focus 시 set만), MapScreen은 payload에서 headerLeft 키 삭제 + 자체 focus 클리어로 일원화, deps는 `!!user`로 교체. 포커스 화면은 항상 1개이므로 경합이 구조적으로 불가능. Map 복귀 시 화살표 제거(잔존 방지)는 Map focus 클리어가 승계. App.tsx 무변경.
+- **사용자 설명문**: "뒤로가기는 원래 상단 탭 헤더 맨 왼쪽(기획사명 왼편)에 ← 로 넣은 것이었는데, 여러 화면이 같은 헤더 자리를 번갈아 쓰는 구조여서 화면 전환 타이밍에 화살표가 지워지는 결함이 있었습니다. v3.201에서 '지금 보는 화면만 헤더를 쓴다' 방식으로 바꿔 3화면 모두에서 항상 보이도록 고쳤습니다."
+
+### 검증
+- 변경 6파일: hooks/useAndroidKeyboardLift.ts(신설), components/PlaylistPickerSheet.tsx, screens/LyricsInputScreen.tsx, screens/ComposerInputScreen.tsx, screens/DialogueScreen.tsx, screens/MapScreen.tsx. tsc 0건.
+- tester U-1~U-13 전부 PASS(5대 게이트 포함), FAIL 0. 주석 1건(입력 리셋 1줄 — 취지 내 허용).
+
+### 편차·실기기 잔여 (E-2 필수 확인)
+1. **재선택 모달 리프트 절반**: 모달 컨테이너가 중앙 정렬(flex center)이라 `marginBottom: kbPad`는 실제로 **kbPad의 절반만** 위로 이동시킨다(중앙 정렬에서 마진은 잔여 공간을 반분). 컨테이너가 중앙 시작 + maxHeight 60%라 대부분 기기에서 절반 리프트로도 입력행이 키보드 위로 나올 것으로 계산되나, **소형 기기·키 큰 키보드에서 하단 일부 가림 가능** — 실기기(E-2)에서 재선택 입력 중 입력행 노출 확인 필수. 가려지면 후속: kbPad>0일 때 `translateY` 직접 이동 또는 overlay를 flex-end+패딩으로 전환.
+2. **iOS 검증 이관**: C의 Dialogue(transparentModal)가 iOS에서 부모 탭 헤더를 덮는지(헤더 자체 미노출 가능) — iOS 실기기/시뮬레이터 확인으로 이관. 필요 시 presentation 'card'+fade 전환이 1안(자체 배경 불투명이라 transparentModal 필요성 낮음).
+3. persistTaps: 목록·선택지 ScrollView에 `keyboardShouldPersistTaps="handled"` — 키보드 열린 상태에서 항목 탭 1회 동작(정합 확인됨).
+
+### 특이사항
+- v3.200 커밋(d8f0b4a) 선행 완료 후 착수 — 전제 충족. DialogueScreen은 v3.200 모드 토글과 같은 파일이나 접촉 블록 분리(cleanup 3줄 삭제 + 주석), 간섭 없음.
+- ArtistInput/ArtistResult/ArtistCody의 구패턴(unmount cleanup) 통일은 후속 백로그(3화면과 교차 전환 없음 — 경로상 Map 경유).
+- 스테이징(frontend 브랜치 — 커밋 시 자동 push 유의): 앱 6파일(**hooks/useAndroidKeyboardLift.ts untracked — git add 필수**) + 산출물(PLAN.md·REPORT.md·TESTPLAN.md). 장기 미커밋 파일(assets·문서 등)은 제외.
+
+### 판정
+**승인** — 계획(§1~3) 대비 구현 정합, tsc 0건·테스트 FAIL 0. 잔여는 실기기 확인 항목 2건(위 편차 1·2)으로 릴리스 차단 아님.
