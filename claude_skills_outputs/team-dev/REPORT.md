@@ -2237,3 +2237,44 @@ RN `Modal`은 별도 window라 **루트 safe-area 패딩과 Android adjustResize
 - 커밋 메시지 제안:
   `fix: v3.197 차량(BT)/화면꺼짐 다음곡 전환 견고화 — 다음 곡 프리로드(셔플 핀+5중 검증)·재생버튼 2곳 재로드 폴백·status.error 분기·AppState 리컨사일(자동 재재생 금지) + [BTDebug] 원격 계측 28건 (team-dev)`
 - 스테이징 4파일(2_housing/ 기준): services/playback.ts, screens/PlayerScreen.tsx, components/MiniPlayer.tsx, App.tsx — mode-only/무관 변경 파일 제외할 것.
+
+## v3.198 — 2026-09-21 — 미니플레이어 시작 시 노출 수정 + 담기 시트 키보드 간격 잔존 수정 + 카카오 초대 링크 랜딩/OG 카드(백엔드 배포) + 인스타·페북 버튼 동작 답변
+
+### 요청 원문
+- "이번 버젼 apk 다운받으니까. 처음 앱 접속할때부터 하단에 미니 플레이어가 보이는채로 시작을 하는데. 뭔가 잘못된것 같아 수정해줘. 텍스트 입력창이 있는 부분에서 텍스트창을 한번 열었다가 닫으면 하단 ui가 살짝 간격이 생긴채로 떠있어. 확인해서 수정해줘(플레이리스트에 담기). 카카오로 공유하면 문자가 'MAIDOL — … 추천코드: 7VFU / https://api.maidol.ai.kr/invite/7VFU' 이렇게 가는데 이걸 클릭하면 어떤 화면으로 연동되는거야? 공유를 하면 플레이스토어 다운로드 링크로 연동이 되었으면 좋겠는데. 그리고 이 카카오톡 메세지를 좀 더 예쁘게 이미지도 있고 그렇게 만들 수는 없을까. 현재 인스타그램, 페이스북 공유버튼이 있는데 이건 공유가 맞아? 아니면 내가 영상이나 음악을 올리도록 하는 기능이야?"
+
+### 원인 진단 (planner 0단계 분석 — PLAN.md v3.198)
+- **A (확정)**: 앱 부팅 restoreSession(App.tsx:510) → loginWithToken(authStore.ts:91) → restoreQueueFor(playerStore.ts:148)가 보관함에서 track까지 복원(일시정지) → **v3.197에서 완화된 MiniPlayer 렌더 조건 `if (!track)`(MiniPlayer.tsx:24)** 이 sound 없이도 렌더 → 자동로그인 APK는 시작부터 일시정지 미니 노출. v3.197 편차 ①의 예견 못 한 부수효과.
+- **B (범위 확정)**: PlaylistPickerSheet.tsx:88이 v3.196 유일의 Android `behavior="padding"` KAV 적용처(나머지 Report/Appeal/AlbumCreate/DmChat 4곳은 iOS 전용 — 확산 없음). Android(edge-to-edge Modal)에서 KAV가 키보드 닫힘 후 제스처 바 높이만큼 padding 잔차를 남김 + 시트 자체 insets.bottom과 이중 계상.
+- **C (서버 실측)**: 공유 링크 `https://api.maidol.ai.kr/invite/{code}` → **404 JSON**(루트 라우트 부재 — 존재하는 건 `GET /api/referral/invite/{code}` JSON뿐, referral.py:43). 가입 보상(inviter/joiner 각 ⭐50 멱등)은 auth.py:268-284에 기완비 — 랜딩은 코드 노출·복사·스토어 유도만 담당하면 됨.
+- **D (분석)**: AppShareModal.tsx:66-74 — 카카오/인스타/페북 세 버튼 모두 동일한 RN `Share.share({message})` = OS 네이티브 공유 시트에 텍스트+링크를 넘기는 순수 공유. 영상·음악 업로드/SNS API 연동 아님(target은 로그용).
+
+### 수행 결과
+**app-dev (A·B — 3파일, planner diff 최종 검토 완료, tsc 0건)**
+- **stores/playerStore.ts**: 비영속 `sessionActive` 플래그 신설(partialize 화이트리스트라 자동 제외). **비대칭 스펙** — setSound(truthy)에서만 true(재생 시작점 분산 → setter 한 곳에서 일괄 마킹, null 세팅은 전환/정리 중일 수 있어 내리지 않음 = v3.197 복구 경로 보존), resetOnLogout·restoreQueueFor(복원 분기)·cleanup에서 false.
+- **components/MiniPlayer.tsx**: 렌더 조건 `if (!track || (!hasSound && !sessionActive))` — sound는 `!!s.sound` 불리언 셀렉터로만 구독(v3.197 원칙 유지, 리렌더 소음 방지). 복원 큐(재생 전)는 숨고, 세션 중 sound null(BT 전환 실패)은 유지 → **v3.197 "재생버튼 1탭 복구"와 양립**.
+- **components/PlaylistPickerSheet.tsx**: KAV behavior iOS 전용 복귀 + Android `keyboardDidShow/Hide` 수동 패딩 `max(0, kbHeight - insets.bottom)`(이중 계상 해소), hide 시 무조건 0 리셋 — 잔존 간격 구조적 불가. 리스너 등록/해제 쌍 + visible false·언마운트 시 해제와 패딩 리셋(v3.197 U-7 교훈 반영).
+- **편차 1건(수용)**: app.json 버전 갱신 보류 — versionName 변경 무전례로 관례 오인 판정, 기존 값 유지.
+
+**backend-dev (C — EC2 backend_9004, docker 재배포 완료)**
+- `app/routes/referral.py`: 프리픽스 없는 `public_router` + `/invite/{code}` HTML 초대 랜딩 — OG 태그(og:title "…님의 초대"/og:description 보상 문구/og:image 1200×630 절대 URL/og:image:width·height/twitter:card) + 본문(다크 톤, 닉네임·추천코드 대형 표기·[코드 복사](clipboard+폴백)·보상 안내·주 CTA **[Google Play에서 다운로드]**=config.py play_store_url·보조 "이미 설치했다면 열기" aidol:// 딥링크). 닉네임·코드 **html.escape 일괄**(XSS 방지). 무효/탈퇴 코드 → **404 HTML**(스토어 CTA는 유지 — 죽은 링크 경험 방지).
+- `app/main.py`: `/static` StaticFiles 마운트 + public_router include. OG 이미지 1200×630 2파일 `app/static/og/` 배치(Dockerfile `COPY app/`로 이미지에 자동 포함).
+- **패치 이력**: 1차 배포 후 오케스트레이터 검증에서 **HEAD 405** 발견(카카오 스크래퍼 프리플라이트 대비) → `api_route(GET, HEAD)`로 패치, **배포 2회**로 해결.
+- **검증 전건 통과**: `/invite/{유효코드}` GET/HEAD 200 HTML, og 이미지 200, 무효코드 404 HTML+CTA, 기존 `GET /api/referral/invite/{code}` JSON 무회귀. 앱 공유 문구·URL은 무변경(요구 충족 — 링크 자체가 카드+랜딩으로 개선).
+
+**(D) 답변 전달 완료**: "세 버튼 모두 초대 문구+링크의 텍스트 공유(OS 공유 시트)이며, 영상·음악을 인스타/페북에 올리는 기능이 아님. 인스타는 텍스트 링크 공유 수용이 제한적(DM 정도)이라 체감 어색할 수 있음 — '공유하기' 단일 버튼 통합 또는 스토리 이미지 공유 연동은 차기 개선 후보."
+
+### 테스트 결과 (tester)
+- unit 6/7 + api 3/3 + e2e 정적 대체 PASS. **U-6만 조건부 FAIL** — 원인은 본건 3파일이 아니라 **스코프 외 정체불명 변경 2건**(App.tsx lineHeight 1줄, ChartScreen 기본탭 'new' 1줄 — 출처 불명, 어느 에이전트도 미보고) → 오케스트레이터가 **revert 처리**(요청되지 않은 변경의 미검증 반입 거부 원칙), revert 후 tsc 재확인 0건.
+- **실기기 잔여 5건 (배포 전 확인)**: ① 자동로그인 APK 콜드 스타트 → 미니 미노출, 곡 재생 후 노출 ② BT 전환 실패(sound null) 상황 미니 유지+재생버튼 1탭 복구(v3.197 무회귀) ③ 담기 시트 키보드 열고 닫기 반복(뒤로가기/빈곳 탭) → 간격 0·입력창 가림 없음(v3.196 무회귀, iOS 무변경 확인) ④ 실기기 카톡 공유 → 이미지 카드 렌더·랜딩→Play 스토어 이동·코드 복사(Android Chrome/iOS Safari) ⑤ 로그아웃→타계정 로그인 → 미니 미노출.
+
+### 특이사항
+- **사용자 액션 잔여 1건**: 카카오가 기존 404 응답을 스크랩 캐시했을 수 있음 — https://developers.kakao.com/tool/debugger/sharing 에서 해당 URL **캐시 초기화** 후 카톡 재공유로 카드 확인 필요.
+- 스코프 외 변경 2건 revert는 편차가 아니라 방어 조치로 기록 — 필요 시 별도 요청으로 재반입.
+- 초대 랜딩의 추천코드는 표시·복사까지만(가입 화면 수동 입력, 현행 유지) — 딥링크로 코드 자동 전달은 범위 밖 차기 후보.
+- 민감정보 미기록: 랜딩 노출 값은 닉네임·추천코드뿐(escape 처리), 토큰/개인정보·서버 크리덴셜 없음.
+
+### 판정: **승인** (커밋 가능 — 실기기 잔여 5건은 배포 전 확인 조건, 카카오 캐시 초기화는 사용자 액션)
+- 커밋 메시지 제안:
+  `fix: v3.198 미니플레이어 시작 시 노출 차단(sessionActive)·담기 시트 Android 키보드 간격 잔존 수정(수동 패딩) + 초대 링크 HTML 랜딩/OG 카드(서버 GET·HEAD /invite)·Play 스토어 CTA (team-dev)`
+- 스테이징 3파일(2_housing/ 기준): stores/playerStore.ts, components/MiniPlayer.tsx, components/PlaylistPickerSheet.tsx + 산출물(PLAN/REPORT/TESTPLAN) — revert된 App.tsx·ChartScreen 등 무관 파일 제외할 것.

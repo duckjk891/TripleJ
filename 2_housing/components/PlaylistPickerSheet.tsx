@@ -1,7 +1,7 @@
 // [PlaylistPickerSheet] 곡(들)을 플레이리스트에 담는 바텀시트 — 기존 목록 선택 또는 새로 만들어 담기.
 // 단일 곡·여러 곡(검색 결과 전체 담기) 모두 지원. trackIds 길이에 따라 문구만 달라진다.
 import { useEffect, useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Keyboard, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
@@ -20,7 +20,22 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
+  // v3.198: Android 키보드 수동 패딩 — v3.196 양플랫폼 KAV가 Android(edge-to-edge Modal)에서
+  // 키보드를 닫아도 제스처 바 높이만큼 padding 잔차를 남기는 문제 → KAV는 iOS 전용으로 되돌리고,
+  // Android는 keyboardDidShow/Hide로 직접 계산(hide 시 무조건 0 리셋이라 잔존 간격이 구조적으로 불가).
+  // show 시 insets.bottom을 빼 시트 자체 paddingBottom과의 이중 계상도 해소.
+  const [kbPad, setKbPad] = useState(0);
   const many = trackIds.length > 1;
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !visible) { setKbPad(0); return; }
+    // v3.197 U-7 교훈: 리스너는 반드시 등록/해제 쌍으로 — visible false·언마운트 시 해제 + 패딩 리셋
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKbPad(Math.max(0, e.endCoordinates.height - insets.bottom));
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKbPad(0));
+    return () => { showSub.remove(); hideSub.remove(); setKbPad(0); };
+  }, [visible, insets.bottom]);
 
   useEffect(() => {
     if (!visible) return;
@@ -84,11 +99,13 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      {/* v3.196: Modal 내부는 Android adjustResize 미보장 → 양 플랫폼 공통 "padding"으로 키보드 가림 해소(기존 iOS 전용에서 확장) */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
+      {/* v3.196→v3.198: KAV는 iOS 전용으로 복귀 — Android는 위 keyboardDidShow/Hide 수동 패딩(kbPad)이 담당
+          (Android KAV padding이 키보드 닫힘 후 잔존 간격을 남기는 문제 해소, 키보드 가림 해소 목적은 유지) */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
-        {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
-        <TouchableOpacity style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]} activeOpacity={1} onPress={() => {}}>
+        {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴)
+            v3.198: + kbPad(Android 키보드 열림 중에만 >0, iOS는 항상 0 — KAV가 담당) */}
+        <TouchableOpacity style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl + kbPad }]} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>
             {many ? `${trackIds.length}곡을 플레이리스트에 담기` : '플레이리스트에 담기'}
           </AppText>

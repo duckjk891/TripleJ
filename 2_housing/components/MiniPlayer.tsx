@@ -15,13 +15,20 @@ export default function MiniPlayer() {
   // v3.197: sound/setIsPlaying 직접 사용 제거 — togglePlay가 getState()로 라이브 참조를 검사하고,
   // 재생 상태는 상태 콜백이 store에 반영한다(낙관적 토글 제거).
   const { track, isPlaying, position, duration, cleanup, queue, currentIndex, playTrackAtIndex, isPlayerScreenOpen } = usePlayerStore();
+  // v3.198: 사운드 객체 직접 구독 금지(v3.197) — 존재 여부만 불리언 셀렉터로 구독(리렌더 소음 방지)
+  const hasSound = usePlayerStore((s) => !!s.sound);
+  const sessionActive = usePlayerStore((s) => s.sessionActive);
 
   // Player 화면이 열려있으면 숨김
   if (isPlayerScreenOpen) return null;
 
-  // v3.197: sound 조건 제거 — 전환 실패로 사운드가 정리(null)돼도 미니플레이어를 유지해
-  // "재생버튼 1탭" 복구 경로를 남긴다(track까지 없으면 숨김 — cleanup 후와 동일).
-  if (!track) return null;
+  // v3.197→v3.198: 전환 실패로 사운드가 정리(null)돼도 이번 세션에 재생한 적 있으면(sessionActive)
+  // 미니를 유지해 "재생버튼 1탭" 복구 경로를 보존한다. 반면 로그인 복원 큐(track만 있고
+  // 재생한 적 없음 — sound null + sessionActive false)는 앱 시작부터 미니가 뜨지 않게 숨긴다.
+  if (!track || (!hasSound && !sessionActive)) {
+    if (__DEV__ && track) console.info('[MiniPlayer] restored queue hidden — 재생 전 복원 큐(세션 미시작)');
+    return null;
+  }
 
   // v3.197: 재생버튼 견고화 — getStatusAsync로 isLoaded 확인, 죽은/부재 객체면 현재 곡
   // 재로드(loadAndPlayTrack 내부에서 applyPlaybackAudioMode 재호출)로 복구.

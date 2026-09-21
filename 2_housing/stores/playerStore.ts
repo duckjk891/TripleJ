@@ -24,6 +24,11 @@ interface PlayerState {
   guestNoticeAck: boolean;
   /** v3.82: 미니플레이어 UI 숨김(렌더만 제어 — 오디오 재생은 유지). ArtistResult 등 화면별 focus/blur로 토글. 비영속. */
   miniHidden: boolean;
+  /** v3.198: 이번 앱 세션에서 실제 재생을 시작한 적이 있는지(비영속, partialize 화이트리스트라 자동 제외).
+   *  setSound(truthy)에서 true — 재생 시작점이 여러 곳(playback.ts·PlayerScreen 등)에 분산돼 있어 setter 한 곳에서 건다.
+   *  resetOnLogout·restoreQueueFor(복원)·cleanup에서 false. MiniPlayer가 "로그인 복원 큐(track만 있고 재생한 적 없음)"를
+   *  숨기면서도, 세션 중 sound가 null이 된 경우(v3.197 BT 전환 실패 복구 경로)는 유지하기 위한 플래그. */
+  sessionActive: boolean;
   setMiniHidden: (v: boolean) => void;
   setSound: (sound: Audio.Sound | null) => void;
   setTrack: (track: any | null) => void;
@@ -77,9 +82,12 @@ export const usePlayerStore = create<PlayerState>()(
       savedQueues: {},
       guestNoticeAck: false,
       miniHidden: false,
+      sessionActive: false,
       shuffle: false,
       repeat: 'off' as RepeatMode,
-      setSound: (sound) => set({ sound }),
+      // v3.198: sound가 truthy면 이번 세션에 재생을 시작한 것 — sessionActive를 setter 한 곳에서 일괄 마킹.
+      // (null 세팅은 전환/정리 중일 수 있으므로 플래그를 내리지 않는다 — v3.197 재생버튼 1탭 복구 경로 보존)
+      setSound: (sound) => set(sound ? { sound, sessionActive: true } : { sound }),
       setTrack: (track) => set({ track }),
       setIsPlaying: (isPlaying) => set({ isPlaying }),
       setPosition: (position) => set({ position }),
@@ -127,6 +135,7 @@ export const usePlayerStore = create<PlayerState>()(
           sound: null, track: null, isPlaying: false, position: 0, duration: 0,
           // guestNoticeAck은 유지 — 한 번 확인한 안내를 로그아웃했다고 다시 띄우지 않는다
           queue: [], currentIndex: -1, queueOwnerId: null,
+          sessionActive: false, // v3.198: 다음 로그인의 복원 큐가 미니로 뜨지 않도록 리셋
         });
       },
       claimQueue: (userId) => {
@@ -148,6 +157,7 @@ export const usePlayerStore = create<PlayerState>()(
             track: saved.track ?? null,
             queueOwnerId: userId,
             isPlaying: false, position: 0, duration: 0,
+            sessionActive: false, // v3.198: 복원 큐는 재생 전까지 미니플레이어 미노출
           });
           return true;
         }
@@ -202,7 +212,8 @@ export const usePlayerStore = create<PlayerState>()(
         if (sound) {
           try { await sound.unloadAsync(); } catch {}
         }
-        set({ sound: null, track: null, isPlaying: false, position: 0, duration: 0 });
+        // v3.198: sessionActive도 리셋 — track이 null이라 미니는 어차피 숨지만 일관성 유지(무해)
+        set({ sound: null, track: null, isPlaying: false, position: 0, duration: 0, sessionActive: false });
       },
     });
     },

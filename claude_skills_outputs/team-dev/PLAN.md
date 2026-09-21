@@ -2920,3 +2920,179 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 
 ### 6. 기록
 - PLAN.md v3.197 append 완료 (본 섹션). 코드 수정 없음 — app-dev 착수 대기.
+
+## v3.198 — 2026-09-21 — 미니플레이어 시작 시 노출 + 담기 시트 키보드 닫힘 후 간격 잔존 + 카카오 초대 링크 랜딩/OG 카드 + 인스타·페북 버튼 동작 답변
+
+> 사용자 원본 요청: "APK — ① 앱 첫 접속부터 하단 미니 플레이어가 보인 채 시작 ② 플레이리스트에 담기에서 텍스트창을 열었다 닫으면 하단 UI가 살짝 간격이 생긴 채 떠 있음 ③ 카카오 공유 링크(https://api.maidol.ai.kr/invite/7VFU) 클릭 시 어디로 연동? 플레이스토어 링크로 연동 + 카톡 메시지를 이미지 있는 예쁜 카드로 ④ 인스타그램/페이스북 공유 버튼은 공유인가, 내가 영상·음악을 올리는 기능인가?"
+> 환경: RN(Expo SDK 54) + FastAPI(EC2, 소스 /home/ubuntu/maidol/backend_9004 → docker 컨테이너 maidol-app :9006, nginx api.maidol.ai.kr→127.0.0.1:9006). 코드 수정 금지 — 본 문서는 계획만.
+
+### 1. 이슈 A — 앱 시작부터 미니플레이어 노출 (원인 확정)
+
+**원인 체인 (파일:라인 확인 완료)**
+1. 앱 부팅: `App.tsx:510` `restoreSession()` → 저장 토큰 유효 시 `authStore.ts:91` `loginWithToken` 성공 → `usePlayerStore.getState().restoreQueueFor(userId)` 호출.
+2. `stores/playerStore.ts:140-152` `restoreQueueFor` — 보관함(savedQueues)에 그 계정 큐가 있으면 `track: saved.track`(:148)까지 복원(일시정지 상태, `isPlaying:false, sound:null`).
+3. `components/MiniPlayer.tsx:24` — v3.197에서 렌더 조건을 `!track || !sound` → **`if (!track) return null;`** 로 완화(전환 실패로 sound가 null이어도 "재생버튼 1탭" 복구 경로 유지 목적, MiniPlayer.tsx:22-23 주석). 부수효과로 **로그인 복원 큐의 track만 있어도(재생한 적 없어도) 미니가 뜬다** → APK 자동로그인 사용자는 앱 켜자마자 일시정지 미니 노출. 사용자 보고와 정확히 일치.
+
+**수정 방안 — `sessionActive` 플래그 (v3.197 복구 경로 보존이 제약)**
+- `stores/playerStore.ts`: 비영속 상태 `sessionActive: boolean`(초기 false, partialize 제외 — 현행 partialize(:217-222)가 화이트리스트라 추가 작업 없음) 신설.
+  - **set true**: `setSound(sound)`(:82)에서 `sound`가 truthy일 때 — 재생 시작점이 3곳(playback.ts:268·306, PlayerScreen.tsx:431·476·520·578 등)에 분산돼 있으므로 각 호출부가 아니라 **스토어 setter 한 곳**에서 걸어야 누락이 없다: `setSound: (sound) => set(sound ? { sound, sessionActive: true } : { sound })`.
+  - **set false(리셋)**: `resetOnLogout`(:126-130)과 `restoreQueueFor`(:145-151)의 set에 `sessionActive: false` 추가. `cleanup`(:205)은 track도 null이라 미니가 어차피 숨음 — 리셋 불필요하나 일관성 위해 넣어도 무해.
+- `components/MiniPlayer.tsx:24`: `const hasSound = usePlayerStore((s) => !!s.sound);` + `sessionActive` 구독 후 조건을 **`if (!track || (!hasSound && !sessionActive)) return null;`** 로.
+  - 시나리오 검증: ① 앱 시작 복원 큐 = track만, sound null, sessionActive false → **숨김(수정 목표 달성)** ② BT 전환 실패로 sound가 정리(null)돼도 이번 세션에 재생한 적 있음(sessionActive true) → **미니 유지 + 재생버튼 1탭 복구(v3.197 보존)** ③ cleanup 후 track null → 숨김(현행 동일) ④ 로그아웃→다른 계정 로그인: resetOnLogout+restoreQueueFor 양쪽에서 리셋 → 숨김.
+- 주의: v3.197이 MiniPlayer에서 sound 직접 구독을 제거했으므로(MiniPlayer.tsx:15 주석) `!!s.sound` **불리언 셀렉터**로만 구독할 것(사운드 객체 구독 금지 — 리렌더 소음 방지). 복원 큐를 미니 없이 재생 시작하는 경로(MyMusic 등 곡 탭)는 playTrackNow→setSound로 자연히 sessionActive true가 된다.
+
+### 2. 이슈 B — 담기 시트 키보드 닫은 뒤 하단 간격 잔존 (원인 규명)
+
+**현황**: `components/PlaylistPickerSheet.tsx:88` — v3.196에서 KAV를 **양플랫폼 `behavior="padding"`** 으로 확장한 유일한 지점(커밋 메시지 "담기 시트 KAV 양플랫폼"과 일치). 나머지 v3.196 적용처는 전부 iOS 전용이라 이 버그와 무관: ReportModal.tsx:77, AppealModal.tsx:95, AlbumCreateModal.tsx:90, DmChatScreen.tsx:158 모두 `behavior={Platform.OS === 'ios' ? 'padding' : undefined}` — **영향 평가: 확산 없음, 수정 범위는 담기 시트 1곳**.
+
+**메커니즘(추정 — Android 한정)**: RN KAV는 Android에서 `keyboardDidShow/DidHide` 이벤트의 endCoordinates로 `상대 키보드 높이 = 뷰 프레임 bottom − keyboard.screenY`를 계산해 paddingBottom을 준다. SDK 54(Android edge-to-edge 강제) 환경의 Modal 별도 window에서는 ① 키보드가 닫힐 때 마지막 프레임 계산에 제스처 내비 바 높이만큼 잔차가 남거나 ② hide 이벤트 순서 문제로 padding이 0으로 완전 복원되지 않는 기지의 RN 이슈가 있다 — "살짝 간격(≈제스처 바 높이)"이라는 증상·재현 절차(열었다 닫기)와 정합. 또한 열려 있는 동안에도 시트 자체 `paddingBottom: insets.bottom + spacing.xl`(:91)과 KAV 키보드 높이가 **인셋을 이중 계상**한다.
+
+**수정 방안 (권장: Android 수동 패딩, iOS 현행 유지)**
+- `PlaylistPickerSheet.tsx`: KAV `behavior`를 iOS 전용으로 되돌리고(`Platform.OS === 'ios' ? 'padding' : undefined`), Android는 `Keyboard.addListener('keyboardDidShow', e => setKbPad(Math.max(0, e.endCoordinates.height - insets.bottom)))` / `'keyboardDidHide', () => setKbPad(0)` 로 시트 컨테이너에 `paddingBottom: insets.bottom + spacing.xl + kbPad` 직접 부여(visible false 시·언마운트 시 리스너 해제 + kbPad 0 리셋).
+  - hide 시 **무조건 0으로 리셋**하므로 잔존 간격이 구조적으로 불가능하고, show 시 `- insets.bottom` 보정으로 이중 계상도 해소. v3.196의 목적(Android Modal 키보드 가림 해소)은 유지.
+- 대안(차선): KAV 유지 + `keyboardVerticalOffset={-insets.bottom}` — 잔존 버그 자체가 KAV 내부 계산에 있어 재발 위험, 비권장.
+- 회귀 확인: 이 시트는 v3.193에서 담기 흐름에 진입점이 늘었으므로(TrackActionSheet→담기) 두 진입 경로 모두에서 테스트.
+
+### 3. 이슈 C — 초대 링크 랜딩 + 카톡 OG 카드 (서버 확인 완료 → backend-dev 설계)
+
+**현재 동작 (확정)**
+- 공유 문구의 링크: `components/AppShareModal.tsx:50` `${BACKEND_BASE_URL}/invite/${code}` (BACKEND_BASE_URL = https://api.maidol.ai.kr, services/api.ts:5).
+- 서버에는 **루트 `/invite/{code}` 라우트가 없다**. 있는 것은 `app/routes/referral.py:43-58` `GET /api/referral/invite/{code}`(JSON 데이터, 무인증)뿐. 실측: `curl https://api.maidol.ai.kr/invite/7VFU` → **404 `{"detail":"Not Found"}`** — 즉 현재 카톡 링크를 누르면 브라우저에 JSON 404가 뜬다(사용자 질문에 대한 답).
+- 보상 로직은 이미 완비: 가입 시 추천코드 입력 → `app/routes/auth.py:268-284` inviter/joiner 각 ⭐50(`referral_inviter`/`referral_joiner`, day="-" 영구 1회 멱등) + 가입 보너스 ⭐50(:258-263). **랜딩은 코드 노출·복사와 스토어 유도만 하면 됨** — 딥링크로 코드를 앱에 전달하는 기능은 이번 범위 밖(가입 화면에서 수동 입력, 현행 유지).
+- play_store_url 기존재: `app/config.py:170` `https://play.google.com/store/apps/details?id=com.maidol.app` (referral.py:39·57 응답에 이미 포함).
+- 인프라: nginx api.maidol.ai.kr → 127.0.0.1:9006 = docker 컨테이너 maidol-app(Dockerfile:150 `COPY app/ ./app/`, :203 uvicorn :9006). **app/ 아래에 정적 파일을 두면 이미지 빌드에 자동 포함**. 참고: /home/ubuntu/maidol/backend_9004/restart_9004.sh는 9004 직접 기동용 구스크립트 — 실서비스는 9006 컨테이너.
+
+**설계 — 루트 초대 랜딩 페이지 (backend-dev 코드 초안 수준)**
+1. **OG 이미지 준비**: 앱 저장소에 1200×630 정확 규격 이미지 기존재 — `/Users/pearl/TripleJ/2_housing/assets/og/beta-event-og.png`. 이를 서버 소스 `app/static/og/invite_og.png` 로 복사(신규 디렉터리). 보조 후보: assets/branding/maidol_logo.png(256×271, 페이지 내 로고용), 서버 app/assets/watermark_logo.png.
+2. **정적 마운트**: `app/main.py` admin_static 마운트(:864-868) 옆에
+   `app.mount('/static', StaticFiles(directory=os.path.join(os.path.dirname(__file__), 'static')), name='static')` (디렉터리 존재 가드 동일 패턴).
+3. **라우트**: `app/routes/referral.py`에 프리픽스 없는 별도 라우터 추가 —
+   ```python
+   public_router = APIRouter()  # 루트 — 카톡/브라우저 사람용 랜딩
+
+   @public_router.get("/invite/{code}", response_class=HTMLResponse)
+   async def invite_landing(code: str, conn=Depends(get_pg)):
+       row = await resolve_referrer(conn, code)   # 기존 재사용(무효 코드 → None)
+       nickname = html.escape(row["nickname"]) if row else None
+       ok = row is not None
+       # ok=False여도 200/404 HTML + 스토어 버튼은 항상 노출(공유 링크가 죽은 경험 방지)
+       return HTMLResponse(status_code=200 if ok else 404, content=_render_invite_html(
+           code=html.escape(code) if ok else None, nickname=nickname,
+           store_url=settings.play_store_url))
+   ```
+   `app/main.py:754` 부근에 `app.include_router(referral.public_router)` 추가. (Starlette은 GET 라우트에 HEAD 자동 대응 — 카카오 스크래퍼 HEAD 프리플라이트 OK.)
+4. **HTML 구성**(`_render_invite_html`, f-string 인라인 템플릿 — 별도 템플릿 엔진 불요):
+   - `<head>`: `<meta property="og:title" content="MAIDOL 초대장 — {nickname}님의 초대">`, `og:description "베타 테스트 기간 가입 시 스타 50 추가 증정! 추천코드 {code}"`, **`og:image "https://api.maidol.ai.kr/static/og/invite_og.png"`(절대 URL 필수)** + `og:image:width 1200`/`og:image:height 630`, `og:url`(자기 자신), `twitter:card summary_large_image`, `<meta name="viewport" ...>`. → **카톡이 이 링크를 이미지 카드로 자동 렌더**(문구·og만으로 충분, Kakao SDK 템플릿 불요 — 앱 공유 코드는 무변경).
+   - `<body>`(모바일 다크, 앱 톤): MAIDOL 로고/워드마크 → "{nickname}님이 MAIDOL에 초대했어요" → 추천코드 대형 표기 + [코드 복사] 버튼(`navigator.clipboard` + execCommand 폴백) → 보상 안내("추천코드로 가입하면 두 사람 모두 ⭐50 · 베타 기간 가입만 해도 ⭐50 추가") → **주 CTA [Google Play에서 다운로드] = settings.play_store_url** → 보조 링크 "이미 설치했다면 열기" `href="aidol://"`(app.json:5 scheme, best-effort). 무효 코드면 코드 영역 대신 "유효하지 않은 초대코드" + 스토어 CTA 유지.
+5. **배포·검증**: 소스 수정 → docker build → 컨테이너 교체(오케스트레이터 기존 절차). 검증: ① `curl -I https://api.maidol.ai.kr/invite/7VFU` 200/HTML ② `curl https://api.maidol.ai.kr/static/og/invite_og.png` 200 ③ 무효코드 404 HTML ④ **카카오 OG 캐시**: 기존 404가 스크랩 캐시됐을 수 있음 — https://developers.kakao.com/tool/debugger/sharing 에서 캐시 초기화 후 실기기 카톡 공유로 카드 확인.
+- **앱 쪽 변경 없음**: shareTextBase/Full(AppShareModal.tsx:53-54) 문구·URL 그대로 — 링크가 카드+랜딩으로 예뻐지는 것으로 요구 충족. (선택 사항으로도 문구 수정 불요.)
+
+### 4. 이슈 D — 인스타그램/페이스북 버튼 동작 (분석·답변만, 코드 무변경)
+
+- `components/AppShareModal.tsx:66-74` `handleShare`: 카카오톡/인스타그램/페이스북 세 버튼 **모두 동일하게** RN `Share.share({ message: shareTextFull })` — OS **네이티브 공유 시트**를 띄우는 것뿐이고 target 값은 로그에만 쓰임(:67). 인스타/페북 API 연동·스토리 업로드·영상/음악 업로드 기능이 아니다.
+- **사용자 전달용 답변**: "세 버튼은 전부 '초대 문구+링크를 텍스트로 공유'하는 기능입니다. 누르면 폰의 공유 시트가 뜨고 거기서 앱을 고르는 방식이라, 인스타그램은 텍스트 링크 공유를 잘 받지 않아(DM 정도만 가능) 체감상 어색할 수 있습니다. 영상·음악을 인스타/페북에 올려주는 기능이 아닙니다. 참고로 곡 영상 공유는 별도의 TrackShareDownloadSheet 흐름이 담당합니다. 추후 개선 옵션: 세 버튼을 '공유하기' 단일 버튼으로 통합하거나, 인스타 스토리 공유(이미지 스티커) 같은 진짜 SNS 연동은 별도 과제로."
+
+### 5. 작업 지시
+
+**app-dev (A·B — 2_housing)**
+1. `stores/playerStore.ts`: `sessionActive` 비영속 플래그 신설 — setSound(truthy)에서 true, resetOnLogout/restoreQueueFor(+cleanup)에서 false. partialize 무변경(화이트리스트라 자동 제외).
+2. `components/MiniPlayer.tsx:24`: 렌더 조건 `if (!track || (!hasSound && !sessionActive)) return null;` — `!!s.sound` 불리언 셀렉터 구독, v3.197 주석 갱신(복구 경로 보존 명시).
+3. `components/PlaylistPickerSheet.tsx`: KAV behavior iOS 전용 복귀 + Android `keyboardDidShow/Hide` 수동 패딩(`max(0, kbHeight - insets.bottom)`, hide 시 0 강제 리셋, visible/언마운트 시 리스너 해제). 다른 KAV 4곳(Report/Appeal/AlbumCreate/DmChat)은 iOS 전용이므로 손대지 않는다.
+4. app.json 버전 v3.198 갱신(기존 관례).
+
+**backend-dev (C — maidol-ec2 backend_9004, 랜딩 코드 초안은 §3 참조)**
+1. `/Users/pearl/TripleJ/2_housing/assets/og/beta-event-og.png` → 서버 소스 `app/static/og/invite_og.png` 반입.
+2. `app/main.py`: `/static` StaticFiles 마운트 + `referral.public_router` include.
+3. `app/routes/referral.py`: `public_router` + `GET /invite/{code}` HTML 랜딩(§3-3·4 초안대로 — OG 태그·코드 복사·Play 스토어 CTA·무효코드 404 HTML). XSS 방지 `html.escape` 필수.
+4. 배포는 오케스트레이터 기존 절차(docker build→컨테이너 교체, :9006) — 배포 후 §3-5 검증 4종 + 카카오 스크랩 캐시 초기화.
+
+**test-designer (v3.191~197 무회귀 포함)**
+- A: ① 자동로그인 APK 콜드 스타트 → 미니 미노출 ② 곡 재생 → 미니 노출 → BT 전환 실패 상황(sound null)에서도 미니 유지+재생버튼 1탭 복구(v3.197 회귀) ③ 로그아웃→재로그인 → 미니 미노출 ④ 미니 닫기(cleanup) 후 미노출.
+- B: 담기 시트에서 입력창 포커스→키보드 닫기(뒤로가기/빈곳 탭 각각) 반복 → 하단 간격 0, 키보드 열림 중 입력창 가림 없음(v3.196 회귀), 제스처 바 겹침 없음(v3.191/196 회귀). iOS 동작 무변경. Report/Appeal/AlbumCreate 모달 키보드 동작 스팟 체크.
+- C: 유효/무효 코드 랜딩 200/404, OG 카드 실기기 카톡 렌더, Play 스토어 버튼 이동, 코드 복사 동작(Android Chrome/iOS Safari), 기존 `GET /api/referral/my-code`·가입 보상 플로우 무회귀.
+- 공통: v3.192 duration·v3.193 담기 흐름·v3.194 소셜 로그인 복귀·v3.197 다음곡 프리로드 스팟 회귀.
+
+### 6. 기록
+- PLAN.md v3.198 append 완료 (본 섹션). 코드 수정 없음 — app-dev/backend-dev 착수 대기.
+
+---
+
+## v3.199 (2026-09-21) — 작업실 UX 4종: 기획사 이니셜 아바타(A) · 디렉터 대화 뒤로가기(B) · 엔터명 마퀴(C) · 선택값 편집 아이콘(D)
+
+### 0. 범위·전제
+- 대상: `/Users/pearl/TripleJ/2_housing` (RN Expo SDK 54). 백엔드 무변경.
+- v3.198 사이클 미커밋 파일(`stores/playerStore.ts`, `components/MiniPlayer.tsx`, `components/PlaylistPickerSheet.tsx`)과 **무접점** — 본 건 대상 파일과 겹치지 않으므로 병행 안전. app-dev는 위 3파일을 건드리지 말 것.
+- 이모지 금지 방침 준수: 아이콘은 Feather 벡터, 이니셜은 텍스트 콘텐츠(허용).
+
+### 1. 이슈 A — 기획사 프로필 이니셜 아바타 + 배경색
+
+**현황(파일:라인)**
+- 공용 `components/ui/Avatar.tsx`가 이미 표준: 이미지 없으면 **첫 글자 이니셜**(:33) + **seed 해시 기반 8색 팔레트** 배경(FALLBACK_PALETTE :17-20, seedColor :22-27, v3.181). 같은 계정은 항상 같은 색(결정적).
+- Avatar 정상 적용처: DmChatScreen:164, DmInboxScreen:145·242, TrackComments:128·171, FeedCard:325, UserChannelScreen:238 — 모두 이니셜+색 폴백 동작.
+- **구멍 1 (사용자가 본 "빈 기본값" 유력 지점)**: `screens/AgencyProfileScreen.tsx:153-171` profileBox — 아바타/이미지 요소가 아예 없음(기획사명 텍스트+지표만). PlayerScreen:1028-1029에서 구형 곡(uploader_id 없음) 기획사 탭 시 진입하는 화면.
+- **구멍 2**: `screens/SettingsScreen.tsx:463-470` — 이니셜(nickname[0])은 있으나 배경이 고정 accent 단색(avatarCircle :938-946). 팔레트 규칙 미적용(Avatar 미사용 — 편집 배지·업로드 스피너 때문에 자체 구현).
+- 소소: UserChannelScreen:238 Avatar에 `seed` 미전달 → name 해시 폴백(색 다양성은 확보되나 닉네임 변경 시 색이 바뀜 — v3.181 취지와 어긋남).
+- 참고: 작업실 상단 헤더(MapScreen:267-282)·MyMusic 성장카드(:487)는 기획사 **이미지 요소 자체가 없는 텍스트 디자인** — A 범위 아님.
+
+**사용자 질문("배경 색상 다양하게 랜덤 맞지?")에 대한 답변(전달용)**
+"네, 다양하게 나옵니다 — 정확히는 매번 바뀌는 완전 랜덤이 아니라, 계정 id(또는 이름)를 해시해 8색 팔레트에서 고르는 방식이에요(v3.181). 그래서 사용자들끼리는 색이 다양하게 갈리되, **같은 기획사는 언제 어디서 봐도 항상 같은 색**입니다. 볼 때마다 색이 바뀌면 '내 기획사 색'이라는 식별성이 사라지고 목록 리렌더마다 색이 튀기 때문에, 랜덤처럼 다양하되 결정적인 지금 방식이 UX상 우월해서 그대로 유지합니다. 대신 이 규칙이 안 닿던 두 곳(기획사 프로필 폴백 화면 — 이미지가 아예 비어 있던 곳, 설정 아바타 — 색이 보라 단색 고정이던 곳)을 이번에 같은 규칙으로 통일합니다."
+
+**수정 방안**
+1. `AgencyProfileScreen.tsx` profileBox 상단(companyLabel 위, 중앙)에 `<Avatar name={uploaderNickname} seed={uploaderId || uploaderNickname} size={64} />` 추가 — 이 화면은 이미지 데이터 자체가 없으므로 이니셜 아바타가 곧 기본값. 신규 컴포넌트 불요(Avatar 재사용).
+2. `components/ui/Avatar.tsx`의 `seedColor`를 named export로 승격 → `SettingsScreen.tsx` avatarCircle 폴백 배경을 `seedColor(user.id, user.nickname)`로 교체(이미지 있으면 기존대로). 편집 배지/스피너 구조 보존을 위해 컴포넌트 통째 교체 대신 색 함수만 재사용.
+3. UserChannelScreen:238에 `seed={authorId}` 전달(1줄).
+
+### 2. 이슈 B — 디렉터 대화 중 상단 뒤로가기 아이콘
+
+**현황**
+- 대화는 별도 스크린 `StudioStack > Dialogue` (App.tsx:180-187, `transparentModal`+fade). 스택 레벨 헤더는 없음(App.tsx:174 headerShown:false).
+- 단, Studio **탭 헤더**(titleHeader App.tsx:374-381, MapScreen:261-287이 setOptions로 기획사명+ⓘ 타이틀을 덮음)는 대화 중에도 상단에 그대로 떠 있음 — 그런데 좌측 back 요소가 없음(headerLeft: undefined :283, 우측은 HomeHeaderActions).
+- 현재 복귀 수단: 대화 끝까지 탭(DialogueScreen:244 goBack) · Android HW back · 하단 작업실 탭 재탭 리셋(App.tsx:369-372)뿐 — 명시적 상단 UI 부재.
+
+**수정 방안**
+- `DialogueScreen.tsx`에 `useFocusEffect`로 부모 탭 헤더에 back 주입: `const parent = navigation.getParent(); parent?.setOptions({ headerLeft: () => <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginLeft: 12 }} accessibilityLabel="작업실로 돌아가기"><Feather name="arrow-left" size={22} color={colors.text.primary} /></TouchableOpacity> })` — 아이콘·마진·사이즈는 stackHeader 관행(App.tsx:293-298) 그대로.
+- **cleanup 필수**: blur/unmount 시 `parent?.setOptions({ headerLeft: undefined })` 복원. MapScreen useLayoutEffect는 deps 불변 시 재실행되지 않아, 미복원 시 Map 복귀 후에도 화살표가 잔존한다.
+- 화면 내 절대배치 오버레이 버튼 대안은 탭 헤더와 이중 상단바가 되므로 비권장.
+- **확장(포함, 동일 패턴)**: `LyricsInputScreen`·`ComposerInputScreen`도 같은 탭 헤더 아래 back 없음("디렉터와 이야기하는 중"의 연장) — 동일 useFocusEffect 패턴 적용. goBack만 수행(확인 팝업은 과설계; 두 화면의 chatHistory는 로컬 state라 이탈 시 초기화됨을 알고 있는 동작). 우선순위: Dialogue > 확장 2종.
+
+### 3. 이슈 C — 작업실 상단 엔터테인먼트 이름 폭 제한 + 마퀴
+
+**현황**
+- `screens/MapScreen.tsx:267-282` headerTitle: `user?.company_name`을 fontSize 17/700 Text `numberOfLines={1}`로 렌더 — **폭 제약 없음**. headerTitleAlign 'left', 우측 HomeHeaderActions(로그인 시 별 배지·출석·초대·알림·DM·마이페이지 6요소, 대략 220~260px). 긴 기획사명("○○○ 엔터테인먼트" 자동 접미까지, AuthPanel:29-33)이 우측 액션 영역을 침범/겹침.
+- 재사용 대상 `components/Marquee.tsx`(v3.192 ScrollView 측정판): 넘칠 때만 흐르고 짧으면 정적. 단 container가 `width:'100%'`(:82)라 **부모가 명시 폭을 줘야** 동작 — bottom-tabs headerTitle 컨테이너는 폭 제약이 느슨하므로 명시 maxWidth 필수.
+
+**수정 방안**
+- headerTitle 렌더를: `const { width: winW } = useWindowDimensions();` → `nameMaxWidth = winW - (user ? 260 : 150)` 근사(우측 액션+좌마진+ⓘ+gap 여유, 실기기 360dp에서 최소 90px 확보되게 하한 `Math.max(90, …)`).
+- `<View style={{ flexDirection:'row', alignItems:'center', gap:6 }}><View style={{ width: nameMaxWidth }}><Marquee text={user?.company_name || '작업실'} style={{ fontSize:17, fontWeight:'700', color: colors.text.primary }} /></View>{ⓘ 기존 그대로}</View>` — ⓘ는 마퀴 밖 고정(흐르는 텍스트와 분리, 항상 같은 자리에서 탭 가능). useLayoutEffect deps에 winW 추가.
+- Marquee 자체는 무수정(PlayerScreen 제목 등 공용 — v3.192 무회귀 유지).
+
+### 4. 이슈 D — 대화 선택값 편집(연필) 아이콘
+
+**현황**
+- 기준 패턴(이미 완성): `screens/VideoDirectorScreen.tsx:402-414` — user 버블 탭=해당 스텝 롤백 수정(handleEditChoice :138-141) + **`<Feather name="edit-2" size={11} color="rgba(255,255,255,0.7)" style={{marginLeft:6}}/>` 아이콘 표시(:411, v3.182)**.
+- `screens/LyricsInputScreen.tsx:304-322` — user 버블 탭 시 재선택 모달 **동작은 이미 있음**(handleReselect :188-192, handleReselectChoice :194-223, 모달 :402-419)이나 **아이콘 없음**. 어포던스는 안내 문구 한 줄(:278-282)뿐. 자유입력 스텝은 choices 없어 재선택 비대상(:189-190 no-op).
+- `screens/ComposerInputScreen.tsx:173-200` — user 버블이 plain View로 **탭 자체가 불가**, 수정 기능 부재. 사용자는 "선택하면 수정할 수 있잖아"로 인지 중 — 작곡 흐름에는 사실이 아니어서, 아이콘만 붙이면 거짓 어포던스가 된다 → 기능 이식이 전제.
+
+**수정 방안**
+1. **LyricsInput**: user 버블 텍스트 우측에 edit-2 아이콘(VideoDirector :411 스펙 동일). 노출 조건 `msg.type==='user' && msg.step!=null && STEPS[msg.step]?.choices?.length`(자유입력 답변엔 미표시 — 탭해도 무동작이므로). 버블 내부를 row 배치(텍스트+아이콘, alignItems center).
+2. **ComposerInput**: LyricsInput 재선택 패턴 이식 — ChatMessage에 `step` 기록(user push :111·:138), 버블 View→TouchableOpacity, handleReselect/handleReselectChoice(스텝 0 genre·1 mood·2 vocal만 — 3·4는 freeText라 제외) + 재선택 모달(LyricsInput :402-419·styles :561- 이식), 동일 아이콘·동일 노출 조건. 수정 시 로컬 state와 chatHistory 텍스트 동시 갱신 — 최종 프롬프트는 완료 시점 state로 조립(:118-123)되므로 정합.
+3. VideoDirector 무변경(기준).
+
+### 5. 작업 지시
+
+**app-dev (전부 2_housing, v3.199 주석 태깅 관례)**
+1. [A] `components/ui/Avatar.tsx` seedColor named export 승격 → `screens/SettingsScreen.tsx` 아바타 폴백 배경색 적용(:463-470·:938-946), `screens/AgencyProfileScreen.tsx` profileBox에 Avatar(64) 추가, `screens/UserChannelScreen.tsx:238` seed={authorId}.
+2. [B] `screens/DialogueScreen.tsx` useFocusEffect로 탭 헤더 headerLeft back 주입+blur 복원(§2 스펙). 이어 `LyricsInputScreen`·`ComposerInputScreen` 동일 패턴.
+3. [C] `screens/MapScreen.tsx:261-287` headerTitle에 winW 기반 maxWidth + Marquee 적용(§3 스펙, deps winW 추가). Marquee.tsx 무수정.
+4. [D] `screens/LyricsInputScreen.tsx` user 버블 edit-2 아이콘(조건부), `screens/ComposerInputScreen.tsx` 재선택 이식+아이콘(§4 스펙).
+5. 금지: v3.198 미커밋 3파일(playerStore/MiniPlayer/PlaylistPickerSheet) 및 backend 접촉 금지. 버전 표기는 커밋 메시지 관례(v3.199).
+
+**test-designer (v3.191~198 무회귀 포함)**
+- A: 이미지 미설정 계정 — ① 설정 아바타: 이니셜+팔레트색(고정 보라 아님), 앱 재실행에도 같은 색 ② 구형 곡(uploader_id 없음) Player→기획사 탭→AgencyProfile: 이니셜 아바타 노출 ③ UserChannel·피드·DM·댓글 아바타 색 계정별 상이+불변 ④ 이미지 설정 계정: 이미지 그대로(회귀) ⑤ 프로필 이미지 업로드/삭제(v3.92) 무회귀.
+- B: 디렉터 탭→대화 진입: 상단 좌측 화살표 노출→탭→Map 복귀. 복귀 후 헤더에 화살표 **잔존 없음**(cleanup). Android HW back 동일. 하단 작업실 탭 재탭 리셋 무회귀. 작사/작곡 입력 화면 back 동작.
+- C: 짧은 기획사명 정적 표시+ⓘ 탭 가능 / 20자+ 긴 이름에서 별 배지·우측 아이콘 침범 없음+텍스트 흐름 / 360dp 소형 기기 · 비로그인('작업실') 확인 / PlayerScreen 제목 마퀴 무회귀(v3.192·v3.159 center).
+- D: 작사 — 선택 답변 버블에만 연필 표시(자유입력 답변 미표시), 탭→재선택 모달→값·버블 갱신(v3.110 매핑 무회귀); 작곡 — 장르/분위기/보컬 수정 신규 동작+최종 프롬프트 반영, 자유입력 2종 비대상; 영상 디렉터 수정 흐름(v3.182) 무회귀.
+- 공통: v3.196 시트 키보드·v3.197 다음곡 전환·v3.198 미니플레이어 게이트(병행 사이클) 스팟 회귀.
+
+### 6. 기록
+- PLAN.md v3.199 append 완료 (본 섹션). 코드 수정 없음 — app-dev 착수 대기.

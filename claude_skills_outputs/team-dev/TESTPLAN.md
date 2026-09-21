@@ -1111,3 +1111,151 @@
 **집계**: PASS 15 / FAIL 1(U-7 ① — 국소 수정 후 재검 1건으로 해제) / N/A·이관 5(API-1, E-3~E-6). **게이트: 조건부 FAIL(머지 보류)** — U-7 ① 구독 해제 쌍 배선 후 U-7 단건 재검으로 PASS 전환 가능(그 외 안전 요구사항·핀 불변식·누수 대차대조표 전부 충족).
 
 **실기기 잔여(이관)**: ① E-3 화면꺼짐 연속재생 3회+(Android APK 로그인 상태 — v3.197 존재 이유, 최우선) ② E-4 **차량 테스트**: 차량 헤드유닛/BT 스피커 연결 후 화면꺼짐 연속 전환 + 주행 중 BT 끊김·전화 인터럽션 후 "재생버튼 1탭" 복구 확인(운전자 외 동승자가 조작할 것 — 자동 재재생 금지가 지켜지는지, 즉 통화 종료·복귀 시 **저절로 소리가 나지 않는지**를 특히 관찰) ③ E-5 비행기모드 전환 실패 유도→미니/풀 각각 1탭 복구(프리로드 선성공 시 곡 초반 스킵 직후로 재시도) ④ E-6 절전 기기(삼성/샤오미)에서 [BTDebug] 서버 도달 확인(실패해도 기록만) ⑤ E-1/E-2 프리로드 히트 실측(셔플 핀 곡 일치·재생바 리셋·record-play 곡당 1회) ⑥ API-1 출시 후 서버 로그 [BTDebug] 검색(오케스트레이터 소관).
+
+## v3.198 — 수정일 2026-09-21
+
+> 대상: PLAN.md v3.198 — (A) `stores/playerStore.ts` 비영속 `sessionActive` 플래그(setSound truthy에서 true, resetOnLogout·restoreQueueFor에서 false) + `components/MiniPlayer.tsx` 렌더 조건 `if (!track || (!hasSound && !sessionActive)) return null;`(불리언 셀렉터) — 로그인 복원 큐 미니 숨김과 v3.197 "재생버튼 1탭 복구" 양립. (B) `components/PlaylistPickerSheet.tsx` KAV behavior iOS 전용 복귀 + Android `keyboardDidShow/Hide` 수동 패딩(`max(0, kbHeight - insets.bottom)`, hide 시 0 강제 리셋, 리스너 등록/해제 쌍). (C) 백엔드(EC2 backend_9004) `GET /invite/{code}` HTML 랜딩 + `/static` StaticFiles 마운트 + OG 태그(og:image 1200×630 절대 URL) + Play 스토어 CTA + 무효 코드 404 HTML. (D) 인스타/페북 버튼 — **코드 무변경, 답변만**(AppShareModal.tsx:66-74 세 버튼 모두 RN Share.share 네이티브 시트 — 검증 대상은 "diff 0"뿐).
+> 실행 환경 관행(v3.191~197 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 정적 대체 병기 + 실기기 실측 이관. 앱 코드 경로 `/Users/pearl/TripleJ/2_housing`, 라인 번호는 **변경 전** PLAN 실측 기준(적용 후 이동 허용 — 앵커 문자열로 재탐색). 백엔드 [api]는 **배포 후 오케스트레이터가 curl로 실행**(tester는 EC2/배포 접근 금지 관행 — 본 문서는 명령·판정 기준만 제공).
+> 변경 허용 파일(격리 기준): 앱 = `stores/playerStore.ts`, `components/MiniPlayer.tsx`, `components/PlaylistPickerSheet.tsx`, `app.json`(버전 v3.198) 4개. 백엔드(EC2 소스, 로컬 워킹트리 diff 아님) = `app/main.py`, `app/routes/referral.py`, `app/static/og/*.png`(신규). **`components/AppShareModal.tsx`·`services/playback.ts`·`screens/PlayerScreen.tsx`·`App.tsx`·Report/Appeal/AlbumCreate/DmChat 4개 KAV 모달은 diff 0 필수.** 그 외 diff는 FAIL.
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.198 앱 변경(A·B)이 적용된 워킹트리.
+- When: `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. (sessionActive 상태 타입, Keyboard 리스너/EmitterSubscription 타입, kbPad state 타입이 전부 통과.)
+
+**U-2. sessionActive 플래그 배선 3점 + 비영속 보장 [unit]**
+- Given: PLAN §1 — 재생 시작점이 3곳+(playback.ts:268·306, PlayerScreen.tsx:431·476·520·578)에 분산 → 호출부가 아닌 **스토어 setter 한 곳**에서 걸어야 누락이 없다.
+- When: `grep -n "sessionActive" stores/playerStore.ts components/MiniPlayer.tsx` 후 3점 확인 —
+  - ① **set true**: `setSound`(변경 전 :82)가 `sound ? { sound, sessionActive: true } : { sound }` 형태 — **truthy일 때만** true(setSound(null) 정리 경로에서 true로 바뀌거나 false로 리셋되면 FAIL — 전자는 복원 큐 숨김 실패, 후자는 v3.197 복구 경로 소멸). setSound **호출부**(playback.ts/PlayerScreen)에 sessionActive 직접 set이 있으면 FAIL(단일 지점 원칙 위반).
+  - ② **set false**: `resetOnLogout`(:126-130)과 `restoreQueueFor`(:145-151)의 set 객체에 `sessionActive: false` 포함. restoreQueueFor는 **저장 큐가 없어 early-return하는 분기에서도** 리셋되는지 확인(계정 전환 시 이전 세션 플래그 잔존 방지 — resetOnLogout이 선행 커버하면 그 배선 확인으로 대체 판정). cleanup(:205)의 리셋은 선택(track null로 어차피 숨음 — 있으면 무해, 없어도 PASS).
+  - ③ **비영속**: partialize(변경 전 :217-222)가 화이트리스트 방식임을 확인하고 `sessionActive`가 목록에 **없는지**(영속되면 재기동 시 true 복원 → 수정 자체가 무효화되는 최악 회귀). 초기값 false.
+- Then: ①~③ 전부 충족.
+
+**U-3. MiniPlayer 렌더 조건식 — 숨김·복구 시나리오 양립 [unit]**
+- Given: 변경 전 `components/MiniPlayer.tsx:24` `if (!track) return null;`(v3.197에서 `!sound` 제거 — 복구 경로 확보의 대가로 복원 큐 미니가 노출된 것이 이번 버그).
+- When: ① 조건이 `if (!track || (!hasSound && !sessionActive)) return null;` 와 논리 동치인지, ② sound 구독이 `usePlayerStore((s) => !!s.sound)` **불리언 셀렉터**인지 — sound 객체 자체 구독(`(s) => s.sound`) 발견 시 FAIL(v3.197이 제거한 리렌더 소음 재도입, MiniPlayer.tsx:15 주석 취지 위반), ③ 진리표 4행 정적 추적:
+  - ⓐ track만(복원 큐: sound null, sessionActive false) → **숨김**(수정 목표)
+  - ⓑ 세션 중 전환 실패(track 有, sound null, sessionActive true) → **노출 유지**(v3.197 복구 보존 — 이 행이 깨지면 즉시 FAIL)
+  - ⓒ 재생 중(sound 有) → 노출(sessionActive 값 무관)
+  - ⓓ cleanup 후(track null) → 숨김
+  ④ v3.197 주석(:22-23) 갱신 — 복구 경로 보존 의도 명시(주석 미갱신은 기록만, FAIL 아님).
+- Then: ①~③ 충족(③은 4행 전부).
+
+**U-4. PlaylistPickerSheet Android 수동 패딩 — 리스너 쌍·0 리셋 [unit]**
+- Given: 변경 전 `components/PlaylistPickerSheet.tsx:88` KAV 양플랫폼 `behavior="padding"`(v3.196) — Android Modal에서 hide 후 패딩 잔차 + 시트 자체 `paddingBottom: insets.bottom + spacing.xl`(:91)과 이중 계상.
+- When: ① `Keyboard.addListener('keyboardDidShow', ...)` 핸들러가 `Math.max(0, e.endCoordinates.height - insets.bottom)` 로 kbPad set(음수 방지 max(0,·) 필수 — 없으면 인셋 큰 기기에서 음수 패딩 FAIL), ② `'keyboardDidHide'` 핸들러가 **무조건 `setKbPad(0)`**(조건부 리셋이면 잔존 간격 구조 재발 — FAIL), ③ 리스너 **등록/해제 쌍**: addListener 2건의 반환 subscription이 보관되고 cleanup(useEffect return 또는 visible false 분기)에서 `.remove()` 2건 대응 — 등록만 있고 해제 0건이면 FAIL(시트 개폐마다 리스너 누적), `visible` 의존 effect라면 visible false 전환 시에도 해제+kbPad 0 리셋 확인(닫힌 채 키보드 이벤트 수신 방지 + 다음 오픈 시 stale 패딩 방지), ④ 시트 컨테이너 패딩이 `insets.bottom + spacing.xl + kbPad` 합산형이고 Android에서 KAV 키보드 패딩과 **중복 적용되지 않는지**(behavior undefined이므로 KAV는 Android에서 무동작 — ⑤와 연동), ⑤ 리스너 등록이 `Platform.OS === 'android'` 한정(iOS에서 KAV padding과 수동 패딩이 겹치면 이중 계상 역수입 — FAIL).
+- Then: ①~⑤ 전부 충족.
+
+**U-5. iOS 분기 보존 + 타 KAV 4곳 무접촉 [unit]**
+- Given: PLAN §2 — v3.196의 나머지 적용처는 전부 iOS 전용이라 이번 버그와 무관, 수정 범위는 담기 시트 1곳.
+- When: ① PlaylistPickerSheet KAV `behavior={Platform.OS === 'ios' ? 'padding' : undefined}` 복귀(KAV 컴포넌트 자체는 유지 — 제거하고 iOS까지 수동 패딩으로 바꾸면 범위 초과 FAIL), ② `git diff -- components/ReportModal.tsx components/AppealModal.tsx components/AlbumCreateModal.tsx screens/DmChatScreen.tsx` **0건**, ③ `keyboardVerticalOffset={-insets.bottom}` 류 차선책 잔재 0건(PLAN이 비권장 명시 — 발견 시 설계 불일치 기록).
+- Then: ①~③ 충족.
+
+**U-6. diff 범위 격리 [unit]**
+- Given: 전문 헤더의 변경 허용 앱 4파일.
+- When: `git status --short` + `git diff --stat`(2_housing 스코프).
+- Then: 콘텐츠 diff가 `stores/playerStore.ts`·`components/MiniPlayer.tsx`·`components/PlaylistPickerSheet.tsx`·`app.json`(버전 v3.198 1줄) 4파일뿐. 특히 **(D) `components/AppShareModal.tsx` diff 0**(답변만이 스펙 — 문구 수정 유혹 포함 일체 불가), v3.197 접촉 4파일(`services/playback.ts`·`screens/PlayerScreen.tsx`·`App.tsx`) diff 0 — **단 App.tsx는 v3.197 FAIL 후속(U-7 teardown 쌍 배선)이 별도 커밋으로 선행됐을 수 있음: 그 diff는 v3.197 재검 소관으로 분리 판정하고 v3.198 스코프에 혼입 금지**. 모드 변경(100644→100755)은 v3.196 관행 계승 제외. 커밋 시 4파일 명시 스테이징.
+
+**U-7. v3.191~197 무회귀 — MiniPlayer 라인 단위(v3.194/196/197 접촉 파일) [unit]**
+- Given: MiniPlayer.tsx는 v3.194(이모지→MCI 벡터화)·v3.196(미니 재생 아이콘 MCI 채움형 size 20)·v3.197(togglePlay 재로드 폴백 + 렌더 조건 완화) 3개 버전이 겹겹이 접촉한 파일 — 이번 diff는 **렌더 조건 1줄 + 셀렉터/구독부**로 한정돼야 한다. playerStore.ts는 v3.197에서 diff 0이 전제였던 파일 — 이번에 처음 열리므로 침투면 최소 확인.
+- When/Then (앵커 문자열 재탐색 기준):
+  - ① **v3.197 togglePlay 폴백 무침투**: MiniPlayer togglePlay 내 try/catch·getStatusAsync·loadAndPlayTrack 폴백·[BTDebug] warn·낙관적 setIsPlaying 부재 — v3.197 U-5 합격 형상 그대로(diff hunk가 togglePlay 본문을 스치면 v3.197 U-5 재실행 승격).
+  - ② **v3.194/196 MCI 무침투**: MiniPlayer MCI import·재생/일시정지 아이콘 size 20(채움형) 라인 diff 0.
+  - ③ **playerStore 침투면**: diff가 sessionActive 신설(초기값·타입)·setSound·resetOnLogout·restoreQueueFor 4개 지점뿐인지 — getNextIndex(:178-183 셔플 랜덤, v3.197 핀 불변식의 전제)·savedQueues 구조·partialize 기존 항목·cleanup의 기존 동작 diff 0(sessionActive 추가 제외).
+  - ④ **v3.197 프리로드/리컨사일 무접촉**: `git diff -- services/playback.ts screens/PlayerScreen.tsx` 0건(U-6과 교차 — App.tsx 예외 규정 동일).
+  - ⑤ **v3.193 담기 흐름 전제**: PlaylistPickerSheet diff가 KAV behavior·키보드 리스너·패딩 계산부에 한정 — 플레이리스트 목록 로직·추가 API 호출부·TrackActionSheet 진입 연동 diff 0.
+  - ⑥ **v3.192 duration·v3.194 소셜 로그인 스팟**: `git diff -- components/SocialLoginButtons.tsx components/AuthPanel.tsx` 0건, PlayerScreen 무접촉으로 duration 보정은 ④에 포섭.
+  - 위반 시 해당 버전 TESTPLAN 항목 재실행으로 승격.
+
+### [api] 실측 검증 — **배포 후 오케스트레이터 실행**(tester 호출 금지, 판정 기준만 본 문서 소관)
+
+**API-1. 유효 초대 코드 랜딩 — 200 + HTML + OG 태그 [api]**
+- Given: docker build→컨테이너 교체(:9006) 배포 완료, 유효 코드 1건 확보(예: 기존 실측 코드 `7VFU` — 변경 전 실측은 404 JSON이었음).
+- When: `curl -sS -D - https://api.maidol.ai.kr/invite/7VFU -o /tmp/invite.html` 후 본문 검사.
+- Then: ① HTTP **200** + `Content-Type: text/html`(변경 전 404 `{"detail":"Not Found"}` JSON에서 전환 확인), ② 본문에 `og:title`(MAIDOL 초대장 + 닉네임)·`og:description`(추천코드 포함)·**`og:image`(https:// 절대 URL — 상대 경로면 카톡 카드 미렌더로 FAIL)**·`og:image:width` 1200·`og:image:height` 630·`twitter:card summary_large_image` 전부 존재, ③ Play 스토어 CTA `https://play.google.com/store/apps/details?id=com.maidol.app` 존재, ④ 코드/닉네임이 HTML-escape 출력(원시 `<` 미노출 — `curl "https://api.maidol.ai.kr/invite/%3Cscript%3E"` 로 무효코드 응답에 `<script>` 원문이 반사되지 않는지 XSS 스팟), ⑤ `curl -I`(HEAD)도 200(카카오 스크래퍼 프리플라이트 — Starlette GET 라우트 자동 대응 확인).
+
+**API-2. OG 정적 이미지 서빙 [api]**
+- Given: `/static` StaticFiles 마운트 + `app/static/og/` 이미지 반입 완료.
+- When: `curl -sS -o /tmp/og.png -w "%{http_code} %{content_type}\n" https://api.maidol.ai.kr/static/og/beta-event-og.png` — **주의(파일명 이원화)**: 오케스트레이터 지시는 `beta-event-og.png`, PLAN §3-1 초안은 `invite_og.png`로 상이. **1차 판정 기준은 API-1 ②에서 실제 og:image 태그가 가리키는 URL**이며, 그 URL로 재curl한다(두 파일명 다 있으면 둘 다 확인).
+- Then: ① HTTP 200 + `image/png`, ② 다운로드 파일이 유효 PNG이고 규격 1200×630(`file /tmp/og.png` 또는 `sips -g pixelWidth -g pixelHeight`), ③ og:image URL과 실서빙 URL 일치(불일치 = 카톡 카드 빈 이미지 — FAIL).
+
+**API-3. 무효 코드 처리 + 기존 API 무회귀 [api]**
+- Given: 존재하지 않는 코드(예: `ZZZZ99`).
+- When/Then:
+  - ① `curl -sS -D - https://api.maidol.ai.kr/invite/ZZZZ99` → **404 + HTML**(JSON 아님) + 본문에 "유효하지 않은 초대코드" 안내 + **Play 스토어 CTA는 여전히 존재**(공유 링크가 죽은 경험 방지 — PLAN §3-3 ok=False 설계. CTA 없는 404면 FAIL).
+  - ② 기존 JSON API 무회귀: `curl https://api.maidol.ai.kr/api/referral/invite/7VFU` → 변경 전과 동일 JSON 200(프리픽스 라우터와 신규 public_router 충돌 없음), `/api/referral/my-code` 등 기존 라우트 스팟 1건.
+  - ③ `/static` 마운트가 기존 admin_static·API 경로를 가리지 않는지(`/api/...` 아무 기존 엔드포인트 1건 200 스팟).
+  - ④ 카카오 OG 캐시 초기화: https://developers.kakao.com/tool/debugger/sharing 에서 `https://api.maidol.ai.kr/invite/7VFU` 재스크랩(기존 404 캐시 잔존 시 E-5 실기기 판정이 오염 — **E-5보다 반드시 선행**).
+
+### [e2e] 핵심 여정 (정적 대체 병기 · 실기기 이관)
+
+**E-1. 자동로그인 콜드 스타트 — 미니 미노출 [e2e] — 실기기(APK) 이관**
+- Given: 자동로그인 상태(저장 토큰 유효) + 해당 계정 savedQueues에 복원 큐 존재(과거 재생 이력), 앱 완전 종료(최근 앱에서 제거).
+- When: 앱 콜드 스타트 → 홈 도달.
+- Then: 하단 미니플레이어 **미노출**(변경 전 증상 = 일시정지 미니 노출 = FAIL). 이후 MyMusic 등에서 큐가 살아 있는지(곡 탭 시 즉시 재생) 확인 — 복원 자체를 죽여서 숨긴 것이면 FAIL(스펙은 "숨김"이지 "복원 제거"가 아님).
+- 정적 대체: U-2 ②③ + U-3 ③ⓐ (restoreQueueFor가 track 복원 + sessionActive false → 조건식 숨김).
+
+**E-2. 재생 후 노출 → 로그아웃/닫기 후 미노출 [e2e] — 실기기 이관**
+- Given: E-1 직후 상태.
+- When/Then: ① 곡 재생 시작 → 미니 **노출**(setSound truthy → sessionActive true), 다른 탭 이동에도 유지 ② 미니 닫기(cleanup) → 미노출 ③ 로그아웃 → 재로그인(동일/타 계정 각 1회) → 미니 **미노출**(resetOnLogout+restoreQueueFor 이중 리셋 검증 — 타 계정에서 이전 계정 세션 플래그 잔존 시 FAIL) ④ 재생 중 앱 재시작(콜드) → 미노출(sessionActive 비영속 검증 — 노출되면 partialize 오염 FAIL).
+- 정적 대체: U-2 ①②③ + U-3 ③ⓒⓓ.
+
+**E-3. 세션 중 sound null — 미니 유지 + 1탭 복구(v3.197 회귀) [e2e] — 실기기 전용(BT/비행기모드)**
+- Given: 실기기, 곡 재생 중(sessionActive true 상태).
+- When: v3.197 E-5와 동일하게 곡 말미 비행기모드 ON으로 전환 실패 유도(또는 BT 끊김) → sound가 정리(null)된 상태 도달 → 비행기모드 OFF.
+- Then: 미니플레이어가 **사라지지 않고 유지**(v3.198 조건식의 `sessionActive` 항이 지키는 핵심 — 사라지면 이번 수정이 v3.197을 죽인 것, 즉시 FAIL) + 재생버튼 **1탭** 재로드·재생(v3.197 복구 경로 그대로). 화면꺼짐 연속재생(v3.197 E-3) 1사이클 스팟 병행.
+- 정적 대체: U-3 ③ⓑ(진리표) + U-7 ①(togglePlay 폴백 무침투). BT/비행기모드 거동 자체는 대체 불가 — 실측 필수.
+
+**E-4. 담기 시트 키보드 개폐 3회 — 간격 0 [e2e] — 실기기(Android) 이관 + iOS 무변경 확인**
+- Given: Android APK 실기기(제스처 내비게이션 기기 우선 — 잔존 간격이 제스처 바 높이였음), 재생 중 곡 1개.
+- When: 담기(플레이리스트에 추가) 시트 진입 — **두 진입 경로 각각**(v3.193: TrackActionSheet 경유 + 기존 직접 진입) — "새 플레이리스트" 입력창 포커스(키보드 열림) → 닫기(뒤로가기 / 빈 곳 탭 각각) — **연속 3회 반복**.
+- Then: ① 매회 닫힌 직후 시트 하단 간격 **0**(잔존 간격 1px이라도 육안 확인되면 FAIL — 변경 전 증상), ② 키보드 열림 중 입력창 가림 없음(v3.196 회귀 — 수동 패딩이 KAV를 대체하고도 가림 재발하면 FAIL), ③ 제스처 바와 시트 버튼 겹침 없음(v3.191/196 회귀), ④ 3회 반복 후에도 열고 닫는 반응 지연 없음(리스너 누적 간접 징후), ⑤ iOS 실기기(또는 시뮬레이터) 동일 시나리오 — v3.196 KAV 동작 그대로(변화 감지 시 U-5 위반). Report/Appeal/AlbumCreate 모달 키보드 스팟 각 1회.
+- 정적 대체: U-4 ①~⑤ + U-5. Android Modal 키보드 프레임 타이밍은 정적 검증 불가 — 간격 0 최종 판정은 실측 필수.
+
+**E-5. 초대 링크 실기기 여정 — 카톡 카드·스토어 이동·코드 복사 [e2e] — 실기기 이관(API-3 ④ 캐시 초기화 선행 필수)**
+- Given: 배포 + API-1~3 PASS + 카카오 스크랩 캐시 초기화 완료.
+- When/Then: ① 앱 공유 모달 → 카카오톡 공유 → 수신 채팅방에서 링크가 **이미지 카드**(1200×630 이미지 + 제목/설명)로 렌더(텍스트 단독 링크면 FAIL — 캐시 초기화 재확인 후 재판정) ② 카드 탭 → 랜딩 표시(다크 톤·닉네임·코드) → [Google Play에서 다운로드] 탭 → Play 스토어 앱 상세 도달 ③ [코드 복사] 탭 → 클립보드에 코드(Android Chrome / iOS Safari 각각 — execCommand 폴백 검증) ④ "이미 설치했다면 열기"(aidol://) — 설치 기기에서 앱 전환(best-effort, 실패는 기록만·FAIL 아님) ⑤ 앱 쪽 무회귀: 공유 문구(shareTextBase/Full)가 변경 전과 동일(U-6 AppShareModal diff 0의 실측 대응) + 인스타/페북 버튼이 종전대로 네이티브 공유 시트를 띄움(D — 동작 변화 없음 확인만).
+- 정적 대체: API-1~3(서버 측) + U-6(앱 무변경). 카톡 카드 렌더·클립보드는 실측 필수.
+
+### 태그 집계
+- [unit] 7건 (U-1 tsc / U-2 sessionActive 3점+비영속 / U-3 렌더 조건 진리표 4행 / U-4 Android 수동 패딩·리스너 쌍 / U-5 iOS 분기·타 KAV 무접촉 / U-6 diff 격리 / U-7 v3.191~197 무회귀 — MiniPlayer 라인 단위)
+- [api] 3건 (API-1 유효 코드 200+HTML+OG / API-2 정적 OG 이미지 / API-3 무효 코드 404 HTML+CTA·기존 API 무회귀 — **3건 전부 배포 후 오케스트레이터 실행**, tester 호출 금지)
+- [e2e] 5건 (E-1 콜드 스타트 미노출 / E-2 재생 후 노출·리셋 / E-3 sound null 유지+1탭 복구 — 실기기 전용 / E-4 키보드 개폐 3회 간격 0 / E-5 카톡 카드 여정 — 전 항목 정적 대체 병기 + 실기기 이관)
+
+### 설계 주의점 (tester·app-dev·backend-dev·오케스트레이터 참고)
+1. **sessionActive는 setter 단일 지점이 생명**: 재생 시작점이 6곳+에 분산돼 있어 호출부 배선은 반드시 누락이 생긴다. setSound 안에서만 true가 되는 구조(U-2 ①)가 유일하게 안전하고, 역으로 **setSound(null)에서 false로 리셋하면 v3.197 복구가 즉사**한다(전환 실패 정리 경로가 setSound(null)을 부르므로). truthy-set / null-무변경의 비대칭이 스펙 그 자체다.
+2. **진리표 ⓑ행이 v3.197과의 양립 조건**: `!track || (!hasSound && !sessionActive)` 에서 AND가 OR로 바뀌거나 `!sound` 단독 복귀가 섞이면, 컴파일도 되고 E-1도 통과하지만 **E-3(전환 실패 시 미니 유지)만 죽는다** — 정적 검증에서 조건식을 문자 그대로가 아니라 진리표(U-3 ③)로 판정하는 이유. 리뷰 시 이 한 줄은 diff 문자열 비교가 아닌 4행 추적 필수.
+3. **sound는 불리언 셀렉터로만**: v3.197이 리렌더 소음 때문에 MiniPlayer에서 sound 객체 구독을 걷어냈다(MiniPlayer.tsx:15 주석). 이번에 `!!s.sound`로 재구독하는 것은 허용이지만 객체 구독 복귀는 회귀다 — grep으로 `(s) => s.sound` 패턴 0건 확인.
+4. **키보드 hide 리셋은 무조건 0**: Android 잔존 간격의 근본 원인이 "닫힘 프레임 계산 잔차"이므로, hide 핸들러가 계산값으로 리셋하면(예: `setKbPad(잔여 계산)`) 버그를 그대로 재수입한다. `setKbPad(0)` 리터럴이어야 하고(U-4 ②), 리스너 해제 시점(visible false·언마운트)에도 0 리셋을 병행해야 다음 오픈이 stale 패딩으로 시작하지 않는다.
+5. **리스너 쌍은 keyboardDidShow/Hide 2건 × remove 2건**: `keyboardWillShow`는 Android에서 발화하지 않으므로 Did 계열이어야 하고, subscription 2건 보관→cleanup에서 2건 remove가 1:1 대응이어야 한다(v3.197 U-7 ①에서 AppState 구독 해제 누락으로 FAIL 났던 동일 유형 — 이번 사이클에서 같은 실수 반복 여부를 최우선 grep).
+6. **OG 이미지 파일명 이원화 주의**: 오케스트레이터 지시는 `/static/og/beta-event-og.png`, PLAN §3-1 초안은 `invite_og.png`. backend-dev가 어느 쪽을 택하든 **판정 기준은 "HTML의 og:image URL = 실서빙 200 URL" 일치**(API-2)다. 파일명만 보고 PASS/FAIL을 찍지 말 것. og:image는 절대 URL 필수 — 상대 경로는 curl 200이어도 카톡 카드가 안 뜬다.
+7. **카카오 스크랩 캐시가 E-5의 숨은 전제**: 변경 전 404가 이미 스크랩 캐시됐을 가능성이 높다. 캐시 초기화(API-3 ④) 없이 실기기 카드 판정을 하면 서버가 완벽해도 FAIL로 오판한다 — E-5 Given에 캐시 초기화 완료를 명시한 이유. 카드 미렌더 시 서버 재검보다 캐시 재확인이 먼저다.
+8. **무효 코드 404에도 CTA는 산다**: API-3 ①의 "404인데 스토어 버튼 존재"는 모순이 아니라 설계(PLAN §3-3 — 공유 링크가 죽은 경험 방지). 404 = FAIL로 기계 판정하는 스크립트를 쓰면 안 되고, 상태코드와 본문 CTA를 분리 판정할 것. 역으로 무효 코드에 200 + 정상 초대장 렌더면 그것이 FAIL.
+9. **App.tsx diff의 출처 분리**: v3.197 게이트가 U-7 ①(AppState 구독 해제) 수정 대기 중 조건부 FAIL 상태다. v3.198 검증 시점의 App.tsx diff는 그 후속 수정일 수 있으므로, v3.198 스코프 위반으로 오판하지 말고 커밋 단위로 분리해 v3.197 U-7 단건 재검과 v3.198 U-6을 각각 판정할 것(한 커밋에 섞여 들어오면 격리 원칙상 분리 커밋 요구).
+10. **(D)는 "검증하지 않는 것"이 검증**: 인스타/페북 버튼은 답변만이 산출물이다. AppShareModal.tsx diff 0(U-6)과 E-5 ⑤의 "종전 동작 그대로" 확인이 전부이며, 여기에 개선 diff(버튼 통합·스토리 연동 등)가 섞여 오면 범위 초과 FAIL — PLAN이 별도 과제로 명시했다.
+
+### 실행 결과 — 2026-09-21 (tester, HEAD 5d7db37 기준 워킹트리)
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 tsc | **PASS** | `npx tsc --noEmit` exit 0, 오류 0건 |
+| U-2 sessionActive 3점+비영속 | **PASS** | ① setSound `sound ? { sound, sessionActive: true } : { sound }`(:90) — truthy만 true, null 무변경(비대칭 스펙 충족). sessionActive 참조는 playerStore·MiniPlayer 2파일뿐 — 호출부 직접 set 0건 ② resetOnLogout(:138)·restoreQueueFor 복원 분기(:160) false 포함. 승계 분기(보관 목록 없음)는 미리셋 — resetOnLogout 선행 배선 확인으로 대체 판정(계획 명시 경로). cleanup(:216) 리셋 있음(선택 — 무해) ③ partialize(:228-233) 화이트리스트 4항목에 sessionActive 없음, 초기값 false(:85) |
+| U-3 렌더 조건 진리표 | **PASS** | ① `if (!track \|\| (!hasSound && !sessionActive)) return null;`(:28) 스펙 문자 동치 ② `usePlayerStore((s) => !!s.sound)` 불리언 셀렉터(:19), `(s) => s.sound` 객체 구독 0건 ③ 진리표 ⓐ숨김/ⓑ노출유지/ⓒ노출/ⓓ숨김 4행 전부 충족 ④ 주석(:25-27) 복구 보존 의도 갱신됨. __DEV__ 로그 1건(:29) |
+| U-4 Android 수동 패딩 | **PASS** | ① `Math.max(0, e.endCoordinates.height - insets.bottom)`(:34) ② hide 핸들러 `setKbPad(0)` 리터럴 무조건(:36) ③ showSub/hideSub 2건 보관 → effect cleanup에서 `.remove()` 2건 + `setKbPad(0)`(:37), visible false 시 early-return 분기도 0 리셋(:31) — stale 패딩 불가 ④ 시트 `insets.bottom + spacing.xl + kbPad` 합산(:108), Android KAV behavior undefined → 이중 계상 없음 ⑤ `Platform.OS !== 'android'` early-return으로 iOS 미등록. keyboardDid 계열(Will 0건) |
+| U-5 iOS 분기·타 KAV 무접촉 | **PASS** | ① KAV 유지 + `behavior={Platform.OS === 'ios' ? 'padding' : undefined}`(:104) ② Report/Appeal/AlbumCreate/DmChat 4파일 diff 0 ③ PlaylistPickerSheet 내 keyboardVerticalOffset 0건(타 화면 기존분은 무접촉) |
+| U-6 diff 격리 | **FAIL(조건부)** | 허용 3파일(playerStore·MiniPlayer·PlaylistPickerSheet) 외 **콘텐츠 diff 2건 검출**: ① `App.tsx` +1줄(tabBarLabelStyle lineHeight 14) — 주의점 9의 v3.197 U-7 후속이 **아님**(v3.197 픽스는 HEAD에 이미 커밋됨 — App.tsx:483,510 확인). ② `screens/ChartScreen.tsx` 1줄(기본 탭 top100→new). 둘 다 v3.198 스코프 밖. app.json 버전 갱신은 보류(스토어 versionName 영향) — 계획 편차로 기록. PNG 등 75건은 전부 mode change(100644→100755)만 — v3.196 관행 제외. AppShareModal·playback.ts·PlayerScreen diff 0 |
+| U-7 v3.191~197 무회귀 | **PASS** | ① MiniPlayer diff 단일 hunk(:15-31 셀렉터·조건부)뿐 — togglePlay 본문(try/catch·getStatusAsync·loadAndPlayTrack 폴백·[BTDebug]·낙관적 토글 부재) v3.197 합격 형상 그대로 ② MCI import·size 20 라인 diff 0 ③ playerStore diff = 인터페이스/초기값/setSound/resetOnLogout/restoreQueueFor/cleanup(sessionActive 추가만) — getNextIndex·savedQueues·partialize 기존 항목 diff 0 ④ playback.ts·PlayerScreen.tsx diff 0 ⑤ PlaylistPickerSheet diff = import·kbPad effect·KAV behavior·패딩 계산부만 — 목록/추가 API 로직 diff 0 ⑥ SocialLoginButtons·AuthPanel diff 0 |
+| API-1 유효 코드 랜딩 | **PASS** | 오케스트레이터 배포 검증 인용 + tester 스팟 재확인: GET /invite/7VFU → 200 text/html, og:image 절대 URL(https://api.maidol.ai.kr/static/og/invite_og.png)·1200×630·twitter summary_large_image·Play CTA 존재, HEAD 200 |
+| API-2 OG 이미지 서빙 | **PASS** | 스팟 재확인: og:image 실 URL(invite_og.png) 200 image/png, sips 실측 1200×630, og:image URL=실서빙 URL 일치. 별칭 beta-event-og.png도 200(파일명 이원화 양쪽 서빙 — 주의점 6 기준 충족) |
+| API-3 무효 코드·무회귀 | **PASS** | 스팟 재확인: /invite/ZZZZ99 → 404 text/html + "유효하지 않은 초대코드예요" + Play CTA 존재. /invite/%3Cscript%3E → 입력 미반사(본문 script는 페이지 자체 copyCode 스크립트, execCommand 폴백 포함) — XSS 스팟 통과. /api/referral/invite/7VFU → 200 application/json 무회귀. ④ 카카오 스크랩 캐시 초기화는 실기기 E-5 선행 절차로 잔여 |
+| E-1 콜드 스타트 미노출 | **PASS(정적)** — 실기기 이관 | U-2 ②③ + U-3 ③ⓐ 충족(restoreQueueFor가 track 복원 + sessionActive false → 조건식 숨김, 복원 자체는 유지) |
+| E-2 재생 후 노출→리셋 | **PASS(정적)** — 실기기 이관 | U-2 ①②③ + U-3 ③ⓒⓓ 충족(재생 시 truthy setSound→노출, cleanup·로그아웃·재로그인·비영속 4경로 전부 정적 커버) |
+| E-3 sound null 유지+1탭 복구 | **PASS(정적)** — **실기기 전용(실측 필수)** | U-3 ③ⓑ(track 有·sound null·sessionActive true → 노출 유지) + U-7 ①(togglePlay 폴백 무침투). BT/비행기모드 실거동은 대체 불가 |
+| E-4 키보드 개폐 3회 간격 0 | **PASS(정적)** — 실기기(Android) 이관 | U-4 ①~⑤ + U-5 충족(hide 무조건 0 리셋 + 해제 시 0 리셋 — 잔존 간격 구조적 불가). Android Modal 키보드 프레임 타이밍 실측 필수 |
+| E-5 카톡 카드 여정 | **PASS(정적)** — 실기기 이관(캐시 초기화 선행) | API-1~3 PASS + U-6 중 AppShareModal diff 0(D 스펙 = 무변경 그 자체). 카톡 카드 렌더·클립보드·스토어 이동 실측 필수 |
+
+**게이트 판정: 조건부 PASS** — v3.198 구현 자체(A·B·C·D)는 unit 6/7 + api 3/3 전부 충족. 유일 결격은 U-6 스코프 혼입 2건(App.tsx lineHeight·ChartScreen 기본 탭 — 기능 무해하나 격리 원칙 위반). **커밋 시 3파일(stores/playerStore.ts·components/MiniPlayer.tsx·components/PlaylistPickerSheet.tsx) 명시 스테이징으로 분리하면 즉시 PASS** — App.tsx·ChartScreen 2건은 별도 커밋(자체 승인 절차) 또는 revert 처리. app.json 버전 보류는 계획 편차 기록(스테이징 목록에서 제외).
+
+**실기기 잔여(APK)**: E-1(콜드 스타트 미노출+큐 생존) / E-2(노출·닫기·로그아웃/재로그인·재시작 4경로) / E-3(비행기모드·BT — 실측 필수) / E-4(Android 키보드 3회 개폐 간격 0 + iOS 무변경 + Report/Appeal/AlbumCreate 스팟) / E-5(카카오 디버거 캐시 초기화 → 카톡 카드·CTA·코드복사·aidol:// — API-3 ④ 선행 필수).
