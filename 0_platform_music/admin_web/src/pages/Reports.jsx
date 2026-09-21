@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getReports, actOnReport, fetchEvidenceBlob } from '../api';
 import { formatDate } from './Dashboard';
+import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
 const STATUS_TABS = [
   { value: 'pending', label: '대기' },
@@ -103,13 +104,13 @@ export default function ReportsPage() {
   useEffect(() => { fetchList(); }, [fetchList]);
 
   const doAction = async (report, action, label) => {
-    if (!window.confirm(`이 신고를 "${label}" 처리하시겠습니까?`)) return;
+    if (!(await appConfirm(`이 신고를 "${label}" 처리하시겠습니까?`))) return;
     setBusy(report.id);
     try {
       await actOnReport(report.id, action);
       await fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '처리에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '처리에 실패했습니다.');
     } finally {
       setBusy(null);
     }

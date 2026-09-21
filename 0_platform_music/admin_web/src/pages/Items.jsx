@@ -5,6 +5,7 @@ import {
 } from '../api';
 import AuthImage from '../components/AuthImage';
 import { formatDate } from './Dashboard';
+import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
 const CATEGORIES = ['상의', '하의', '신발', '장소'];
 const GENDERS = ['남성용', '여성용', '공용'];
@@ -30,7 +31,7 @@ function EditModal({ item, onClose, onSaved }) {
       onSaved();
       onClose();
     } catch (err) {
-      alert(err.response?.data?.error || '저장에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
       setSaving(false);
     }
@@ -114,32 +115,32 @@ function ImportPanel({ onImported }) {
   };
 
   const handleDryRun = async () => {
-    if (!file) { alert('CSV 파일을 선택하세요.'); return; }
+    if (!file) { await appAlert('CSV 파일을 선택하세요.'); return; }
     setBusy(true);
     setDryResult(null);
     try {
       const res = await importItems(file, mode, true);
       setDryResult(res.data);
     } catch (err) {
-      alert(err.response?.data?.error || '검증에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '검증에 실패했습니다.');
     } finally {
       setBusy(false);
     }
   };
 
   const handleRun = async () => {
-    if (!file) { alert('CSV 파일을 선택하세요.'); return; }
+    if (!file) { await appAlert('CSV 파일을 선택하세요.'); return; }
     const warn = mode === 'replace'
       ? 'CSV에 포함된 플랫폼의 기존 시드/임포트 아이템을 모두 지우고 새로 넣습니다(전량 교체). 진행할까요?'
       : '기존 아이템을 유지한 채 CSV 행을 추가합니다. 진행할까요?';
-    if (!window.confirm(warn)) return;
+    if (!(await appConfirm(warn))) return;
     setBusy(true);
     try {
       const res = await importItems(file, mode, false);
       setDryResult(null);
       startPolling(res.data.job_id);
     } catch (err) {
-      alert(err.response?.data?.error || '임포트 시작에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '임포트 시작에 실패했습니다.');
     } finally {
       setBusy(false);
     }
@@ -244,23 +245,23 @@ export default function ItemsPage() {
     const toHide = !item.admin_hidden;
     let reason = '';
     if (toHide) {
-      reason = window.prompt('숨김 사유 (감사 로그용, 생략 가능):') || '';
+      reason = await appPrompt('숨김 사유 (감사 로그용, 생략 가능):') || '';
     }
     try {
       await setItemHidden(item.id, toHide, reason);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '숨김 설정에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '숨김 설정에 실패했습니다.');
     }
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`"${item.name}" 아이템을 삭제하시겠습니까? 이미지도 함께 삭제됩니다.`)) return;
+    if (!(await appConfirm(`"${item.name}" 아이템을 삭제하시겠습니까? 이미지도 함께 삭제됩니다.`))) return;
     try {
       await deleteItem(item.id);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '삭제에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '삭제에 실패했습니다.');
     }
   };
 

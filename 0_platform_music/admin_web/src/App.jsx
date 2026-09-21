@@ -1,6 +1,7 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
 import Layout from './components/Layout';
+import { DialogHost } from './components/dialog';
 import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import ReportsPage from './pages/Reports';
@@ -17,6 +18,7 @@ function Protected({ children }) {
 export default function App() {
   return (
     <AuthProvider>
+      <DialogHost />
       <HashRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

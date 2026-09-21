@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getTracks, deleteTrack, updateTrackVisibility } from '../api';
 import { formatDate } from './Dashboard';
+import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
 export default function TracksPage() {
   const [tracks, setTracks] = useState([]);
@@ -34,17 +35,17 @@ export default function TracksPage() {
       await updateTrackVisibility(t.id, !t.is_public);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '공개 설정 변경에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '공개 설정 변경에 실패했습니다.');
     }
   };
 
   const handleDelete = async (t) => {
-    if (!window.confirm(`"${t.title}" 트랙을 삭제하시겠습니까?\n음원·데이터가 삭제되며 되돌릴 수 없습니다.`)) return;
+    if (!(await appConfirm(`"${t.title}" 트랙을 삭제하시겠습니까?\n음원·데이터가 삭제되며 되돌릴 수 없습니다.`))) return;
     try {
       await deleteTrack(t.id);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '트랙 삭제에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '트랙 삭제에 실패했습니다.');
     }
   };
 

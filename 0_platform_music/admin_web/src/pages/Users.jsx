@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getUsers, updateUserRole, banUser } from '../api';
 import { formatDate } from './Dashboard';
+import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
 export default function UsersPage() {
   const [users, setUsers] = useState([]);
@@ -31,33 +32,33 @@ export default function UsersPage() {
 
   const handleRole = async (u) => {
     const next = u.role === 'admin' ? 'user' : 'admin';
-    if (!window.confirm(`${u.nickname} 님의 역할을 "${next}" 로 변경하시겠습니까?`)) return;
+    if (!(await appConfirm(`${u.nickname} 님의 역할을 "${next}" 로 변경하시겠습니까?`))) return;
     try {
       await updateUserRole(u.id, next);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '역할 변경에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '역할 변경에 실패했습니다.');
     }
   };
 
   const handleBan = async (u) => {
     if (u.is_banned) {
-      if (!window.confirm(`${u.nickname} 님의 정지를 해제하시겠습니까?`)) return;
+      if (!(await appConfirm(`${u.nickname} 님의 정지를 해제하시겠습니까?`))) return;
       try {
         await banUser(u.id, false);
         fetchList();
       } catch (err) {
-        alert(err.response?.data?.error || '정지 해제에 실패했습니다.');
+        await appAlert(err.response?.data?.error || '정지 해제에 실패했습니다.');
       }
       return;
     }
-    const reason = window.prompt(`${u.nickname} 님을 정지합니다. 사유를 입력하세요:`);
+    const reason = await appPrompt(`${u.nickname} 님을 정지합니다. 사유를 입력하세요:`);
     if (reason === null) return;
     try {
       await banUser(u.id, true, reason);
       fetchList();
     } catch (err) {
-      alert(err.response?.data?.error || '정지에 실패했습니다.');
+      await appAlert(err.response?.data?.error || '정지에 실패했습니다.');
     }
   };
 
