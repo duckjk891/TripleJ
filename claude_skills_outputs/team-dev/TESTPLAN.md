@@ -1766,3 +1766,174 @@ git add 2_housing/hooks/useAndroidKeyboardLift.ts \
         2_housing/screens/MapScreen.tsx
 ```
 App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
+
+## v3.202 — 수정일 2026-09-21
+
+> 대상: PLAN.md v3.202(:3282-3306) — 실기기 10건, 앱 전용·백엔드 무변경. 슬라이스 9개: (A-lite) `services/playback.ts` 프리로드 조기화(이중 트리거)+실패 백오프(곡당 3회/10s), (B) LyricsInput 재선택 모달 flex-end 전환+클램프 / ReportModal·AppealModal·AlbumCreateModal 3곳 translateY(-kbPad) 리프트, (C) consentTexts `COPYRIGHT_RECORD_GUIDE` 상수+recChip 탭→PolicySheet, (D) MapScreen nameMaxWidth 300/90 산식+flexShrink 안전망 2키, (E/F) MusicGenerationScreen performRewind 비파괴 값 치환, (G) 아티스트 게이트(:418) 제거+0명 showAlert 분기, (H) CoverGenerationScreen fix 1~5, (I-lite) ERR_NETWORK 시 cover-sessions 폴링 복구, (J) 연주곡 경로 개통+**ComposerInputScreen 삭제**.
+> **구현 편성**: 2개 조 병행 — **1조**: playback(A)·LyricsInput 재선택 모달(B안1)·MusicGeneration(E/F·G·J 스킵체인)·ComposeLyricsPick/ComposerSelect/MusicLoading/musicService/musicStore(J)·App.tsx(J 삭제)·ComposerInputScreen 삭제 / **2조**: ReportModal·AppealModal·AlbumCreateModal(B안2)·consentTexts+DialogueScreen(C)·MapScreen(D)·CoverGeneration(H·I-lite)·musicStore(H 영속 필드). **`stores/musicStore.ts`는 두 조 공유 접점**(1조 J instrumental 필드 + 2조 H cover* 필드) — U-17에서 hunk 귀속 판정.
+> 실행 환경 관행(v3.191~201 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 정적 대체 병기 + 실기기 실측 이관. 특히 **A(Doze)는 에뮬/시뮬 재현 불가**(Doze 네트워크 차단은 실기기 절전 상태 전용) — [unit] 정적 논증이 머지 게이트의 전부. 앱 코드 경로 `/Users/pearl/TripleJ/2_housing`. **백엔드 무접촉 — [api]는 "서버 무변경 확인" 1건뿐, 연주곡 실생성 1회는 Suno 실과금이라 실기기 이관.** 증적에 실계정 토큰·개인 식별 정보 기재 금지.
+> 변경 허용 파일(격리 기준): 1조 — `services/playback.ts`, `screens/LyricsInputScreen.tsx`, `screens/MusicGenerationScreen.tsx`, `screens/ComposeLyricsPickScreen.tsx`, `screens/ComposerSelectScreen.tsx`, `screens/MusicLoadingScreen.tsx`, `services/musicService.ts`, `App.tsx`(J 삭제 3곳만), **`screens/ComposerInputScreen.tsx` 삭제** / 2조 — `components/ReportModal.tsx`, `components/AppealModal.tsx`, `components/AlbumCreateModal.tsx`, `constants/consentTexts.ts`, `screens/DialogueScreen.tsx`(C recChip·alert만), `screens/MapScreen.tsx`(D 2줄대), `screens/CoverGenerationScreen.tsx` / 공유 — `stores/musicStore.ts`. VOCAL_OPTIONS 소비처(`screens/ArtistResultScreen.tsx`·`screens/VoiceManageScreen.tsx`)는 **원칙 무접촉**(U-15 ⑤ 파급 판정 결과에 따라 가드 1줄만 조건부 허용 — 적용 시 커밋 메시지 명기). 그 외 콘텐츠 diff는 FAIL.
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 선행 게이트 — v3.201 커밋 확인 + 타입 무결성 [unit]**
+- Given: v3.201 6파일(훅 포함)이 미커밋으로 남으면 이번 diff 귀속 판정(U-17) 성립 불가. 또한 J가 ComposerInputScreen을 삭제하므로 **v3.201(B) 이식분이 커밋에 먼저 존재해야 "삭제"의 이력이 남는다**(스쿼시로 이식+삭제가 상쇄되면 REPORT 정정 근거 소실).
+- When: ① `git log --oneline -1` + `git status --short`(2_housing 스코프)로 v3.201 커밋 완료·클린 기준선 확인(미커밋 시 착수 금지·반려). ② 1조·2조 산출물 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: ① 클린 기준선 ② exit 0 — 특히 **ComposerInputScreen 삭제 후 잔존 참조 0건이 tsc로 전수 보증**되는지(U-16과 교차).
+
+**U-2. [A] 프리로드 이중 트리거 배선 — 조기화 [unit]**
+- Given: 원인 확정(계획) — 프리로드 창(20s/85%)이 Doze 진입보다 늦어 히트율 저하. 수정 = ① 현재 곡 **로드 성공 직후** 즉시 1회 ② **잔여 60s 전** 트리거 추가, 기존 20s/85% 창 유지(3중이 아니라 "기존 창 + 조기 2트리거"의 합집합).
+- When: `services/playback.ts` 판정(앵커 `maybePreloadNext` :74, 호출부 :225) — ① 곡 로드 성공 경로(현재 곡 사운드 로드 완료 콜백/then)에서 maybePreloadNext 계열 호출 **신설 1건**(로드 실패 경로에서는 미호출). ② 상태 콜백 호출부에 잔여 `durationMillis - positionMillis <= 60_000` 조건 추가 또는 maybePreloadNext 내부 창 확장 — 기존 `20s/85%` 상수 **삭제·변경 금지**(창 합집합 확장만 허용, 축소 발견 시 FAIL). ③ `preloadInFlight`(:59) 가드가 신설 트리거에도 동일 적용(로드 직후 트리거와 창 트리거가 동시 발화해도 중복 로드 불가 논증). ④ 프리로드 대상 산출이 기존 next 선정 로직(셔플 핀 포함) **재사용** — 별도 next 계산 신설 시 FAIL(v3.197 핀과 이원화되면 스왑 검증 5중이 깨짐).
+- Then: ①~④ 전부 충족.
+
+**U-3. [A] 실패 백오프 — 곡당 3회/10s + 폭주 제거 [unit]**
+- Given: 원인 확정 — 실패 시 상태 콜백 주기(~초당 8회)마다 재시도 폭주. `preloadInFlight`는 **동시성 가드일 뿐 재시도 간격 가드가 아니다**(실패 즉시 false 복원 :107 → 다음 틱 재발화).
+- When: ① **재시도 상한**: 곡(trackId) 단위 실패 카운터 ≤ **3회** — 4회째 시도 경로가 코드상 차단되는지(카운터 비교 연산자 경계 `< 3` vs `<= 3` 명시 확인). ② **간격**: 직전 실패 시각 기록 + `Date.now() - lastFailAt < 10_000` 류 가드 — **실패 catch에서 즉발 재호출(setTimeout 0·재귀 호출) 0건**(grep: catch 블록 내 maybePreloadNext/재시도 함수 호출 부재 — 발견 시 즉시 FAIL, 폭주 재발). ③ **카운터 리셋 경로**: 현재 곡 변경 시·프리로드 성공 시 카운터/시각 초기화(리셋 누락 시 다음 곡에서 이월 차단되는 역결함 — FAIL). ④ 백오프 상태가 모듈 변수면 트랙 전환 시 초기화 지점 명시, per-track Map이면 곡 종료 시 정리(누수 기록). ⑤ [BTDebug] 로그: 기존 `preload start/ready/fail/stale discard/invalid discard/swap ok/swap fail` 문자열 유지 + 백오프 발동 로그 추가 권장(부재는 기록).
+- Then: ①~③ 충족(④⑤ 기록 허용).
+
+**U-4. [A] v3.197 무침투 — 셔플 핀·5중 검증·didJustFinish 분기 [unit]**
+- Given: 접촉 파일이 v3.197 산출물(프리로드 셔플 핀 pinnedIdx·5중 스왑 검증·status.error 분기·AppState 리컨사일)과 동일 — 조기화·백오프는 **트리거 시점/횟수만** 바꿔야 하고 스왑·검증·핀 로직은 diff 0이어야 한다.
+- When: ① pinnedIdx 산출·전달·`preload stale discard`(:99)·`preload invalid discard`(:130) 검증 경로 diff 0. ② didJustFinish 분기(:230 preloadHit true/:235 false)·스왑 성공/폴백(:270/:275) diff 0. ③ status.error 분기·AppState 리컨사일·재생버튼 재로드 폴백(v3.197) diff 0. ④ `stores/playerStore.ts`·`components/MiniPlayer.tsx` diff 0(v3.198 sessionActive 무접촉).
+- Then: ①~④ 전부 충족 — **①② 중 1줄이라도 침범 시 FAIL 게이트**.
+
+**U-5. [B안1] Lyrics 재선택 모달 — flex-end 전환 + 클램프 (담기 시트 패턴 문자 대조) [unit]**
+- Given: v3.201 편차 2 확정 — center 정렬에서 marginBottom 리프트는 유효 상향 kbPad/2(Yoga 산식). 수정 = 담기 시트 **검증 완료 패턴**(flex-end+marginBottom+동적 maxHeight)으로 전환. 검증 준거가 이미 PASS한 PlaylistPickerSheet 형상이므로 **문자 대조가 곧 판정**.
+- When: `screens/LyricsInputScreen.tsx`(앵커 `reselectOverlay` :644) — ① `justifyContent: 'center'`(:647) → `'flex-end'` (상시 또는 kbPad>0 조건부 — 상시 전환이면 키보드 없을 때도 하단 시트화되는 UX 변화라 **계획 B안1의 채택 형태를 커밋 메시지로 확인**, 조건부면 두 상태 스타일 분기 정합 확인). ② 컨테이너 `marginBottom: reselectKbPad` 유지(v3.201 이식분 — 이제 flex-end라 전량 유효). ③ **동적 maxHeight 클램프 — PlaylistPickerSheet 형상 문자 대조**: `kbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (kbPad + insets.bottom) - 24) }` 동치식(v3.201 U-4 PASS 형상 — kbPad 단독식·상수 편차 ±8 허용, `Math.max` 오기 시 FAIL). ④ 검산 2행: winH=640·kbHeight=256 → 유효 상향 = kbPad 전량(center의 절반 손실 소멸) + 클램프 360 발동, `클램프+kbHeight+24 ≤ winH` 항등. ⑤ v3.201 합격 형상 무회귀: 제출 경로 `handleReselectChoice` 직접 호출·제외 집합 {2,8,9}·autoFocus 부재·리셋 전수(closeReselect) **diff 0**(정렬·클램프 외 로직 접촉 시 FAIL).
+- Then: ①~⑤ 전부 충족.
+
+**U-6. [B안2] 모달 3곳 — useAndroidKeyboardLift + translateY(-kbPad) + 클램프 [unit]**
+- Given: ReportModal/AppealModal/AlbumCreateModal은 Android 회피 전무(원인 확정 — 동종 3곳). center 유지 + **translateY 리프트**(B안2)는 marginBottom과 달리 Yoga 재배치 없이 전량 상향 — 단 위로 밀린 만큼 **상단 클리핑** 위험이 생겨 클램프 병행이 필수.
+- When: 3파일 각각 — ① `useAndroidKeyboardLift(visible)` 호출(각 모달의 visible prop과 게이트 동기 — 상시 리스너면 기록). ② 컨테이너 `transform: [{ translateY: -kbPad }]` (부호 **음수** — 양수면 키보드 쪽으로 내려가는 역결함 FAIL) — 절반 보정(`-kbPad/2`)이면 center 산식상 잔여 가림 존속으로 FAIL(원인 확정의 kbPad/2 손실은 marginBottom 경로 얘기고 translateY는 전량 반영이므로 보정 불요). ③ **클램프**: `maxHeight ≤ winH - kbPad - 상단여백` 동치식 또는 translateY 상한 클램프(`Math.min(kbPad, 컨테이너 상단 여유)`) — 둘 다 부재면 소형 기기에서 모달 상단이 status bar 밖으로 나가는 코드 경로 존재 = FAIL. ④ iOS 경로 무변경: 훅이 iOS에서 0 반환(불변) → transform 무효과 논증 + 기존 KAV/정렬 diff 0. ⑤ 3파일 간 구현 형상 동일(한 곳만 marginBottom 방식이거나 클램프 누락 등 이형 발견 시 해당 파일 FAIL). ⑥ 각 모달의 기존 기능 배선(신고 제출·이의 제출·앨범 생성 핸들러) diff 0.
+- Then: ①~⑥ 전부 충족.
+
+**U-7. [B] v3.201 담기 시트 무회귀 [unit]**
+- Given: B 슬라이스가 같은 훅을 3+1곳으로 확장 — 훅 본체를 만지면 v3.201 합격 형상(담기 시트)이 조용히 깨진다.
+- When: ① `hooks/useAndroidKeyboardLift.ts` **diff 0**(시그니처 확장 필요 시 — 예: 원시 kbHeight 노출 — 기존 반환 계약 불변 + 추가만 허용, 기존 호출 3곳 재검증 조건). ② `components/PlaylistPickerSheet.tsx` diff 0(marginBottom·클램프·ScrollView·keyboardShouldPersistTaps v3.201 형상). ③ 훅 hide→0 무조건 리셋(v3.201 U-2 ② 게이트) 존속.
+- Then: ①~③ 충족 — ③ 침범 시 즉시 FAIL.
+
+**U-8. [C] COPYRIGHT_RECORD_GUIDE 상수 — 문구 금지선 grep [unit]**
+- Given: 계획 §3 — 가이드는 **사실 서술**만("창작 과정이 기록됩니다" 류), 법적 효력 보장 어휘 금지. 문구는 코드가 아니라서 tsc가 못 잡는다 — grep이 유일 게이트.
+- When: `constants/consentTexts.ts` — ① `COPYRIGHT_RECORD_GUIDE` 상수 신설(기존 consentTexts 파일 관행의 export 형태 일치). ② **금지어 grep 4건 = 0건**: 상수 문자열 내 `등록 가능`·`보장`·`인정`·`특허` 각 0건(조사 변형 포함 육안 재확인 — "등록될 수 있"·"보장되"·"인정받" 류 우회 표현도 취지 위반으로 FAIL). ③ 사실 서술 구성 확인: 기록 대상(대화·선택·가사 버전)·기록 목적·"법적 효력을 보장하지 않는다" 류 한계 고지 포함(한계 고지 부재는 기록·오케스트레이터 문구 검토 회부). ④ 기존 consentTexts 기존 상수 diff 0.
+- Then: ①②④ 충족(③ 기록 허용) — **② 1건이라도 검출 시 커밋 금지**.
+
+**U-9. [C] recChip 탭 배선 + PolicySheet 재사용 — 신규 컴포넌트 0 [unit]**
+- Given: recChip(:464)은 현재 정적 View. 수정 = TouchableOpacity화+info 아이콘 → **기존 PolicySheet**(components/PolicySheet.tsx)로 가이드 표시 + 모드 alert에 '자세히 보기'. DialogueScreen은 v3.200(모드 토글)·v3.201(C cleanup) 2이력 위 3번째 접촉 — 라인 귀속 정밀 판정 대상.
+- When: ① recChip View→TouchableOpacity(또는 Touchable 래핑) + info 계열 아이콘 추가, onPress → PolicySheet 오픈 state 배선. ② **PolicySheet 재사용 확인**: import가 `components/PolicySheet`이고 **신규 시트/모달 컴포넌트 파일 0개**(`git status` untracked에 컴포넌트 0 — 신설 발견 시 FAIL, 계획 명시 "신규 컴포넌트 0"). PolicySheet props 계약(제목/본문 전달 형태)이 기존 사용처와 동형인지. ③ 모드 전환 alert(v3.200 산출물)에 '자세히 보기' 버튼 추가 — **showAlert(앱 내 다이얼로그) 유지, RN `Alert.alert` 도입 0건**(grep — 발견 시 즉시 FAIL, 앱 전역 규칙). '자세히 보기' onPress → 동일 가이드 표시. ④ 세그먼트/토글 라벨 문자열 **무변경**(라벨 재검토는 후속·사용자 결정 — 변경 발견 시 계획 편차 FAIL). ⑤ 재열람 가능 논증: 동일 모드 재탭 no-op 가드는 유지하되 recChip 탭이 가드 밖 경로로 가이드 도달(가드 안에 넣으면 재열람 불가 재발 — FAIL). ⑥ **v3.200/201 라인 무침범**: diff가 recChip JSX·recChip 스타일·alert 버튼 추가에 국한 — 모드 토글 useFocusEffect·modeBar 위치·저작권 1회 고지 로직·v3.201 headerLeft focus 주입에 1줄이라도 걸리면 FAIL(라인 단위 귀속).
+- Then: ①~⑥ 전부 충족.
+
+**U-10. [D] MapScreen — 300/90 산식 + flexShrink 안전망 2키 [unit]**
+- Given: 원인 확정 — 현행 `Math.max(90, screenWidth - (user ? 260 : 150))`(:266)이 화살표 38px 미반영·HomeHeaderActions 실측 208~229px 대비 여유 −1~+20px. 수정 산식 = `(user ? 300 : 90)`.
+- When: ① :266 산식이 `Math.max(90, screenWidth - (user ? 300 : 90))` **정확 일치**(하한 90 유지 — 260→300·150→90 두 상수 동시 교체, 한쪽만 바뀌면 FAIL). ② 검산: winW=360·user 존재 → 60 → 하한 90 발동(마퀴 스크롤 담당); winW=412 → 112 — 실측 최대 229px + 화살표 38 + 여유 대비 우측 침범 불가 논증(229+38=267 ≤ 300 확인 — **300이 실측 상한을 덮는지가 산식의 본질**). ③ 안전망 2키: setOptions payload에 `headerRightContainerStyle: { flexShrink: 0 }`·`headerTitleContainerStyle: { flexShrink: 1 }` — **이 2키 외 헤더 컨테이너 스타일 키 추가 금지**(레이아웃 부작용 면 최소화). ④ v3.199/201 무회귀: deps `[navigation, user?.company_name, !!user, showTutorial, nameMaxWidth]` 유지(nameMaxWidth 값 변화로 재실행 — 산식 교체와 정합), headerLeft **payload 키 부재** 유지·focus 클리어(v3.201 U-9 ②) diff 0, Marquee 명시 폭 View(:275)가 nameMaxWidth 참조 유지.
+- Then: ①~④ 전부 충족.
+
+**U-11. [E/F] performRewind 비파괴 값 치환 — 절단 0건 + 에코 쌍 + 이후 보존 [unit]**
+- Given: 원인 확정 — MusicGenerationScreen performRewind(:290)의 `...prev.slice(0, idx)`(:307)가 설계상 파괴적 절단(재선택 지점 이후 대화 전량 소실 + 디렉터 구값 에코 잔존이 E의 본체). 수정 = **map 치환**: 해당 user 버블 텍스트 교체 + **직후 디렉터 에코 버블도 새 값으로 치환**, 이후 메시지·스텝 전량 보존.
+- When: ① **절단 0건**: performRewind 본문에서 `prev.slice(0,`·`splice`·length 재할당 등 배열 절단 연산 **0건**(grep — :344 editedLyrics preview slice·:467 입력 30자 slice는 무관 라인, 대상은 메시지 배열 조작만). ② **치환 쌍**: `prev.map(...)` 형태로 ⓐ idx의 user 버블 text→새 값 ⓑ **idx 직후 인접 디렉터 버블 중 구값을 에코하는 버블**의 해당 구간 치환(에코 식별 방식 명시 — 인덱스 idx+1 고정이면 "디렉터 버블이 2개 연속인 스텝" 반례 존재 여부 확인, 구값 문자열 포함 검색이면 짧은 값('여성' 등)의 오치환 위험 판정 — 어느 쪽이든 **식별 규칙이 코드에 명시**돼야 하고 암묵 idx+1이면 스텝별 반례 전수 논증 요구). ③ **이후 보존 논증**: map은 길이 불변 — 치환 대상 외 메시지 참조 동일성 유지 확인. step state·이후 스텝의 store 값이 초기화되지 않는지(기존 rewind의 개별 필드 초기화 루프가 "target 스텝 값만 새 값 세팅"으로 전환 — **target 이후 스텝 필드 초기화 코드 잔존 시 FAIL**, 비파괴 취지 정면 위반). ④ 재선택 다이얼로그(:318 '다시 선택' onPress) 배선이 새 시그니처와 정합(새 값 전달 경로 — 값 입력이 선행되는 UI 흐름 확인). ⑤ 최종 프롬프트 정합: 치환된 store 값이 생성 파라미터에 반영(요약/프롬프트 조립부가 store를 읽는 경로 무변경이면 자동 충족 — 로컬 state 이원화 발견 시 FAIL).
+- Then: ①~⑤ 전부 충족 — ①③이 FAIL 게이트.
+
+**U-12. [G] 아티스트 게이트 제거 — 0명 분기 showAlert + 대화 보존 [unit]**
+- Given: :418 `if (list.length > 0)` 게이트가 0명 사용자에게 '아티스트로 만들기' 선택지 자체를 숨김. 수정 = 선택지 상시 노출 → 0명 선택 시 showAlert [취소/이동].
+- When: ① :418 게이트가 선택지 **노출 조건에서 제거**(0명에도 렌더) — 단 list 로드 실패(undefined)와 0명([]) 구분 처리 확인(로드 전 탭 시 분기 오작동 여부). ② 0명 선택 시 `showAlert('아티스트가 아직 없어요', …)` — 문구 계획 동일·버튼 [취소/이동] 2개·**RN Alert 금지**(U-9 ③과 동일 grep). ③ '이동' onPress → 아티스트 디렉터 navigation(Dialogue artist 파라미터 형상은 기존 Map→Dialogue 진입 코드와 동형 — 신규 라우트 문자열 오타는 tsc가 못 잡으므로 기존 호출부와 문자 대조). ④ **대화 보존**: 이동 경로에서 MusicGeneration 대화 상태(chatHistory·step·store 값) reset 호출 **0건** — navigate(스택 push)인지 replace인지 확인, replace면 복귀 시 대화 소실로 FAIL. ⑤ 1명 이상 사용자의 기존 흐름 diff 0(게이트 제거가 기존 분기 순서를 바꾸지 않는지).
+- Then: ①~⑤ 전부 충족.
+
+**U-13. [H] CoverGeneration fix 1~5 [unit]**
+- Given: 원인 확정 5건 — ① stale closure(handleTrackSelect :633이 이전 렌더 클로저의 스텝 함수 호출 → 가사반영 질문 step 1.75 스킵) ② doRegenerate(:899) 전체 와이프+step 2 강등 ③ performRewind(:598) 파괴적 절단+result 모드 탭 불가 ④ coverExtras 모듈 상태(:51 resetCoverExtras) 화면과 유리 ⑤ 실패 finally(:352 등)가 coverTrackId 클리어 → 재개 불가.
+- When:
+  - **fix1 stale closure**: handleTrackSelect가 참조하던 클로저 함수에 **track을 인자로 전달**(state 경유 제거) — 수정 후 해당 함수 시그니처에 track 파라미터 존재 + 호출부 전달 + 함수 본문의 구 state 참조 제거(인자와 state 혼용 잔존 시 FAIL). 가사반영 질문(step 1.75) 도달 조건이 "아티스트 유무와 무관"해졌는지 분기 논증.
+  - **fix2**: step-2 자유입력 영역에 '가사 내용 기반으로 생성' 버튼 — 기존 선택지와 **동일 핸들러 경로**(신규 생성 파이프 분기 금지, v3.201 U-6 취지 준용).
+  - **fix3**: doRegenerate 본문에서 메시지 배열 와이프(setMessages([...초기]) 류)·step 2 강등 **제거** → 기존 대화에 디렉터 메시지 **append** + 직전 스텝 복귀. `resetCoverExtras()` 호출이 **명시적 '처음부터' 경로에만** 잔존(doRegenerate·실패 경로에서 호출 0건 — grep 전수, :180 hasPendingGeneration 분기의 기존 호출은 재진입 초기화라 유지 판정). 429·일반 실패 공통 경로 확인(:337 onCancel → doRegenerate 배선이 와이프 없는 새 형상으로).
+  - **fix4**: performRewind(:598) — U-11과 **동일 패턴 문자 대조**(절단 0건·치환 쌍·이후 보존). + result 모드에서 말풍선 탭 가드 제거(재선택 다이얼로그 :620 도달 가능) — result 모드 치환 후 재생성 트리거 경로 정합.
+  - **fix5**: 대화 상태의 zustand 이동 — `stores/musicStore.ts`에 `coverMessages/coverStep/coverExtras/coverLyrics*` 필드 신설(모듈 변수 :51 coverExtras류 → store 이관, **화면 로컬 state와 이중 소스 잔존 시 FAIL** — 원인 ④ 재발). AsyncStorage persist를 새로 붙였다면 범위 초과 기록+재시작 부활 검토 회부(계획의 '영속'은 화면 언마운트 생존 의미로 해석 — hot-reload 유실 이력 메모리 취지와 정합 확인). 실패 finally에서 `coverTrackId`(및 재개 필수 필드) 클리어 **제거** — 클리어는 **성공 경로에만**(grep: finally 블록 내 coverTrackId 클리어 0건, :352-354 주석의 기존 부분 보호와 정합). store 리셋 경로(생성 완료·명시적 새로 시작)에 신설 필드 포함.
+- Then: fix1~5 전부 충족 — fix3(resetCoverExtras 잔존)·fix5(finally 클리어 잔존)가 FAIL 게이트.
+
+**U-14. [I-lite] ERR_NETWORK 폴링 복구 — 15s×12·재차감 없음 [unit]**
+- Given: 실측 — 서버는 150~180s 동기 처리 완료+별 차감했는데 클라이언트 연결 단절(11/44/153s)로 실패 표시 → 고아. 복구 = 실패 확정 전 `GET /upload/cover-sessions` 폴링으로 완성본 회수(**백엔드 무변경**).
+- When: ① 발동 조건: catch에서 `ERR_NETWORK`/타임아웃 **판별 분기**(code/message 판정 — 4xx/5xx 응답 오류는 기존 즉시 오류 유지, 전 오류 폴링화는 과잉으로 FAIL). ② 폴링 파라미터: **15s 간격 × 최대 12회**(총 ~180s = 서버 처리 상한과 정합 — 상수 2개 명시, 하드루프·즉발 재시도 0건). ③ 완성본 식별: cover-sessions 목록에서 **이번 요청 귀속 판정 기준**이 코드에 명시(요청 시각 이후 created_at + trackId/스타일 일치 등 — 기준 부재로 "남의 최신 커버" 오귀속 가능하면 FAIL). ④ **재차감 없음**: 발견 시 성공 처리 경로가 기존 성공 핸들러 **재사용**(이미지 URL 반영·mode 전환)이고 **생성 API 재호출 0건**(doGenerate 재진입 발견 시 즉시 FAIL — 별 재차감). ⑤ 미발견(12회 소진) 시 기존 오류 UI 폴백 + 폴링 중 대기 문구 표시(state 배선). ⑥ 폴링 중 취소/언마운트 시 타이머 정리(clearTimeout/interval — 누락 시 언마운트 후 setState 경고, 기록). ⑦ `services/coverLibraryService.ts`의 기존 list 함수 재사용(:56 — 신규 API 함수 신설이면 기록, 서버 스펙 동일 확인).
+- Then: ①~⑤ 충족(⑥⑦ 기록 허용) — ④가 FAIL 게이트.
+
+**U-15. [J] 연주곡 경로 개통 — 진입 2위치·게이트 예외·스킵 체인·배선 4점 [unit]**
+- Given: 원인 확정 — vocal='' → 'instrumental' 서버 배선(musicService :268)은 있으나 앱 경로 2중 단절(MusicLoading :210 `store.vocal || undefined`가 ''를 undefined로 삼킴 + VOCAL_OPTIONS(:43 `['남성','여성']`)에 선택지 부재). 수정은 신규 store 필드 `instrumental` 기준으로 전 구간 배선.
+- When:
+  - ① **진입 카드 2위치**: `ComposeLyricsPickScreen` — 목록 위 + 빈 상태(가사 0개) 양쪽에 '가사 없이 만들기(연주곡)' 카드. onPress = `setLyrics('') + setInstrumental(true) + replace('ComposerSelect')` 3동작(순서 무관·전부 존재 — replace라 뒤로가기 시 Pick 미복귀 확인). **일반 가사 선택 경로에 `setInstrumental(false)` 리셋 존재**(누락 시 연주곡 1회 후 일반 생성이 전부 연주곡화되는 끈적 상태 — FAIL 게이트).
+  - ② **게이트 예외 2곳**: ComposerSelectScreen 가사 하드 블록에 `|| store.instrumental` 예외. ComposeLyricsPick 빈 상태('돌아가기'만)는 ①의 카드 추가로 해소 — 두 화면 외 제3의 가사 게이트 grep(`lyrics`가 빈값일 때 차단하는 조건 전수 — MusicGeneration 진입부 포함) 0건 확인.
+  - ③ **스킵 체인**: MusicGenerationScreen — instrumental 시 **가사확인 스텝 + 보컬 스텝** 스킵. 스텝 인덱스가 배열 기반이면 **시프트 여부 판정**(v3.129 인덱스 시프트 사고 전례 — 스킵이 "인덱스 건너뛰기"인지 "배열 재구성"인지 확인, 재구성이면 재선택 제외 집합·performRewind idx 매핑 전부 재검증 필요 = 해당 시 U-11 재판정). 스킵된 스텝의 store 필드가 미정의로 남을 때 후속 조립 안전(undefined 가드).
+  - ④ **VOCAL_OPTIONS**: 'Instrumental (연주곡)' 추가(가사 있어도 무보컬 선택 가능 — 선택 시 instrumental=true 세팅인지 vocal 문자열 매핑인지 배선 방식 명시). **⑤ export 파급 판정(신규 발견 리스크)**: VOCAL_OPTIONS는 `ArtistResultScreen.tsx`(:32·:1287)·`VoiceManageScreen.tsx`(:19)가 import — 아티스트 보컬 설정 UI에 'Instrumental'이 노출되면 **오파급 FAIL**(아티스트는 연주곡 개념 무관). 해소 형태: MusicGeneration 로컬 확장 배열 사용 또는 소비처 filter — 어느 쪽이든 소비처 2화면 렌더 결과 불변 논증 필수.
+  - ⑥ **MusicLoading :210**: `store.vocal || undefined` → instrumental 반영 형태로 수정(`store.instrumental ? '' : (store.vocal || undefined)` 또는 params.instrumental 직접 전달 — musicService :268의 `params.vocal === '' ? 'instrumental'` 기존 배선과 정합, **이중 번역(앱 'instrumental' 문자열을 vocal에 직접 넣는 등)으로 서버 값이 'instrumental'/'') 불일치되면 FAIL**).
+  - ⑦ **musicService**: `params.instrumental` 명시 처리 + 연주곡 프롬프트 문장(작곡.md:67 문구 대조) — 기존 :268 폴백과 신설 명시 처리의 우선순위 명확(둘 다 참일 때 단일 결과).
+  - ⑧ **musicStore**: `instrumental` 필드 + **리셋 경로 전수**(생성 완료 리셋·새로 시작·claimQueue류 초기화 — 기존 리셋 함수 grep으로 필드 포함 확인, 1곳이라도 누락 시 ①의 끈적 상태 재발).
+- Then: ①~⑧ 전부 충족 — ①리셋·⑤파급·⑥번역이 FAIL 게이트.
+
+**U-16. [J] ComposerInputScreen 삭제 — 등록 3곳 제거 + 참조 0건 [unit]**
+- Given: v3.131부터 도달 불가 죽은 화면(라이브 작곡 대화 = MusicGenerationScreen) — v3.199 D·v3.201 B 이식분이 죽은 코드에 감(REPORT 정정 대상). 삭제 누락 3곳 중 1곳만 남아도 tsc 오류 또는 죽은 등록 잔존.
+- When: ① `screens/ComposerInputScreen.tsx` **파일 삭제**(`git status`에 D). ② App.tsx **등록 3곳 제거**: import(:61)·StudioStackParamList `ComposerInput: undefined;`(:106)·`<StudioStack.Screen name="ComposerInput" …>`(:199) — 3곳 전부 부재. ③ **전역 참조 grep 0건**: `grep -rn "ComposerInput" --include="*.ts*"`(node_modules 제외) = 0건 — navigation.navigate('ComposerInput') 류 문자열 잔존은 tsc가 못 잡는 런타임 크래시 경로(발견 시 FAIL). ④ tsc exit 0(U-1 ②와 교차 — param 타입 삭제로 기존 `NativeStackScreenProps<any,'ComposerInput'>` 참조가 파일과 함께 소멸했는지). ⑤ **REPORT 정정 기록**: REPORT.md에 "v3.199 D(재선택 edit-2)·v3.201 B(자유입력 이식) 중 ComposerInputScreen 분은 죽은 코드였고 v3.202에서 삭제로 폐기" 명기 — v3.201 테스트 결과의 Composer 관련 PASS 항목(U-6~U-8 Composer 절반)이 **라이브 화면 검증이 아니었음**을 주석(테스트플랜 이력 정합). LyricsInputScreen 분은 라이브 — 유지 명확화.
+- Then: ①~⑤ 전부 충족.
+
+**U-17. diff 격리 — 1조/2조 파일 목록 + musicStore 공유 접점 [unit]**
+- Given: 2개 조 병행 — 접촉 파일이 겹치는 곳은 `stores/musicStore.ts` 1개(1조 J instrumental / 2조 H cover* 필드)뿐이어야 한다.
+- When: ① `git status --short` + `git diff --stat`(2_housing): 콘텐츠 diff = 헤더의 허용 목록(1조 8파일+삭제 1 / 2조 7파일 / 공유 1) 내 — VOCAL_OPTIONS 소비처 2화면은 U-15 ⑤ 판정 결과에 따른 조건부(적용 시 커밋 메시지 명기). ② **musicStore hunk 귀속**: diff hunk를 J(instrumental)·H(cover*)로 전수 귀속 — 어느 쪽도 아닌 hunk 발견 시 FAIL. 두 조가 같은 리셋 함수를 수정하면 충돌 병합 결과 필드 누락 여부 정밀 확인(U-15 ⑧·U-13 fix5 교차). ③ DialogueScreen diff = 2조 C분만(1조 접촉 금지). ④ App.tsx diff = J 삭제 3곳만(다른 라우트 무접촉). ⑤ backend·`0_platform` 디렉토리 무접촉. ⑥ 커밋 전략 확인: 1조/2조 커밋 분리든 단일이든 스테이징 목록 명시(mode-only 파일 제외 관행 유지).
+- Then: ①~⑥ 전부 충족.
+
+**U-18. v3.191~201 무회귀 — 라이브/죽은 코드 구분 + 라인 귀속 [unit]**
+- Given: 접촉 파일 이력 최다 중첩 버전 — MusicGeneration(v3.110/129 스텝·v3.199 D)·Cover(v3.93 재개·v3.189류 보관함)·Dialogue(v3.199 B+v3.200+v3.201 C)·Map(v3.199 C+v3.201)·LyricsInput(v3.201 B)·playback(v3.197)·PlaylistPicker(v3.196/198/201).
+- When/Then (앵커 재탐색):
+  - ① **v3.197**: U-4로 포섭(셔플 핀·5중 검증·didJustFinish 분기 diff 0).
+  - ② **v3.196/198/201 시트·훅**: U-7로 포섭.
+  - ③ **v3.110/129**: MusicGeneration STEPS 정의·스텝→store 매핑 — E/F 치환·J 스킵이 매핑 인덱스를 움직였는지(U-15 ③ 교차, 시프트 발견 시 재선택·rewind 전 경로 재판정).
+  - ④ **v3.199 B/C/D + v3.200 + v3.201**: DialogueScreen — C(recChip) diff의 라인 귀속(U-9 ⑥). MapScreen — D 산식·안전망 외 diff 0(U-10 ④). 3화면 headerLeft focus 주입·Map focus 클리어 diff 0.
+  - ⑤ **v3.200 계측**: creationLogService 무접촉 — E/F 치환·J 스킵이 LISTEN/CANDIDATE_SELECT·가사 버전 커밋 호출부를 지나치는 경로 변화 여부 확인(치환 시 계측 재발화 중복 기록이면 기록·비차단).
+  - ⑥ **죽은/라이브 구분 명시**: 이번 무회귀 판정 대상에서 **ComposerInputScreen 관련 이력(v3.199 D 일부·v3.201 B Composer분)은 제외**(삭제로 폐기 — U-16 ⑤ REPORT 정정과 정합). 반대로 LyricsInput v3.201 B분은 라이브 — U-5 ⑤로 무회귀 판정. "삭제된 파일의 이력 항목을 FAIL로 오판"하지 않도록 tester에 명시.
+  - ⑦ **v3.93/189 커버 재개**: hasPendingGeneration(:110)·재진입 배선 — fix5 store 이관 후에도 재개 분기 판정식이 신설 필드 기준으로 동작(구 모듈 변수 참조 잔존 시 FAIL).
+
+### [e2e] 실기기 실측 이관 + 정적 대체
+
+**E-1. [A] 배경 재생 Doze 전환 [e2e] — 실기기 전용**: Android 실기기(전원 분리·화면 꺼짐·Doze 유도 15분+): ① 곡 자연 종료 시 다음 곡 전환(프리로드 히트 — [BTDebug] preloadHit:true) ② 차량 BT 환경 재현(가능 시) ③ 프리로드 실패 유도(비행기 모드 토글) 후 [BTDebug] 로그에서 재시도 ≤3회·간격 ≥10s 실측(폭주 재발 = FAIL) ④ 셔플 모드에서 핀 일치. **에뮬 재현 불가 — 정적 대체**: U-2~U-4 완료로 갈음. Doze 실측은 사용자 실기기 이관(원격 [BTDebug] 로그 회수 경로 기존 관행).
+
+**E-2. [J] 연주곡 여정 [e2e] — Suno 실과금 1회, 실기기 이관**: ① ComposeLyricsPick 목록 위+빈 상태 카드 → ComposerSelect(가사 게이트 통과) → MusicGeneration에서 가사확인·보컬 스텝 미노출 → MusicLoading → **생성 1회 실행(과금 인지 하에)** → 서버 요청 payload vocal='instrumental' 확인([BTDebug]/네트워크 로그) → 결과물 무보컬 청취 확인 ② 가사 있는 일반 플로우에서 VOCAL_OPTIONS 'Instrumental (연주곡)' 선택 경로 1회 ③ 연주곡 직후 일반 생성 1회 — instrumental 리셋 확인(U-15 ① 끈적 상태 실측) ④ ArtistResult·VoiceManage 보컬 설정 UI에 'Instrumental' 미노출(U-15 ⑤ 실측). **정적 대체**: U-15·U-16 완료로 갈음(과금 항목이므로 ①은 사용자 판단 하 1회만).
+
+**E-3. [H/I] 커버 실패 복구 여정 [e2e] — 실기기 이관**: ① 커버 생성 중 기내 모드로 ERR_NETWORK 유도 → 대기 문구 노출 → 네트워크 복원 → 폴링이 완성본 회수(별 잔액 **재차감 없음** — 생성 전후 잔액 대조) ② 12회 소진 케이스 → 기존 오류 UI ③ 생성 실패 후 앱 재진입 → coverTrackId 잔존으로 재개 가능(fix5) ④ doRegenerate(다시 생성) → 대화 보존+디렉터 메시지 append(와이프 무) ⑤ 아티스트 0명 계정에서 가사반영 질문 도달(fix1). **정적 대체**: U-13·U-14 완료로 갈음.
+
+**E-4. [B/E/F/G] 재선택 비파괴 여정 [e2e] — 실기기 이관**: ① MusicGeneration 재선택 → 해당 user 버블+디렉터 에코만 새 값, 이후 대화 보존, 최종 프롬프트 반영 ② Cover result 모드에서 말풍선 탭 → 재선택 가능 ③ Lyrics 재선택 모달 소형 기기(≤640dp) 키보드 열림 — 입력행 완전 노출(v3.201 편차 2 해소 실측) ④ Report/Appeal/AlbumCreate 3모달 키보드 가림 무+상단 클리핑 무 ⑤ 아티스트 0명 → '아티스트로 만들기' 탭 → 앱 내 팝업 → 이동 → 복귀 시 작곡 대화 보존 ⑥ recChip 탭 → PolicySheet 가이드, 모드 alert '자세히 보기'. **정적 대체**: U-5·U-6·U-9·U-11·U-12 완료로 갈음.
+
+### [api] 서버 무변경 확인
+
+**A-1. 백엔드 무접촉 + 기존 API 계약 내 소비 [api]**: ① 이번 diff에 서버 코드·`0_platform` 무접촉(U-17 ⑤ 포섭 — [api] 신규 테스트 0건의 근거). ② I-lite가 소비하는 `GET /upload/cover-sessions`는 기존 엔드포인트(coverLibraryService :56) — 요청 파라미터가 기존 스펙(page/limit) 내인지 확인(신규 쿼리 추가 시 서버 계약 위반 FAIL). ③ J의 vocal='instrumental'은 musicService :268에 기왕 존재하던 서버 계약 — 신규 필드 전송 없음 확인. **연주곡 실생성 검증은 Suno 과금이라 E-2 ①로 이관.**
+
+**게이트**: U-1~U-18 전부 PASS 시 머지 허용(E-1~E-4·A-1 실측분은 실기기 이관 — 정적 대체 완료 조건으로 비차단). 핵심 FAIL 게이트 9건 — U-3 ②(재시도 즉발 0건) / U-4 ①②(v3.197 침범) / U-7 ③(훅 hide 0 리셋) / U-8 ②(금지어 4종) / U-11 ①③(절단 0건·이후 스텝 초기화 잔존) / U-13 fix3·fix5(resetCoverExtras 오호출·finally 클리어 잔존) / U-14 ④(생성 재호출=재차감) / U-15 ①⑤⑥(instrumental 리셋·VOCAL_OPTIONS 파급·서버 값 번역) / U-16 ③(ComposerInput 참조 잔존) — 1건이라도 FAIL이면 커밋 금지.
+
+### v3.202 테스트 결과 (tester, 2026-09-21)
+
+| ID | 판정 | 근거 요약 |
+|----|------|-----------|
+| U-1 | PASS | v3.201 커밋 e48a7ee 완료·2_housing 콘텐츠 diff=v3.202분만(그 외 전부 mode-only) / `npx tsc --noEmit` exit 0 |
+| U-2 | **FAIL(②)** | ①✓ eager 트리거 2곳(loadAndPlayTrack 성공·preload 스왑 성공 — 실패 경로 미호출) ③✓ preloadInFlight 공통 가드 ④✓ getNextIndex 핀 재사용. **② 잔여 60s 트리거/창 확장 부재** — 백오프 가드가 20s/85% 창 게이트 **뒤**에 있어 eager 1회 실패 시 다음 재시도가 종곡 20s 전까지 지연(중간 재시도 기회 소실, 계획 '조기 2트리거' 미충족) |
+| U-3 | PASS (게이트) | ① `count >= 3` 차단 = 총 3회 정확 ② catch 내 즉발 재호출/setTimeout/재귀 **0건** ③ 성공 시 null·forTrackId 미스매치로 곡 전환 자동 리셋 ④ 모듈 변수 자연 무효 주석 명시 ⑤ 기존 BTDebug 문자열 유지+retry/max 필드 추가 |
+| U-4 | PASS (게이트) | 핀 산출·stale/invalid discard·didJustFinish 분기·스왑 성공/폴백·playerStore·MiniPlayer diff 0. `forTrackId: curId` 치환은 값 동일 리팩터(동기 시점 String화), eager 호출 추가는 트리거 신설로 침범 아님 |
+| U-5 | PASS | ① center→flex-end **상시** 전환(+overlay paddingBottom insets.bottom+24) — **커밋 메시지에 채택 형태 명기 필요** ② marginBottom 유지 ③ PlaylistPickerSheet :109와 문자 동치 ④ 검산: winH=640·kbH=256 → 클램프 360, 360+256+24=640 항등 성립 ⑤ handleReselectChoice·제외집합·closeReselect diff 0 |
+| U-6 | PASS(편차 기록) | ①visible 게이트 ✓ ②**편차**: -kbPad 전량 대신 `-(kbPad+insets.bottom)/2` = **-kbH/2 재중앙식**. 검산: 가시영역 [0, winH-kbH] 중앙으로 가려면 필요 상향 = winH/2-(winH-kbH)/2 = **kbH/2 = (kbPad+insets.bottom)/2 정확 일치**. translateY는 post-layout 1:1 반영이라 v3.201 '절반 손실'(Yoga margin 분배)과 무관 — 클램프(maxHeight ≤ winH-kbH-insets.top-24 = 가시영역-24)와 결합 시 상하 클리핑 0 증명. 계획 문언(-kbPad)보다 우월(과리프트로 인한 상단 클리핑 원천 차단) — 오케스트레이터 확인 권고 ③✓ ④iOS kbPad=0→무효과 ⑤3파일 완전 동형 ⑥핸들러 diff 0. 기록: Math.max(240,…) 하한이 초소형 기기(가시영역<264)에서 미세 넘침 허용 |
+| U-7 | PASS (게이트) | 훅·PlaylistPickerSheet diff 0, hide→무조건 0 리셋 존속 |
+| U-8 | PASS (게이트) | ② 금지어 4종+우회 변형 grep **0건** ①{label,body} 관행 일치 ④기존 상수 diff 0. **기록(③)**: "법적 효력을 보장하지 않는다" 류 한계 고지 부재 — 오케스트레이터 문구 검토 회부(부정형 '보장하지 않음'도 grep '보장'에 걸리는 딜레마 있음 — "법적 효력이 자동으로 생기는 것은 아닙니다" 류 권고) |
+| U-9 | PASS | ①Touchable+Feather info+onPress ✓ ②PolicySheet 재사용(props visible/title/body/onClose 동형)·신규 컴포넌트 0(untracked는 기존 scratchpad뿐) ③showAlert '자세히 보기'·RN Alert 0건 ④라벨 무변경 ⑤recChip 탭 = no-op 가드 밖 경로 ⑥diff가 import·state·alert 버튼·recChip JSX·시트 렌더에 국한(v3.200/201 라인 무침범) |
+| U-10 | PASS | ① `Math.max(90, screenWidth - (user ? 300 : 90))` 정확 일치 ②360→90 발동·412→112·267≤300 ✓ ③안전망 정확히 2키 ④deps 5요소 유지·headerLeft 키 부재·focus 클리어·Marquee nameMaxWidth 참조 유지 |
+| U-11 | PASS (게이트) | ①performRewind·commitExchange에 slice/splice/length 절단 0건(:412·:532 slice는 무관 라인) ②치환 쌍: user 버블 text만 교체(step 보존)+에코는 **echoOfStep===target 메타 매치**(코드 명시·암묵 idx+1 아님) — 에코 수 불일치 시 초과분 보존 정책 주석화 ③구 필드 초기화 루프 전면 삭제·핸들러가 새 값 세팅(step12 자동스킵도 되감기 중 차단) ④다이얼로그 문구 비파괴로 갱신·값 입력 선행 ⑤로컬 state 이원화 없음. 기록: step12 자동스킵 버블은 step 태그 없어 되감기 대상 제외(설계 정합) |
+| U-12 | PASS | ①게이트 제거—조회 실패도 0명 취급으로 단계 진행(로드 전 탭 불가: await 후 step 200) ②showAlert+[취소/이동] ③Dialogue push params가 MapScreen 형상과 문자 대조 일치(role 문자열·y=340 동일, 동일 StudioStack 라우트) ④navigate=push·reset 0건·focus 시 refreshArtists ⑤기존 ≥1명 흐름 동일(건너뛰기 번호 산식만 0명 대응) |
+| U-13 | PASS(편차 1) (게이트 2건 통과) | fix1 ✓ track 인자 전달+인자 우선(state 폴백은 무인자 호출부용 — handleTrackSelect가 store도 선기록해 stale 원천 제거)·1.75 도달 아티스트 무관 / fix2 ✓ handleLyricsUse(2) 동일 핸들러(신규 파이프 0) — 기록: 성공 시 디렉터 확인 버블 없음+라벨 '생성'이나 실제 동작은 발췌 반영 후 step2 잔류 / fix3 ✓ 와이프 제거→append+마지막 답변 스텝 복귀, **resetCoverExtras 호출 = mount 신규시작·앨범모드(false)·곡변경(step0)만 — doRegenerate·실패 경로 0건** / fix4 ✓ 비파괴 치환+result 탭 개방(mode==='loading'만 차단) — **편차**: step 0(곡 변경)만 slice 파괴 유지(전용 경고 다이얼로그 병행, 곡 변경 시 이후 선택 전부 무효라 논리 타당 — 오케스트레이터 승인 요) / fix5 ✓ coverMessages/coverStep/coverExtrasSnapshot/coverLyrics* store 이관(applyExtras 단일 통로 미러+마운트 hydrate — 직접 대입 잔존 0), AsyncStorage 미도입(언마운트 생존 의미 정합), **finally 블록 자체 삭제·clearCoverContext는 성공 2경로만**, 실패는 coverStyle만 해제(hasPendingGeneration=coverTrackId&&coverStyle 강화판과 정합) |
+| U-14 | PASS (게이트 통과) | ①`!err.response && (ERR_NETWORK|ECONNABORTED|/network|timeout/)` — 4xx/5xx 제외 ✓ ②15000×12 상수 명시·선대기 후 폴링 ③귀속 기준 코드+주석 명시(t0−120s·cover_object_name·최신 1건) — **권고**: 120s 창 내 직전 생성 오귀속 이론상 가능(세션 row에 track_id 있으면 매치 추가) ④**생성 API 재호출 0건**·fetchBalance로 잔액 동기화만 ⑤12회 소진→기존 오류 UI+recoveryNotice 배선 ⑥기록: 언마운트 시 폴링 중단 없음(최대 3분 setState 경고 가능) ⑦기록: coverLibraryService 함수 대신 api 직호출(동일 엔드포인트·page/limit 스펙 내) |
+| U-15 | PASS (게이트 3건 통과) | ①카드 단일 배치가 목록 위+빈 상태 겸용(entries 무관 상시)·3동작+900ms replace·**handlePick setInstrumental(false) 존재** ②ComposerSelect 2곳 예외+제3 가사 게이트 grep 0건 ③조건 분기 스킵(배열 재구성 없음 — 인덱스 시프트 0, U-11 재판정 불요)·proceedGenerate가 보컬/페르소나 명시 공백 ④INSTRUMENTAL_OPTION 로컬 상수+렌더 시 확장·선택=setInstrumental(true) 플래그 방식 ⑤**VOCAL_OPTIONS 배열 무변경·소비처 2화면 diff 0**(렌더 불변 자동 충족) ⑥**MusicLoading `store.instrumental ? '' : (store.vocal||undefined)`+instrumental 플래그 → musicService 단일 번역 `'instrumental'`**(이중 번역 없음) ⑦연주곡 프롬프트 = 작곡.md:67 문자 일치 — 기록: 구 암묵 폴백(vocal===''→) 제거(죽은 분기 정리, 우선순위 단일화) ⑧reset()=initialState(instrumental:false 포함)+진입 정규화(ComposeLyricsPick·ComposerSelect — LyricsResult:112/LyricsBook:150 모두 setLyrics 선행 확인, 끈적 누수 경로 부재). 기록: ComposerSelect 정규화가 lyricsStore.generatedLyrics 단독 케이스 미검(현 진입 4경로 전부 musicStore.lyrics 세팅이라 실경로 없음 — 방어적 보강 권고). isDuet+instrumental 동시 전송 가능(서버 영향 미미, E-2 실측) |
+| U-16 | **FAIL(③⑤)** | ①파일 삭제 D ✓ ②App.tsx 3곳 제거 ✓ ④tsc 0 ✓. **③ FAIL: `screens/DialogueScreen.tsx:68` 로컬 StudioStackParamList에 `ComposerInput: undefined;` 잔존** — 이 타입 키가 살아있는 한 DialogueScreen에서 navigate('ComposerInput')이 타입 통과 후 런타임 크래시하는 문이 열려 있음(게이트 정의 그대로). 부수(비차단 기록): App.tsx:61·ComposerSelect:65 삭제 주석, MapScreen:310 이력 주석의 'ComposerInput' 문자열. **⑤ FAIL: REPORT.md·REPORT_v3.md에 v3.202 정정 기록(죽은 코드 폐기·v3.201 Composer PASS 항목 주석) 미기재** |
+| U-17 | PASS(편차 1) | ①콘텐츠 diff = 허용 목록 내 + **`types/index.ts`(+2, MusicParams.instrumental — 허용 목록 외이나 J 배선 필수분)** → 커밋 메시지 명기 조건부 ②musicStore hunk 전수 귀속: J=instrumental 6 hunk / H=cover* 타입·필드·액션 — 무귀속 hunk 0, 공유 리셋 함수 수정 없음 ③DialogueScreen diff=C분만 ④App.tsx=J 3곳만 ⑤0_platform 156건 전부 mode change 100644→100755(콘텐츠 0)·서버 코드 무접촉 ⑥스테이징 목록 하단 확정 |
+| U-18 | PASS | ①U-4 ②U-7 포섭 ③스텝 번호 체계 유지(조건 분기) — 매핑 인덱스 불변 ④DialogueScreen C 귀속·MapScreen D 국한·headerLeft/focus diff 0 ⑤creationLogService 무접촉(diff 0) ⑥Composer 이력 제외 적용·LyricsInput B분은 U-5 ⑤로 무회귀 확인 ⑦hasPendingGeneration 강화판이 신설 store 필드 기준 — 구 모듈 변수 참조 잔존 0. 기록: clearCoverContext가 앨범 모드 성공 시 coverCharacterObjectName 미정리(구 finally는 무조건 정리) — 유령 포함 엣지, E-3 실측 항목에 추가 |
+| E-1~E-4 | 정적 대체 완료 | 실기기 이관(하단 목록) |
+| A-1 | PASS | ①0_platform·백엔드 콘텐츠 diff 0(mode-only뿐) ②cover-sessions page=1/limit=5 기존 스펙 내 ③body에 신규 필드 없음 — instrumental은 앱 내부 파라미터, 서버 전송은 기존 vocal='instrumental'뿐 |
+
+**게이트 판정: 커밋 금지.** 핵심 FAIL 게이트 9건 중 **U-16 ③ 1건 FAIL**(DialogueScreen:68 ComposerInput 타입 키 잔존). 비핵심 FAIL 2건: U-2 ②(60s 조기 트리거 부재), U-16 ⑤(REPORT 정정 미기재).
+
+**수정 지시 (3건 — 완료 후 재판정 없이 커밋 가능, 모두 기계적 수정)**
+1. [1조] `screens/DialogueScreen.tsx:68` `  ComposerInput: undefined;` 1줄 삭제 (tsc 재확인 — navigate 호출부 0건이라 안전).
+2. [1조] `services/playback.ts` — 창 합집합 확장: `PRELOAD_EARLY_LEAD_MS = 60_000` 상수 신설 후 비-eager 게이트를 `if (remaining > PRELOAD_LEAD_MS && remaining > PRELOAD_EARLY_LEAD_MS && positionMillis / durationMillis < PRELOAD_RATIO) return;` 형태(또는 동치 union)로 — 기존 20s/85% 상수 삭제·변경 금지, 백오프(10s 간격·3회)는 그대로 이 확장 창 안에서 동작.
+3. [양조] REPORT.md(v3.202 절)에 정정 기록: "v3.199 D(재선택 edit-2)·v3.201 B(자유입력 이식) 중 ComposerInputScreen 분은 죽은 코드였고 v3.202에서 삭제로 폐기 — v3.201 U-6~U-8의 Composer 관련 PASS는 라이브 화면 검증이 아니었음. LyricsInputScreen 분은 라이브 유지."
+
+**커밋 메시지 명기 사항**: ① U-5 B안1 = 상시 flex-end 채택 ② U-6 리프트 산식 = 재중앙 -(kbPad+insets.bottom)/2 (계획 -kbPad 대비 편차·수학 검산 완료) ③ types/index.ts 허용 목록 외 접촉(MusicParams.instrumental) ④ U-13 fix4 step 0(곡 변경) 파괴 유지(경고 다이얼로그 병행).
+
+**커밋 스테이징 목록 (2_housing/, mode-only 파일 제외 관행 유지)**: App.tsx / types/index.ts / stores/musicStore.ts / services/playback.ts / services/musicService.ts / hooks 무 / screens/ComposeLyricsPickScreen.tsx / screens/ComposerSelectScreen.tsx / screens/CoverGenerationScreen.tsx / screens/DialogueScreen.tsx / screens/LyricsInputScreen.tsx / screens/MapScreen.tsx / screens/MusicGenerationScreen.tsx / screens/MusicLoadingScreen.tsx / **screens/ComposerInputScreen.tsx (삭제 D)** / components/ReportModal.tsx / components/AppealModal.tsx / components/AlbumCreateModal.tsx / constants/consentTexts.ts + 산출물(PLAN/REPORT/TESTPLAN). 그 외 M(assets·문서 등 mode-only)·untracked(scratchpad·이식 로드맵 md) 제외.
+
+**실기기 이관 잔여**: E-1 ①③④(Doze 프리로드 히트·백오프 ≤3회/≥10s 실측·셔플 핀) / E-2 ①~④(연주곡 실생성 1회 — Suno 과금 사용자 판단·payload vocal='instrumental'·끈적 리셋·소비처 미노출) / E-3 ①~⑤(폴링 회수·잔액 재차감 없음 대조·12회 소진·재개·append·0명 1.75 도달 + **앨범 모드 성공 후 다음 트랙 커버에 아티스트 유령 포함 여부**) / E-4 ①~⑥(비파괴 재선택·result 탭·소형기기 키보드 3모달+재선택 모달·0명 CTA 왕복 보존·recChip 시트).

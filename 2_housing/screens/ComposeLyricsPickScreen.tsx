@@ -190,6 +190,8 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     music.setLyrics(entry.lyrics);
     music.setGenre(entry.genre || '');
     music.setMood(entry.mood || '');
+    // v3.202(J): 가사 기반 작곡 시작 = 연주곡 플래그 해제 — 직전 연주곡 흐름의 끈적 상태 방지
+    music.setInstrumental(false);
     if (entry.source === 'asset') {
       music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
       // v3.144: 출처 id를 영속 스토어에도 기록 — 리로드 후에도 수정 동기화·장르 승계 유지
@@ -220,6 +222,23 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     setTimeout(() => navigation.replace('ComposerSelect'), 900);
   };
 
+  // v3.202(J): '가사 없이 만들기(연주곡)' — 가사 게이트를 우회하는 명시 경로.
+  // 가사·출처·장르/분위기를 비우고 instrumental 플래그만 세워 작곡 흐름에 태운다.
+  // (ComposerSelect 가사 게이트는 instrumental 예외, MusicGeneration은 가사확인·보컬 스텝 스킵)
+  const handleInstrumental = () => {
+    if (composingRef.current) return;
+    composingRef.current = true;
+    console.info('[ComposeLyricsPick] 연주곡(가사 없이) 선택');
+    setPickedTitle('연주곡');
+    const music = useMusicStore.getState();
+    music.setLyrics('');
+    music.setLyricsSource(null);
+    music.setGenre('');
+    music.setMood('');
+    music.setInstrumental(true);
+    setTimeout(() => navigation.replace('ComposerSelect'), 900);
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -238,7 +257,7 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
               {pickedTitle
                 ? `『${pickedTitle}』(으)로 가볼게요! 멋진 곡을 만들어봐요.`
                 : entries.length === 0 && !loading
-                  ? '아직 작사한 가사가 없네요. 작사 디렉터에게 먼저 다녀와주세요!'
+                  ? '아직 작사한 가사가 없네요. 작사 디렉터에게 다녀오거나, 가사 없이 연주곡으로 만들 수도 있어요!'
                   : '어떤 가사로 곡을 만들까요? 최근에 작사한 가사부터 보여드릴게요.'}
             </AppText>
           </View>
@@ -246,6 +265,20 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
 
         {loading && (
           <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
+        )}
+
+        {/* v3.202(J): 가사 없이 만들기(연주곡) — 목록 위 상시 노출(빈 상태 포함, 가사 게이트 우회 경로) */}
+        {!pickedTitle && !loading && (
+          <TouchableOpacity style={styles.instrumentalCard} activeOpacity={0.8} onPress={handleInstrumental}>
+            <View style={styles.instrumentalIconWrap}>
+              <Feather name="music" size={16} color={colors.accent.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText style={styles.instrumentalTitle}>가사 없이 만들기 (연주곡)</AppText>
+              <AppText style={styles.instrumentalSub}>보컬 없이 연주만 있는 곡을 만들어요</AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.text.muted} />
+          </TouchableOpacity>
         )}
 
         {/* 가사 카드 선택지 — 카드 탭=바로 작곡, [가사 보기]=전체 가사 펼치기 */}
@@ -349,4 +382,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent.primary, borderRadius: 10,
   },
   emptyBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  // v3.202(J): 가사 없이 만들기(연주곡) 카드
+  instrumentalCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14, marginBottom: 10,
+    borderWidth: 1, borderColor: colors.border.subtle, borderStyle: 'dashed',
+  },
+  instrumentalIconWrap: {
+    width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  instrumentalTitle: { fontSize: 14, fontWeight: '700', color: colors.text.primary },
+  instrumentalSub: { fontSize: 11, color: colors.text.muted, marginTop: 2 },
 });

@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  useWindowDimensions,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -109,6 +110,8 @@ type Props = NativeStackScreenProps<any, 'LyricsInput'>;
 
 export default function LyricsInputScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.202(B): 재선택 모달 동적 maxHeight 클램프용 — PlaylistPickerSheet 검증 패턴
+  const { height: winH } = useWindowDimensions();
   const store = useLyricsStore();
   const [step, setStep] = useState(0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -455,9 +458,23 @@ export default function LyricsInputScreen({ navigation }: Props) {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           pointerEvents="box-none"
         >
-          <TouchableOpacity style={styles.reselectOverlay} activeOpacity={1} onPress={closeReselect}>
-            {/* Android: 중앙 정렬 + marginBottom(kbPad)으로 키보드 열림 중 컨테이너 상향 — Modal 내 KAV padding 재도입 금지(v3.198) */}
-            <View style={[styles.reselectContainer, { marginBottom: reselectKbPad }]}>
+          {/* v3.202(B): overlay center→flex-end 전환 — center에서는 marginBottom 리프트가 kbPad/2만
+              유효(Yoga가 상하 여백을 분배 — v3.202 원인 확정 B). flex-end에서는 100% 유효(담기 시트 검증). */}
+          <TouchableOpacity
+            style={[styles.reselectOverlay, { paddingBottom: insets.bottom + 24 }]}
+            activeOpacity={1}
+            onPress={closeReselect}
+          >
+            {/* Android: flex-end + marginBottom(kbPad)으로 키보드 열림 중 컨테이너 상향 — Modal 내 KAV padding 재도입 금지(v3.198)
+                v3.202(B): 키보드 열림 중에는 maxHeight를 남는 화면(winH - 키보드 - 하단 인셋 - 24)과
+                기본 60% 중 작은 값으로 클램프 — 컨테이너 상단이 화면 밖으로 밀리는 것 방지(PlaylistPickerSheet :109 동일식) */}
+            <View
+              style={[
+                styles.reselectContainer,
+                { marginBottom: reselectKbPad },
+                reselectKbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (reselectKbPad + insets.bottom) - 24) },
+              ]}
+            >
               <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
               <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
                 {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
@@ -644,7 +661,9 @@ const styles = StyleSheet.create({
   reselectOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
+    // v3.202(B): center → flex-end — marginBottom 키보드 리프트가 전량 유효하도록(Yoga 산식).
+    // 하단 여백은 렌더부 인라인 paddingBottom(insets.bottom+24)이 담당.
+    justifyContent: 'flex-end',
     alignItems: 'center',
   },
   reselectContainer: {

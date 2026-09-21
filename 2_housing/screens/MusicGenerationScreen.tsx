@@ -41,6 +41,10 @@ const MOODS = ['밝고 경쾌한', '슬프고 우울한', '몽환적·신비로�
 // v3.84: 간편 목소리(프리셋) 화면에서도 동일 세팅을 쓰도록 export (VoiceManageScreen)
 export const VOCAL_STYLES = ['소프트', '파워풀', '위스퍼', '그루비', '클리어', '허스키'];
 export const VOCAL_OPTIONS = ['남성', '여성'];
+// v3.202(J): 작곡 대화 보컬 스텝 전용 선택지 — VOCAL_OPTIONS는 VoiceManageScreen(:333)·
+// ArtistResultScreen(:1287)이 성별(남/여→male/female) 매핑으로 공유하므로 배열에 직접
+// 추가하지 않는다(아티스트 보컬 설정 UI 오노출 방지). step 3 렌더에서만 로컬 확장.
+const INSTRUMENTAL_OPTION = 'Instrumental (연주곡)';
 
 const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A major', 'B major', 'C minor', 'D minor', 'E minor', 'F minor', 'G minor', 'A minor', 'B minor'];
 
@@ -65,6 +69,9 @@ interface ChatMessage {
   text: string;
   /** v3.148 — 이 사용자 답변이 응답한 step. 있으면 말풍선 탭 → 그 단계부터 다시 선택(작사 디렉터와 동일 UX) */
   step?: number;
+  /** v3.202(E/F) — director 메시지가 어느 step의 사용자 답변에 대한 응답(에코/다음 질문)인지.
+   *  비파괴 되감기에서 "직후 에코 버블" 식별은 이 메타 매치로만 한다(암묵 idx+1·문자열 검색 금지). */
+  echoOfStep?: number;
 }
 
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
@@ -122,6 +129,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const personaDefaultAppliedRef = useRef(false);
   // v3.145: 장르/분위기 재선택 모드 — 302에서 '아니요' 시 300→301 모두 다시 질문
   const repickRef = useRef(false);
+  // v3.202(E/F): 비파괴 되감기 컨텍스트 — 탭한 버블 idx·되감은 step·복귀할 원래 step.
+  // 활성 중에는 답변 핸들러가 대화를 덧붙이는 대신 해당 버블/에코만 치환하고 resumeStep으로 복귀.
+  const rewindRef = useRef<{ idx: number; target: number; resumeStep: number } | null>(null);
+  // v3.202(J): 연주곡 진입 스냅샷 — ComposeLyricsPick '가사 없이 만들기' 경로(가사 공백 상태로 진입).
+  // 마운트 시점에 고정해, 이후 보컬 스텝의 Instrumental 선택(가사 유지·무보컬)과 구분한다.
+  const instrumentalEntryRef = useRef(
+    useMusicStore.getState().instrumental && !useMusicStore.getState().lyrics.trim()
+  );
   // v3.146(대표): 장르/분위기 직접 입력 — 작사 디렉터와 동일한 자유 입력 UI (step 300/301 공용)
   const [customPickInput, setCustomPickInput] = useState('');
   const [bpmValue, setBpmValue] = useState(120);
@@ -144,6 +159,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.156a: 작곡 대화는 마운트 시 처음부터 시작하므로 이전 작곡의 아티스트 선택이
   // store에 남아 새 곡에 오염되지 않도록 초기화 (musicStore.reset()은 호출처가 없음).
+  // v3.202(J): instrumental은 여기서 리셋 금지 — ComposeLyricsPick 카드 경로가 직전에 세팅한
+  // 플래그다. 잔존 방지는 가사 선택(handlePick)·ComposerSelect 정규화가 담당.
   useEffect(() => {
     useMusicStore.getState().setArtistCharacterId(null);
   }, []);
@@ -220,6 +237,26 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }, [step, fetchClones])
   );
 
+  // v3.202(G): 아티스트 목록 새로고침 — 아티스트 디렉터(Dialogue)에 다녀온 뒤 복귀 시
+  // 방금 만든 아티스트가 선택지에 반영되도록.
+  const refreshArtists = useCallback(async () => {
+    try {
+      const list = (await listArtists()).characters;
+      setArtists(list);
+      console.info('[MusicGeneration] 아티스트 목록 갱신', { count: list.length });
+    } catch (err: any) {
+      console.error('[MusicGeneration] 아티스트 목록 갱신 실패', { status: err?.response?.status });
+    }
+  }, []);
+
+  // v3.202(G): 아티스트 단계에서 화면 복귀(focus) 시 목록 갱신 — Dialogue(artist)는 push라
+  // 이 화면(chatHistory/step)이 스택에 보존되고, 뒤로가기로 돌아오면 여기서 이어진다.
+  useFocusEffect(
+    useCallback(() => {
+      if (step === 200) refreshArtists();
+    }, [step, refreshArtists])
+  );
+
   // v3.84: 아티스트 목소리가 "클론"이면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중).
   // "프리셋"이면 이 스텝은 건너뛰기 기본 — 스타일 태그는 성별/스타일 스텝에서 이미 반영됨.
   useEffect(() => {
@@ -231,7 +268,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   }, [step, artistClone]);
 
   // v3.135: 아티스트 목소리가 이미 적용된 경우 내 목소리(step 12) 단계 자동 통과
+  // v3.202(E/F): 되감기 중에는 자동 통과 금지 — 사용자가 이 스텝을 직접 다시 고르는 중
   useEffect(() => {
+    if (rewindRef.current) return;
     if (step === 12 && artistVoiceApplied) {
       console.info('[MusicGeneration] step12 스킵 — 아티스트 목소리 적용됨');
       setChatHistory((prev) => [
@@ -244,25 +283,52 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, artistVoiceApplied]);
 
-  const advanceStep = (userAnswer: string, nextStep: number) => {
-    if (nextStep >= DIRECTOR_MESSAGES.length) {
-      // All steps done - show generate button
-      const newHistory: ChatMessage[] = [
-        ...chatHistory,
-        { type: 'user', text: userAnswer, step },
-        { type: 'director', text: '모든 설정이 완료됐어요! 아래 버튼을 눌러 음악을 만들어볼까요?' },
-      ];
-      setChatHistory(newHistory);
-      setStep(nextStep);
-    } else {
-      const newHistory: ChatMessage[] = [
-        ...chatHistory,
-        { type: 'user', text: userAnswer, step },
-        { type: 'director', text: DIRECTOR_MESSAGES[nextStep] },
-      ];
-      setChatHistory(newHistory);
-      setStep(nextStep);
+  // ── v3.202(E/F): 대화 커밋 공용 헬퍼 — 모든 답변 핸들러가 이 함수로 대화를 기록한다 ──
+  // 일반 모드: [user, directors...] append + setStep(nextStep) (기존 동작과 동일).
+  // 되감기 모드(rewindRef 활성): prev.slice 파괴적 절단(v3.148) 폐기 → 비파괴 치환:
+  //   ① 탭한 user 버블(idx)의 text만 새 값으로 교체(step 태그 보존)
+  //   ② 직후 디렉터 에코 버블(구값 언급) 치환 — 식별은 echoOfStep === 되감은 step 메타 매치로만
+  //      (암묵 idx+1 가정·문자열 검색 금지). 핸들러가 새 값 기준으로 재생성한 텍스트로 순서대로 덮어쓰고,
+  //      새 메시지가 더 적으면 남는 기존 에코는 보존한다.
+  //   ③ 이후 대화·다른 답변·진행 step 전부 보존 — 원래 위치(resumeStep)로 복귀.
+  const commitExchange = (user: ChatMessage, directors: ChatMessage[], nextStep: number) => {
+    const rw = rewindRef.current;
+    if (rw) {
+      rewindRef.current = null;
+      console.info('[MusicGeneration] 되감기 커밋(비파괴 치환)', { idx: rw.idx, target: rw.target, resume: rw.resumeStep });
+      setChatHistory((prev) => {
+        const next = [...prev];
+        if (next[rw.idx]?.type === 'user') next[rw.idx] = { ...next[rw.idx], text: user.text };
+        let di = 0;
+        for (let j = rw.idx + 1; j < next.length && di < directors.length; j++) {
+          const m = next[j];
+          if (m.type !== 'director' || m.echoOfStep !== rw.target) break;
+          next[j] = { type: 'director', text: directors[di].text, echoOfStep: rw.target };
+          di++;
+        }
+        return next;
+      });
+      setStep(rw.resumeStep);
+      return;
     }
+    setChatHistory((prev) => [
+      ...prev,
+      user,
+      ...directors.map((d) => ({ ...d, echoOfStep: user.step })),
+    ]);
+    setStep(nextStep);
+  };
+
+  const advanceStep = (userAnswer: string, nextStep: number) => {
+    const directorText =
+      nextStep >= DIRECTOR_MESSAGES.length
+        ? '모든 설정이 완료됐어요! 아래 버튼을 눌러 음악을 만들어볼까요?'
+        : DIRECTOR_MESSAGES[nextStep];
+    commitExchange(
+      { type: 'user', text: userAnswer, step },
+      [{ type: 'director', text: directorText }],
+      nextStep
+    );
   };
 
   // ── v3.148(대표): 작곡 대화도 작사처럼 내 답변 탭 → 그 단계부터 다시 선택 ──
@@ -287,33 +353,23 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
   };
 
+  // v3.202(E/F): 비파괴 되감기 — 대화 절단·파생 상태 초기화(v3.148) 전면 폐기.
+  // 값 반영은 각 답변 핸들러가 "새 값으로 세팅"하고(commitExchange 경유), 이후 대화·선택은 보존된다.
   const performRewind = (idx: number, target: number) => {
-    console.info('[MusicGeneration] 대화 되감기', { idx, target });
-    // 되감는 지점 이후의 선택 파생 상태 리셋 — 앞으로 재진행하며 다시 채워진다.
+    // 연쇄 되감기(되감기 중 다른 버블 탭) — 복귀 지점은 최초의 원래 진행 위치를 유지
+    const resumeStep = rewindRef.current ? rewindRef.current.resumeStep : step;
+    console.info('[MusicGeneration] 대화 되감기(비파괴)', { idx, target, resumeStep });
     repickRef.current = false;
-    const voiceRelated = target <= 3 || target === 200 || target === 210 || target === 220 || target >= 300;
-    if (voiceRelated) {
-      setArtistVoiceApplied(false);
-      personaDefaultAppliedRef.current = false;
-      setPersonaModelOn(false);
-      setSelectedPersonaId(null);
-    }
-    if (target <= 1 || target === 200 || target >= 300) {
-      setSelectedArtistId(null);
-      musicStore.setArtistCharacterId(null); // v3.156: 아티스트 재선택 되감기 시 store도 초기화
-    }
+    rewindRef.current = { idx, target, resumeStep };
     if (target === 210) fetchClones();
-    setChatHistory((prev) => [
-      ...prev.slice(0, idx),
-      { type: 'director', text: questionForStep(target) },
-    ]);
+    if (target === 200) refreshArtists(); // v3.202(G): 아티스트 재선택 — 목록 최신화
     setStep(target);
   };
 
   const handleUserBubbleTap = (idx: number) => {
     const msg = chatHistory[idx];
     if (msg?.type !== 'user' || msg.step == null) return;
-    showAlert('이 답변부터 다시 할까요?', `"${msg.text}"\n\n이후의 선택은 초기화되고, 이 질문부터 다시 진행해요.`, [
+    showAlert('이 답변만 다시 고를까요?', `"${msg.text}"\n\n이 답변만 새 값으로 바뀌고, 이후의 대화와 선택은 그대로 유지돼요.`, [
       { text: '취소', style: 'cancel' },
       { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
     ]);
@@ -323,6 +379,18 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 편집한 제목을 lyricsStore에 반영 (이걸 안 하면 MyMusic / LyricsResult에서 원본만 보임)
   const handleTitleConfirm = () => {
     lyricsStore.setGeneratedTitle(editedTitle.trim());
+    if (instrumentalEntryRef.current) {
+      // v3.202(J): 연주곡(가사 없음) — 가사 확인(step 1) 스킵, 장르/분위기는 항상 새로 질문.
+      // 이전 작사 세션의 잔존 장르/분위기로 "이 가사는..." 확인 문구(step 302)를 타지 않게 한다.
+      console.info('[MusicGeneration] 연주곡 진입 — 가사 확인 스킵, 장르 질문으로');
+      if (!rewindRef.current) repickRef.current = true; // 장르 선택 후 분위기도 질문
+      commitExchange(
+        { type: 'user', text: `제목: ${editedTitle || '(없음)'}`, step: 0 },
+        [{ type: 'director', text: '연주곡으로 가볼게요! 이 곡은 어떤 장르로 만들까요?' }],
+        300
+      );
+      return;
+    }
     advanceStep(`제목: ${editedTitle || '(없음)'}`, 1);
   };
 
@@ -349,34 +417,32 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const styleInfo = lyricsStore.style || '';
     // v3.137(대표): '자동' 표기 폐지 — 값이 없으면 디렉터가 장르(step 300)/분위기(step 301)를
     // 직접 질문해 실값을 받는다. 둘 다 있으면 실값 안내 후 진행.
+    // v3.202(E/F): 아래 분기 전부 commitExchange 경유 — 되감기(가사 재수정) 시 비파괴 치환
     if (!genreInfo) {
       console.warn('[MusicGeneration] 장르 없음 — 선택 질문으로 전환');
-      setChatHistory((prev) => [
-        ...prev,
+      commitExchange(
         { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
-        { type: 'director', text: '이 가사에는 장르 정보가 없네요. 어떤 장르로 작곡할까요?' },
-      ]);
-      setStep(300);
+        [{ type: 'director', text: '이 가사에는 장르 정보가 없네요. 어떤 장르로 작곡할까요?' }],
+        300
+      );
       return;
     }
     if (!moodInfo) {
       console.warn('[MusicGeneration] 분위기 없음 — 선택 질문으로 전환');
-      setChatHistory((prev) => [
-        ...prev,
+      commitExchange(
         { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
-        { type: 'director', text: `장르는 ${genreInfo}(으)로 갈게요. 분위기는 어떻게 할까요?` },
-      ]);
-      setStep(301);
+        [{ type: 'director', text: `장르는 ${genreInfo}(으)로 갈게요. 분위기는 어떻게 할까요?` }],
+        301
+      );
       return;
     }
     // v3.145(대표): 장르/분위기가 있어도 자동 확정하지 않고 확인 질문 — 같은 가사를
     // 완전히 다른 장르의 곡으로 만들 수 있어야 함. 아니오 → 작곡 디렉터 선택이 우선.
-    setChatHistory((prev) => [
-      ...prev,
+    commitExchange(
       { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
-      { type: 'director', text: `이 가사는 작사할 때 장르 '${genreInfo}' · 분위기 '${moodInfo}'(으)로 만들어졌어요. 이 느낌 그대로 작곡할까요? 다른 장르로 바꿔서 만들 수도 있어요!` },
-    ]);
-    setStep(302);
+      [{ type: 'director', text: `이 가사는 작사할 때 장르 '${genreInfo}' · 분위기 '${moodInfo}'(으)로 만들어졌어요. 이 느낌 그대로 작곡할까요? 다른 장르로 바꿔서 만들 수도 있어요!` }],
+      302
+    );
   };
 
   // v3.145: 장르/분위기 확정 공통 — 안내 후 아티스트 단계(구 자동 확정 후반부)
@@ -386,54 +452,49 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
 
   // v3.145: step 302 — 작사 장르/분위기 그대로 갈지 확인
+  // v3.202(E/F): '네' 답변 버블(step 302)은 별도 커밋 없이 announce(=proceedToArtistStep 커밋)에
+  // 흡수 — 되감기 치환이 한 버블에 대해 한 번만 일어나도록 단일 커밋 유지.
   const handleGenreConfirmYes = () => {
     const genreInfo = lyricsStore.genre || selectedGenre;
     const moodInfo = lyricsStore.mood || selectedMood;
     console.info('[MusicGeneration] 작사 장르/분위기 유지', { genre: genreInfo, mood: moodInfo });
-    setChatHistory((prev) => [...prev, { type: 'user', text: '네, 이대로 갈게요', step: 302 }]);
     announceAndProceed(genreInfo, moodInfo, lyricsStore.style || '');
   };
 
   const handleGenreConfirmNo = () => {
     console.info('[MusicGeneration] 장르/분위기 재선택 진입 (작곡 선택 우선)');
     repickRef.current = true;
-    setChatHistory((prev) => [
-      ...prev,
+    if (rewindRef.current) {
+      // v3.202(E/F): 되감기 중 전환 답변 — 커밋(치환)은 장르→분위기 확정 시 1회만 수행
+      setStep(300);
+      return;
+    }
+    commitExchange(
       { type: 'user', text: '아니요, 다르게 고를게요', step: 302 },
-      { type: 'director', text: '좋아요! 이 곡은 어떤 장르로 만들까요?' },
-    ]);
-    setStep(300);
+      [{ type: 'director', text: '좋아요! 이 곡은 어떤 장르로 만들까요?' }],
+      300
+    );
   };
 
-  // v3.137: 장르/분위기 확정 후 아티스트 스텝(또는 보컬)으로 — handleLyricsConfirm 후반부와 동일 로직
+  // v3.137: 장르/분위기 확정 후 아티스트 스텝으로 — handleLyricsConfirm 후반부와 동일 로직
   // v3.148: originStep — announce 말풍선이 응답한 step(되감기 태그)
+  // v3.202(G): list.length>0 게이트 제거 — 아티스트 0명(조회 실패 포함)이어도 아티스트 단계를
+  // 항상 노출한다(0명이면 '아티스트로 만들기' CTA → 아티스트 디렉터 안내). 스텝 번호 체계는
+  // 유지하고 조건 분기로만 처리(재선택 idx 매핑 보존).
   const proceedToArtistStep = async (announce: string, originStep?: number) => {
     let list: ServerArtist[] = [];
     try {
       console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
       list = (await listArtists()).characters;
     } catch (err: any) {
-      console.error('[MusicGeneration] listArtists failed — 아티스트 단계 생략', { status: err?.response?.status });
+      console.error('[MusicGeneration] listArtists failed — 0명 취급으로 아티스트 단계 계속', { status: err?.response?.status });
     }
-    if (list.length > 0) {
-      setArtists(list);
-      setChatHistory((prev) => [
-        ...prev,
-        { type: 'user', text: announce, step: originStep },
-        { type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' },
-      ]);
-      setStep(200);
-      return;
-    }
-    const vocalQuestion = lyricsStore.isDuet
-      ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
-      : DIRECTOR_MESSAGES[3];
-    setChatHistory((prev) => [
-      ...prev,
+    setArtists(list);
+    commitExchange(
       { type: 'user', text: announce, step: originStep },
-      { type: 'director', text: vocalQuestion },
-    ]);
-    setStep(3);
+      [{ type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' }],
+      200
+    );
   };
 
   // v3.137: step 300 — 장르 선택 (가사에 장르 정보 없거나 v3.145 재선택)
@@ -443,12 +504,16 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const mood = lyricsStore.mood || selectedMood;
     // v3.145: 재선택 모드면 분위기도 무조건 다시 질문 (작곡 디렉터 선택이 우선)
     if (!mood || repickRef.current) {
-      setChatHistory((prev) => [
-        ...prev,
+      if (rewindRef.current) {
+        // v3.202(E/F): 되감기 중 장르→분위기 체인 — 커밋(치환)은 분위기 확정 시 1회만
+        setStep(301);
+        return;
+      }
+      commitExchange(
         { type: 'user', text: genre, step: 300 },
-        { type: 'director', text: '분위기는 어떻게 할까요?' },
-      ]);
-      setStep(301);
+        [{ type: 'director', text: '분위기는 어떻게 할까요?' }],
+        301
+      );
       return;
     }
     proceedToArtistStep(`장르: ${genre}`, 300);
@@ -483,18 +548,36 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.135: 아티스트 선택 (null = 건너뛰기)
   const handleArtistPick = (artist: ServerArtist | null) => {
+    // v3.202(J): 연주곡이면 보컬 스텝(3/220/4)으로 가지 않고 참고 음원(step 5)으로 직행
+    const instrumental = musicStore.instrumental;
     const vocalQuestion = lyricsStore.isDuet
       ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
       : DIRECTOR_MESSAGES[3];
     if (!artist) {
-      console.info('[MusicGeneration] 아티스트 건너뛰기');
+      console.info('[MusicGeneration] 아티스트 건너뛰기', { instrumental });
+      setSelectedArtistId(null); // v3.202(E/F): 되감기로 아티스트→건너뛰기 전환 시 새 값 세팅
       musicStore.setArtistCharacterId(null); // v3.156: 미선택 곡은 기획사명 폴백
-      setChatHistory((prev) => [
-        ...prev,
+      commitExchange(
         { type: 'user', text: '아티스트 없이 진행', step: 200 },
-        { type: 'director', text: vocalQuestion },
-      ]);
-      setStep(3);
+        [{ type: 'director', text: instrumental ? DIRECTOR_MESSAGES[5] : vocalQuestion }],
+        instrumental ? 5 : 3
+      );
+      return;
+    }
+    if (instrumental) {
+      // v3.202(J): 연주곡 — 보컬을 쓰지 않으므로 목소리 연결 여부 무관(게이트 미적용),
+      // 아티스트 명의(발매 아티스트명·착장 근거)만 승계하고 보컬 설정 없이 다음으로.
+      setSelectedArtistId(artist.character_id);
+      musicStore.setArtistCharacterId(artist.character_id || null);
+      console.info('[MusicGeneration] 아티스트 선택(연주곡 — 목소리 미사용)', { cid: artist.character_id });
+      commitExchange(
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
+        [
+          { type: 'director', text: `${artist.name || '아티스트'} 이름으로 연주곡을 준비할게요! 보컬 설정은 없으니 바로 다음으로 갈게요.` },
+          { type: 'director', text: DIRECTOR_MESSAGES[5] },
+        ],
+        5
+      );
       return;
     }
     // v3.143(대표): 아티스트 목소리 필수 — 미연결 아티스트는 선택 차단 + 연결 안내.
@@ -522,13 +605,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setSelectedVocalGender(preset.gender);
       setSelectedVocalStyle(preset.style);
       setArtistVoiceApplied(true);
-      setChatHistory((prev) => [
-        ...prev,
+      commitExchange(
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
-        { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
-        { type: 'director', text: DIRECTOR_MESSAGES[5] },
-      ]);
-      setStep(5);
+        [
+          { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+          { type: 'director', text: DIRECTOR_MESSAGES[5] },
+        ],
+        5
+      );
       return;
     }
     if (hasClone) {
@@ -538,27 +622,53 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setPersonaModelOn(true);
       personaDefaultAppliedRef.current = true;
       setArtistVoiceApplied(true);
-      setChatHistory((prev) => [
-        ...prev,
+      commitExchange(
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
-        { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
-        { type: 'director', text: DIRECTOR_MESSAGES[5] },
-      ]);
-      setStep(5);
+        [
+          { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+          { type: 'director', text: DIRECTOR_MESSAGES[5] },
+        ],
+        5
+      );
     }
     // v3.143: 목소리 미연결 아티스트는 위에서 선택 차단 — 성별 추정 폴백(v3.137) 제거
+  };
+
+  // v3.202(G): 아티스트 0명 CTA — 앱 내 다이얼로그(showAlert 규칙)로 아티스트 디렉터 안내.
+  // '이동'은 같은 StudioStack에 Dialogue(artist)를 push하는 방식 — MusicGeneration이 스택에
+  // 남아 작곡 대화 상태(chatHistory/step=200)가 그대로 보존되고, 뒤로가기로 돌아오면
+  // useFocusEffect(step 200)의 refreshArtists가 새 아티스트를 반영해 이어서 진행된다.
+  const handleNoArtistCta = () => {
+    console.info('[MusicGeneration] 아티스트 0명 — 디렉터 이동 안내');
+    showAlert('아티스트가 아직 없어요', '아티스트 디렉터에게 먼저 만들어달라고 할까요?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '이동',
+        onPress: () =>
+          navigation.navigate('Dialogue' as any, {
+            directorType: 'artist',
+            directorName: '아티스트 디렉터', // MapScreen DIRECTOR_NAMES.artist와 동일 값
+            directorRole: '아티스트 캐릭터를 생성하고 관리합니다',
+            directorY: 340, // MapScreen DIRECTORS artist 좌표(대화 배경 연출용)
+          }),
+      },
+    ]);
   };
 
   // v3.139: 성별 선택지의 '내 목소리로 만들기' 진입 → 클론 선택(step 210)
   const handleMyVoiceEntry = () => {
     console.info('[MusicGeneration] 내 목소리 진입 (step 210)');
     fetchClones();
-    setChatHistory((prev) => [
-      ...prev,
+    if (rewindRef.current) {
+      // v3.202(E/F): 되감기 중 전환 답변 — 커밋(치환)은 목소리 확정(handleMyVoicePick) 시 1회만
+      setStep(210);
+      return;
+    }
+    commitExchange(
       { type: 'user', text: '내 목소리', step: 220 },
-      { type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' },
-    ]);
-    setStep(210);
+      [{ type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' }],
+      210
+    );
   };
 
   const handleMyVoicePick = (clone: any) => {
@@ -569,47 +679,78 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setPersonaModelOn(true);
     personaDefaultAppliedRef.current = true;
     setArtistVoiceApplied(true); // step 12 자동 통과 재사용
-    setChatHistory((prev) => [
-      ...prev,
+    commitExchange(
       { type: 'user', text: `내 목소리: ${clone.voice_name || '선택한 목소리'}`, step: 210 },
-      { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
-      { type: 'director', text: DIRECTOR_MESSAGES[5] },
-    ]);
-    setStep(5);
+      [
+        { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+        { type: 'director', text: DIRECTOR_MESSAGES[5] },
+      ],
+      5
+    );
   };
 
   // v3.143: 내 목소리 목록에서 돌아가면 목소리 방식 질문(step 220)으로 복귀
   const handleMyVoiceBack = () => {
-    setChatHistory((prev) => [
-      ...prev,
+    if (rewindRef.current) {
+      // v3.202(E/F): 되감기 중 전환 답변 — 커밋 없이 방식 질문으로만 복귀
+      setStep(220);
+      return;
+    }
+    commitExchange(
       { type: 'user', text: '돌아가기', step: 210 },
-      { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
-    ]);
-    setStep(220);
+      [{ type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' }],
+      220
+    );
   };
 
   // Step 3: Vocal select (메인 보컬) — v3.143: 성별 다음은 목소리 방식 질문(step 220)
   const handleVocalSelect = (vocal: string) => {
+    if (vocal === INSTRUMENTAL_OPTION) {
+      // v3.202(J): 가사가 있어도 무보컬(연주곡) 선택 가능 — vocalOff 처리 후 보컬 관련
+      // 스텝(220/4/12)을 건너뛰고 참고 음원(step 5)으로 직행. 가사는 유지(가사 기반 연주곡).
+      console.info('[MusicGeneration] 보컬: Instrumental(연주곡) 선택 — vocalOff');
+      musicStore.setInstrumental(true);
+      setUseVocal(false);
+      setSelectedVocalGender('');
+      setSelectedVocalStyle('');
+      commitExchange(
+        { type: 'user', text: INSTRUMENTAL_OPTION, step: 3 },
+        [
+          { type: 'director', text: '좋아요! 보컬 없이 연주곡으로 만들게요.' },
+          { type: 'director', text: DIRECTOR_MESSAGES[5] },
+        ],
+        5
+      );
+      return;
+    }
+    // v3.202(J): 되감기로 Instrumental → 성별 재선택 시 연주곡 해제(새 값 세팅)
+    if (musicStore.instrumental) musicStore.setInstrumental(false);
     setUseVocal(true);
     setSelectedVocalGender(vocal);
-    setChatHistory((prev) => [
-      ...prev,
+    commitExchange(
       { type: 'user', text: lyricsStore.isDuet ? `메인 보컬: ${vocal}` : vocal, step: 3 },
-      { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
-    ]);
-    setStep(220);
+      [{ type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' }],
+      220
+    );
   };
 
   // v3.143: step 220 — 목소리 방식 선택 (아티스트 없이 작곡할 때 필수)
   const handleVoiceModeQuick = () => {
     console.info('[MusicGeneration] 목소리 방식: 간편 목소리');
     setArtistVoiceApplied(true); // 목소리 결정 완료 — step 12 자동 통과
-    setChatHistory((prev) => [
-      ...prev,
+    // v3.202(E/F): "새 값 세팅" — 되감기로 내 목소리→간편 목소리 전환 시 페르소나 해제
+    setPersonaModelOn(false);
+    setSelectedPersonaId(null);
+    if (rewindRef.current) {
+      // v3.202(E/F): 되감기 중 전환 답변 — 보컬 스타일(step 4)까지 받은 뒤 1회 커밋
+      setStep(4);
+      return;
+    }
+    commitExchange(
       { type: 'user', text: '간편 목소리', step: 220 },
-      { type: 'director', text: DIRECTOR_MESSAGES[4] },
-    ]);
-    setStep(4);
+      [{ type: 'director', text: DIRECTOR_MESSAGES[4] }],
+      4
+    );
   };
 
   // Step 4: Vocal style select (메인 보컬 스타일)
@@ -617,13 +758,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedVocalStyle(style);
     if (lyricsStore.isDuet) {
       // 듀엣: 메인 스타일 선택 후 서브 보컬 질문
-      const newHistory: ChatMessage[] = [
-        ...chatHistory,
+      commitExchange(
         { type: 'user', text: `메인 보컬 스타일: ${style}`, step: 4 },
-        { type: 'director', text: '서브 보컬 성별을 선택해주세요!' },
-      ];
-      setChatHistory(newHistory);
-      setStep(100); // 서브 보컬 성별 선택 임시 step
+        [{ type: 'director', text: '서브 보컬 성별을 선택해주세요!' }],
+        100 // 서브 보컬 성별 선택 임시 step
+      );
     } else {
       advanceStep(style, 5);
     }
@@ -632,13 +771,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 듀엣 서브 보컬 성별 선택
   const handleSubVocalSelect = (vocal: string) => {
     setSubVocalGender(vocal);
-    const newHistory: ChatMessage[] = [
-      ...chatHistory,
+    commitExchange(
       { type: 'user', text: `서브 보컬: ${vocal}`, step: 100 },
-      { type: 'director', text: '서브 보컬 스타일을 선택해주세요!' },
-    ];
-    setChatHistory(newHistory);
-    setStep(101); // 서브 보컬 스타일 선택 임시 step
+      [{ type: 'director', text: '서브 보컬 스타일을 선택해주세요!' }],
+      101 // 서브 보컬 스타일 선택 임시 step
+    );
   };
 
   // 듀엣 서브 보컬 스타일 선택
@@ -699,7 +836,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   const handleKeyConfirm = (apply: boolean) => {
     setMusicalKeyOn(apply && !!musicalKey);
-    advanceStep(apply && musicalKey ? `키: ${musicalKey}` : '자동 키', 12);
+    // v3.202(J): 연주곡은 내 목소리(step 12) 스킵 — 바로 완료(13). 스텝 번호 체계는 유지.
+    advanceStep(apply && musicalKey ? `키: ${musicalKey}` : '자동 키', musicStore.instrumental ? 13 : 12);
   };
   // 참고: handlePersonaConfirm은 위에 정의됨 (case 12에서 호출)
 
@@ -801,12 +939,17 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // Final generate — 실제 시작 처리 (v3.94: 피로 게이트 통과 후에만 호출)
   const proceedGenerate = () => {
-    musicStore.setLyrics(editedLyrics.trim());
+    // v3.202(J): 연주곡 처리 —
+    //  · 가사 없이 진입(카드)한 곡은 잔존 드래프트(editedLyrics 초기값)가 실리지 않게 공백 고정.
+    //    가사 버전 커밋(v3.200)은 빈 가사라 musicService에서 자연 스킵된다.
+    //  · Instrumental 선택 곡(가사 유지)은 보컬/페르소나 파라미터만 전부 비운다.
+    const instrumental = musicStore.instrumental;
+    musicStore.setLyrics(instrumentalEntryRef.current ? '' : editedLyrics.trim());
     musicStore.setGenre(lyricsStore.genre || selectedGenre);
     musicStore.setMood(lyricsStore.mood || selectedMood);
     musicStore.setTempo(lyricsStore.tempo || musicStore.tempo || '보통');
-    musicStore.setVocal(selectedVocalGender || '');
-    musicStore.setVocalStyle(selectedVocalStyle);
+    musicStore.setVocal(instrumental ? '' : (selectedVocalGender || ''));
+    musicStore.setVocalStyle(instrumental ? '' : selectedVocalStyle);
     musicStore.setStyle(lyricsStore.style || '');
     musicStore.setReferenceStyle(refStyle.trim());
     musicStore.setBpm(bpmOn ? String(bpmValue) : '');
@@ -814,10 +957,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
     // v3.91: 참고음 세기(audio_weight) — "적용"을 골랐을 때만 body에 실림(자동=null)
     musicStore.setAudioWeight(audioWeightOn ? audioWeight : null);
-    musicStore.setPersonaModel(personaModelOn && personaModel ? personaModel : '');
-    musicStore.setPersonaId(personaModelOn && selectedPersonaId ? selectedPersonaId : null);
-    musicStore.setSubVocal(subVocalGender);
-    musicStore.setSubVocalStyle(subVocalStyle);
+    musicStore.setPersonaModel(!instrumental && personaModelOn && personaModel ? personaModel : '');
+    musicStore.setPersonaId(!instrumental && personaModelOn && selectedPersonaId ? selectedPersonaId : null);
+    musicStore.setSubVocal(instrumental ? '' : subVocalGender);
+    musicStore.setSubVocalStyle(instrumental ? '' : subVocalStyle);
     setChatHistory((prev) => [
       ...prev,
       { type: 'director', text: '작곡을 시작할게요! 곧 결과를 보여드릴게요.' },
@@ -927,7 +1070,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               contentContainerStyle={styles.choicesContainer}
               showsVerticalScrollIndicator={false}
             >
-              {VOCAL_OPTIONS.map((vocal, idx) => (
+              {/* v3.202(J): 공유 배열(VOCAL_OPTIONS)은 VoiceManage/ArtistResult가 성별 매핑으로
+                  쓰므로 무변경 — 작곡 스텝 렌더에서만 Instrumental(연주곡) 로컬 확장 */}
+              {[...VOCAL_OPTIONS, INSTRUMENTAL_OPTION].map((vocal, idx) => (
                 <TouchableOpacity
                   key={vocal}
                   style={[styles.choiceButton, selectedVocalGender === vocal && styles.choiceButtonSelected]}
@@ -1073,8 +1218,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   </TouchableOpacity>
                 );
               })}
+              {/* v3.202(G): 아티스트 0명이어도 단계 상시 노출 — 만들러 가기 CTA(디렉터 이동 안내) */}
+              {(artists || []).length === 0 && (
+                <TouchableOpacity style={styles.choiceButton} onPress={handleNoArtistCta}>
+                  <AppText style={styles.choiceNumber}>1</AppText>
+                  <AppText style={styles.choiceText}>아티스트로 만들기 (아직 없어요 — 만들러 가기)</AppText>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.choiceButton} onPress={() => handleArtistPick(null)}>
-                <AppText style={styles.choiceNumber}>{(artists || []).length + 1}</AppText>
+                <AppText style={styles.choiceNumber}>{((artists || []).length || 1) + 1}</AppText>
                 <AppText style={styles.choiceText}>아티스트 없이 진행 (건너뛰기)</AppText>
               </TouchableOpacity>
             </ScrollView>

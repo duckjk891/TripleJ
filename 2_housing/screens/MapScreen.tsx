@@ -263,7 +263,10 @@ export default function MapScreen({ navigation }: Props) {
   // winW 기반 명시 폭 안에 Marquee(넘칠 때만 흐름·짧으면 정적). Marquee container가 width:'100%'라
   // 부모가 명시 폭을 줘야 동작 — bottom-tabs headerTitle 컨테이너는 폭 제약이 느슨해 필수.
   // 360dp 소형 기기에서도 최소 90px 확보. ⓘ는 마퀴 밖 고정(흐르는 텍스트와 분리, 항상 같은 자리에서 탭 가능).
-  const nameMaxWidth = Math.max(90, screenWidth - (user ? 260 : 150));
+  // v3.202(D안1): 예약폭 260→300 — v3.199 산식이 3화면 headerLeft 화살표(≈38px) 미반영 +
+  // HomeHeaderActions 실측 208~229px로 여유가 −1~+20px에 불과해 화살표 6px 순증으로 임계 초과,
+  // 타이틀이 우측 액션 위로 넘치던 실기기 결함. 비로그인도 화살표 몫 포함 90 유지.
+  const nameMaxWidth = Math.max(90, screenWidth - (user ? 300 : 90));
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent) return;
@@ -294,6 +297,10 @@ export default function MapScreen({ navigation }: Props) {
       // 화살표를 와이프했다(부 원인). headerLeft 클리어는 아래 useFocusEffect(Map 포커스 시)로 일원화.
       // v3.75: 우측 액션은 차트와 동일한 공용 컴포넌트(별·출석·초대·알림·메시지·마이페이지)로 통일
       headerRight: () => <HomeHeaderActions navigation={parent} />,
+      // v3.202(D안4 안전망): 산식이 어긋나도 우측 액션은 절대 줄지 않고(0) 타이틀 컨테이너가
+      // 양보(1) — end 컨테이너 flexShrink:0 기본값으로 타이틀이 위로 넘치는 겹침을 차단.
+      headerRightContainerStyle: { flexShrink: 0 },
+      headerTitleContainerStyle: { flexShrink: 1 },
     });
     // v3.201(C): deps의 user 객체 identity 제거(→ !!user) — 클로저는 user truthiness와 company_name만
     // 사용하므로 충분. identity 유지 시 setUser류 갱신마다 불필요 재실행(와이프 트리거)됐다.

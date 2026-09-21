@@ -2421,3 +2421,41 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 
 ### 판정
 **승인** — 계획(§1~3) 대비 구현 정합, tsc 0건·테스트 FAIL 0. 잔여는 실기기 확인 항목 2건(위 편차 1·2)으로 릴리스 차단 아님.
+
+## v3.202 — 2026-09-21/22 (실기기 10건: 배경재생·입력가림·모드가이드·헤더폭·디렉터 대화·이미지 디렉터·연주곡)
+
+### 요청 (원문 요지)
+백그라운드 자동재생 실패 / 하단 팝업 입력창 반 가림 / 일반·저작권 모드 둘 다 로그 기록 + 저작권 모드 가이드 안내 / 작업실 헤더 기획사명 폭 축소 / 작사 디렉터 재선택 시 구값 응답 잔존 / 작곡 디렉터 수정 시 초기화 / 작곡 아티스트 선택 항상 노출 + 없으면 아티스트 디렉터 연결 / 이미지 디렉터 가사 기반 옵션·실패 후 대화 유실·수정 시 초기화 / 이미지 생성 지연·오류 원인 / 가사 없는 곡(연주곡) UI 부재.
+
+### 원인 (전 항목 실측)
+- **A**: 원격 [BTDebug] 실측 — didJustFinish는 배경에서도 발화(JS 생존), 실패 원인은 Android Doze의 네트워크 차단(UnknownHostException). 프리로드 히트 시 전환 성공. 부수 결함: 실패 시 초당 ~8회 재시도 폭주(백오프 없음), 프리로드 창(20s/85%)이 Doze 진입보다 늦음.
+- **B**: 재선택 모달 overlay가 center 정렬 → marginBottom 리프트가 Yoga 산식상 kbPad/2만 유효(담기 시트는 flex-end라 정상). ReportModal/AppealModal/AlbumCreateModal은 Android 회피 전무(동종). edge-to-edge에서 adjustResize 무력.
+- **C**: creationLogService에 creationMode 참조 0건 — **양 모드 공통 기록 확인**(분기는 발매 track_type뿐). 가이드는 1회 showAlert뿐이고 동일 모드 재탭 no-op 가드로 재열람 불가.
+- **D**: nameMaxWidth 산식이 화살표(38px) 미반영, HomeHeaderActions 실측 208~229px에 여유가 −1~+20px뿐이라 6px 순증이 임계 초과, end 컨테이너 flexShrink:0으로 타이틀 침범.
+- **E/F/G/J**: **라이브 작곡 대화 = MusicGenerationScreen**. F=performRewind의 prev.slice 파괴적 절단(설계였음), G=아티스트 게이트 list.length>0, E=재선택 후 디렉터 에코 버블 구값 잔존, J=가사 게이트 이중 차단 + vocal→'instrumental' 경로 2중 단절로 발동 불가.
+- **H**: ① stale closure로 가사반영 질문(step 1.75) 스킵(아티스트 없는 사용자) ② doRegenerate가 대화 전체 와이프+step 2 강등 ③ performRewind 파괴적 절단+질문 중복+result 모드 탭 불가 ④ coverExtras 모듈 상태가 화면과 분리되어 안 보이는 답이 요청에 실림 ⑤ 실패 시 finally가 coverTrackId 클리어 → 재개 불가.
+- **I**: gpt_image_2 2048² 서버 150~180s 동기 처리. 실패 3건 실측 = 클라이언트 ERR_NETWORK 단절 후 **서버는 완성**(별 5 차감+이미지 고아). GET /api/upload/cover-sessions에 완성본 존재 → 백엔드 무변경 폴링 회수 가능.
+
+### 수행 결과 (앱 전용, 백엔드 무변경)
+1. **A-lite**: 프리로드 이중 트리거(로드/스왑 성공 직후 eager + 기존 20s/85%), 창을 60초로 합집합 확장(U-2 보강), 실패 백오프 곡당 3회·10초(폭주 제거). v3.197 셔플 핀·5중 검증 무침투.
+2. **B**: 작사 재선택 모달 flex-end 전환+동적 maxHeight(담기 시트 검증 패턴). 모달 3곳은 useAndroidKeyboardLift+translateY(-(kbPad+insets.bottom)/2 = 가시영역 재중앙, 수학 검증 통과)+동적 클램프.
+3. **C**: consentTexts COPYRIGHT_RECORD_GUIDE 신설(금지어 0건 grep 확인), recChip 탭 가능화+info 아이콘 → PolicySheet 재사용(신규 컴포넌트 0), 모드 alert에 '자세히 보기' 버튼. **양 모드 기록은 기존대로 정상 — 코드 변경 불요 확인**.
+4. **D**: nameMaxWidth 300/90 + headerRightContainerStyle flexShrink:0·headerTitleContainerStyle flexShrink:1 안전망.
+5. **E/F**: performRewind 파괴적 절단 폐기 → commitExchange 단일 커밋 경로 + ChatMessage.echoOfStep 메타로 디렉터 에코 버블만 정확히 치환(암묵 idx+1·문자열 검색 배제). 이후 대화·답변·step 전부 보존.
+6. **G**: 아티스트 게이트 제거(항상 노출), 0명 선택 시 showAlert → Dialogue(artist) push(작곡 대화 스택 보존, 복귀 시 refreshArtists 반영).
+7. **H**: fix①~⑤ 전면 — 인자 전달로 stale closure 제거, step-2에 '가사 내용 기반으로 생성' 동등 버튼, doRegenerate 와이프→append 복귀, commitRewindAnswer 비파괴 치환(result 모드 탭 허용), musicStore cover* 영속 + 클리어를 성공 경로로 이동, hasPendingGeneration 판별 강화(재차감 방지).
+8. **I-lite**: ERR_NETWORK/타임아웃 시 cover-sessions 폴링(15s×12, created_at≥t0−120s+cover_object_name) → 완성본 회수 성공 처리(**재생성 호출 0 = 재차감 없음**), 대기 안내 문구.
+9. **J**: ComposeLyricsPick '가사 없이 만들기(연주곡)' 카드(목록 위+빈 상태), ComposerSelect 게이트 예외+끈적 정규화, MusicGeneration 조건 분기 스킵(스텝 번호 체계 유지)+INSTRUMENTAL_OPTION 로컬 상수(공유 VOCAL_OPTIONS 무변경 — 아티스트 설정 UI 오노출 차단), MusicLoading/musicService 배선+연주곡 프롬프트, musicStore instrumental+리셋 2경로.
+
+### 정정 기록 (중요)
+- **v3.199 D(작곡 재선택 이식)·v3.201 B(Composer 자유입력)의 ComposerInputScreen 분은 죽은 코드 대상 작업이었음** — 해당 화면은 v3.131(커밋 1970d7f)부터 도달 경로가 없었고, 당시 tester PASS는 라이브 동작 검증이 아니었다. v3.202에서 화면 삭제 + App.tsx 등록 3곳 + DialogueScreen 타입 키 제거로 폐기 완료. LyricsInputScreen 분은 라이브이므로 유지.
+- 오케스트레이터의 직전 "연주곡 파이프라인이 이미 동작한다"는 답변도 같은 죽은 코드를 근거로 한 오답이었음 — 실제로는 진입 경로·전송 배선 모두 부재했고 v3.202에서 신설.
+
+### 테스트
+tester 통합 검증: unit 18 / api 1 / e2e 4. 핵심 FAIL 게이트 9건 중 8건 즉시 통과, FAIL 3건(타입 키 잔존·프리로드 창·REPORT 정정)은 오케스트레이터가 수정·기록 완료 후 재판정 없이 커밋 승인. tsc 0건. 리프트 산식은 수학 검증으로 "절반 결함 재림 아님" 확정.
+
+### 실기기 잔여 (배포 후 확인)
+E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연주곡 실생성 1회(Suno 과금), E-3 커버 실패 폴링 회수·잔액 무차감 대조(+앨범 모드 성공 후 coverCharacterObjectName 미정리 엣지), E-4 비파괴 재선택·소형 기기 키보드 4모달·0명 CTA 왕복.
+
+### 후속 과제
+포그라운드 서비스/track-player 이관(A 근본), 이미지 비동기 잡 전환+고아 자동 복구 배치(I 근본), 댓글 패널 Android 키보드 회피, '저작권 등록 모드' 라벨 재검토(사용자 결정 대기).

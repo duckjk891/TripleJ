@@ -62,16 +62,23 @@ export default function ComposerSelectScreen({ navigation }: Props) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // v3.127: 단일 모델 모드 — 기존 handleSelect와 동일한 검증 후 suno 확정·직행.
-  // (진입점 3곳: ComposerInput·Dialogue·LyricsBook은 무수정 — 라우트 계약 유지)
+  // (진입점: Dialogue·LyricsBook·LyricsResult·ComposeLyricsPick — v3.202: ComposerInput 폐기)
   useEffect(() => {
     if (WONDERA_ENABLED) return;
-    if (!lyricsStore.generatedLyrics && !musicStore.lyrics) {
+    // v3.202(J): 끈적 상태 정규화 — 가사 기반 진입(모든 경로가 musicStore.lyrics를 채움)인데
+    // 이전 연주곡 흐름의 instrumental=true가 남아있으면 해제. 연주곡 카드 경로는 lyrics=''라 유지됨.
+    if (musicStore.instrumental && musicStore.lyrics.trim()) {
+      console.info('[ComposerSelect] instrumental 잔존 플래그 해제(가사 기반 진입)');
+      musicStore.setInstrumental(false);
+    }
+    // v3.202(J): 가사 게이트 instrumental 예외 — 연주곡은 가사 없이 진행
+    if (!musicStore.instrumental && !lyricsStore.generatedLyrics && !musicStore.lyrics) {
       console.warn('[ComposerSelect] 가사 없음 — 작사 유도 후 복귀');
       showAlert('작사 필요', '먼저 작사 디렉터에게 가사를 만들어주세요!');
       navigation.goBack();
       return;
     }
-    if (__DEV__) console.info('[ComposerSelect] 단일 모델 모드 — suno 자동 확정');
+    if (__DEV__) console.info('[ComposerSelect] 단일 모델 모드 — suno 자동 확정', { instrumental: musicStore.instrumental });
     musicStore.setSelectedModel('suno');
     navigation.replace('MusicGeneration');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,7 +99,8 @@ export default function ComposerSelectScreen({ navigation }: Props) {
   };
 
   const handleSelect = (composerId: 'suno' | 'wondera') => {
-    if (!lyricsStore.generatedLyrics && !musicStore.lyrics) {
+    // v3.202(J): 가사 게이트 instrumental 예외(useEffect 게이트와 동일 규칙)
+    if (!musicStore.instrumental && !lyricsStore.generatedLyrics && !musicStore.lyrics) {
       showAlert('작사 필요', '먼저 작사 디렉터에게 가사를 만들어주세요!');
       return;
     }

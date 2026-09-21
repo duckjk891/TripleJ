@@ -21,6 +21,9 @@ import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
+// v3.202(C): 창작 과정 기록 가이드 — recChip 탭·모드 안내 '자세히 보기'에서 PolicySheet로 표시
+import PolicySheet from '../components/PolicySheet';
+import { COPYRIGHT_RECORD_GUIDE } from '../constants/consentTexts';
 
 const MAP_IMAGE = require('../assets/map_rendered.png');
 const MAP_WIDTH = 704;
@@ -62,7 +65,6 @@ type StudioStackParamList = {
     hasArtist?: boolean; // v3.182: 아티스트 디렉터 — 기보유 시 대화에서 내 아티스트로 안내
   };
   LyricsInput: undefined;
-  ComposerInput: undefined;
   ComposerSelect: undefined;
   MusicGeneration: undefined;
 };
@@ -82,6 +84,8 @@ export default function DialogueScreen({ route, navigation }: Props) {
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
+  // v3.202(C): 창작 과정 기록 가이드 시트 — recChip 탭·모드 안내 '자세히 보기'로 열림(재열람 가능)
+  const [recordGuideVisible, setRecordGuideVisible] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // v3.199(B): 대화 중 상단 명시적 뒤로가기 — Studio 탭 헤더(headerLeft)에 back 주입.
@@ -211,9 +215,14 @@ export default function DialogueScreen({ route, navigation }: Props) {
     musicStore.setCreationMode(mode);
     if (mode === 'copyright' && !copyrightModeNoticeShown) {
       copyrightModeNoticeShown = true;
+      // v3.202(C): '자세히 보기' → 가이드 전문(PolicySheet). 1회 안내 이후에도 recChip 탭으로 재열람 가능.
       showAlert(
         '저작권 등록 모드',
-        '작사·작곡 전 과정(수정·선택 이력)이 기록됩니다. 저작권 등록 증빙 자료 생성 기능은 정식 프로모션 때 제공 예정이에요.'
+        '작사·작곡 전 과정(수정·선택 이력)이 기록됩니다. 저작권 등록 증빙 자료 생성 기능은 정식 프로모션 때 제공 예정이에요.',
+        [
+          { text: '자세히 보기', onPress: () => setRecordGuideVisible(true) },
+          { text: '확인' },
+        ]
       );
     }
   };
@@ -459,15 +468,29 @@ export default function DialogueScreen({ route, navigation }: Props) {
               );
             })}
           </View>
-          {/* 저작권 등록 모드 상태 칩 — record 점(벡터 View, 이모지 금지) + 은은한 secondary 톤 */}
+          {/* 저작권 등록 모드 상태 칩 — record 점(벡터 View, 이모지 금지) + 은은한 secondary 톤.
+              v3.202(C): 탭 → 무엇이·왜 기록되는지 가이드(PolicySheet) 재열람. info 아이콘은 Feather(이모지 금지). */}
           {musicStore.creationMode === 'copyright' && (
-            <View style={styles.recChip}>
+            <TouchableOpacity
+              style={styles.recChip}
+              onPress={() => setRecordGuideVisible(true)}
+              accessibilityLabel="창작 과정 기록 안내 보기"
+            >
               <View style={styles.recDot} />
               <AppText style={styles.recChipText}>창작 과정 기록 중</AppText>
-            </View>
+              <Feather name="info" size={12} color={colors.text.secondary} />
+            </TouchableOpacity>
           )}
         </View>
       )}
+
+      {/* v3.202(C): 창작 과정 기록 가이드 — consentTexts 단일 출처, 사실 서술만(금지어 없음) */}
+      <PolicySheet
+        visible={recordGuideVisible}
+        title={COPYRIGHT_RECORD_GUIDE.label}
+        body={COPYRIGHT_RECORD_GUIDE.body}
+        onClose={() => setRecordGuideVisible(false)}
+      />
     </Animated.View>
   );
 }

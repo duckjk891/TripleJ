@@ -59,6 +59,8 @@ export interface MusicParams {
   referenceData?: ReferenceUploadResult | null;
   /** v3.102(B-4): 가사 보관함에서 고른 가사 출처 스냅샷 — 생성 body의 lyrics_source */
   lyricsSource?: LyricsSourceSnapshot | null;
+  /** v3.202(J): 연주곡(Instrumental) — true면 generateWithSuno가 vocal='instrumental'로 전송 */
+  instrumental?: boolean;
 }
 
 /**

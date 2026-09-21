@@ -160,8 +160,9 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
   const promptParts = [];
   if (params.genre) promptParts.push(`${params.genre} 장르의`);
   if (params.mood) promptParts.push(`${params.mood} 분위기로,`);
-  if (params.vocal) promptParts.push(`${params.vocal} 보컬이 부르는`);
-  promptParts.push('곡을 생성합니다.');
+  if (params.vocal && !params.instrumental) promptParts.push(`${params.vocal} 보컬이 부르는`);
+  // v3.202(J): 연주곡 프롬프트 문장 — 작곡.md:67 Instrumental 변형 템플릿
+  promptParts.push(params.instrumental ? '연주곡(Instrumental)을 생성합니다.' : '곡을 생성합니다.');
   if (params.bpm) promptParts.push(`템포는 ${params.bpm} BPM입니다.`);
   if (params.musicalKey) promptParts.push(`키는 ${params.musicalKey}입니다.`);
   if (params.negativeTags) promptParts.push(`제외할 스타일: ${params.negativeTags}`);
@@ -265,7 +266,9 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     lyrics: params.lyrics || '',
     genre: genreEn,
     mood: moodEn,
-    vocal: mainVocalKey || (params.vocal === '' ? 'instrumental' : ''),
+    // v3.202(J): 연주곡은 명시 플래그로 결정 — 구 암묵 폴백(params.vocal===''→'instrumental')은
+    // 발동 경로가 없던 죽은 분기라 제거(MusicLoading이 빈 보컬을 undefined로 보냈음).
+    vocal: params.instrumental ? 'instrumental' : (mainVocalKey || ''),
     style: combinedStyle || undefined,
     reference_style: params.referenceStyle || undefined,
     bpm: params.bpm ? parseInt(params.bpm) : undefined,

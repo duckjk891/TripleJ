@@ -1,6 +1,25 @@
 import { create } from 'zustand';
 import { GenerationStatus, LyricsSourceSnapshot } from '../types';
 
+// ── v3.202(H-⑤): 커버 디렉터 대화 영속 타입 — CoverGenerationScreen의 ChatMessage/coverExtras와
+// 구조 동일(구조적 타이핑으로 호환). 화면 이탈·생성 실패 후 재진입 시 대화·답변을 복원한다. ──
+export interface CoverChatMessage {
+  type: 'director' | 'user';
+  text: string;
+  step?: number;
+  echoOfStep?: number;
+}
+export interface CoverExtrasSnapshot {
+  shot: string | null;
+  expression: string | null;
+  palette: string | null;
+  bgPrompt: string | null;
+  bgObjectName: string | null;
+  lyricsExcerpt: string | null;
+  charKind: 'real' | 'virtual' | null;
+  virtualArtStyle: string | null;
+}
+
 interface MusicState {
   selectedModel: 'suno' | 'wondera';
   lyrics: string;
@@ -27,12 +46,26 @@ interface MusicState {
   lyricsSource: LyricsSourceSnapshot | null;
   subVocal: string;
   subVocalStyle: string;
+  /** v3.202(J): 연주곡(Instrumental) 플래그 — true면 가사·보컬 없이 생성(vocal='instrumental').
+   *  진입 2경로: ComposeLyricsPick '가사 없이 만들기' 카드(가사 공백), 작곡 대화 보컬 스텝의
+   *  'Instrumental (연주곡)' 선택(가사 유지·무보컬). 일반 가사 선택/작곡 진입 시 false로 리셋
+   *  (ComposeLyricsPick.handlePick + ComposerSelect 정규화) — 끈적 상태 방지. */
+  instrumental: boolean;
   coverTrackId: string | null;
   coverTrackTitle: string | null;
   coverStyle: string | null;
   /** v3.80: 커버에 포함할 캐릭터 슬롯(실사/가상)의 object_name. null=미포함.
    *  로컬 state 대신 store에 두어 대기 후 재진입 시에도 "아티스트 포함" 선택이 유지됨. */
   coverCharacterObjectName: string | null;
+  /** v3.202(H-⑤): 커버 디렉터 대화 영속(트랙 모드 전용, 앨범 모드 미사용) — 화면 이탈/실패 후
+   *  재진입 시 대화 내역·진행 스텝·보강 답변을 복원해 "안 보이는 답이 요청에 실리는" 괴리를 차단.
+   *  성공(결과 확정 경로) 시에만 클리어. */
+  coverMessages: CoverChatMessage[] | null;
+  coverStep: number | null;
+  coverExtrasSnapshot: CoverExtrasSnapshot | null;
+  /** v3.202(H-⑤): 가사 반영 답변의 발췌·원본 lyrics_id — 재진입/재생성 시 재조회 없이 승계 */
+  coverLyricsExcerpt: string | null;
+  coverLyricsId: string | null;
   generationId: string | null;
   savedTrackId: string | null;
   /** v3.200: 창작 기록 세션(Phase 0) id — creationLogService가 관리, 생성/발매 body에 동봉.
@@ -68,10 +101,16 @@ interface MusicState {
   setLyricsSource: (v: LyricsSourceSnapshot | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
+  setInstrumental: (v: boolean) => void;
   setCoverTrackId: (v: string | null) => void;
   setCoverTrackTitle: (v: string | null) => void;
   setCoverStyle: (v: string | null) => void;
   setCoverCharacterObjectName: (v: string | null) => void;
+  setCoverMessages: (v: CoverChatMessage[] | null) => void;
+  setCoverStep: (v: number | null) => void;
+  setCoverExtrasSnapshot: (v: CoverExtrasSnapshot | null) => void;
+  setCoverLyricsExcerpt: (v: string | null) => void;
+  setCoverLyricsId: (v: string | null) => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
   setCreationSessionId: (id: string | null) => void;
@@ -105,10 +144,16 @@ const initialState = {
   lyricsSource: null,
   subVocal: '',
   subVocalStyle: '',
+  instrumental: false,
   coverTrackId: null,
   coverTrackTitle: null,
   coverStyle: null,
   coverCharacterObjectName: null,
+  coverMessages: null,
+  coverStep: null,
+  coverExtrasSnapshot: null,
+  coverLyricsExcerpt: null,
+  coverLyricsId: null,
   generationId: null,
   savedTrackId: null,
   creationSessionId: null,
@@ -142,10 +187,16 @@ export const useMusicStore = create<MusicState>((set) => ({
   setLyricsSource: (lyricsSource) => set({ lyricsSource }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
+  setInstrumental: (instrumental) => set({ instrumental }),
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),
   setCoverTrackTitle: (coverTrackTitle) => set({ coverTrackTitle }),
   setCoverStyle: (coverStyle) => set({ coverStyle }),
   setCoverCharacterObjectName: (coverCharacterObjectName) => set({ coverCharacterObjectName }),
+  setCoverMessages: (coverMessages) => set({ coverMessages }),
+  setCoverStep: (coverStep) => set({ coverStep }),
+  setCoverExtrasSnapshot: (coverExtrasSnapshot) => set({ coverExtrasSnapshot }),
+  setCoverLyricsExcerpt: (coverLyricsExcerpt) => set({ coverLyricsExcerpt }),
+  setCoverLyricsId: (coverLyricsId) => set({ coverLyricsId }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
   setCreationSessionId: (creationSessionId) => set({ creationSessionId }),

@@ -207,8 +207,11 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           genre: store.genre,
           mood: store.mood,
           tempo: store.tempo,
-          vocal: store.vocal || undefined,
-          vocalStyle: store.vocalStyle || undefined,
+          // v3.202(J): 연주곡이면 보컬 파라미터 차단 + instrumental 플래그 전달
+          // (musicService가 vocal='instrumental'·연주곡 프롬프트 문장으로 변환)
+          vocal: store.instrumental ? '' : (store.vocal || undefined),
+          vocalStyle: store.instrumental ? undefined : (store.vocalStyle || undefined),
+          instrumental: store.instrumental || undefined,
           referenceFile: store.referenceFile || undefined,
           isDuet: lyricsStore.isDuet || undefined,
           subVocal: store.subVocal || undefined,
@@ -231,7 +234,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         };
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,
-          vocal: params.vocal, style: params.style, referenceStyle: params.referenceStyle,
+          vocal: params.vocal, instrumental: params.instrumental, style: params.style, referenceStyle: params.referenceStyle,
           bpm: params.bpm, musicalKey: params.musicalKey, negativeTags: params.negativeTags,
           personaModel: params.personaModel, personaId: params.personaId,
           audioWeight: params.audioWeight, referenceUploaded: !!referenceData,

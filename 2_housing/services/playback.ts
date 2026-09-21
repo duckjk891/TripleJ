@@ -40,6 +40,18 @@ let durationWarnedTrackId: string | null = null;
 // ─────────────────────────────────────────────────────────────────────────────
 const PRELOAD_LEAD_MS = 20_000;
 const PRELOAD_RATIO = 0.85;
+// v3.202(A-lite, U-2 보강): 조기 트리거 실패 시 재시도 창 — 종료 60초 전부터.
+// 백오프 가드가 시간 창 게이트 뒤에 있어, 창이 20초면 eager 실패 후 재시도가
+// 종곡 20초 전까지 지연된다(그 시점엔 이미 Doze 가능성이 높음). 창을 합집합으로 넓혀
+// 화면이 아직 살아 있을 확률이 높은 구간에서 재시도 기회를 확보한다.
+const PRELOAD_EARLY_LEAD_MS = 60_000;
+// v3.202(A-lite): 실패 백오프 — 곡당 최대 3회·10초 간격.
+// 기존에는 실패 시 상태 콜백(~500ms)마다 무제한 재시도(초당 ~8회 폭주 — 원격 실측).
+// Doze로 네트워크가 죽은 상태에서 재시도 폭주는 성공 가능성 없이 배터리/로그만 태운다.
+const PRELOAD_RETRY_MAX = 3;
+const PRELOAD_RETRY_INTERVAL_MS = 10_000;
+/** 현재 곡 기준 프리로드 실패 이력 — forTrackId가 바뀌면 자연 무효(가드 미매치) */
+let preloadFail: { forTrackId: string; count: number; lastAt: number } | null = null;
 
 interface NextPreload {
   /** 프리로드를 건 시점의 "현재 재생 곡" id — 곡당 1회 트리거 가드 */
@@ -70,14 +82,32 @@ export function discardPreloaded(reason?: string): void {
 /**
  * 종료 임박 시 다음 곡 프리로드 트리거 — 양쪽 상태 콜백(playback.ts·PlayerScreen)에서 호출.
  * durationMillis는 v3.192 effectiveDuration(보정값)을 넘길 것.
+ * v3.202(A-lite): opts.eager=true — 현재 곡 로드 성공 직후 조기 트리거(시간 게이트 무시).
+ * Doze 진입 전(화면 켜짐·네트워크 생존 구간)에 프리로드를 끝내 두는 것이 목적.
+ * 기존 20s/85% 트리거는 유지(조기 트리거 실패 시 2차 기회) — 이중 트리거.
  */
-export function maybePreloadNext(currentTrack: any, positionMillis: number, durationMillis: number): void {
+export function maybePreloadNext(
+  currentTrack: any,
+  positionMillis: number,
+  durationMillis: number,
+  opts?: { eager?: boolean },
+): void {
   if (Platform.OS === 'web') return; // 웹은 presigned 경로 유지 — 네이티브 한정
-  if (!currentTrack?.id || !durationMillis || durationMillis <= 0) return;
-  const remaining = durationMillis - positionMillis;
-  if (remaining > PRELOAD_LEAD_MS && positionMillis / durationMillis < PRELOAD_RATIO) return;
+  if (!currentTrack?.id) return;
+  if (!opts?.eager) {
+    if (!durationMillis || durationMillis <= 0) return;
+    const remaining = durationMillis - positionMillis;
+    const leadMs = Math.max(PRELOAD_LEAD_MS, PRELOAD_EARLY_LEAD_MS); // 창 합집합(20s ∪ 60s)
+    if (remaining > leadMs && positionMillis / durationMillis < PRELOAD_RATIO) return;
+  }
   if (preloadInFlight) return;
   if (nextPreload && nextPreload.forTrackId === String(currentTrack.id)) return; // 곡당 1회 가드
+  // v3.202(A-lite): 실패 백오프 — 같은 곡에서 3회 실패했으면 중단, 10초 안 지났으면 대기
+  const curId = String(currentTrack.id);
+  if (preloadFail && preloadFail.forTrackId === curId) {
+    if (preloadFail.count >= PRELOAD_RETRY_MAX) return;
+    if (Date.now() - preloadFail.lastAt < PRELOAD_RETRY_INTERVAL_MS) return;
+  }
   const s = usePlayerStore.getState();
   const pinnedIdx = s.getNextIndex(); // 지금 핀 — didJustFinish에서 재호출 금지
   const next = pinnedIdx >= 0 ? s.queue[pinnedIdx] : null;
@@ -88,21 +118,28 @@ export function maybePreloadNext(currentTrack: any, positionMillis: number, dura
   const pin = { fromIndex: s.currentIndex, shuffle: s.shuffle, repeat: s.repeat as string };
   (async () => {
     try {
-      console.warn('[BTDebug] preload start', { trackId: next.id, pinnedIdx });
+      console.warn('[BTDebug] preload start', { trackId: next.id, pinnedIdx, eager: !!opts?.eager });
       const { sound } = await Audio.Sound.createAsync(
         { uri: `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${next.id}` },
         { shouldPlay: false },
       );
       if (gen !== loadGen) {
-        // 프리로드 도중 닫힘/전환 — 폐기
+        // 프리로드 도중 닫힘/전환 — 폐기 (실패 아님 — 백오프 카운트 비대상)
         try { await sound.unloadAsync(); } catch {}
         console.warn('[BTDebug] preload stale discard', { trackId: next.id });
         return;
       }
-      nextPreload = { forTrackId: String(currentTrack.id), trackId: String(next.id), sound, pinnedIdx, gen, ...pin };
+      nextPreload = { forTrackId: curId, trackId: String(next.id), sound, pinnedIdx, gen, ...pin };
+      preloadFail = null; // v3.202(A-lite): 성공 — 실패 이력 리셋
       console.warn('[BTDebug] preload ready', { trackId: next.id, pinnedIdx });
     } catch (err: any) {
-      console.warn('[BTDebug] preload fail', { trackId: next?.id, message: err?.message });
+      // v3.202(A-lite): 실패 기록 — 곡당 3회·10s 간격 백오프의 근거(폭주 제거)
+      preloadFail = {
+        forTrackId: curId,
+        count: preloadFail?.forTrackId === curId ? preloadFail.count + 1 : 1,
+        lastAt: Date.now(),
+      };
+      console.warn('[BTDebug] preload fail', { trackId: next?.id, message: err?.message, retry: preloadFail.count, max: PRELOAD_RETRY_MAX });
     } finally {
       preloadInFlight = false;
     }
@@ -271,6 +308,9 @@ async function playPreloadedSound(pre: { index: number; track: any; sound: Audio
     if (oldSound && oldSound !== pre.sound) {
       try { await oldSound.unloadAsync(); } catch {}
     }
+    // v3.202(A-lite): 스왑 성공 = 새 현재 곡 확정 — 다음 곡 프리로드 조기 트리거(이중 트리거 1차).
+    // 백그라운드 연쇄 전환(차량) 중 Doze 창이 열리기 전에 다음 곡까지 확보한다.
+    maybePreloadNext(pre.track, 0, 0, { eager: true });
   } catch (err: any) {
     console.warn('[BTDebug] preload swap fail → network fallback', { src: 'playback', trackId: pre.track?.id, message: err?.message });
     try { await pre.sound.unloadAsync(); } catch {}
@@ -305,6 +345,10 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
     }
     usePlayerStore.getState().setSound(newSound);
     usePlayerStore.getState().setIsPlaying(true);
+    // v3.202(A-lite): 현재 곡 로드 성공 직후 다음 곡 프리로드 조기 트리거(이중 트리거 1차).
+    // 기존 20s/85% 창은 Android Doze(네트워크 차단) 진입보다 늦는 실측 — 화면/네트워크가
+    // 살아있는 지금 확보한다. 실패 시 백오프(곡당 3회·10s)가 폭주를 막는다.
+    maybePreloadNext(newTrack, 0, 0, { eager: true });
   } catch (err: any) {
     // v3.197: 실패 시 참조/상태 정리 — 죽은 객체 방치 금지(재생버튼 1탭 복구가 받아준다)
     usePlayerStore.getState().setSound(null);

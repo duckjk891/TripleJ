@@ -58,7 +58,7 @@ import LyricsInputScreen from './screens/LyricsInputScreen';
 import LyricsPromptReviewScreen from './screens/LyricsPromptReviewScreen';
 import LyricsLoadingScreen from './screens/LyricsLoadingScreen';
 import LyricsResultScreen from './screens/LyricsResultScreen';
-import ComposerInputScreen from './screens/ComposerInputScreen';
+// v3.202(J): ComposerInputScreen 삭제 — v3.131부터 도달 불가한 죽은 화면(진입 경로 없음) 폐기
 import ComposerSelectScreen from './screens/ComposerSelectScreen';
 import MusicGenerationScreen from './screens/MusicGenerationScreen';
 import MusicLoadingScreen from './screens/MusicLoadingScreen';
@@ -103,7 +103,6 @@ export type StudioStackParamList = {
   LyricsPromptReview: undefined;
   LyricsLoading: undefined;
   LyricsResult: undefined;
-  ComposerInput: undefined;
   ComposerSelect: undefined;
   MusicGeneration: undefined;
   // v3.93: resumeGenerationId — 생성 이력에서 진행 중 생성을 이어볼 때 폴링 재개 모드
@@ -196,7 +195,6 @@ function StudioNavigator() {
         options={{ gestureEnabled: false }}
       />
       <StudioStack.Screen name="LyricsResult" component={LyricsResultScreen} />
-      <StudioStack.Screen name="ComposerInput" component={ComposerInputScreen} />
       <StudioStack.Screen
         name="ComposerSelect"
         component={ComposerSelectScreen}

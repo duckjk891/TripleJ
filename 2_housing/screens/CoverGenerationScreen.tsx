@@ -42,16 +42,23 @@ const SHOT_NO_PERSON = '인물 없이'; // 아티스트 미포함일 때만 노�
 const PALETTE_OPTIONS = ['파스텔', '비비드', '다크 무디', '흑백'];
 
 // v3.150: 보강 답변 — 생성 도중 이탈·재진입(remount)에도 유지되도록 모듈 스코프 보관
-// (musicStore cover* 재진입 계약을 안 건드리는 최소 침습)
+// v3.202(H-⑤): 모듈 상태가 화면(chatHistory)과 따로 놀아 "안 보이는 답이 요청에 실리는" 괴리의
+// 원인이었다 — 변경은 setCoverExtras 경유로 musicStore.coverExtrasSnapshot에도 동기화하고,
+// 대화(coverMessages/coverStep)도 store에 영속해 재진입 시 화면과 답변이 항상 일치하게 한다.
 const coverExtras: {
   shot: string | null; expression: string | null; palette: string | null;
   bgPrompt: string | null; bgObjectName: string | null; lyricsExcerpt: string | null;
   charKind: 'real' | 'virtual' | null; virtualArtStyle: string | null;
 } = { shot: null, expression: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null };
-const resetCoverExtras = () => {
+const syncCoverExtrasToStore = () => {
+  useMusicStore.getState().setCoverExtrasSnapshot({ ...coverExtras });
+};
+// syncStore=false: 앨범 모드 마운트 초기화용 — 트랙 모드의 진행 중 스냅샷을 지우지 않는다(v3.202)
+const resetCoverExtras = (syncStore = true) => {
   coverExtras.shot = null; coverExtras.expression = null; coverExtras.palette = null;
   coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; coverExtras.lyricsExcerpt = null;
   coverExtras.charKind = null; coverExtras.virtualArtStyle = null;
+  if (syncStore) syncCoverExtrasToStore();
 };
 
 // v3.169(대표): 인물 표정 선택지 — 아티스트 포함 시 구도 다음 질문
@@ -69,6 +76,10 @@ interface ChatMessage {
   text: string;
   /** v3.151 — 이 답변이 응답한 step. 있으면 말풍선 탭 → 그 단계부터 다시 선택(타 디렉터 UX 통일) */
   step?: number;
+  /** v3.202(H-④) — director 메시지가 어느 step의 사용자 답변에 대한 응답(에코/다음 질문)인지.
+   *  비파괴 되감기의 "직후 에코 버블" 식별은 이 메타 매치로만 한다(1조 MusicGeneration 패턴 동일 —
+   *  암묵 idx+1 가정·문자열 검색 금지). musicStore.CoverChatMessage와 구조 동일(영속 호환). */
+  echoOfStep?: number;
 }
 interface MyTrack { id: string; title: string; cover_image?: string; cover_image_url?: string; genre?: string[]; mood?: string[]; }
 
@@ -107,20 +118,38 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const albumMode: AlbumModeParams | undefined = route.params?.albumMode;
 
   // 앨범 모드는 musicStore cover* 재진입 컨텍스트를 쓰지 않음 (트랙 커버 대기 이어보기 전용)
-  const hasPendingGeneration = !albumMode && !!musicStore.coverTrackId;
+  // v3.202(H-⑤): coverTrackId는 이제 곡 선택 시점부터 "대화 컨텍스트"로 보관되므로,
+  // "생성 대기(이어보기)" 판별은 스타일 확정(coverStyle != null, handleStyleConfirm)까지 요구.
+  // 실패 확정 시 coverStyle을 지워(catch) 재진입 자동 doGenerate(재차감)를 막는다.
+  const hasPendingGeneration =
+    !albumMode && !!musicStore.coverTrackId && musicStore.coverStyle != null;
+  // v3.202(H-⑤): 진행 중이던 대화가 store에 영속돼 있으면 이어서 복원 (성공 확정 시에만 클리어)
+  const initialStore = useRef(useMusicStore.getState()).current;
+  const hasResumableDialogue =
+    !albumMode && !hasPendingGeneration && (initialStore.coverMessages?.length ?? 0) > 0;
 
   // 화면 모드: dialogue(대화) / loading(생성중) / result(결과)
   const [mode, setMode] = useState<ScreenMode>(hasPendingGeneration ? 'loading' : 'dialogue');
 
-  // 대화 관련
-  const [step, setStep] = useState(0);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    albumMode
-      ? { type: 'director', text: `안녕하세요! 이미지 디렉터예요. 앨범 "${albumMode.albumTitle}"의 커버 이미지를 만들어볼까요?` }
-      : { type: 'director', text: '안녕하세요! 이미지 디렉터예요. 어떤 곡의 커버 이미지를 만들어볼까요?' },
-  ]);
+  // 대화 관련 — v3.202(H-⑤): 재진입 시 store 영속본으로 hydrate
+  const [step, setStep] = useState(hasResumableDialogue ? (initialStore.coverStep ?? 0) : 0);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(() => {
+    if (albumMode) {
+      return [{ type: 'director', text: `안녕하세요! 이미지 디렉터예요. 앨범 "${albumMode.albumTitle}"의 커버 이미지를 만들어볼까요?` }];
+    }
+    if (hasResumableDialogue) return initialStore.coverMessages as ChatMessage[];
+    if (hasPendingGeneration && initialStore.coverMessages?.length) {
+      return initialStore.coverMessages as ChatMessage[];
+    }
+    return [{ type: 'director', text: '안녕하세요! 이미지 디렉터예요. 어떤 곡의 커버 이미지를 만들어볼까요?' }];
+  });
   const [tracks, setTracks] = useState<MyTrack[]>([]);
-  const [selectedTrack, setSelectedTrack] = useState<MyTrack | null>(null);
+  const [selectedTrack, setSelectedTrack] = useState<MyTrack | null>(
+    // v3.202(H-⑤): 재진입 시 곡 선택 복원 — coverTrackId는 handleTrackSelect부터 기록됨
+    !albumMode && musicStore.coverTrackId
+      ? ({ id: musicStore.coverTrackId, title: musicStore.coverTrackTitle || '' } as MyTrack)
+      : null
+  );
   const [styleInput, setStyleInput] = useState('');
   const [trackLoading, setTrackLoading] = useState(!hasPendingGeneration);
   // v3.80: 커버에 포함할 캐릭터 — 실사/가상 슬롯 object_name (선택 결과는 musicStore에 저장:
@@ -130,8 +159,37 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 재생성 시 슬롯 선택 유지용 (doGenerate 정리부에서 store가 비워진 뒤 복원)
   const lastCharObjRef = useRef<string | null>(null);
 
+  // v3.202(H-⑤): 보강 답변 변경 단일 통로 — 모듈 값 + (트랙 모드) store 스냅샷 동시 갱신.
+  // 앨범 모드는 store를 오염시키지 않는다(모듈 값만).
+  const applyExtras = (patch: Partial<typeof coverExtras>) => {
+    Object.assign(coverExtras, patch);
+    if (!albumMode) syncCoverExtrasToStore();
+  };
+
+  // v3.202(H-④): 비파괴 되감기 컨텍스트 — 1조 MusicGeneration commitExchange 패턴 동일.
+  // 활성 중에는 답변 핸들러가 대화를 덧붙이는 대신 해당 버블/에코만 치환하고 resumeStep으로 복귀.
+  const rewindRef = useRef<{ idx: number; target: number; resumeStep: number } | null>(null);
+
+  // v3.202(H-⑤): 성공 확정 시에만 커버 컨텍스트 전체 클리어 (실패는 coverStyle만 해제해
+  // 재진입 자동 재요청(재차감)을 막고, 대화·곡 선택·아티스트 선택은 보존 → 이어서 수정 가능)
+  const clearCoverContext = () => {
+    const s = useMusicStore.getState();
+    s.setCoverTrackId(null);
+    s.setCoverTrackTitle(null);
+    s.setCoverStyle(null);
+    // v3.80 승계: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
+    s.setCoverCharacterObjectName(null);
+    s.setCoverMessages(null);
+    s.setCoverStep(null);
+    s.setCoverExtrasSnapshot(null);
+    s.setCoverLyricsExcerpt(null);
+    s.setCoverLyricsId(null);
+  };
+
   // 로딩/결과 관련
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
+  // v3.202(I-lite): 네트워크 단절 후 cover-sessions 폴링 복구 중 안내 문구 (loading 화면 대체 표기)
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
   const [coverObjectName, setCoverObjectName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -176,10 +234,41 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   }, [chatHistory, step]);
 
   // v3.150: 새 대화 시작 시 이전 세션의 보강 답변 초기화 (생성 중 재진입은 유지)
+  // v3.202(H-⑤): 이어가는 대화(영속본)면 초기화 대신 스냅샷으로 모듈 값을 hydrate.
+  // 앨범 모드는 모듈 값만 리셋(트랙 모드의 진행 중 스냅샷 보존 — syncStore=false).
   useEffect(() => {
-    if (!hasPendingGeneration) resetCoverExtras();
+    if (albumMode) { resetCoverExtras(false); return; }
+    if (hasPendingGeneration || hasResumableDialogue) {
+      const snap = useMusicStore.getState().coverExtrasSnapshot;
+      if (snap) {
+        Object.assign(coverExtras, snap);
+        if (snap.charKind) setChosenSlot(snap.charKind); // 의상 미리보기 슬롯 복원
+      }
+      // 아티스트 관련 스텝(1~1.7)에서 복원된 경우 — 슬롯 object_name 재확보(대화 append 없음)
+      if (hasResumableDialogue && (initialStore.coverStep ?? 0) >= 1 && (initialStore.coverStep ?? 0) < 1.75) {
+        api.get('/character/me')
+          .then((res) => {
+            const ch = res.data?.character;
+            setRealObjName(ch?.sheet_object_name || null);
+            setVirtualObjName(ch?.virtual_sheet_object_name || null);
+          })
+          .catch((err) => console.warn('[Cover] 복원 시 캐릭터 재조회 실패:', err?.response?.status));
+      }
+      return;
+    }
+    resetCoverExtras();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // v3.202(H-⑤): 대화 영속 — 트랙 모드 dialogue 진행분을 store에 미러링(재진입 복원 원천).
+  // 성공 확정(clearCoverContext) 시에만 지워진다.
+  useEffect(() => {
+    if (albumMode) return;
+    const s = useMusicStore.getState();
+    s.setCoverMessages(chatHistory);
+    s.setCoverStep(step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatHistory, step]);
 
   // 트랙 조회 (앨범 모드는 곡 선택 단계가 없어 불필요)
   useEffect(() => {
@@ -227,6 +316,50 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
   }, []);
 
+  // ── v3.202(I-lite): 네트워크 단절/타임아웃 복구 — 서버 generate-cover는 150~180s 동기 처리라
+  // 클라이언트 연결이 먼저 끊겨도(실측 11/44/153s ERR_NETWORK) 서버는 완성 + ⭐ 차감을 마친다.
+  // 즉시 실패 확정 대신 GET /upload/cover-sessions(upload.py:1150, 백엔드 무변경) 폴링으로
+  // 완성본을 회수한다(재생성 호출 금지 = 재차감 금지). 판정 기준: 요청 시각(t0) - 120s(클럭
+  // 오차 허용) 이후 created_at 인 cover_object_name 보유 세션 중 최신 1건. 15s×최대 12회(≈3분). ──
+  const isRecoverableNetErr = (err: any) =>
+    !err?.response &&
+    (err?.code === 'ERR_NETWORK' ||
+      err?.code === 'ECONNABORTED' ||
+      /network|timeout/i.test(String(err?.message || '')));
+
+  const tryRecoverFromCoverSessions = async (requestStartMs: number) => {
+    const POLL_INTERVAL_MS = 15000;
+    const POLL_MAX = 12;
+    // 서버 시각은 타임존 표기 없는 UTC — 'Z' 보정 파싱 (AppealModal fmtDate 관행)
+    const parseTs = (iso?: string | null) => {
+      if (!iso) return NaN;
+      return new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z').getTime();
+    };
+    const threshold = requestStartMs - 120000;
+    for (let attempt = 1; attempt <= POLL_MAX; attempt++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        const res = await api.get('/upload/cover-sessions', { params: { page: 1, limit: 5 } });
+        const covers: any[] = res.data?.covers || [];
+        const found = covers
+          .filter((c) => c?.cover_object_name && parseTs(c?.created_at) >= threshold)
+          .sort((a, b) => parseTs(b?.created_at) - parseTs(a?.created_at))[0];
+        if (found) {
+          console.log('[Cover] 폴링 복구 성공', {
+            attempt, cover_session_id: found.cover_session_id, created_at: found.created_at,
+          });
+          return found;
+        }
+        console.log('[Cover] 폴링 복구 — 완성본 미발견', { attempt, count: covers.length });
+      } catch (pollErr: any) {
+        console.warn('[Cover] 폴링 복구 조회 실패', {
+          attempt, status: pollErr?.response?.status, code: pollErr?.code,
+        });
+      }
+    }
+    return null;
+  };
+
   const doGenerate = async (trackId: string, title: string, style: string) => {
     // 재생성 시 사용할 수 있도록 로컬에 보존 (앨범 모드는 트랙 개념 없음)
     if (!albumMode && !selectedTrack) {
@@ -234,6 +367,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
     setMode('loading');
     setErrorMsg(null);
+    setRecoveryNotice(null);
     // v3.89: 새 생성 시작 — 이전 refine 세션/히스토리 폐기 (MAIDOL v58 Q4-a 관행:
     // 재생성마다 백엔드가 신규 cover_session을 발급하므로 옛 세션은 버림)
     setCoverSessionId(null);
@@ -245,6 +379,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     // 재생성 시 선택 유지를 위해 ref에 백업 (handleStyleConfirm에서 복원).
     const charObjectName = useMusicStore.getState().coverCharacterObjectName;
     lastCharObjRef.current = charObjectName;
+    const t0 = Date.now(); // v3.202(I-lite): 폴링 복구 판정 기준 시각 — catch에서도 사용
     try {
       // v3.150(대표): 장르/분위기 자동 주입 제거 — 이미지에 왜 필요한지 불명확(대표 지적).
       // 사용자가 원하면 배경/자유 서술로 직접 표현한다.
@@ -278,7 +413,6 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           ? (coverExtras.virtualArtStyle || undefined) : undefined,
       };
       console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
-      const t0 = Date.now();
       const res = await api.post('/upload/generate-cover', payload, {
         timeout: 600000, // GPT Image 2는 캐릭터 ref 포함 시 5분 이상 걸리기도 함 → 10분
       });
@@ -311,6 +445,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         console.log('[Cover] cover_session_id 없음 — refine 비활성');
       }
       setMode('result');
+      // v3.202(H-⑤): 컨텍스트 클리어는 성공 경로에서만 (기존 finally 클리어가 실패 시 재개를
+      // 막던 문제의 픽스 — 실패는 catch에서 coverStyle만 해제해 대화·선택을 보존한다)
+      if (!albumMode) clearCoverContext();
     } catch (err: any) {
       console.warn('[Cover] generate-cover FAIL', {
         message: err?.message,
@@ -341,30 +478,63 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             doGenerate(trackId, title, style);
           },
         });
-        // finally에서 store가 정리되므로 mode만 대화로 되돌려 둠 (다이얼로그 위에 표시됨)
+        // v3.202(H-③): 대화 와이프 제거 — 기존 대화에 휴식 안내만 append, 스타일 단계(2)로 복귀.
+        // coverStyle만 해제(재진입 자동 재요청 방지) — 곡·아티스트·보강 답변은 보존.
+        if (!albumMode) musicStore.setCoverStyle(null);
         setMode('dialogue');
         setStep(2);
-        setChatHistory([{ type: 'director', text: '잠깐 쉬는 중이에요. 휴식이 끝나면 다시 만들어드릴게요!' }]);
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'director', text: '잠깐 쉬는 중이에요. 휴식이 끝나면 다시 만들어드릴게요!', echoOfStep: 2 },
+        ]);
       } else {
+        // v3.202(I-lite): 네트워크 단절/타임아웃 — 실패 확정 전에 서버 완성본 폴링 회수 시도
+        if (!albumMode && isRecoverableNetErr(err)) {
+          console.log('[Cover] 네트워크 단절 감지 — cover-sessions 폴링 복구 시작', {
+            code: err?.code, elapsedMs: Date.now() - t0,
+          });
+          setRecoveryNotice('이미지가 거의 다 됐어요, 잠시만요…');
+          const found = await tryRecoverFromCoverSessions(t0);
+          setRecoveryNotice(null);
+          if (found) {
+            // 완성본 회수 = 성공 처리 — 재생성 호출 없음(⭐ 재차감 없음)
+            const obj: string = found.cover_object_name;
+            setCoverObjectName(obj);
+            setCoverImageUrl(found.image_url ? `${BACKEND_BASE_URL}${found.image_url}` : coverPreviewUrl(obj));
+            const ver = typeof found.current_version === 'number' ? found.current_version : 0;
+            if (found.cover_session_id) {
+              setCoverSessionId(String(found.cover_session_id));
+              setCoverHistory([{
+                version: ver,
+                object_name: obj,
+                refine_prompt: null,
+                image_model: found.image_model,
+                created_at: found.created_at || undefined,
+              }]);
+            }
+            setCurrentVersion(ver);
+            setViewVersion(ver);
+            setMode('result');
+            clearCoverContext();
+            usePointsStore.getState().fetchBalance(); // 서버는 이미 차감 완료 — 잔액 표시 동기화
+            return;
+          }
+          console.warn('[Cover] 폴링 복구 실패 — 오류 확정');
+        }
+        // v3.202(H-⑤): 실패 확정 — coverStyle만 해제(재진입 자동 재요청·재차감 방지).
+        // 곡 선택·대화·보강 답변·아티스트 선택은 보존 → '다시 생성하기'로 이어서 수정 가능.
+        if (!albumMode) musicStore.setCoverStyle(null);
         setErrorMsg(err?.response?.data?.error || err?.message || '커버 생성에 실패했습니다.');
         setMode('result');
       }
-    } finally {
-      // v3.120: 앨범 모드는 cover* 컨텍스트를 안 씀 — 진행 중일 수 있는 트랙 커버
-      // 재진입 컨텍스트(coverTrackId 등)를 지우지 않도록 캐릭터 선택만 정리
-      if (!albumMode) {
-        musicStore.setCoverTrackId(null);
-        musicStore.setCoverTrackTitle(null);
-        musicStore.setCoverStyle(null);
-      }
-      // v3.80: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
-      musicStore.setCoverCharacterObjectName(null);
     }
   };
 
   // v3.80: /character/me 조회 — 실사·가상 시트 모두 확보. 하나라도 있으면 "아티스트 포함?" 질문.
   // v3.120: 트랙 모드(곡 선택 후)·앨범 모드(마운트 직후) 공용으로 추출.
-  const checkCharacterAndProceed = async () => {
+  // v3.202(H-①): 방금 고른 track을 인자로 전달 — setSelectedTrack 직후의 stale closure 때문에
+  // 아티스트 없는 사용자가 가사 반영 질문(1.75)을 건너뛰던 결함 픽스(state 대신 인자 우선).
+  const checkCharacterAndProceed = async (track?: MyTrack | null) => {
     try {
       const res = await api.get('/character/me');
       const ch = res.data?.character;
@@ -373,46 +543,66 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       setRealObjName(realObj);
       setVirtualObjName(virtualObj);
       // v3.152: 가상 화풍 보관 — 가상 슬롯 선택 시 프롬프트 분기(character_art_style)에 사용
-      coverExtras.virtualArtStyle = ch?.virtual_art_style || null;
+      applyExtras({ virtualArtStyle: ch?.virtual_art_style || null });
       if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj, vStyle: ch?.virtual_art_style || null });
       if (realObj || virtualObj) {
         setChatHistory((prev) => [
           ...prev,
-          { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?' },
+          { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?', echoOfStep: 0 },
         ]);
         setStep(1); // 아티스트 포함 여부 단계
       } else {
         musicStore.setCoverCharacterObjectName(null);
-        proceedToLyricsQ(); // v3.151: 아티스트 없어도 가사 질문부터
+        proceedToLyricsQ(track); // v3.151: 아티스트 없어도 가사 질문부터
       }
     } catch (err) {
       console.warn('[Cover] /character/me 조회 실패, 캐릭터 없이 진행:', err);
       musicStore.setCoverCharacterObjectName(null);
-      proceedToLyricsQ();
+      proceedToLyricsQ(track);
     }
+  };
+
+  // ── v3.202(H-④): 비파괴 되감기 커밋 — 되감기 중 답변은 탭한 user 버블의 text만 새 값으로
+  // 치환(step 태그 보존)하고 원래 진행 위치(resumeStep)로 복귀한다. 이 화면의 디렉터 버블은
+  // 값을 에코하지 않는 "다음 질문"이라 버블 치환 + 값(coverExtras/store) 갱신만으로 충분.
+  // true 반환 = 되감기 커밋 완료(호출부는 flow 진행 금지). ──
+  const commitRewindAnswer = (text: string) => {
+    const rw = rewindRef.current;
+    if (!rw) return false;
+    rewindRef.current = null;
+    console.info('[Cover] 되감기 커밋(비파괴 치환)', { idx: rw.idx, target: rw.target, resume: rw.resumeStep });
+    setChatHistory((prev) => {
+      const next = [...prev];
+      if (next[rw.idx]?.type === 'user') next[rw.idx] = { ...next[rw.idx], text };
+      return next;
+    });
+    setStep(rw.resumeStep);
+    return true;
   };
 
   // ── v3.150(대표 확정): 대화 보강 체인 — 의상 확인 → 구도 → 배경·장소 → 색감 → (가사) → 자유 서술.
   //    전부 선택사항(건너뛰기 가능). 답변은 coverExtras(모듈 스코프)에 보관돼 재진입에도 유지. ──
   const goWardrobe = (slot: 'real' | 'virtual') => {
     setChosenSlot(slot);
-    coverExtras.charKind = slot; // v3.152: 실사/가상 프롬프트 분기용
+    applyExtras({ charKind: slot }); // v3.152: 실사/가상 프롬프트 분기용
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!' },
+      { type: 'director', text: '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!', echoOfStep: step },
     ]);
     setStep(1.7);
   };
 
   const handleWardrobeKeep = () => {
+    if (commitRewindAnswer('이 의상 그대로')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: '이 의상 그대로', step: 1.7 }]);
     proceedToLyricsQ(); // v3.151(대표): 의상 다음은 가사 포함 여부
   };
 
   // v3.151(대표): 가사 포함 질문을 앞으로 — 포함하면 디테일(구도~색감) 질문 생략,
   // 미포함이면 디테일 질문 진행. 앨범 모드/곡 없음은 가사 개념이 없어 디테일로 직행.
-  const proceedToLyricsQ = () => {
-    if (albumMode || !(selectedTrack?.id || musicStore.coverTrackId)) {
+  // v3.202(H-①): track 인자 우선 — handleTrackSelect 직후 stale selectedTrack 참조 픽스.
+  const proceedToLyricsQ = (track?: MyTrack | null) => {
+    if (albumMode || !(track?.id || selectedTrack?.id || musicStore.coverTrackId)) {
       proceedToShot();
       return;
     }
@@ -425,6 +615,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   const handleWardrobeChange = () => {
     console.info('[Cover] 의상 변경 — ArtistCody 연동 이동');
+    rewindRef.current = null; // v3.202(H-④): 화면 이동 흐름은 되감기 치환 대상이 아님 — 일반 진행으로 전환
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: '의상 바꾸러 가기', step: 1.7 },
@@ -454,8 +645,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   const handleShotPick = (shot: string | null) => {
     setShotText('');
-    coverExtras.shot = shot;
+    applyExtras({ shot });
     console.info('[Cover] 구도 선택', { shot });
+    if (commitRewindAnswer(shot || '건너뛰기')) return; // v3.202(H-④)
     // v3.169(대표): 아티스트 포함이면 표정 질문(1.82) 경유, 아니면 바로 배경(1.85)
     const hasPerson = !!useMusicStore.getState().coverCharacterObjectName;
     setChatHistory((prev) => [
@@ -463,7 +655,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       { type: 'user', text: shot || '건너뛰기', step: 1.8 },
       { type: 'director', text: hasPerson
         ? '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!'
-        : '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!' },
+        : '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', echoOfStep: 1.8 },
     ]);
     setStep(hasPerson ? 1.82 : 1.85);
   };
@@ -471,12 +663,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.169: 표정 선택/직접 입력 → 배경 질문으로
   const handleExpressionPick = (expression: string | null) => {
     setExpressionText('');
-    coverExtras.expression = expression;
+    applyExtras({ expression });
     console.info('[Cover] 표정 선택', { expression });
+    if (commitRewindAnswer(expression || '건너뛰기')) return; // v3.202(H-④)
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: expression || '건너뛰기', step: 1.82 },
-      { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!' },
+      { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', echoOfStep: 1.82 },
     ]);
     setStep(1.85);
   };
@@ -496,9 +689,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       const data = await uploadCoverBackground({
         uri: a.uri, fileName: a.name || 'background.jpg', mimeType: a.mimeType, size: a.size,
       } as any);
-      coverExtras.bgObjectName = data.object_name;
-      coverExtras.bgPrompt = null;
+      applyExtras({ bgObjectName: data.object_name, bgPrompt: null });
       console.info('[Cover] 배경 사진 업로드 완료', { object: data.object_name });
+      if (commitRewindAnswer('배경 사진을 올렸어요')) return; // v3.202(H-④)
       setChatHistory((prev) => [...prev, { type: 'user', text: '배경 사진을 올렸어요', step: 1.85 }]);
       proceedToPalette();
     } catch (err: any) {
@@ -512,16 +705,16 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const handleBgText = () => {
     const v = bgText.trim().slice(0, 300);
     if (!v) return;
-    coverExtras.bgPrompt = v;
-    coverExtras.bgObjectName = null;
+    applyExtras({ bgPrompt: v, bgObjectName: null });
     setBgText('');
+    if (commitRewindAnswer(v)) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: v, step: 1.85 }]);
     proceedToPalette();
   };
 
   const handleBgSkip = () => {
-    coverExtras.bgPrompt = null;
-    coverExtras.bgObjectName = null;
+    applyExtras({ bgPrompt: null, bgObjectName: null });
+    if (commitRewindAnswer('건너뛰기')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: '건너뛰기', step: 1.85 }]);
     proceedToPalette();
   };
@@ -529,31 +722,46 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const proceedToPalette = () => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!' },
+      { type: 'director', text: '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!', echoOfStep: 1.85 },
     ]);
     setStep(1.9);
   };
 
   const handlePalettePick = (palette: string | null) => {
     setPaletteText('');
-    coverExtras.palette = palette;
+    applyExtras({ palette });
     console.info('[Cover] 색감 선택', { palette });
+    if (commitRewindAnswer(palette || '건너뛰기')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: palette || '건너뛰기', step: 1.9 }]);
     proceedToFinal(); // v3.151: 가사 질문은 앞(1.75)으로 이동
   };
 
   // 가사 반영 — LLM 추가 호출 없이 가사 발췌를 이미지 프롬프트에 직접 동봉 (무비용)
-  const handleLyricsUse = async () => {
-    setChatHistory((prev) => [...prev, { type: 'user', text: '가사 내용 반영', step: 1.75 }]);
+  // v3.202(H-②): fromStep 2 = 자유 서술(step 2) 화면의 '가사 내용 기반으로 생성' 버튼 경유 —
+  // 1.75와 동등 기능(발췌 동봉), 이미 마지막 단계라 질문 재출력 없이 step 2에 머문다.
+  const handleLyricsUse = async (fromStep: number = 1.75) => {
+    const answerText = fromStep === 2 ? '가사 내용 기반으로 생성' : '가사 내용 반영';
+    const rewinding = !!rewindRef.current; // v3.202(H-④): 되감기 중이면 버블 치환으로 커밋
+    if (!rewinding) {
+      setChatHistory((prev) => [...prev, { type: 'user', text: answerText, step: 1.75 }]);
+    }
     try {
       const trackId = selectedTrack?.id || musicStore.coverTrackId;
-      const trackRes = await api.get(`/tracks/${trackId}`);
-      const lyricsId = trackRes.data?.lyrics_id;
+      const store = useMusicStore.getState();
       let excerpt: string | null = null;
-      if (lyricsId) {
-        const items = await listLyricsAssets();
-        const found = items.find((it) => it.lyrics_id === lyricsId);
-        if (found?.content) excerpt = found.content.slice(0, 400);
+      let lyricsId: string | null = null;
+      if (!albumMode && store.coverLyricsExcerpt) {
+        // v3.202(H-⑤): 같은 대화의 발췌는 재조회 없이 승계 (곡 변경 시 performRewind가 클리어)
+        excerpt = store.coverLyricsExcerpt;
+        lyricsId = store.coverLyricsId;
+      } else {
+        const trackRes = await api.get(`/tracks/${trackId}`);
+        lyricsId = trackRes.data?.lyrics_id ?? null;
+        if (lyricsId) {
+          const items = await listLyricsAssets();
+          const found = items.find((it) => it.lyrics_id === lyricsId);
+          if (found?.content) excerpt = found.content.slice(0, 400);
+        }
       }
       if (!excerpt) {
         console.warn('[Cover] 가사 발췌 실패 — lyrics_id/자산 없음', { lyricsId: lyricsId || null });
@@ -561,20 +769,36 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           ...prev,
           { type: 'director', text: '이 곡의 가사를 찾지 못했어요. 가사 없이 이어서 갈게요!' },
         ]);
-        coverExtras.lyricsExcerpt = null;
+        applyExtras({ lyricsExcerpt: null });
+        if (!albumMode) { store.setCoverLyricsExcerpt(null); store.setCoverLyricsId(null); }
       } else {
-        coverExtras.lyricsExcerpt = excerpt;
+        applyExtras({ lyricsExcerpt: excerpt });
+        if (!albumMode) { store.setCoverLyricsExcerpt(excerpt); store.setCoverLyricsId(lyricsId); }
         console.info('[Cover] 가사 발췌 반영', { len: excerpt.length });
       }
     } catch (err: any) {
       console.error('[Cover] 가사 조회 실패', { status: err?.response?.status });
-      coverExtras.lyricsExcerpt = null;
+      applyExtras({ lyricsExcerpt: null });
     }
+    if (rewinding) { commitRewindAnswer(answerText); return; }
+    if (fromStep === 2) return; // 이미 자유 서술 단계 — proceedToFinal 질문 재출력 없음
     proceedToFinal();
   };
 
   const handleLyricsSkip = () => {
-    coverExtras.lyricsExcerpt = null;
+    applyExtras({ lyricsExcerpt: null });
+    if (!albumMode) {
+      useMusicStore.getState().setCoverLyricsExcerpt(null);
+      useMusicStore.getState().setCoverLyricsId(null);
+    }
+    if (commitRewindAnswer('아니요, 직접 정할게요')) {
+      // v3.202(H-④): '반영→직접'으로 되감은 경우 — 디테일(구도~색감)을 아직 답한 적 없으면
+      // 이어서 질문 진행(마지막 setStep이 우선), 이미 답이 있으면 원위치 복귀 유지.
+      if (coverExtras.shot == null && coverExtras.palette == null && coverExtras.bgPrompt == null && coverExtras.bgObjectName == null) {
+        proceedToShot();
+      }
+      return;
+    }
     setChatHistory((prev) => [...prev, { type: 'user', text: '아니요, 직접 정할게요', step: 1.75 }]);
     proceedToShot(); // v3.151: 미포함 → 디테일 질문(구도~색감)
   };
@@ -595,30 +819,54 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
   };
 
+  // v3.202(H-④): 비파괴 되감기 — 대화 절단·이후 답변 초기화(v3.151) 폐기.
+  // 해당 버블 값 치환만 수행하고 이후 대화·상태는 보존한다(1조 MusicGeneration 패턴).
+  // 예외: step 0(곡 변경)만 파괴 허용 — 곡이 바뀌면 이후 선택 전부가 무효라 처음부터 재진행.
   const performRewind = (idx: number, target: number) => {
-    console.info('[Cover] 대화 되감기', { idx, target });
-    // 되감는 단계 이후의 답변은 초기화 (앞으로 재진행하며 다시 채움 — step 번호가 흐름 순서와 단조)
-    if (target <= 1.75) coverExtras.lyricsExcerpt = null;
-    if (target <= 1.8) coverExtras.shot = null;
-    if (target <= 1.82) coverExtras.expression = null;
-    if (target <= 1.85) { coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; }
-    if (target <= 1.9) coverExtras.palette = null;
-    if (target <= 1) { musicStore.setCoverCharacterObjectName(null); setChosenSlot(null); coverExtras.charKind = null; }
-    if (target === 0) setSelectedTrack(null);
-    setChatHistory((prev) => [
-      ...prev.slice(0, idx),
-      { type: 'director', text: questionForStep(target) },
-    ]);
+    if (target === 0) {
+      console.info('[Cover] 대화 되감기 — 곡 변경(파괴 허용)', { idx });
+      rewindRef.current = null;
+      resetCoverExtras(!albumMode);
+      musicStore.setCoverCharacterObjectName(null);
+      setChosenSlot(null);
+      setSelectedTrack(null);
+      if (!albumMode) {
+        musicStore.setCoverTrackId(null);
+        musicStore.setCoverTrackTitle(null);
+        musicStore.setCoverStyle(null);
+        musicStore.setCoverLyricsExcerpt(null);
+        musicStore.setCoverLyricsId(null);
+      }
+      if (mode !== 'dialogue') setMode('dialogue');
+      setChatHistory((prev) => [
+        ...prev.slice(0, idx),
+        { type: 'director', text: questionForStep(0) },
+      ]);
+      setStep(0);
+      return;
+    }
+    // 연쇄 되감기(되감기 중 다른 버블 탭) — 복귀 지점은 최초의 원래 진행 위치 유지
+    const resumeStep = rewindRef.current ? rewindRef.current.resumeStep : step;
+    console.info('[Cover] 대화 되감기(비파괴)', { idx, target, resumeStep, fromMode: mode });
+    rewindRef.current = { idx, target, resumeStep };
+    if (mode !== 'dialogue') setMode('dialogue'); // v3.202: result 모드에서도 수정 진입 허용
     setStep(target);
   };
 
   const handleUserBubbleTap = (idx: number) => {
     const msg = chatHistory[idx];
-    if (msg?.type !== 'user' || msg.step == null || mode !== 'dialogue') return;
-    showAlert('이 답변부터 다시 할까요?', `"${msg.text}"\n\n이후의 선택은 초기화되고, 이 질문부터 다시 진행해요.`, [
-      { text: '취소', style: 'cancel' },
-      { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
-    ]);
+    if (msg?.type !== 'user' || msg.step == null || mode === 'loading') return;
+    const destructive = msg.step === 0;
+    showAlert(
+      destructive ? '곡을 다시 고를까요?' : '이 답변만 다시 고를까요?',
+      destructive
+        ? `"${msg.text}"\n\n곡을 바꾸면 이후의 선택은 초기화되고 처음부터 다시 진행해요.`
+        : `"${msg.text}"\n\n이 답변만 새 값으로 바뀌고, 이후의 대화와 선택은 그대로 유지돼요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
+      ]
+    );
   };
 
   const proceedToFinal = () => {
@@ -630,30 +878,51 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   // 대화: 곡 선택 → 캐릭터 시트 보유 여부 확인
+  // v3.202(H-①/⑤): track을 인자로 전달(stale closure 제거) + 곡 선택 시점부터 store에 컨텍스트
+  // 기록(coverTrackId/Title — 재진입 복원용. 생성 대기 판별은 coverStyle 확정까지 요구).
   const handleTrackSelect = async (track: MyTrack) => {
     setSelectedTrack(track);
+    if (!albumMode) {
+      musicStore.setCoverTrackId(track.id);
+      musicStore.setCoverTrackTitle(track.title);
+      musicStore.setCoverStyle(null);
+    }
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: `"${track.title}"`, step: 0 },
     ]);
-    await checkCharacterAndProceed();
+    await checkCharacterAndProceed(track);
   };
 
   // 대화: 아티스트 포함 여부 선택 → (둘 다 있으면 슬롯 선택) → 스타일 단계로
   const handleArtistChoice = (include: boolean) => {
     if (!include) {
       musicStore.setCoverCharacterObjectName(null);
-      coverExtras.charKind = null;
+      applyExtras({ charKind: null });
+      setChosenSlot(null);
+      if (commitRewindAnswer('아티스트 빼고')) return; // v3.202(H-④): 값 치환 후 원위치 복귀
       setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 빼고', step: 1 }]);
       proceedToLyricsQ(); // v3.151: 미포함도 가사 질문부터
       return;
     }
     // v3.81: 아티스트 1명=슬롯 1개 모델 — 두 명 있으면 아티스트 선택(step 1.5), 한 명이면 자동 선택
     if (realObjName && virtualObjName) {
+      if (rewindRef.current) {
+        // v3.202(H-④): 되감기 중 '포함'+슬롯 2개 — 버블만 갱신하고 슬롯 질문(1.5)으로 연쇄 되감기
+        const rw = rewindRef.current;
+        setChatHistory((prev) => {
+          const next = [...prev];
+          if (next[rw.idx]?.type === 'user') next[rw.idx] = { ...next[rw.idx], text: '아티스트 포함' };
+          return next;
+        });
+        rewindRef.current = { ...rw, target: 1.5 };
+        setStep(1.5);
+        return;
+      }
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: '아티스트 포함', step: 1 },
-        { type: 'director', text: '아티스트가 두 명 있네요! 어느 아티스트로 넣을까요?' },
+        { type: 'director', text: '아티스트가 두 명 있네요! 어느 아티스트로 넣을까요?', echoOfStep: 1 },
       ]);
       setStep(1.5);
       return;
@@ -661,6 +930,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     const obj = realObjName || virtualObjName;
     musicStore.setCoverCharacterObjectName(obj);
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 자동 선택', { slot: realObjName ? 'real' : 'virtual', obj });
+    if (rewindRef.current) {
+      // v3.202(H-④): 되감기 중 자동 선택 — 슬롯 종류만 반영하고 원위치 복귀(의상 확인 재진행 없음)
+      applyExtras({ charKind: realObjName ? 'real' : 'virtual' });
+      setChosenSlot(realObjName ? 'real' : 'virtual');
+      commitRewindAnswer('아티스트 포함');
+      return;
+    }
     setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 포함', step: 1 }]);
     goWardrobe(realObjName ? 'real' : 'virtual'); // v3.150: 의상 확인 단계
   };
@@ -671,6 +947,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (!obj) return;
     musicStore.setCoverCharacterObjectName(obj);
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
+    if (rewindRef.current) {
+      // v3.202(H-④): 되감기 중 슬롯 변경 — 값 반영 + 버블 치환 후 원위치 복귀
+      applyExtras({ charKind: slot });
+      setChosenSlot(slot);
+      commitRewindAnswer(slot === 'real' ? '아티스트①로' : '아티스트②로');
+      return;
+    }
     setChatHistory((prev) => [...prev, { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로', step: 1.5 }]);
     goWardrobe(slot); // v3.150: 의상 확인 단계
   };
@@ -741,11 +1024,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       if (__DEV__) console.info('[Cover] 재생성: 캐릭터 슬롯 선택 복원', { obj: lastCharObjRef.current });
       musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
     }
-    setChatHistory((prev) => [
-      ...prev,
-      { type: 'user', text: style || '이대로 만들어주세요', step: 2 },
-      { type: 'director', text: '커버 작업을 시작할게요! 곧 결과를 보여드릴게요.' },
-    ]);
+    // v3.202(H-④): 스타일 버블 되감기 중이면 버블 치환(에코 보존) 후 바로 생성 진행
+    if (!commitRewindAnswer(style || '이대로 만들어주세요')) {
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: style || '이대로 만들어주세요', step: 2 },
+        { type: 'director', text: '커버 작업을 시작할게요! 곧 결과를 보여드릴게요.', echoOfStep: 2 },
+      ]);
+    }
     // v3.107: 대기열 타이머 폐지 — 즉시 생성 시작. musicStore의 cover* 필드는 유지해서
     // 생성 도중 화면 이탈 후 재진입 시 hasPendingGeneration 경로로 이어보기 가능.
     console.log('[Cover] 커버 생성 시작 — 즉시 doGenerate (대기열 없음)', albumMode ? '(앨범 모드)' : '');
@@ -895,16 +1181,23 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
   };
 
-  // 결과: 다시 생성 → 스타일 변경 화면
+  // 결과: 다시 생성 → 대화 이어서 (v3.202(H-③): 전체 와이프 제거 — 실패·429 공통)
+  // 기존 대화에 디렉터 안내만 append하고, 사용자가 마지막으로 답한 스텝(없으면 트랙을 알면
+  // 가사 질문 1.75, 아니면 0)으로 복귀. resetCoverExtras는 '곡 변경(step 0)' 명시 액션에만.
   const doRegenerate = () => {
     setCoverImageUrl(null);
     setErrorMsg(null);
     setStyleInput('');
+    rewindRef.current = null;
+    const lastAnswered = [...chatHistory].reverse().find((m) => m.type === 'user' && m.step != null);
+    const target = lastAnswered?.step ?? ((selectedTrack?.id || musicStore.coverTrackId) ? 1.75 : 0);
+    console.info('[Cover] 다시 생성 — 대화 보존 복귀', { target });
     setMode('dialogue');
-    setStep(2); // 스타일 선택으로 (아티스트 포함 여부는 이전 선택 유지)
-    setChatHistory([
-      { type: 'director', text: '원하시는 커버 이미지의 느낌을 다시 설명해주세요.' },
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'director', text: '좋아요, 이어서 바꿔볼까요? 방금 답부터 다시 고르거나, 이전 답변 말풍선을 탭해서 그 부분만 수정할 수 있어요.' },
     ]);
+    setStep(target);
   };
 
   const handleRegenerate = () => {
@@ -933,7 +1226,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <Image source={IMAGE_PORTRAIT} style={styles.loadingPortraitImage} />
             </View>
           </Animated.View>
-          <AppText style={styles.loadingText}>{LOADING_STEPS[loadingMsgIndex].message}</AppText>
+          {/* v3.202(I-lite): 네트워크 단절 복구 폴링 중에는 디렉터 대기 안내로 대체 */}
+          <AppText style={styles.loadingText}>{recoveryNotice ?? LOADING_STEPS[loadingMsgIndex].message}</AppText>
           <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
 
           {/* 스텝 인디케이터 */}
@@ -970,7 +1264,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
           <View style={styles.loadingNote}>
             <AppText style={styles.loadingNoteText}>
-              {`이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n잠시만 기다려주세요.`}
+              {recoveryNotice
+                ? '연결이 잠시 불안정했어요. 서버에서 완성된 이미지를 확인하고 있어요.\n추가 비용 없이 그대로 가져올게요.'
+                : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n잠시만 기다려주세요.`}
             </AppText>
           </View>
         </View>
@@ -1334,7 +1630,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         ) : step === 1.75 ? (
           // v3.151: 가사 내용 반영 여부 — 반영 시 디테일 질문(구도~색감) 생략, 미반영 시 진행
           <>
-            <TouchableOpacity style={styles.optionBtn} onPress={handleLyricsUse} activeOpacity={0.8}>
+            <TouchableOpacity style={styles.optionBtn} onPress={() => handleLyricsUse()} activeOpacity={0.8}>
               <AppText style={styles.optionBtnText}>가사 내용 반영하기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.optionBtnOutline} onPress={handleLyricsSkip} activeOpacity={0.8}>
@@ -1363,6 +1659,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 <AppText style={styles.sendBtnText}>확인</AppText>
               </TouchableOpacity>
             </View>
+            {/* v3.202(H-②): 마지막 단계에서도 가사 반영 진입 가능 — 1.75 질문을 놓친(스킵된)
+                사용자를 위한 동등 버튼(handleLyricsUse 경유, 추가 비용 없음) */}
+            {!albumMode && !!(selectedTrack?.id || musicStore.coverTrackId) && (
+              <TouchableOpacity style={styles.optionBtnOutline} onPress={() => handleLyricsUse(2)} activeOpacity={0.8}>
+                <AppText style={styles.optionBtnOutlineText}>가사 내용 기반으로 생성</AppText>
+              </TouchableOpacity>
+            )}
             {/* v3.150: 자유 서술 없이도 생성 가능 — 전 항목 선택사항 원칙 */}
             <TouchableOpacity style={styles.optionBtnOutline} onPress={() => handleStyleConfirm('')} activeOpacity={0.8}>
               <AppText style={styles.optionBtnOutlineText}>이대로 만들기 (건너뛰기)</AppText>

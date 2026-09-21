@@ -3278,3 +3278,28 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 
 ### 6. 기록
 - PLAN.md v3.201 append 완료. 코드 수정 없음(계획 전용). 구현은 v3.200 커밋 후 app-dev가 착수.
+
+## v3.202 — 수정일 2026-09-21 (실기기 10건: 배경재생·입력가림·모드가이드·헤더폭·디렉터 대화·이미지 디렉터·연주곡)
+
+> 작성: 오케스트레이터 (planner A/I/E/F/G 분석 + H/J·B/C/D 심층 조사 2건 통합 — planner 최종 검토는 구현 후 수행)
+
+### 원인 확정 (전 항목 실측 근거)
+- **A 배경 자동재생**: 원격 [BTDebug] 로그 실측 — didJustFinish는 배경에서도 발화(JS 생존). 실패 원인 = Android Doze의 네트워크 차단(UnknownHostException). 프리로드 히트 시 전환 성공. 결함 2: maybePreloadNext 실패 시 초당 ~8회 재시도 폭주(백오프 없음), 프리로드 창(20s/85%)이 Doze 진입보다 늦음. **근본(포그라운드 서비스/track-player 이관)은 별도 과제.**
+- **B 입력 반 가림**: 재선택 모달 overlay가 justifyContent:center → marginBottom 리프트가 kbPad/2만 유효(Yoga 산식 확정). 담기 시트(flex-end)는 정상. ReportModal/AppealModal/AlbumCreateModal은 Android 회피 전무(동종). edge-to-edge에서 adjustResize 무력 — 수동 리프트가 유일 방어선.
+- **C 모드 로깅**: creationLogService에 creationMode 참조 0건 — **양 모드 공통 기록 확인**(분기는 발매 track_type 2곳뿐). 가이드 안내는 1회 showAlert뿐 + 재열람 불가(동일 모드 재탭 no-op 가드).
+- **D 헤더 폭**: nameMaxWidth 산식이 화살표(38px) 미반영, HomeHeaderActions 실측 208~229px에 기존 여유 −1~+20px → 화살표 6px 순증으로 임계 초과, end 컨테이너가 flexShrink:0이라 타이틀 위로 넘침.
+- **E/F/G/J 작곡**: **라이브 작곡 대화 = MusicGenerationScreen** (ComposerInputScreen은 v3.131부터 도달 불가 죽은 화면 — v3.199 재선택 이식이 죽은 코드에 감). F=performRewind의 prev.slice 파괴적 절단(설계였음). G=아티스트 게이트 list.length>0(:418). E=재선택 후 디렉터 응답(구값 에코)이 잔존. J=가사 게이트(ComposeLyricsPick 빈 상태 '돌아가기'만)+ComposerSelect 하드 블록, vocal='' → 'instrumental' 경로도 2중 단절(MusicLoadingScreen:210 `store.vocal || undefined`, VOCAL_OPTIONS에 선택지 부재)로 발동 불가.
+- **H 커버 디렉터**: ① 가사반영 질문(step 1.75)은 존재하나 stale closure(handleTrackSelect가 이전 렌더 클로저 호출)로 아티스트 없는 사용자에게 스킵 ② doRegenerate가 대화 전체 와이프+step 2 강등(실패·429 공통) ③ performRewind 파괴적 절단+질문 중복+result 모드에서 탭 불가 ④ coverExtras 모듈 상태가 화면과 따로 놀아 안 보이는 답이 요청에 실림 ⑤ 실패 시 finally가 coverTrackId 등을 지워 재개 불가.
+- **I 이미지 느림/오류**: gpt_image_2 2048² 서버 150~180s 동기 처리. 실패 3건 실측 = 클라이언트 ERR_NETWORK(11/44/153s 연결 단절) 후 **서버는 완성**(별 5 차감+이미지 고아). 복구: GET /api/upload/cover-sessions 목록에 완성본 존재 — **백엔드 무변경으로 앱 폴링 회수 가능**. 비동기 잡 전환은 별도 과제.
+
+### 슬라이스 — v3.202(이번, 앱 전용·백엔드 무변경)
+1. **A-lite** services/playback.ts: 프리로드 트리거 조기화(현재 곡 로드 성공 직후+60s 전 이중 트리거, 기존 20s/85% 유지), 실패 재시도 백오프(곡당 최대 3회, 10s 간격 — 폭주 제거), [BTDebug] 유지.
+2. **B** LyricsInputScreen 재선택 모달: overlay flex-end 전환+동적 maxHeight(담기 시트 검증 패턴 — B안1). ReportModal/AppealModal/AlbumCreateModal: useAndroidKeyboardLift + translateY(-kbPad) (center 유지 — B안2, 클램프 병행).
+3. **C** consentTexts에 COPYRIGHT_RECORD_GUIDE 상수(문구 금지선: '등록 가능/보장/인정/특허' 금지, 사실 서술) + DialogueScreen recChip을 TouchableOpacity화(+info 아이콘) → PolicySheet로 가이드 표시. 모드 alert에 '자세히 보기' 버튼 추가. 세그먼트 라벨은 유지(변경은 사용자 결정 사항으로 REPORT에 기록).
+4. **D** MapScreen: nameMaxWidth = max(90, winW-(user?300:90)) (D안1) + setOptions에 headerRightContainerStyle {flexShrink:0}·headerTitleContainerStyle {flexShrink:1} (D안4 안전망).
+5. **E/F** MusicGenerationScreen: performRewind를 파괴적 절단 → **비파괴 값 치환**(해당 user 버블 map 교체 + 직후 디렉터 에코 버블도 새 값으로 치환, 이후 대화·상태 보존). 치환 대상 스텝의 store/로컬 값 갱신은 기존 rewind의 개별 필드 초기화 로직을 "새 값 세팅"으로 전환.
+6. **G** MusicGenerationScreen 아티스트 스텝(:418 게이트): 아티스트 0명이어도 '아티스트로 만들기' 선택지 항상 노출 → 선택 시 showAlert('아티스트가 아직 없어요', '아티스트 디렉터에게 먼저 만들어달라고 할까요?') [취소/이동] → 이동 시 navigation으로 아티스트 디렉터(Dialogue artist) 연결(현재 대화 상태는 보존).
+7. **H** CoverGenerationScreen+musicStore: H fix 1~5 전면 — ① stale closure 수정(track 인자 전달) ② step-2 자유입력에 '가사 내용 기반으로 생성' 동등 버튼 추가 ③ doRegenerate 와이프 제거(기존 대화에 디렉터 메시지 append+직전 스텝 복귀, resetCoverExtras는 명시적 처음부터에만) ④ performRewind 비파괴 치환(E/F와 동일 패턴, result 모드에서도 탭 허용) ⑤ 대화 상태 zustand 영속(coverMessages/coverStep/coverExtras/coverLyrics*) + 실패 finally의 coverTrackId 클리어 제거(성공 시만).
+8. **I-lite** CoverGenerationScreen: ERR_NETWORK/타임아웃 catch에서 즉시 실패 확정하지 않고 cover-sessions 폴링(15s 간격×최대 12회) → 완성본 발견 시 성공 처리(재차감 없음) + 대기 UI 문구. 미발견 시 기존 오류.
+9. **J** 연주곡: ComposeLyricsPickScreen에 '가사 없이 만들기(연주곡)' 카드(목록 위+빈 상태) → setLyrics('')+setInstrumental(true)+replace('ComposerSelect'). ComposerSelectScreen 가사 게이트에 instrumental 예외. MusicGenerationScreen: instrumental 시 가사확인·보컬 스텝 스킵 + VOCAL_OPTIONS에 'Instrumental (연주곡)' 추가(가사 있어도 무보컬 선택 가능). MusicLoadingScreen:210 vocal 배선 수정 + musicService: params.instrumental 명시 처리+연주곡 프롬프트 문장(작곡.md:67). musicStore에 instrumental 필드(리셋 경로 포함). **ComposerInputScreen 삭제**(App.tsx 등록 3곳 제거 — v3.199 이식분 포함 폐기, REPORT에 정정 기록).
+### 후속(별도 과제): 포그라운드 서비스/track-player 이관(A 근본), 이미지 비동기 잡+고아 자동 복구 배치(I 근본), 댓글 패널 Android 회피, '저작권 등록 모드' 라벨 재검토(사용자 결정)
