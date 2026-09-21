@@ -943,3 +943,171 @@
 **집계**: PASS 17 / FAIL 0 / N/A 1(U-9 P2-4분 — 조건부 규칙상 정상). **게이트: PASS(머지 가능)**.
 
 **실기기 잔여(이관)**: ① E-1 제스처/3버튼 내비 시트 하단 노출 ② E-2 Android 키보드 위 입력창 노출(→PASS 시 P2-4 착수 게이트 해제) ③ E-3 두 시트 최하단 행 ④ E-4 4개 모달 키보드+탈퇴 버튼 오탭 ⑤ E-5 ① 이중 패딩 육안·② 냥냥냥 2:43 진행바 실측·③~⑥ 정상군/웹 1회 ⑥ U-P6 미니바 아이콘 시각 균형(20px/16px) 육안.
+
+## v3.197 — 수정일 2026-09-21
+
+> 대상: BT/화면꺼짐 상태 다음곡 자동재생 실패 + 재생버튼 무반응 복구 불능 수정(PLAN.md v3.197 T1~T6) — ① 다음 곡 프리로드(잔여 ≤20초 트리거·shuffle 인덱스 핀·`shouldPlay:false`) ② didJustFinish 2계통(playback.ts·PlayerScreen) 프리로드 스왑 우선 전환 ③ 재생버튼 2곳(PlayerScreen togglePlayPause·MiniPlayer togglePlay) 죽은 객체 재로드 폴백 ④ `status.error` 분기 신설 2곳 ⑤ AppState 'active' 리컨사일(자동 재재생 금지) ⑥ [BTDebug] warn 레벨 원격 계측.
+> 실행 환경 관행(v3.191~196 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 정적 대체 병기 + 실기기 실측 이관. 특히 이번 버전의 핵심 시나리오(BT/차량·화면꺼짐·비행기모드)는 **에뮬레이터로도 재현 불가 — 실기기 전용**임을 각 항목에 명시. 코드 경로 `/Users/pearl/TripleJ/2_housing`, 라인 번호는 **변경 전** 워킹트리 실측 기준(적용 후 ±수십 라인 이동 허용 — PlayerScreen은 이번에 diff가 필연이므로 "diff 0 가드" 불가, 라인 단위 무침투 검사로만 판정).
+> 변경 허용 파일(격리 기준): `services/playback.ts`, `screens/PlayerScreen.tsx`, `components/MiniPlayer.tsx`, `App.tsx`(T4를 playback.ts init 함수로 두면 App.tsx는 호출 1줄 또는 diff 0) 4개. **app.json은 diff 0 필수**(T6 — 확인만), `services/audioMode.ts`·`services/remoteLogger.ts`·`stores/playerStore.ts` diff 0(재호출·기존 API 사용만, 수정 금지가 PLAN 전제). 그 외 diff는 FAIL.
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.197 변경이 적용된 워킹트리.
+- When: `cd 2_housing && npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. (신규 export `preloadNext`/`consumePreloaded` 시그니처, AppState 타입, getStatusAsync 반환 내로잉이 전부 타입 통과.)
+
+**U-2. 프리로드 모듈 구조 [unit]**
+- Given: PLAN T1 — `services/playback.ts` 모듈 스코프 `nextPreload = { trackId, sound, pinnedIdx, gen }`. 변경 전 getNextIndex()는 shuffle 시 **호출마다 랜덤**(stores/playerStore.ts:178-183).
+- When: ① `grep -n "preloadNext\|consumePreloaded\|nextPreload" services/playback.ts` — export 2건+보관 구조 존재, ② 트리거 조건이 "남은 시간 ≤ 20초(20000ms) 또는 position/duration ≥ 85%"이고 **duration은 effectiveDuration(보정값) 기준**인지, ③ 곡당 1회 가드(이미 preload된 trackId/gen이면 재시도 안 함), ④ createAsync 옵션이 `{ shouldPlay: false }`인지(`shouldPlay: true` 발견 시 즉시 FAIL — 프리로드 곡이 겹쳐 소리 남), ⑤ 프리로드 시점에 `getNextIndex()`를 **1회 호출해 pinnedIdx로 핀**하고, didJustFinish 소비 시 getNextIndex() **재호출이 없는지**(재호출 발견 시 FAIL — shuffle에서 프리로드 곡≠실제 전환 곡 불일치).
+- Then: ①~⑤ 전부 충족. 트리거 호출부가 양쪽 상태 콜백(playback.ts:101-·PlayerScreen onPlaybackStatusUpdate) 모두에 배선.
+
+**U-3. 프리로드 해제·폐기 경로 — 메모리 누수 경계 [unit]**
+- Given: 프리로드 sound는 스왑 소비 전까지 고아 후보 — 해제 누락 시 곡마다 네이티브 사운드 객체 누적(장시간 연속재생에서 OOM/이중 재생).
+- When: ① **스왑 성공 시**: consumePreloaded가 반환한 뒤 nextPreload 슬롯이 비워지는지(null 리셋), 스왑으로 대체된 **이전 곡 sound의 unloadAsync 호출이 존재**하는지, ② **폐기 시**: 수동 스킵·큐 편집(remove/reorder)·셔플/반복 토글·미니플레이어 닫기(cleanup) 경로에서 프리로드 sound `unloadAsync()` 후 버리는 코드 존재 — 기존 loadGen 세대 토큰(playback.ts:11-17)에 연동해 stale gen이면 소비 거부하는지, ③ **매치 실패 시**: consumePreloaded(expectedTrackId) 불일치 반환 경로에서도 보유 sound를 unload 후 null 반환(unload 없이 버리면 누수), ④ `grep -c "unloadAsync" services/playback.ts` — 변경 전 대비 증가분이 위 경로들과 1:1 대응(설명 불가한 감소는 FAIL).
+- Then: ①~④ 전부 충족. "폐기인데 unload 누락" 0건이 판정 기준.
+
+**U-4. 2계통 didJustFinish 스왑 우선 배선 [unit]**
+- Given: 변경 전 didJustFinish 2계통 — `services/playback.ts:121-129`(loadAndPlayTrack 재귀), `screens/PlayerScreen.tsx:410-443`(자체 unload→createAsync). 한쪽만 배선하면 로더 소유권에 따라 증상 잔존.
+- When: ① 두 계통 **모두** didJustFinish 최초 분기에서 `consumePreloaded(...)`를 먼저 시도하고 null이면 기존 createAsync/loadAndPlayTrack 폴백인지 grep 교차 확인, ② 스왑 경로에서 반환된 sound에 즉시 `playAsync()`+상태 콜백 부착이 있는지 — **콜백 부착 시 v3.192 effectiveDuration 보정 경로를 타는지**(프리로드 곡만 보정 누락되면 냥냥냥류 VBR 회귀), ③ PlayerScreen 폴백 catch(변경 전 :440-442)에서 `soundRef.current = null` + `store.setSound(null)` + `setIsPlaying(false)` + [BTDebug] warn, playback.ts catch(변경 전 :142-144)에서 `setSound(null)`+`setIsPlaying(false)`+warn, unload 직후(변경 전 :91-93) setSound(null)로 죽은 참조 창 제거, ④ autoContinueWithRelated 주입 로더(PlayerScreen 변경 전 :451-471)에도 실패 시 동일 참조 정리.
+- Then: ①~④ 충족. "2계통 중 1곳만 배선" 발견 시 FAIL.
+
+**U-5. 재생버튼 2곳 getStatusAsync 폴백 [unit]**
+- Given: 변경 전 `PlayerScreen.tsx:727-734` togglePlayPause — `if (!soundRef.current) return;` 후 호출뿐(try/catch·isLoaded 검사 전무), `components/MiniPlayer.tsx:22-31` togglePlay — 동일 + 낙관적 setIsPlaying.
+- When: 두 함수 각각 ① try/catch 존재, ② `getStatusAsync()`로 isLoaded 확인 → 미로드/에러/참조 null이면 `applyPlaybackAudioMode()` 재호출 후 현재 store.track 재로드(PlayerScreen은 loadAndPlay, MiniPlayer는 loadAndPlayTrack) 폴백, ③ playAsync 실패 catch에서도 동일 폴백 + [BTDebug] warn, ④ MiniPlayer의 **낙관적 setIsPlaying 제거**(성공 후 상태 콜백 반영 — 선(先)토글 잔존 시 FAIL), ⑤ `grep -n "applyPlaybackAudioMode" services/audioMode.ts` export 기존재 확인(audioMode.ts 자체는 diff 0).
+- Then: 2곳 × ①~④ 전부 충족. "폴백은 넣었는데 한쪽 화면만" 발견 시 FAIL.
+
+**U-6. status.error 분기 신설 2곳 [unit]**
+- Given: 변경 전 상태 콜백이 `if (status.isLoaded)` 단독 분기(PlayerScreen.tsx:377, playback.ts:102) — `{isLoaded:false, error}` 무음 무시(grep 실측 처리 0건, PLAN H2).
+- When: 두 콜백 각각 `else if (!status.isLoaded && status.error)` 분기 존재 — `console.warn('[BTDebug] ...')` + `setIsPlaying(false)` (자동 재로드/재재생 호출 **없음** — 복구는 재생버튼 1탭이 스펙).
+- Then: 2곳 충족. 분기 안에서 playAsync/createAsync 호출 발견 시 FAIL(리컨사일 원칙 위반 — U-7과 동일 사유).
+
+**U-7. AppState 리컨사일 — 등록/해제 쌍 + 자동 재재생 금지 [unit]**
+- Given: PLAN T4 — 변경 전 App.tsx에 AppState 구독 없음(사용처는 remoteLogger.ts:276 flush뿐). 'active' 복귀 시 sound 죽음 감지 → 상태 정합만.
+- When: ① `grep -n "AppState.addEventListener" App.tsx services/playback.ts` — 신규 구독 1곳, 반환 subscription의 `.remove()`가 정리 경로(useEffect cleanup 또는 대응 teardown)에 **쌍으로** 존재(해제 누락 = 리스너 누수 FAIL), ② 리컨사일 본문: store.sound 존재 && isPlaying=true && `getStatusAsync()`가 !isLoaded/error → `setIsPlaying(false)` + 참조 정리 + `[BTDebug] reconcile` warn, ③ 본문에 `playAsync`/`loadAndPlayTrack` 호출 **0건**(자동 재재생 금지 — 운전 중 돌발 재생 방지, PLAN 명시. 발견 시 즉시 FAIL), ④ remoteLogger.ts:276 기존 flush 구독 무접촉.
+- Then: ①~④ 충족.
+
+**U-8. [BTDebug] warn 레벨 + 민감정보 0건 [unit]**
+- Given: remoteLogger는 **warn/error만 프로덕션 후킹**(remoteLogger.ts:218-219), info/log는 DEV 전용(:220-222) — [BTDebug]를 console.info/log로 찍으면 출시 빌드에서 서버에 안 감(H1 확진 불가 = 이번 계측의 존재 이유 소멸).
+- When: ① `grep -rn "BTDebug" services/ screens/ components/ App.tsx` — 전 출력이 `console.warn`(또는 console.error)인지 전수 확인, `console.info('[BTDebug'`·`console.log('[BTDebug'` **0건**, ② 계측 포인트 커버리지: didJustFinish 진입(`{trackId, nextIdx, appState, preloadHit}`)·프리로드 시작/성공/실패·전환 createAsync 실패·재생버튼 폴백 발동(화면 구분)·status.error 분기·autoContinueWithRelated 실패·AppState 리컨사일 — PLAN T5 목록 전부 존재, ③ 로그 페이로드에 토큰·이메일·사용자명·전체 URI(presigned 쿼리 포함) **0건** — trackId·인덱스·appState·불리언·에러 코드/메시지 요약만 허용.
+- Then: ①~③ 충족. ①이 하나라도 info/log면 FAIL.
+
+**U-9. 경계 케이스 정적 검증 [unit]**
+- Given: 프리로드·핀 구조가 새로 생기며 흔들리는 4개 경계.
+- When/Then:
+  - ⓐ **마지막 곡(다음 곡 없음)**: getNextIndex() < 0(반복 off 큐 소진)이면 프리로드 **미시도**(nextPreload 생성 0) — didJustFinish는 기존 autoContinueWithRelated 경로 그대로(related 프리페치는 PLAN상 보류 — 신설 발견 시 범위 초과 기록). 핀 없는 상태에서 consumePreloaded가 안전하게 null 반환.
+  - ⓑ **큐 1곡 + repeat one**: pinnedIdx = 현재 인덱스(자기 자신) — 같은 uri로 sound 2개(현재+프리로드) 공존 구간이 생기는 구조인지 확인, 스왑 시 이전 sound unload가 ⓐ보다 특히 중요(동일 곡 이중 발성 위험). repeat one이 프리로드 대상에서 제외되는 설계라면 그 분기 존재로 대체 판정(어느 쪽이든 명시적 처리 필요 — 무처리 FAIL).
+  - ⓒ **프리로드 중 수동 곡 변경**: 수동 스킵/곡 클릭(playTrackNow)/큐 편집/셔플·반복 토글 각 경로에서 U-3 ②의 폐기가 실제 배선돼 있고, 폐기 후 도착하는 **늦은 createAsync resolve**(프리로드 비동기 완료)가 stale gen 검사로 버려지는지(loadGen 비교 후 unload) — 검사 없으면 늦게 도착한 sound가 영구 고아.
+  - ⓓ **프리로드 실패 시 네트워크 폴백**: preloadNext의 catch가 nextPreload를 오염 없이 비우고([BTDebug] warn만), didJustFinish는 consumePreloaded null → 기존 createAsync 경로로 **기능 저하 없이** 진행(프리로드 실패가 전환 자체를 막으면 FAIL — 프리로드는 최적화이지 의존성이 아님).
+
+**U-10. diff 범위 격리 [unit]**
+- Given: 전문 헤더의 변경 허용 4파일.
+- When: `git status --short` + `git diff --stat`(2_housing 스코프).
+- Then: 허용 목록 외 diff 0. 특히 `app.json`(T6 확인만)·`services/audioMode.ts`·`services/remoteLogger.ts`·`stores/playerStore.ts`·`stores/`·백엔드 디렉토리 diff 0. 바이너리·에셋 콘텐츠 diff 0(기왕 잔존 모드 변경 100644→100755는 v3.196 관행 계승 제외). 커밋 시 스코프 파일만 명시 스테이징.
+
+**U-11. v3.191~196 무회귀 라인 검사 [unit]**
+- Given: PlayerScreen·playback.ts는 이번에 diff가 필연(v3.196의 "diff 0 가드"는 이번 버전부터 불가) → **라인 단위 무침투 검사로 전환**. 라인 번호는 변경 전 실측(지시서 참조 라인 중 인셋 :797·duration :356-390은 구버전 기준 — 아래 실측 라인으로 재확정).
+- When/Then:
+  - ① v3.192 duration 보정 **무침투**: PlayerScreen 보정 블록(:383-399 — effectiveDuration Math.max 3인자·durationWarnedRef) 및 playback.ts 보정 블록(:106-122 — apiDurationMs·engineDurationMs·durationWarnedTrackId) 라인 diff 0. 단 U-2 ②·U-4 ②가 이 값을 **읽는 것**은 허용 — 수정만 금지.
+  - ② v3.191 인셋 무침투: PlayerScreen 컨테이너 인셋(:848)·queueSheet 인셋(:1351 `insets.bottom + spacing.xxl`) diff 0.
+  - ③ v3.196 미니바 MCI 아이콘 무침투: PlayerScreen :1123-1126(MCI play/pause size 16 주석 포함)·MiniPlayer MCI(:3 import·:98 size 20) diff 0 — MiniPlayer는 togglePlay(:22-31)만 접촉 허용.
+  - ④ v3.192 record-play 무회귀: recordPlayIfNeeded(:361-374, 70%·곡당 1회) diff 0 + **프리로드 스왑 곡에서도 recordedTrackRef가 새 trackId로 정상 동작하는 구조**(스왑 경로가 기존 전환과 동일하게 store.track을 갱신하는지 — 이중/누락 기록 경계).
+  - ⑤ v3.193~194: `git diff -- stores/likesStore.ts components/PlaylistPickerSheet.tsx components/SocialLoginButtons.tsx components/AuthPanel.tsx screens/SplashScreen.tsx` 0건.
+  - ⑥ v3.196 시트/KAV 무침투: PlayerScreen 상세패널 KAV(:1096 인근)·v3.196 접촉 8파일(TrackActionSheet 등) diff 0.
+  - 위반 시 해당 버전 TESTPLAN 항목 재실행으로 승격.
+
+### [api] 실측 검증
+
+**API-1. [BTDebug] 원격 로그 파이프라인 — 출시 후 이관 [api]**
+- Given: remoteLogger 전송 조건 — 로그인 필수(remoteLogger.ts:153), 백그라운드 진입 flush(:276-281)+5초 인터벌, 큐 cap 200. 계측의 최종 목적 = 사용자 주행 로그로 H1 확진.
+- When: **이번 사이클 실측 없음(설계상 이관)** — 출시 후 오케스트레이터가 서버 `/api/_logs/frontend`에서 `[BTDebug]` 검색(백엔드 로그 조회 권한 소관, tester는 호출 금지). 프론트 측 사전 조건은 U-8이 정적으로 대체.
+- Then: 이관 항목으로 기록. tester가 이번 사이클에 로그 API를 직접 호출하면 스코프 위반(쓰기 계열 접근 금지 관행).
+
+### [e2e] 핵심 여정 (정적 대체 병기 · 실기기 전용 구분)
+
+**E-1. 일반 자동 전환 — 포그라운드 [e2e] (웹/에뮬 실측 가능성 있음)**
+- Given: 큐 2곡+, 앱 포그라운드. 순차/shuffle/repeat all·one 각 모드.
+- When: 곡 말미 20초 구간 통과 → 곡 종료.
+- Then: 프리로드 히트 시에도 ① 다음 곡이 끊김 없이 전환(shuffle은 **프리로드된 바로 그 곡**으로 — 핀 검증), ② 재생바 0부터 시작·총시간 = 새 곡 duration(이전 곡 duration 잔상 없음 — U-4 ② 연동), ③ 70% record-play 곡당 1회 유지(이중 기록 없음). **웹 실측 검토**: 웹은 getAudioUri가 presigned 비동기 경로(PlayerScreen 변경 전 :479-491)라 프리로드 분기가 네이티브와 다를 수 있음 — 웹에서 프리로드가 동작하면 전환·재생바·record-play 3점 실측, 네이티브 한정 플래그면 "웹 = 기존 경로 무회귀"만 확인. 정적 대체: U-2+U-4+U-11 ④.
+- 정적 대체: U-2·U-4·U-9 ⓑ.
+
+**E-2. 수동 개입 직후 곡 종료 — 핀 폐기 [e2e] (웹/에뮬 실측 가능성 있음)**
+- Given: 곡 말미 20초 이내(프리로드 생성 이후), 큐 3곡+.
+- When: ① 수동 스킵, ② 큐에서 다음 곡 제거/순서 변경, ③ 셔플 토글 — 각각 수행 후 곡 종료까지 재생.
+- Then: 폐기된 핀이 아닌 **현시점 올바른 다음 곡**으로 전환(잘못된 곡 재생 = FAIL), 이중 발성(고아 사운드) 없음, 이후 미니 닫기→재클릭 기존 복구 경로 정상. 웹 실측 가능 시 ①~③ 각 1회.
+- 정적 대체: U-3+U-9 ⓒ.
+
+**E-3. 화면꺼짐 연속재생 [e2e] — 실기기 전용(에뮬 재현 불가)**
+- Given: Android APK 실기기(iOS 병행 권장), 로그인 상태(BTDebug 전송 전제), 큐 3곡+.
+- When: 재생 시작 → 화면 끄고(잠금) 방치, 곡 종료 3회 이상 통과.
+- Then: 매 전환 자동재생 성공(핵심 시나리오 — v3.197의 존재 이유). 실패 시에도 앱 복귀 후 서버에 [BTDebug] didJustFinish/프리로드 로그 도달 확인(API-1 연동).
+- 정적 대체(한계 명시): U-2~U-4는 배선만 보장 — cached-app freezer/Doze 거동은 정적 검증 불가, **본 항목은 대체 불가·실측 필수**로 이관.
+
+**E-4. BT/차량 + 화면꺼짐 [e2e] — 실기기 전용(BT 하드웨어 필수)**
+- Given: BT 스피커 또는 차량 헤드유닛 연결, E-3과 동일 조건.
+- When: E-3 시나리오 반복 + ② 재생 중 BT 연결 해제(이어폰/차량 끊기) ③ 전화 수신 인터럽션 → 통화 종료.
+- Then: ① 화면꺼짐+BT 연속 전환 성공, ②③ 일시정지 후 **재생버튼 1탭** 복구(미니 닫기 불요). 실패 케이스는 [BTDebug] 서버 로그로 원인 채증.
+- 정적 대체: U-5+U-6+U-7(복구 배선만) — BT 라우팅 자체는 대체 불가, 실측 이관.
+
+**E-5. 전환 실패 유도 → 재생버튼 1탭 복구 [e2e] — 실기기 전용(비행기모드)**
+- Given: 실기기, 곡 말미 재생 중.
+- When: 곡 종료 직전 비행기모드 ON → 전환 실패 유도 → 비행기모드 OFF → 재생버튼 1탭. 미니플레이어·풀 플레이어 **각각** 수행.
+- Then: 두 화면 모두 미니 닫기 없이 현재 곡 재로드·재생(처음부터 재생 허용 — position 복원은 1차 스펙 아님). 무반응(변경 전 증상) = FAIL. status.error/[BTDebug] 폴백 로그 발생 확인. 프리로드가 이미 성공해 있던 경우 비행기모드에서도 전환 자체가 성공할 수 있음 — 그 경우 프리로드 미생성 시점(곡 초반 스킵 직후)으로 재시도해 실패를 유도.
+- 정적 대체: U-5+U-6+U-9 ⓓ.
+
+**E-6. 공격적 절전 기기 + 계측 도달 [e2e] — 실기기 전용**
+- Given: 배터리 최적화(절전) 켠 삼성/샤오미류, 로그인 상태.
+- When: 화면 꺼짐 연속재생 시도(성공 여부 무관).
+- Then: 실패하더라도 앱 복귀 시 [BTDebug] 로그가 서버 도달(H1 확진 데이터 확보가 본 항목의 목적 — PLAN 5장 "한계 잔존" 인정 범위, 전환 실패 자체는 이 기기군에서 FAIL 아님·기록만). 필요 시 "앱 배터리 최적화 제외" 안내 문구 검토를 잔여로 기록.
+- 정적 대체: U-8(레벨·커버리지)+API-1(이관).
+
+### 태그 집계
+- [unit] 11건 (U-1 tsc / U-2 프리로드 구조 / U-3 해제·누수 경계 / U-4 2계통 스왑 배선 / U-5 재생버튼 2곳 / U-6 error 분기 2곳 / U-7 AppState 쌍+재재생 금지 / U-8 BTDebug warn·민감정보 / U-9 경계 4케이스 / U-10 diff 격리 / U-11 v3.191~196 무회귀)
+- [api] 1건 (API-1 — 이번 사이클 실측 0회, 출시 후 서버 로그 조회로 이관·오케스트레이터 소관)
+- [e2e] 6건 (E-1·E-2 웹/에뮬 실측 가능성 검토 병기 / E-3~E-6 **실기기 전용** — E-3은 정적 대체 불가 명시, 전 항목 정적 대체 또는 이관 사유 병기)
+
+### 설계 주의점 (tester·app-dev 참고)
+1. **shuffle 핀이 이번 버전의 1급 불변식**: getNextIndex()는 호출마다 랜덤(playerStore.ts:178-183) — 프리로드 시점 핀(pinnedIdx) 후 didJustFinish에서 **재호출하면 프리로드 곡과 실제 전환 곡이 갈라진다**. U-2 ⑤가 grep으로 재호출 0건을 못 박는 이유. 수동 개입 시엔 핀 폐기가 유일한 정답(핀 재계산 아님).
+2. **자동 재재생 금지는 안전 요구사항**: U-6·U-7의 "분기 안 playAsync 0건"은 코드 취향이 아니라 **운전 중 돌발 재생 방지**(PLAN T4 명시). 리컨사일·error 분기에서 재생을 살리려는 선의의 diff가 들어오면 즉시 FAIL로 처리할 것.
+3. **프리로드는 최적화이지 의존성이 아님**: U-9 ⓓ — consumePreloaded null → 기존 createAsync 폴백이 항상 살아 있어야 한다. 프리로드 실패가 전환을 막는 구조(예: preload 완료를 await하고 didJustFinish 진행)가 최악의 회귀.
+4. **unload 대차대조표로 누수 판정**: 사운드 소유권이 3곳 분산(playback.ts/PlayerScreen soundRef/store — PLAN 5장)인 상태에 프리로드 슬롯이 4번째로 추가된다. U-3 ④처럼 unloadAsync 증가분을 경로별로 1:1 대응시켜 "폐기인데 unload 없음"을 찾는 방식이 grep으로 가능한 유일한 누수 검사. 특히 U-9 ⓒ의 늦은 resolve(stale gen) 고아가 가장 놓치기 쉽다.
+5. **[BTDebug]는 console.warn이 아니면 무의미**: remoteLogger 프로덕션 후킹이 warn/error 한정(remoteLogger.ts:218-222)이고 이번 계측의 목적이 출시 후 H1 확진이므로, info로 찍힌 [BTDebug] 1건은 "사소한 레벨 실수"가 아니라 **계측 전체의 목적 상실** — U-8 ①을 전수 grep으로. 로그인 필수(:153) 전제도 실기기 시나리오(E-3~E-6) Given에 반드시 포함.
+6. **PlayerScreen "diff 0 시대" 종료 — 라인 번호 재실측 필수**: v3.196까지는 PlayerScreen diff 0 가드가 가능했으나 이번엔 onPlaybackStatusUpdate·didJustFinish·togglePlayPause가 정면 수정 대상. 지시서의 참조 라인 일부(인셋 :797, duration :356-390)는 구버전 기준으로 실측과 어긋남 — U-11의 실측 라인(:383-399·:848·:1351·:1123-1126·:361-374, playback.ts :106-122)을 기준으로 하되, 적용 후 라인 이동이 크므로 tester는 **앵커 문자열**(effectiveDuration·queueSheet·MaterialCommunityIcons 등)으로 재탐색 후 무침투를 판정할 것.
+7. **duration 보정은 "읽기 허용·수정 금지"**: 프리로드 트리거(U-2 ②)와 스왑 콜백(U-4 ②)이 effectiveDuration을 **참조**하는 것은 스펙이고, 보정 블록 자체를 고치는 것은 v3.192 회귀다. U-11 ①에서 이 둘을 혼동해 정당한 참조 추가를 FAIL로 찍지 말 것.
+8. **record-play 이중 기록 경계**: 프리로드 스왑은 "콜백 부착 시점"이 기존 경로와 달라진다 — recordedTrackRef 리셋·store.track 갱신 순서가 어긋나면 70% 기록이 이전 곡 tid로 남거나 이중 기록된다(U-11 ④). E-1 ③에서 웹 실측 가능하면 곡당 1회를 실제로 세어볼 것.
+9. **repeat one은 명시적 설계 확인 대상**: 큐 1곡 반복(U-9 ⓑ)은 "같은 곡 sound 2개 공존"이라는 프리로드의 특수 케이스 — 지원이든 제외든 코드에 명시적 분기가 있어야 하며, 무처리(우연히 동작)면 이중 발성 시한폭탄으로 FAIL.
+
+### 실행 결과 — 2026-09-21 (tester)
+
+> 실행 환경: 에뮬레이터/adb/maestro 부재(관행 계승) → [e2e]는 정적 대체 + 실기기 이관. 워킹트리 실측: 콘텐츠 diff는 허용 4파일뿐 — App.tsx(+4)·MiniPlayer.tsx(+32/-9)·PlayerScreen.tsx(+147/-57)·playback.ts(+239/-35). 그 외 M 표시 75건은 전부 100644→100755 모드 변경(콘텐츠 diff 0 — v3.196 관행 계승 제외). `app.json`·`services/audioMode.ts`·`utils/remoteLogger.ts`(계획서의 services/ 표기는 실경로 utils/)·`stores/playerStore.ts` diff 0.
+
+| 항목 | 판정 | 근거 요약 |
+|------|------|-----------|
+| U-1 타입 무결성 | PASS | `npx tsc --noEmit` exit 0, 오류 0건 |
+| U-2 프리로드 모듈 구조 | PASS | ① export maybePreloadNext/consumePreloaded/discardPreloaded + NextPreload 슬롯(playback.ts:44-58) ② 트리거 `remaining ≤ 20000 ∥ ratio ≥ 0.85`(:77-78), 호출 양쪽 모두 effectiveDuration 전달(playback.ts:225, PlayerScreen:413) ③ 곡당 1회 가드 forTrackId(:80)+preloadInFlight(:79) ④ `{shouldPlay:false}`(:94), shouldPlay:true 0건 ⑤ 핀 1회 호출(:82), didJustFinish 소비 경로 getNextIndex 재호출 0건(재호출은 프리로드 미스 폴백 분기에만 존재 — 스펙 적합). 양쪽 상태 콜백 배선 확인 |
+| U-3 프리로드 해제·폐기 | PASS(기록 2) | ① 스왑 성공 시 슬롯 null 리셋(consumePreloaded 진입 즉시 :119) + 이전 sound unload(playback.ts:271-273, PlayerScreen:440) ② 수동 스킵(switchToTrack:826·loadAndPlayTrack:284)·미니 닫기(invalidatePlayback:22)·재핀(:85)에 discardPreloaded 직접 배선. 큐 편집·셔플/반복 토글은 **핀 스냅샷(fromIndex/shuffle/repeat/트랙 id) 소비 시점 무효화+unload**(:122-131)로 대체 — 슬롯 상한 1개라 누적 불가, "폐기인데 unload 누락" 0건 기준 충족 ③ 매치 실패 시 unload 후 null(:129) ④ unloadAsync 2→8: 증가 6건 = discard·stale-resolve(:98)·consume-invalid·스왑gen불일치(:265)·스왑성공old(:272)·스왑실패(:276) 1:1 대응. **기록①**: resetOnLogout(playerStore — 수정금지 파일) 경로는 프리로드 미폐기 — 로그아웃 시 최대 1개 사운드가 다음 로드/닫기까지 잔존(상한 1, 차기 authService 측 invalidatePlayback 호출 검토). **기록②**: preload 실패 시 다음 상태 콜백 주기에 재시도됨(곡당 1회 가드는 성공 슬롯 기준) — 오프라인에서 말미 20초간 [BTDebug] preload fail 반복 warn 가능(큐 cap 200 내, 차기 실패 백오프 검토) |
+| U-4 2계통 스왑 배선 | PASS | ① 두 계통 모두 didJustFinish 최초 분기에서 consumePreloaded 우선(playback.ts:228, PlayerScreen:421), null → 기존 loadAndPlayTrack/advanceViaNetwork 폴백 ② 스왑 sound에 즉시 콜백 부착+playAsync — playback.ts는 makeStatusCallback(v3.192 보정 내장 :209-223), PlayerScreen은 onPlaybackStatusUpdate 재부착(:428, liveTrack 기반 보정 경로 동일) ③ PlayerScreen 폴백 catch 참조 정리 3점+warn(advanceViaNetwork:528-534), playback.ts catch(:308-312), unload 직전 setSound(null)(:288) ④ 주입 로더 catch 정리(:484-491). 2계통 편배선 없음 |
+| U-5 재생버튼 2곳 폴백 | PASS | PlayerScreen togglePlayPause(:797-818)·MiniPlayer togglePlay(:29-54) 각각 ① try/catch ② getStatusAsync isLoaded 확인→미로드/null이면 loadAndPlay/loadAndPlayTrack(내부 applyPlaybackAudioMode 재호출) ③ catch에서도 동일 폴백+[BTDebug] warn(src 구분) ④ MiniPlayer 낙관적 setIsPlaying 제거 확인(destructure에서도 sound/setIsPlaying 제거) ⑤ applyPlaybackAudioMode export 기존재(audioMode.ts:10, diff 0) |
+| U-6 status.error 분기 2곳 | PASS | playback.ts makeStatusCallback else-if(:245-250)·PlayerScreen(:496-502) — warn+setIsPlaying(false)만. 분기 내 playAsync/createAsync 0건(자동 재재생 금지 준수) |
+| **U-7 AppState 리컨사일** | **FAIL(①)** / ②③④ PASS | ① **구독 해제 쌍 부재**: playback.ts:336 addEventListener 반환 subscription 미보관·`.remove()` 0건(App.tsx:483 remove는 별개 기존 리스너). reconcilerInited 가드로 프로덕션 실누수는 1개 상한이나 계획 기준 "해제 누락 = FAIL" 해당(dev fast-refresh 시 모듈 재로드마다 잔존 리스너 누적) — 수정 지시 아래 ② 본문: sound&&isPlaying→getStatusAsync !isLoaded→setIsPlaying(false)+setSound(null)+reconcile warn(:341-347), catch도 동일 정리(:353-358) ③ 본문 playAsync/loadAndPlayTrack 0건 ④ remoteLogger flush 구독(utils/remoteLogger.ts:276) 무접촉 |
+| U-8 BTDebug warn·민감정보 | PASS(기록 1) | ① 전수 grep 30건 중 출력 28건 전부 console.warn(주석 2건 제외), info/log 0건 ② 커버리지: didJustFinish 2계통({trackId,nextIdx,appState,preloadHit})·preload start/ready/fail/stale/invalid·swap ok/fail·transition/load/switchToTrack fail·play button recover(src Player/Mini)·toggle fail·sound error 2계통·related fail/related load fail·reconcile 3종 — PLAN T5 전부 존재 ③ 페이로드 필드 trackId/인덱스/appState/불리언/err.message 요약만 — 토큰·이메일·사용자명·stream-proxy/presigned URI 0건. **기록**: err?.message 원문 pass-through라 웹 presigned 실패 메시지에 URL이 실릴 이론적 여지(네이티브 proxy URL은 무쿼리라 민감도 낮음) — 차기 message 절단/화이트리스트 검토 |
+| U-9 경계 4케이스 | PASS | ⓐ pinnedIdx<0→next null→미시도(:83-84), related 프리페치 신설 없음(보류 명시 주석), 슬롯 비었을 때 consume null 안전(:118) ⓑ repeat one: getNextIndex=currentIndex 핀 → 동일 uri 2 sound 공존 구조 — 스냅샷에 repeat 포함+양 스왑 경로 old unload 확인으로 명시적 처리 인정(전용 분기는 없으나 forTrackId 가드·스냅샷 검증·unload가 이중 발성 구조 차단) ⓒ 수동 변경: 스킵/playTrackNow/미니 닫기는 즉시 폐기+loadGen 증가, 늦은 resolve는 gen 검사 후 unload(:96-100), 큐 편집·토글은 소비 시점 스냅샷 거부+unload — 영구 고아 0 ⓓ preloadNext catch는 warn만·슬롯 오염 없음(:104-105), consume null→기존 createAsync 경로 무저하(프리로드 await 의존 0건) |
+| U-10 diff 범위 격리 | PASS | 콘텐츠 diff = 허용 4파일뿐(위 전제 참조). app.json·audioMode·remoteLogger·playerStore·stores/·백엔드 diff 0. 바이너리 콘텐츠 diff 0(모드 변경만). 커밋 시 4파일 명시 스테이징 |
+| U-11 v3.191~196 무회귀 | PASS | 앵커 재탐색 기준(라인 이동 반영): ① v3.192 보정 블록 무침투 — PlayerScreen :385-407(durationWarnedRef·Math.max 3인자)·playback.ts makeStatusCallback 내 보정(:209-223, 팩토리 승격으로 이동만·로직 동일) diff는 참조 추가(maybePreloadNext 인자)뿐 ② 인셋: queueSheet `insets.bottom + spacing.xxl`(:1441) 무접촉(diff hunk 최종 :844 이전 종료) ③ MCI: PlayerScreen :1216 size 16·MiniPlayer :121 size 20 무접촉(MiniPlayer diff는 togglePlay+렌더 조건 한정) ④ recordPlayIfNeeded(:365-376) diff 0 + 스왑 경로 playTrackAtIndex→store.track 갱신 후 콜백 부착이라 recordedTrackRef 새 tid 정상(이중/누락 구조 없음) ⑤ likesStore·PlaylistPickerSheet·SocialLoginButtons·AuthPanel·SplashScreen diff 0 ⑥ KAV(:1186)·TrackActionSheet 등 v3.196 8파일 diff 0 |
+| API-1 BTDebug 파이프라인 | N/A(이관) | 설계상 출시 후 오케스트레이터 소관(서버 `/api/_logs/frontend` 검색). tester 호출 0회(스코프 준수). 사전 조건은 U-8로 정적 대체 — remoteLogger warn/error 프로덕션 후킹(:218-219)·로그인 전제(:153) 확인 |
+| E-1 일반 자동 전환 | PASS(정적 대체) | 웹 실측 가능성 검토 결과: maybePreloadNext 첫 줄 `Platform.OS==='web'` return(:75) → 웹에서 슬롯이 채워질 수 없어 consumePreloaded 항상 null = 기존 네트워크 경로와 로직 등가(+warn 1줄) — "기존 경로 무회귀"는 정적으로 판정 완료, 프리로드 히트 실측은 웹에서 불가능하므로 실기기 이관. 정적 근거: U-2+U-4+U-9ⓑ+U-11④ |
+| E-2 수동 개입 직후 종료 | PASS(정적 대체) | 동일 사유(웹 프리로드 비활성 → 핀 폐기 시나리오 자체가 네이티브 전용). 정적 근거: U-3+U-9ⓒ — 스킵 즉시 폐기·큐편집/토글 스냅샷 거부·늦은 resolve gen 폐기 전 경로 배선 확인. 실기기 ①②③ 이관 |
+| E-3 화면꺼짐 연속재생 | 이관(실기기 전용) | 정적 대체 불가 명시 항목 — cached-app freezer/Doze 거동은 실기기에서만. U-2~U-4 배선만 보장 |
+| E-4 BT/차량+화면꺼짐 | 이관(실기기 전용) | BT 하드웨어 필수. 복구 배선은 U-5+U-6+U-7(②③)로 정적 확인 |
+| E-5 비행기모드 복구 | 이관(실기기 전용) | U-5+U-6+U-9ⓓ로 배선 확인. 무반응 재현 여부는 실측 필수 |
+| E-6 공격적 절전+계측 도달 | 이관(실기기 전용) | U-8+API-1(이관). 로그인 전제 Given 유지 |
+
+**FAIL 상세 및 수정 지시 (U-7 ①)**: `services/playback.ts` initPlaybackReconciler가 `AppState.addEventListener` 반환 subscription을 버림 — 해제 경로 0. 수정: 모듈 스코프 `let reconcilerSub: { remove(): void } | null = null;`로 보관, `if (reconcilerSub) return;`을 가드로 사용(reconcilerInited 불리언 대체), `export function teardownPlaybackReconciler(){ reconcilerSub?.remove(); reconcilerSub = null; }` 추가 후 App.tsx `useEffect(() => { initPlaybackReconciler(); return () => teardownPlaybackReconciler(); }, []);`로 쌍 완성. 접촉 파일은 허용 목록 내(playback.ts·App.tsx) — U-7 ①만 재검하면 게이트 해제(타 항목 재검 불요).
+
+**편차 판정 2건**:
+① MiniPlayer 렌더 조건 `!sound` 제거 — **수용**. v3.197 설계(전환 실패 시 setSound(null) 정리)와 `!sound` 숨김은 양립 불가: 유지하면 실패 순간 미니플레이어가 사라져 "재생버튼 1탭 복구" 스펙 자체가 소멸. 부수효과(로그인 큐 복원 시 일시정지 미니 노출)는 restoreQueueFor가 `isPlaying:false`로 세팅해 자동 재생 0 — 안전 요구사항(자동 재재생 금지) 위반 없음, 재생은 사용자 탭에서만 발생(togglePlay→loadAndPlayTrack).
+② 리컨사일 "로드됐지만 시스템 정지" UI 정합화 분기 — **수용**. 본문은 `setIsPlaying(false)` 1줄뿐, playAsync/재로드 0건으로 자동 재재생 금지 준수. 재생 아이콘·무음 불일치를 해소하는 순수 정합화로 T4 취지에 부합.
+
+**집계**: PASS 15 / FAIL 1(U-7 ① — 국소 수정 후 재검 1건으로 해제) / N/A·이관 5(API-1, E-3~E-6). **게이트: 조건부 FAIL(머지 보류)** — U-7 ① 구독 해제 쌍 배선 후 U-7 단건 재검으로 PASS 전환 가능(그 외 안전 요구사항·핀 불변식·누수 대차대조표 전부 충족).
+
+**실기기 잔여(이관)**: ① E-3 화면꺼짐 연속재생 3회+(Android APK 로그인 상태 — v3.197 존재 이유, 최우선) ② E-4 **차량 테스트**: 차량 헤드유닛/BT 스피커 연결 후 화면꺼짐 연속 전환 + 주행 중 BT 끊김·전화 인터럽션 후 "재생버튼 1탭" 복구 확인(운전자 외 동승자가 조작할 것 — 자동 재재생 금지가 지켜지는지, 즉 통화 종료·복귀 시 **저절로 소리가 나지 않는지**를 특히 관찰) ③ E-5 비행기모드 전환 실패 유도→미니/풀 각각 1탭 복구(프리로드 선성공 시 곡 초반 스킵 직후로 재시도) ④ E-6 절전 기기(삼성/샤오미)에서 [BTDebug] 서버 도달 확인(실패해도 기록만) ⑤ E-1/E-2 프리로드 히트 실측(셔플 핀 곡 일치·재생바 리셋·record-play 곡당 1회) ⑥ API-1 출시 후 서버 로그 [BTDebug] 검색(오케스트레이터 소관).

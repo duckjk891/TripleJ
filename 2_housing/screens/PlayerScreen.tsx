@@ -15,6 +15,7 @@ import {
   Share,
   useWindowDimensions,
   KeyboardAvoidingView,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -34,7 +35,8 @@ import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
-import { autoContinueWithRelated } from '../services/playback';
+// v3.197: 프리로드 공용 모듈(consume/trigger/discard) — BT/화면꺼짐 전환 실패 완화
+import { autoContinueWithRelated, consumePreloaded, discardPreloaded, maybePreloadNext } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -407,70 +409,129 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setIsPlaying(status.isPlaying);
       // 70% 도달(또는 seek로 넘김) 시 재생 기록 — 위치 기반(v3.192: effectiveDuration 기준 — 조기 기록 방지)
       recordPlayIfNeeded(status.positionMillis, effectiveDuration);
+      // v3.197: 종료 임박(20초 전/85%) — 다음 곡 프리로드(셔플 인덱스 핀, 공용 모듈·네이티브 한정)
+      maybePreloadNext(liveTrack ?? track, status.positionMillis ?? 0, effectiveDuration);
       if (status.didJustFinish) {
         // 재생 완료 EXP — 내 아티스트 +1
         useArtistStore.getState().addExp(1, 'play');
         // 셔플/반복 모드 반영한 다음 인덱스
         const store = usePlayerStore.getState();
-        const nextIdx = store.getNextIndex();
-        if (nextIdx >= 0 && store.queue[nextIdx]) {
-          const nextTrack = store.queue[nextIdx];
-          store.playTrackAtIndex(nextIdx);
-          // 큰 화면이든 미니든 sound 직접 교체 → 슬라이드 애니메이션 없이 곡만 전환
+        // v3.197: 프리로드 스왑 우선 — 종료 시점 네트워크 의존 제거(BT/화면꺼짐 전환 실패 완화).
+        // 셔플 인덱스는 프리로드 시점에 핀됨(consumePreloaded 내부 검증) — 여기서 getNextIndex 재호출 금지.
+        const pre = consumePreloaded();
+        if (pre) {
+          console.warn('[BTDebug] didJustFinish', { src: 'Player', trackId: (liveTrack ?? track)?.id, nextIdx: pre.index, appState: AppState.currentState, preloadHit: true });
+          store.playTrackAtIndex(pre.index);
           (async () => {
             try {
-              if (soundRef.current) {
-                await soundRef.current.unloadAsync().catch(() => {});
-              }
-              const audioUrl = await getAudioUri(nextTrack.id);
-              const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: audioUrl },
-                { shouldPlay: true },
-                onPlaybackStatusUpdate,
-              );
-              soundRef.current = newSound;
-              store.setSound(newSound);
-              store.setTrack(nextTrack);
+              const old = soundRef.current;
+              pre.sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+              await pre.sound.playAsync();
+              soundRef.current = pre.sound;
+              store.setSound(pre.sound);
+              store.setTrack(pre.track);
               store.setIsPlaying(true);
               if (store.isPlayerScreenOpen) {
-                setSound(newSound);
+                setSound(pre.sound);
                 setIsPlaying(true);
                 setPosition(0);
               }
-            } catch (err) {
-              console.warn('[Player] 자동재생 실패:', err);
+              console.warn('[BTDebug] preload swap ok', { src: 'Player', trackId: pre.track?.id });
+              if (old && old !== pre.sound) await old.unloadAsync().catch(() => {});
+            } catch (err: any) {
+              console.warn('[BTDebug] preload swap fail → network fallback', { src: 'Player', trackId: pre.track?.id, message: err?.message });
+              try { await pre.sound.unloadAsync(); } catch {}
+              await advanceViaNetwork(pre.track);
             }
           })();
         } else {
-          setIsPlaying(false);
-          setPosition(0);
-          playerStore.setIsPlaying(false);
-          // v3.99: 큐 소진(반복 off) — 관련곡 자동 이어듣기.
-          // PlayerScreen은 자체 사운드/콜백을 관리하므로 로더를 주입해 이 화면의
-          // onPlaybackStatusUpdate로 재생을 잇는다(스토어 기본 로더를 쓰면 재생바가 멈춤).
-          autoContinueWithRelated(async (nextTrack) => {
-            if (soundRef.current) {
-              await soundRef.current.unloadAsync().catch(() => {});
-            }
-            const audioUrl = await getAudioUri(nextTrack.id);
-            const { sound: newSound } = await Audio.Sound.createAsync(
-              { uri: audioUrl },
-              { shouldPlay: true },
-              onPlaybackStatusUpdate,
-            );
-            soundRef.current = newSound;
-            const store = usePlayerStore.getState();
-            store.setSound(newSound);
-            store.setTrack(nextTrack);
-            store.setIsPlaying(true);
-            if (store.isPlayerScreenOpen) {
-              setSound(newSound);
-              setIsPlaying(true);
-              setPosition(0);
-            }
-          });
+          const nextIdx = store.getNextIndex();
+          console.warn('[BTDebug] didJustFinish', { src: 'Player', trackId: (liveTrack ?? track)?.id, nextIdx, appState: AppState.currentState, preloadHit: false });
+          if (nextIdx >= 0 && store.queue[nextIdx]) {
+            const nextTrack = store.queue[nextIdx];
+            store.playTrackAtIndex(nextIdx);
+            // 큰 화면이든 미니든 sound 직접 교체 → 슬라이드 애니메이션 없이 곡만 전환
+            (async () => { await advanceViaNetwork(nextTrack); })();
+          } else {
+            setIsPlaying(false);
+            setPosition(0);
+            playerStore.setIsPlaying(false);
+            // v3.99: 큐 소진(반복 off) — 관련곡 자동 이어듣기.
+            // PlayerScreen은 자체 사운드/콜백을 관리하므로 로더를 주입해 이 화면의
+            // onPlaybackStatusUpdate로 재생을 잇는다(스토어 기본 로더를 쓰면 재생바가 멈춤).
+            autoContinueWithRelated(async (nextTrack) => {
+              // v3.197: 실패 시 참조/상태 정리 — 죽은 객체 방치 금지(재생버튼 1탭 복구가 받아준다)
+              try {
+                if (soundRef.current) {
+                  await soundRef.current.unloadAsync().catch(() => {});
+                }
+                const audioUrl = await getAudioUri(nextTrack.id);
+                const { sound: newSound } = await Audio.Sound.createAsync(
+                  { uri: audioUrl },
+                  { shouldPlay: true },
+                  onPlaybackStatusUpdate,
+                );
+                soundRef.current = newSound;
+                const liveStore = usePlayerStore.getState();
+                liveStore.setSound(newSound);
+                liveStore.setTrack(nextTrack);
+                liveStore.setIsPlaying(true);
+                if (liveStore.isPlayerScreenOpen) {
+                  setSound(newSound);
+                  setIsPlaying(true);
+                  setPosition(0);
+                }
+              } catch (err: any) {
+                console.warn('[BTDebug] related load fail', { src: 'Player', trackId: nextTrack?.id, message: err?.message, appState: AppState.currentState });
+                soundRef.current = null;
+                const liveStore = usePlayerStore.getState();
+                liveStore.setSound(null);
+                liveStore.setIsPlaying(false);
+                setIsPlaying(false);
+              }
+            });
+          }
         }
       }
+    } else if (status.error) {
+      // v3.197: 미디어 에러 상태({isLoaded:false, error}) — 무음 방치 제거(UI 일시정지 정합화) + 원격 계측.
+      // 자동 재재생은 하지 않음 — 견고화된 재생버튼 1탭이 복구 경로.
+      console.warn('[BTDebug] sound error', { src: 'Player', trackId: usePlayerStore.getState().track?.id, error: String(status.error) });
+      setIsPlaying(false);
+      playerStore.setIsPlaying(false);
+    }
+  };
+
+  // v3.197: didJustFinish 네트워크 전환(기존 v3.99 경로) — 프리로드 미스/스왑 실패 폴백 공용.
+  // 호출 전 playTrackAtIndex는 완료된 상태여야 한다.
+  const advanceViaNetwork = async (nextTrack: TrackData) => {
+    const store = usePlayerStore.getState();
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync().catch(() => {});
+      }
+      const audioUrl = await getAudioUri(nextTrack.id);
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: true },
+        onPlaybackStatusUpdate,
+      );
+      soundRef.current = newSound;
+      store.setSound(newSound);
+      store.setTrack(nextTrack);
+      store.setIsPlaying(true);
+      if (store.isPlayerScreenOpen) {
+        setSound(newSound);
+        setIsPlaying(true);
+        setPosition(0);
+      }
+    } catch (err: any) {
+      // v3.197: 실패 시 죽은 참조 정리 — 재생버튼 1탭 복구(견고화 토글)가 받아준다
+      console.warn('[BTDebug] transition fail', { src: 'Player', trackId: nextTrack?.id, message: err?.message, appState: AppState.currentState });
+      soundRef.current = null;
+      store.setSound(null);
+      store.setIsPlaying(false);
+      setIsPlaying(false);
     }
   };
 
@@ -492,6 +553,7 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const loadAndPlay = async (target: TrackData = track) => {
     if (!target?.id) return;
+    discardPreloaded('player-load'); // v3.197: 새 재생 — 이전 곡 기준 핀 프리로드 폐기
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync();
@@ -531,8 +593,13 @@ export default function PlayerScreen({ route, navigation }: any) {
           pause: () => { usePlayerStore.getState().sound?.pauseAsync().catch(() => {}); },
         },
       );
-    } catch (err) {
-      console.error('Audio load error:', err);
+    } catch (err: any) {
+      // v3.197: 실패 시 참조/상태 정리 + 원격 계측 — 재생버튼 1탭 복구가 받아준다
+      console.warn('[BTDebug] load fail', { src: 'Player', trackId: target?.id, message: err?.message, appState: AppState.currentState });
+      soundRef.current = null;
+      playerStore.setSound(null);
+      playerStore.setIsPlaying(false);
+      setIsPlaying(false);
     }
   };
 
@@ -724,12 +791,29 @@ export default function PlayerScreen({ route, navigation }: any) {
   // PlayerScreen 언마운트 시에도 콜백이 계속 store.position/isPlaying을 업데이트하도록
   // setOnPlaybackStatusUpdate는 위에서 설정된 상태를 유지 (MiniPlayer가 store 구독하므로 OK)
 
+  // v3.197: 재생버튼 견고화 — getStatusAsync로 isLoaded 확인, 죽은/미로드 객체면
+  // 현재 곡 재로드(loadAndPlay 내부에서 applyPlaybackAudioMode 재호출)로 복구.
+  // 전환이 어떤 이유로 죽어도 "재생버튼 1탭"이 복구 경로가 된다.
   const togglePlayPause = async () => {
-    if (!soundRef.current) return;
-    if (isPlaying) {
-      await soundRef.current.pauseAsync();
-    } else {
-      await soundRef.current.playAsync();
+    try {
+      const snd = soundRef.current;
+      if (snd) {
+        const st: any = await snd.getStatusAsync().catch(() => null);
+        if (st?.isLoaded) {
+          if (st.isPlaying) {
+            await snd.pauseAsync();
+          } else {
+            await snd.playAsync();
+          }
+          return;
+        }
+      }
+      // soundRef 부재/미로드/에러 — 현재 곡을 처음부터 재로드(복잡도 억제: position 복원 생략)
+      console.warn('[BTDebug] play button recover', { src: 'Player', trackId: track?.id, hadSound: !!snd });
+      await loadAndPlay(track);
+    } catch (err: any) {
+      console.warn('[BTDebug] toggle fail → reload', { src: 'Player', trackId: track?.id, message: err?.message });
+      try { await loadAndPlay(track); } catch {}
     }
   };
 
@@ -739,6 +823,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     const store = usePlayerStore.getState();
     const target = store.queue[idx];
     if (!target?.id) return;
+    discardPreloaded('manual-skip'); // v3.197: 수동 스킵 — 핀된 프리로드 폐기(잘못된 곡 재생 방지)
     store.playTrackAtIndex(idx);
     try {
       if (soundRef.current) {
@@ -758,8 +843,13 @@ export default function PlayerScreen({ route, navigation }: any) {
       store.setIsPlaying(true);
       setIsPlaying(true);
       setPosition(0);
-    } catch (err) {
-      console.warn('[Player] switchToTrack 실패:', err);
+    } catch (err: any) {
+      // v3.197: 실패 시 죽은 참조 정리 — 재생버튼 1탭 복구가 받아준다
+      console.warn('[BTDebug] switchToTrack fail', { src: 'Player', trackId: target?.id, message: err?.message });
+      soundRef.current = null;
+      store.setSound(null);
+      store.setIsPlaying(false);
+      setIsPlaying(false);
     }
   };
 

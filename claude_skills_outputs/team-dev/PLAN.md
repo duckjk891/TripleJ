@@ -2829,3 +2829,94 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 
 ### 3. 기록
 - PLAN.md v3.196 append 완료 (본 섹션).
+
+## v3.197 — 2026-09-21 — 차량(BT)/화면꺼짐 상태 다음곡 자동재생 실패 + 재생버튼 무반응 복구 불능 수정 계획
+
+> 사용자 원본 요청: "APK — 블루투스 연결 차 안에서 재생 시 재생목록 다음곡이 재생 안 됨. 재생버튼 눌러도 무반응, 미니플레이어 닫고 곡을 다시 클릭해야만 재생됨. BT 끊고 모바일 단독이면 자동 다음곡 정상."
+> 환경: Expo SDK 54 + expo-av ~16.0.8 (package.json:20-21). 코드 수정 금지 — 본 문서는 계획만.
+
+### 1. 가설별 코드 근거 (0단계 분석 — 파일 직접 확인 완료)
+
+**H1 (최우선 확정 원인 후보): 백그라운드 곡 전환이 "unload → 네트워크 재로드" 구조 — 무음 갭 + 네트워크 의존**
+- 곡 종료 처리 didJustFinish 2계통 모두 동일 구조:
+  - `screens/PlayerScreen.tsx:410-443` — didJustFinish → 기존 sound `unloadAsync()`(:423) → `getAudioUri`(:425, 네이티브는 stream-proxy URL 문자열 즉시 반환) → `Audio.Sound.createAsync({uri}, {shouldPlay:true})`(:426-430) = **이 시점에 네트워크 스트림 로드 시작**. 실패 시 catch(:440-442)는 `console.warn`만.
+  - `services/playback.ts:121-129` — loadAndPlayTrack 상태 콜백 안 didJustFinish → `loadAndPlayTrack(다음곡)` 재귀(:125) → 내부에서 unload(:91-93)+createAsync(:98-100).
+- 오디오 모드 설정 현황: `services/audioMode.ts:12-19` — `staysActiveInBackground: true`, DoNotMix(iOS/Android), `shouldDuckAndroid: false`. **설정 자체는 이미 정석**. iOS `UIBackgroundModes: ["audio"]`도 존재(app.json:24-27).
+- 그러나 Android에는 **포그라운드 서비스·미디어 알림이 없음**(app.json:29-37에 관련 항목 없음) — expo-av 자체가 미지원이며 audioMode.ts:5 주석에 "네이티브 잠금화면 미디어 알림은 expo-av 미지원 — react-native-track-player 필요(별도 과제)"로 이미 자인돼 있음.
+- 종합: 곡이 끝나는 순간 unload로 **재생 중 오디오가 0이 되는 무음 갭**이 생기고, 그 갭에 Android가 알림 없는 백그라운드 앱을 cached/frozen 처리(Android 12+ cached-app freezer, Doze 네트워크 유예)하면 createAsync의 네트워크 로드가 완료되지 못해 전환이 죽는다. 화면 켜짐(손에 들고 사용) 시 정상인 것과 정확히 일치 — **BT는 원인이 아니라 "차량 = 화면 꺼짐/거치" 상황의 프록시**일 가능성이 높다. 단, 확진은 (e) 원격 계측으로.
+- 큐 소진 시 관련곡 이어듣기는 한 단계 더 취약: `services/playback.ts:34-85` `autoContinueWithRelated`가 `GET /tracks/{id}/related` **API 왕복**(:47)까지 필요 — 백그라운드 실패 확률 최고.
+
+**H2: 오디오 포커스/인터럽션·에러 상태 미처리 — 부분 확정(에러 무시는 확정, 포커스 이벤트는 expo-av가 노출 안 함)**
+- 상태 콜백이 `if (status.isLoaded)` 단독 분기: `PlayerScreen.tsx:376-377`, `playback.ts:102`. expo-av가 미디어 에러 시 주는 `{isLoaded:false, error}` 상태는 **어느 쪽에도 처리 분기가 없어 무음 무시** → 사운드가 죽어도 UI는 마지막 상태로 방치. (grep 결과 `status.error`/`!status.isLoaded` 처리 0건)
+- 포커스 상실/오디오 라우트 변경 이벤트는 expo-av JS API에 미노출 — 직접 구독 불가. AppState 복귀 시 재생상태 리컨사일 코드도 전무(AppState 사용처는 remoteLogger.ts:276 flush뿐, App.tsx에 없음).
+
+**H3: 재생버튼 복구 부재 — 확정 (BT 무관 견고성 결함, 사용자 복구 경로와 정확히 일치)**
+- `PlayerScreen.tsx:727-734` `togglePlayPause`: `if (!soundRef.current) return;` 후 pause/playAsync 호출뿐 — isLoaded 검사·try/catch·재로드 폴백 전무. unloaded 사운드에 playAsync → reject(무반응 + unhandled rejection).
+- `components/MiniPlayer.tsx:22-31` `togglePlay`: 동일 + 낙관적 `setIsPlaying` (실패해도 아이콘만 토글).
+- **죽은 참조가 잔존하는 이유**: 전환 실패 시 ① playback.ts:91-93에서 기존 sound를 unload했지만 store.sound를 null로 갱신하지 않고, createAsync 실패 catch(:142-144)는 로그만 — `setIsPlaying(false)`도 없음 ② PlayerScreen.tsx:422-424 → 실패 catch(:440-442)도 동일하게 soundRef.current가 unloaded 객체로 잔존. 이후 재생버튼은 죽은 객체에 playAsync만 반복 → 무반응.
+- 유일 복구 경로 = 미니플레이어 닫기(`MiniPlayer.tsx:53-57` invalidatePlayback+cleanup으로 참조 초기화) 후 곡 재클릭(playTrackNow 신규 로드) — **사용자 보고 "미니 닫고 다시 클릭해야만 재생"과 정확히 일치**.
+
+### 2. 수정 방안 판정
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| (a) 오디오 모드 설정 보강 | **부분 적용** | staysActiveInBackground 등 핵심 설정은 이미 정석(audioMode.ts:12-19) — 신규 옵션 추가는 없음. 대신 **복구 재로드 경로(c)에서 `applyPlaybackAudioMode()` 재호출**(인터럽션 후 포커스 재획득)만 추가. app.json 변경 없음(iOS audio 기존재, Android는 expo-av 한계로 추가할 항목 자체가 없음). |
+| (b) 다음 곡 프리로드 | **적용 (핵심)** | 곡 종료 시점의 네트워크 의존 제거 + 무음 갭 최소화(freeze 트리거 약화). 난이도 **중** — 주의점 4개는 아래 작업지시 참조. |
+| (c) 재생버튼 견고화 | **적용 (핵심)** | H3 확정 결함. BT/차량과 무관하게 고쳐야 할 견고성 문제 — 전환이 어떤 이유로 죽어도 "재생버튼 1탭"이 복구 경로가 되게 한다. |
+| (d) 인터럽션/포커스 복구 | **부분 적용** | 가능한 것만: ① 상태 콜백에 `else if (!status.isLoaded && status.error)` 분기(로그+isPlaying 정합) ② AppState 'active' 복귀 리컨사일. 포커스 이벤트 직접 구독은 expo-av 미노출로 **보류**(track-player 과제로 이관). |
+| (e) [BTDebug] 원격 계측 | **적용** | 차량 재현 불가 → 사용자 주행 후 서버 로그로 H1 확진. **반드시 console.warn 레벨** 사용 — remoteLogger는 warn/error만 프로덕션 후킹(remoteLogger.ts:218-219), info는 DEV 전용(:220-222). 로그인 필수(:153)·백그라운드 진입 시 flush(:276-281)+5초 인터벌·큐 cap 200이라 주행 중 실패분도 앱 복귀 시 전송됨. |
+| 관련곡 이어듣기(related API) 프리페치 | **보류** | 큐 내 전환 프리로드가 우선. related 프리페치는 "언제 끝날지"에 더해 "무엇이 다음인지"도 서버 의존이라 범위 초과 — track-player 과제와 함께 재검토. |
+
+### 3. app-dev 작업 지시 (파일 단위)
+
+**T1. services/playback.ts — 프리로드 공용 모듈 (신규 export)**
+- `preloadNext()`: 현재 곡 남은 시간 ≤ 20초(또는 position/duration ≥ 85%) 시점에 다음 곡을 `createAsync({uri}, {shouldPlay:false})`로 미리 로드해 모듈 스코프 `nextPreload = { trackId, sound, pinnedIdx, gen }` 보관. 트리거는 양쪽 상태 콜백에서 호출(1회 가드).
+- `consumePreloaded(expectedTrackId)`: didJustFinish에서 pinnedIdx 트랙과 매치하면 preload된 sound를 반환(즉시 `playAsync()` + 콜백 부착) — 매치 실패/미존재면 null 반환 → 기존 createAsync 경로 폴백.
+- **주의점 4개**: ① `getNextIndex()`는 shuffle 시 호출마다 랜덤(playerStore.ts:178-183) — 프리로드 시점에 다음 인덱스를 **핀(pinnedIdx)**하고 didJustFinish는 핀을 사용(현재처럼 종료 시 재호출 금지) ② 수동 스킵·큐 편집(remove/reorder)·셔플/반복 토글·미니 닫기 시 프리로드 폐기 — 기존 loadGen 세대 토큰(:11-17)에 연동해 unloadAsync 후 버림 ③ 로더 2계통(playback.ts loadAndPlayTrack ↔ PlayerScreen 자체 createAsync) **양쪽 didJustFinish 모두** consumePreloaded를 먼저 시도 ④ 프리로드 곡 duration도 v3.192 effectiveDuration 보정(playback.ts:106-120) 경로를 타야 함(콜백 부착 시점 주의).
+- loadAndPlayTrack catch(:142-144) 보강: `store.setSound(null)` + `store.setIsPlaying(false)` + `[BTDebug]` warn. unload 직후(:91-93)에도 setSound(null)로 죽은 참조 창 제거.
+- 상태 콜백(:101-)에 `else if (!status.isLoaded && status.error)` 분기: `console.warn('[BTDebug] sound error', {...})` + `setIsPlaying(false)`.
+
+**T2. screens/PlayerScreen.tsx**
+- `onPlaybackStatusUpdate`(:376-475): ① isLoaded else-분기에 status.error 처리(위와 동일) ② 프리로드 트리거 호출(position 기반, effectiveDuration 사용) ③ didJustFinish(:410-473)에서 consumePreloaded 먼저 → 폴백 시 기존 경로. 폴백 catch(:440-442)에서 `soundRef.current = null; store.setSound(null); store.setIsPlaying(false)` + [BTDebug] warn.
+- `togglePlayPause`(:727-734) 견고화: try/catch + `getStatusAsync()`로 isLoaded 확인 → 미로드/에러/soundRef null이면 `applyPlaybackAudioMode()` 후 현재 store.track을 `loadAndPlay(track)`로 재로드(현 position 복원은 선택 — 1차는 처음부터 재생으로 충분, 복잡도 억제). playAsync 실패 catch에서도 동일 폴백 + [BTDebug] warn.
+- autoContinueWithRelated 주입 로더(:451-471)에도 실패 시 참조 정리 동일 적용.
+
+**T3. components/MiniPlayer.tsx**
+- `togglePlay`(:22-31) 견고화: T2와 동일 패턴 — getStatusAsync 검사, 죽었으면 `loadAndPlayTrack(track)` 폴백(+applyPlaybackAudioMode). 낙관적 setIsPlaying 제거(성공 후 상태 콜백이 반영).
+
+**T4. AppState 복귀 리컨사일 (App.tsx 1곳 또는 playback.ts에 init 함수)**
+- `AppState 'active'` 진입 시: store.sound 존재 && store.isPlaying=true인데 `getStatusAsync()`가 !isLoaded/error면 → `setIsPlaying(false)` + 참조 정리 + `[BTDebug] reconcile` warn. (자동 재재생은 하지 않음 — 사용자가 재생버튼 1탭으로 복구, (c)가 받아줌. 운전 중 갑작스러운 자동 재생 시작 방지.)
+
+**T5. [BTDebug] 계측 포인트 (전부 console.warn, 민감정보 금지)**
+- didJustFinish 진입: `{ trackId, nextIdx, appState: AppState.currentState, preloadHit: bool }`
+- 프리로드 시작/성공/실패, 전환 createAsync 성공/실패(catch), 재생버튼 폴백 발동(어느 화면), status.error 분기, autoContinueWithRelated 실패, AppState 리컨사일 발동.
+- 출시 후 사용자 주행 → 서버 `/api/_logs/frontend` 로그에서 `[BTDebug]` 검색으로 H1 확진(백엔드 로그 조회는 오케스트레이터).
+
+**T6. app.json — 변경 없음** (확인만: iOS UIBackgroundModes audio :24-27 유지).
+
+### 4. test-designer 항목
+
+**시뮬레이터/에뮬레이터 가능**
+- 큐 2곡+ 자동 전환(포그라운드): 순차·shuffle·repeat all/one 각각 — 프리로드 히트 시에도 전환 정상, 재생바 0부터, 70% 재생기록(record-play) 곡당 1회 유지.
+- 마지막 곡 소진 → 관련곡 자동 이어듣기 무회귀(PlayerScreen 열림/미니 두 경로).
+- 수동 스킵/큐 편집/셔플 토글 직후 곡 종료 — 핀된 프리로드가 폐기되고 올바른 곡으로 전환(잘못된 곡 재생 금지), 이중 재생(고아 사운드) 없음.
+- 재생/일시정지 토글 반복 — 지연·이중재생 없음, 미니↔풀 화면 전환 후 콜백 정상(재생바 갱신).
+- 웹: getAudioUri presigned 경로(PlayerScreen.tsx:479-491)에서 프리로드 정상 동작 확인, 아니면 네이티브 한정 플래그 확인.
+
+**실기기 전용 (BT/차량/화면꺼짐은 에뮬 재현 불가 — Android APK 필수, iOS 병행 권장)**
+- 화면 끄고(잠금) 곡 종료 대기 → 다음 곡 자동재생 (핵심 시나리오, 3곡 이상 연속).
+- BT 스피커/차량 헤드유닛 연결 + 화면 끄고 동일 시나리오.
+- 전환 실패 유도: 곡 말미 비행기모드 → 전환 실패 → 재생버튼 **1탭**으로 현재 곡 복구(미니플레이어·풀 플레이어 각각). 미니 닫기 없이 복구되어야 통과.
+- BT 연결 해제(재생 중 이어폰/차량 끊기) → 일시정지됨 → 재생버튼 1탭 복구.
+- 전화 수신 인터럽션 → 통화 종료 후 재생버튼 복구.
+- 배터리 최적화(절전 모드) 켠 삼성/샤오미류 기기에서 화면 꺼짐 연속재생 — 실패하더라도 [BTDebug] 로그가 서버에 도착하는지 확인(로그인 상태 전제).
+
+**무회귀 (v3.191~196)**
+- 3.191 queueSheet 인셋, 3.192 VBR duration 보정(프리로드 곡에도 effectiveDuration 적용 확인)·marquee, 3.193 좋아요 서버연동·담기 시트, 3.194 소셜 로그인 APK 복귀·벡터 아이콘, 3.196 하단 시트 인셋·입력 모달 KAV. 미니플레이어 닫기(cleanup) 후 재클릭 재생(기존 복구 경로)도 여전히 정상.
+
+### 5. 근본 해결 판정 — react-native-track-player 이관: **필요, 별도 세션 분리 권고**
+- expo-av는 Android 포그라운드 서비스·미디어 알림 미지원(audioMode.ts:5 주석으로 기자인) + Expo 공식 deprecated(expo-audio로 대체 권고 흐름). 화면 꺼짐/차량 장시간 연속재생의 **완전한** 신뢰성과 잠금화면 컨트롤은 track-player(포그라운드 서비스+미디어 세션+네이티브 큐)가 정도.
+- 현 구조는 사운드 소유권이 3곳(playback.ts / PlayerScreen 자체 soundRef / MiniPlayer via store)에 분산 — 이관은 재생 파이프라인 전면 재편(대수술)이므로 v3.197 범위 밖. **[BTDebug] 로그로 H1 확진 후 별도 세션 발제**(그때 expo-audio vs RNTP 비교 포함). 이번 개선으로 재발 빈도·복구성은 크게 좋아지나, 무음 갭 없이도 프로세스를 freeze하는 공격적 절전 기기에서는 한계 잔존 — 임시 완화로 사용자에게 "앱 배터리 최적화 제외" 안내 가능.
+
+### 6. 기록
+- PLAN.md v3.197 append 완료 (본 섹션). 코드 수정 없음 — app-dev 착수 대기.

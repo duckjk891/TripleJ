@@ -40,6 +40,8 @@ import NotificationsScreen from './screens/NotificationsScreen';
 import MyReportsScreen from './screens/MyReportsScreen';
 import { useUiStore } from './stores/uiStore';
 import { usePlayerStore } from './stores/playerStore';
+// v3.197(T4): 포그라운드 복귀 시 재생상태 리컨사일 — 죽은 사운드면 UI를 일시정지로 정합화(자동 재재생 금지)
+import { initPlaybackReconciler, teardownPlaybackReconciler } from './services/playback';
 import { usePointsStore } from './stores/pointsStore';
 import api, { BACKEND_BASE_URL } from './services/api';
 
@@ -505,6 +507,11 @@ export default function App() {
   // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   useEffect(() => { restoreSession(); }, []);
+  // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
+  useEffect(() => {
+    initPlaybackReconciler();
+    return () => { teardownPlaybackReconciler(); };
+  }, []);
   // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용
   const [currentRoute, setCurrentRoute] = useState<string | undefined>(undefined);
   const syncRoute = () => setCurrentRoute(navigationRef.getCurrentRoute()?.name);

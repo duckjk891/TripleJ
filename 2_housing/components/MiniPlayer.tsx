@@ -12,21 +12,44 @@ function getCoverUrl(img: string): string {
 
 export default function MiniPlayer() {
   const navigation = useNavigation<any>();
-  const { track, sound, isPlaying, setIsPlaying, position, duration, cleanup, queue, currentIndex, playTrackAtIndex, isPlayerScreenOpen } = usePlayerStore();
+  // v3.197: sound/setIsPlaying 직접 사용 제거 — togglePlay가 getState()로 라이브 참조를 검사하고,
+  // 재생 상태는 상태 콜백이 store에 반영한다(낙관적 토글 제거).
+  const { track, isPlaying, position, duration, cleanup, queue, currentIndex, playTrackAtIndex, isPlayerScreenOpen } = usePlayerStore();
 
   // Player 화면이 열려있으면 숨김
   if (isPlayerScreenOpen) return null;
 
-  if (!track || !sound) return null;
+  // v3.197: sound 조건 제거 — 전환 실패로 사운드가 정리(null)돼도 미니플레이어를 유지해
+  // "재생버튼 1탭" 복구 경로를 남긴다(track까지 없으면 숨김 — cleanup 후와 동일).
+  if (!track) return null;
 
+  // v3.197: 재생버튼 견고화 — getStatusAsync로 isLoaded 확인, 죽은/부재 객체면 현재 곡
+  // 재로드(loadAndPlayTrack 내부에서 applyPlaybackAudioMode 재호출)로 복구.
+  // 낙관적 setIsPlaying 제거 — 성공 후 상태 콜백이 store에 반영한다.
   const togglePlay = async () => {
-    if (!sound) return;
-    if (isPlaying) {
-      await sound.pauseAsync();
-      setIsPlaying(false);
-    } else {
-      await sound.playAsync();
-      setIsPlaying(true);
+    const s = usePlayerStore.getState();
+    const snd = s.sound;
+    const curTrack = s.track;
+    try {
+      if (snd) {
+        const st: any = await snd.getStatusAsync().catch(() => null);
+        if (st?.isLoaded) {
+          if (st.isPlaying) {
+            await snd.pauseAsync();
+          } else {
+            await snd.playAsync();
+          }
+          return;
+        }
+      }
+      if (!curTrack?.id) return;
+      console.warn('[BTDebug] play button recover', { src: 'Mini', trackId: curTrack.id, hadSound: !!snd });
+      await loadAndPlayTrack(curTrack);
+    } catch (err: any) {
+      console.warn('[BTDebug] toggle fail → reload', { src: 'Mini', trackId: curTrack?.id, message: err?.message });
+      if (curTrack?.id) {
+        try { await loadAndPlayTrack(curTrack); } catch {}
+      }
     }
   };
 
