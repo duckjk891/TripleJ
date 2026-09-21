@@ -2278,3 +2278,47 @@ RN `Modal`은 별도 window라 **루트 safe-area 패딩과 Android adjustResize
 - 커밋 메시지 제안:
   `fix: v3.198 미니플레이어 시작 시 노출 차단(sessionActive)·담기 시트 Android 키보드 간격 잔존 수정(수동 패딩) + 초대 링크 HTML 랜딩/OG 카드(서버 GET·HEAD /invite)·Play 스토어 CTA (team-dev)`
 - 스테이징 3파일(2_housing/ 기준): stores/playerStore.ts, components/MiniPlayer.tsx, components/PlaylistPickerSheet.tsx + 산출물(PLAN/REPORT/TESTPLAN) — revert된 App.tsx·ChartScreen 등 무관 파일 제외할 것.
+
+---
+
+## v3.199 (2026-09-21) — 작업실 UX 4종: 기획사 이니셜 아바타 · 디렉터 대화 뒤로가기 · 엔터명 마퀴 · 선택값 편집 아이콘
+
+### 1. 요청 원문
+"기획사 프로필 이미지를 설정하지 않아도 기본값이 비어있으면 안되. 제일 앞글자라도 써있어야하고. 그리고 기본값 배경 색상 다양하게 랜덤으로 되는거 맞지? 추가로 작업실에 디렉터들과 이야기를 하는 중에 다시 작업실로 돌아가고 싶을때 상단에 이전으로 돌아갈 수 잇는 아이콘 ui가 있어야 할것 같아. 그리고 작업실 접속했을때 상단에 엔터테이먼트 이름도 너무 길어지니까 ui 를 침범해서 옆의 ui 를 침범하지 않는 선에서 적당히 가로길이를 정하고 텍스트가 흘러가도록 해줘. 추가로 디렉터와 대화할때 값을 선택해도 값을 선택하면 수정할 수 있잖아. 수정할 수 있으니까 편집 아이콘을 살짝 넣어주면 좋을 것 같아."
+
+### 2. 수행 결과 (9파일, +240/-17, tsc 0건)
+
+**A. 기획사 이니셜 아바타**
+- 진단: 공용 `components/ui/Avatar.tsx`(v3.181)가 이미 이니셜+seed 해시 8색 팔레트 표준. 빈 기본값은 두 곳 — AgencyProfileScreen(아바타 요소 전무), SettingsScreen(이니셜은 있으나 배경 고정 보라 단색).
+- 수정: ① Avatar `seedColor` named export 승격(+ui/index barrel 1줄) ② SettingsScreen 폴백 배경 = seedColor(계정 id, 닉네임) ③ AgencyProfileScreen profileBox에 Avatar 64px(이니셜=기획사명 첫 글자) ④ UserChannelScreen Avatar에 seed=authorId(닉변에도 색 불변).
+- **사용자 질문 "배경 색상 다양하게 랜덤 맞지?" 답변**: 네, 다양하게 나옵니다 — 정확히는 매번 바뀌는 완전 랜덤이 아니라 계정 id 해시로 8색 팔레트에서 고르는 방식(v3.181)입니다. 사용자끼리는 색이 다양하게 갈리되 **같은 기획사는 언제 봐도 항상 같은 색** — 볼 때마다 색이 바뀌면 "내 기획사 색" 식별성이 사라지고 리렌더마다 색이 튀므로, 랜덤처럼 다양하되 결정적인 현 방식을 유지했고, 이 규칙이 안 닿던 두 곳을 이번에 통일했습니다.
+
+**B. 디렉터 대화 뒤로가기**
+- DialogueScreen(+ 대화의 연장인 LyricsInput·ComposerInput)에 useFocusEffect로 Studio 탭 헤더 headerLeft에 arrow-left 주입, blur/unmount 시 undefined 복원(미복원 시 Map 복귀 후 화살표 잔존 — MapScreen effect deps 불변 함정 방어). 아이콘 스펙은 stackHeader 관행 동일.
+
+**C. 엔터명 마퀴**
+- MapScreen 헤더 타이틀: winW 기반 명시 폭(`max(90, winW - 로그인 260/비로그인 150)`) 안에 기존 Marquee(v3.192) 재사용 — 넘칠 때만 흐르고 짧으면 정적. ⓘ 도움말 아이콘은 마퀴 밖 고정(항상 같은 자리 탭 가능). winW는 useWindowDimensions라 회전에도 반응(deps 포함).
+
+**D. 선택값 편집 아이콘**
+- LyricsInput: 재선택 기능은 기존(v3.110) — user 버블에 Feather edit-2 11px 아이콘 추가(VideoDirector v3.182 스펙 동일). 선택지 스텝에만 노출(자유입력 답변은 재선택 비대상이라 미표시).
+- ComposerInput: 수정 기능 자체가 없어 아이콘만 붙이면 거짓 어포던스 → LyricsInput 재선택 패턴 이식(+156줄): step 기록·버블 탭·재선택 모달(장르/분위기/보컬 3스텝, 자유입력 2종 제외)·아이콘. store 반영은 processAnswer와 동일 매핑(genre/mood는 store+로컬, vocal은 로컬 — 최종 프롬프트는 완료 시점 state 조립이라 정합).
+
+### 3. 편차 3건 (tester 전부 승인)
+1. **ComposerInput `!isComplete` 게이트**: 완료 후에는 프롬프트가 이미 클로저로 조립·저장돼 수정이 반영될 경로가 없음 → 완료 후 재선택 차단+아이콘 숨김(거짓 어포던스 방지).
+2. **userText `flexShrink:1`**: 버블 row 배치 전환에 따라 긴 자유입력 답변이 버블 밖으로 밀리는 것 방지(Yoga 기본 0).
+3. **back 라벨 이원화**: Dialogue는 "작업실로 돌아가기", LyricsInput/ComposerInput은 "뒤로"(스택 관행) — 접근성 문맥 반영.
+
+### 4. 테스트
+- unit 9/9 PASS, FAIL 0. tsc 0건. 안전 분류기 미검토 공백은 tester가 diff 전량 열람으로 보완 — 수상 코드 혼입 없음.
+- planner 최종 diff 검수: 9파일 전량 확인 — ① reselect store 반영이 processAnswer와 정확히 동일 매핑 ② headerLeft 주입/복원 순서(blur 정리→focus 주입) 안전 ③ MapScreen winW 반응성 확인. 지적 사항 없음.
+- **실기기 잔여**: ① 20자+ 기획사명 마퀴 흐름·우측 아이콘 침범 없음(360dp 포함) ② 대화→back→Map 복귀 후 화살표 잔존 없음(왕복 반복) ③ Dialogue→LyricsInput 연속 전환 시 headerLeft 유지 ④ 작곡 재선택 후 최종 프롬프트 값 반영 ⑤ 이미지 미설정 계정 아바타 색 일관성(재실행 포함). v3.191~198 스팟 회귀 포함.
+
+### 5. 특이사항
+- v3.198 미커밋 3파일(playerStore/MiniPlayer/PlaylistPickerSheet)과 무접점 확인 — 병행 커밋 시 스테이징 분리 가능.
+- ui/index.ts 1줄(barrel export)은 필연·최소 변경으로 커밋 포함.
+- 이모지 금지 방침 준수(Feather 벡터), 민감정보 미기록.
+
+### 판정: **승인** (커밋 가능 — 실기기 잔여 5건은 배포 전 확인 조건)
+- 커밋 메시지 제안:
+  `feat: v3.199 작업실 UX 4종 — 기획사 이니셜 아바타 통일(seed 팔레트 export·설정/기획사프로필/채널)·디렉터 대화 3화면 헤더 뒤로가기 주입/복원·엔터명 maxWidth+마퀴(ⓘ 고정)·선택 답변 edit-2 아이콘+작곡 재선택 이식 (team-dev)`
+- 스테이징(2_housing/): components/ui/Avatar.tsx, components/ui/index.ts, screens/SettingsScreen.tsx, screens/AgencyProfileScreen.tsx, screens/UserChannelScreen.tsx, screens/DialogueScreen.tsx, screens/LyricsInputScreen.tsx, screens/ComposerInputScreen.tsx, screens/MapScreen.tsx + 산출물(PLAN/REPORT/TESTPLAN) — v3.198 사이클 3파일은 제외할 것.

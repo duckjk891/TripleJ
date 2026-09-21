@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import {
   StyleSheet,
   View,
@@ -119,6 +121,29 @@ export default function LyricsInputScreen({ navigation }: Props) {
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
   useEffect(() => { store.setStyle(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const [reselectStep, setReselectStep] = useState<number | null>(null);
+
+  // v3.199(B): "디렉터와 이야기하는 중"의 연장 — Studio 탭 헤더에 back 주입(DialogueScreen 동일 패턴).
+  // goBack만 수행(확인 팝업은 과설계 — chatHistory는 로컬 state라 이탈 시 초기화됨을 아는 동작).
+  // cleanup 필수: 미복원 시 Map 복귀 후에도 화살표 잔존(MapScreen useLayoutEffect deps 불변).
+  useFocusEffect(
+    useCallback(() => {
+      const parent = navigation.getParent();
+      parent?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={{ marginLeft: 12 }}
+            accessibilityLabel="뒤로"
+          >
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+      return () => {
+        parent?.setOptions({ headerLeft: undefined });
+      };
+    }, [navigation])
+  );
 
   useEffect(() => {
     setTimeout(() => {
@@ -319,6 +344,11 @@ export default function LyricsInputScreen({ navigation }: Props) {
               >
                 {msg.text}
               </AppText>
+              {/* v3.199(D): 재선택 가능 답변(선택지 스텝)에만 편집 어포던스 — VideoDirector :411 스펙 동일.
+                  자유입력 답변은 재선택 모달 비대상(no-op)이라 미표시(거짓 어포던스 금지) */}
+              {msg.type === 'user' && msg.step != null && STEPS[msg.step]?.choices?.length ? (
+                <Feather name="edit-2" size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 6 }} />
+              ) : null}
             </TouchableOpacity>
           </View>
         ))}
@@ -480,6 +510,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent.primary,
     borderBottomRightRadius: 4,
     alignSelf: 'flex-end',
+    // v3.199(D): 텍스트+편집 아이콘 row 배치 (VideoDirector bubbleUser 관행)
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   messageText: {
     fontSize: 15,
@@ -490,6 +523,7 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: colors.text.primary,
+    flexShrink: 1, // v3.199(D): row 배치에서 긴 자유입력 답변이 버블 밖으로 밀리지 않게(Yoga 기본 0)
   },
   inputArea: {
     borderTopWidth: 1,

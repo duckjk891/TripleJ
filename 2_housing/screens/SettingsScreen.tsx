@@ -33,7 +33,7 @@ import AuthPanel from '../components/auth/AuthPanel';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS, CONSENT_VERSION } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
-import { AppText } from '../components/ui';
+import { AppText, seedColor } from '../components/ui';
 
 // v3.92(A-18): 인구통계 선택지 — MAIDOL backend user.py GENDERS/REGIONS 계약값 그대로
 const GENDER_OPTIONS: Array<{ value: 'male' | 'female' | 'other' | null; label: string }> = [
@@ -460,7 +460,8 @@ export default function SettingsScreen({ navigation }: any) {
             disabled={avatarBusy}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
-            <View style={styles.avatarCircle}>
+            {/* v3.199(A): 이미지 없는 폴백 배경 = 고정 보라 → Avatar 공용 seed 팔레트(계정별 상이·결정적) */}
+            <View style={[styles.avatarCircle, !user.profile_image && { backgroundColor: seedColor(String(user.id), user.nickname) }]}>
               {avatarBusy ? (
                 <ActivityIndicator color={colors.text.primary} />
               ) : user.profile_image ? (

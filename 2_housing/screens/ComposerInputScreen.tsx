@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import {
   StyleSheet,
   View,
@@ -9,6 +11,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -21,6 +24,7 @@ const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 interface ChatMessage {
   type: 'director' | 'user';
   text: string;
+  step?: number; // v3.199(D): user 메시지에만 — 탭 시 해당 step 재선택(LyricsInput 패턴 이식)
 }
 
 interface StepConfig {
@@ -73,6 +77,30 @@ export default function ComposerInputScreen({ navigation }: Props) {
   const [vocal, setVocal] = useState('');
   const [styleDesc, setStyleDesc] = useState('');
   const [referenceStyle, setReferenceStyle] = useState('');
+  // v3.199(D): 재선택 모달 대상 스텝 (LyricsInput 패턴 이식 — 장르 0·분위기 1·보컬 2만, 3·4는 freeText)
+  const [reselectStep, setReselectStep] = useState<number | null>(null);
+
+  // v3.199(B): "디렉터와 이야기하는 중"의 연장 — Studio 탭 헤더에 back 주입(DialogueScreen 동일 패턴).
+  // goBack만 수행. cleanup 필수: 미복원 시 Map 복귀 후에도 화살표 잔존(MapScreen useLayoutEffect deps 불변).
+  useFocusEffect(
+    useCallback(() => {
+      const parent = navigation.getParent();
+      parent?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={{ marginLeft: 12 }}
+            accessibilityLabel="뒤로"
+          >
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+      return () => {
+        parent?.setOptions({ headerLeft: undefined });
+      };
+    }, [navigation])
+  );
 
   useEffect(() => {
     setTimeout(() => {
@@ -108,7 +136,7 @@ export default function ComposerInputScreen({ navigation }: Props) {
 
       const newHistory: ChatMessage[] = [
         ...chatHistory,
-        { type: 'user', text: answer },
+        { type: 'user', text: answer, step: currentStep },
         { type: 'director', text: '좋아요! 모든 준비가 끝났어요. 작곡을 시작해볼게요!' },
       ];
       setChatHistory(newHistory);
@@ -135,12 +163,50 @@ export default function ComposerInputScreen({ navigation }: Props) {
 
     const newHistory: ChatMessage[] = [
       ...chatHistory,
-      { type: 'user', text: answer },
+      { type: 'user', text: answer, step: currentStep },
       { type: 'director', text: nextQuestion },
     ];
     setChatHistory(newHistory);
     setStep(nextStep);
     setCustomInput('');
+  };
+
+  // v3.199(D): 이전 답변 재선택 (LyricsInput handleReselect/handleReselectChoice 이식)
+  const handleReselect = (targetStep: number) => {
+    // 자유 입력 스텝(스타일 3·참고 4)은 선택지가 없어 재선택 모달 대상이 아님
+    if (!STEPS[targetStep]?.choices?.length) return;
+    // 완료 후에는 최종 프롬프트가 완료 시점 로컬 state 클로저로 이미 조립·저장됨(setTimeout :117-124)
+    // — 수정이 프롬프트에 반영될 경로가 없어 허용하면 거짓 어포던스. 진행 중에만 허용.
+    if (step >= STEPS.length) return;
+    if (__DEV__) console.info('[ComposerInput] 답변 재선택 모달', { targetStep });
+    setReselectStep(targetStep);
+  };
+
+  const handleReselectChoice = (choice: string) => {
+    if (reselectStep == null) return;
+    // processAnswer 와 동일한 스텝 매핑 — 최종 프롬프트는 완료 시점 state로 조립되므로 정합
+    switch (reselectStep) {
+      case 0:
+        setGenre(choice);
+        store.setGenre(choice);
+        break;
+      case 1:
+        setMood(choice);
+        store.setMood(choice);
+        break;
+      case 2:
+        setVocal(choice);
+        break;
+    }
+    // 대화 기록에서 해당 user 메시지 텍스트만 교체
+    setChatHistory((prev) =>
+      prev.map((msg) =>
+        msg.type === 'user' && msg.step === reselectStep
+          ? { ...msg, text: choice }
+          : msg
+      )
+    );
+    setReselectStep(null);
   };
 
   const handleChoicePress = (choice: string) => {
@@ -182,7 +248,17 @@ export default function ComposerInputScreen({ navigation }: Props) {
                 <Image source={COMPOSER_PORTRAIT} style={styles.smallPortraitImage} />
               </View>
             )}
-            <View
+            {/* v3.199(D): user 버블 탭 → 재선택 (LyricsInput 패턴 이식). 선택지 스텝에만 아이콘·탭 활성 —
+                자유입력(3·4)·완료 후는 비대상(거짓 어포던스 금지) */}
+            <TouchableOpacity
+              activeOpacity={
+                msg.type === 'user' && msg.step != null && !!STEPS[msg.step]?.choices?.length && !isComplete
+                  ? 0.6
+                  : 1
+              }
+              onPress={() => {
+                if (msg.type === 'user' && msg.step != null) handleReselect(msg.step);
+              }}
               style={[
                 styles.messageBubble,
                 msg.type === 'user' ? styles.userBubble : styles.directorBubble,
@@ -196,7 +272,10 @@ export default function ComposerInputScreen({ navigation }: Props) {
               >
                 {msg.text}
               </AppText>
-            </View>
+              {msg.type === 'user' && msg.step != null && STEPS[msg.step]?.choices?.length && !isComplete ? (
+                <Feather name="edit-2" size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 6 }} />
+              ) : null}
+            </TouchableOpacity>
           </View>
         ))}
       </ScrollView>
@@ -255,6 +334,28 @@ export default function ComposerInputScreen({ navigation }: Props) {
           </View>
         </View>
       )}
+      {/* v3.199(D): 재선택 모달 (LyricsInput :402-419 이식) */}
+      <Modal visible={reselectStep != null} transparent animationType="fade" onRequestClose={() => setReselectStep(null)}>
+        <TouchableOpacity style={styles.reselectOverlay} activeOpacity={1} onPress={() => setReselectStep(null)}>
+          <View style={styles.reselectContainer}>
+            <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={styles.reselectOption}
+                  onPress={() => handleReselectChoice(choice)}
+                >
+                  <AppText style={styles.reselectOptionText}>{choice}</AppText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.reselectClose} onPress={() => setReselectStep(null)}>
+              <AppText style={styles.reselectCloseText}>취소</AppText>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -315,6 +416,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent.primary,
     borderBottomRightRadius: 4,
     alignSelf: 'flex-end',
+    // v3.199(D): 텍스트+편집 아이콘 row 배치 (VideoDirector bubbleUser 관행)
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   messageText: {
     fontSize: 15,
@@ -325,6 +429,7 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: colors.text.primary,
+    flexShrink: 1, // v3.199(D): row 배치에서 긴 자유입력 답변이 버블 밖으로 밀리지 않게(Yoga 기본 0)
   },
   inputArea: {
     borderTopWidth: 1,
@@ -391,6 +496,47 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: colors.text.primary,
     fontWeight: 'bold',
+    fontSize: 14,
+  },
+  // v3.199(D): 재선택 모달 스타일 (LyricsInput 이식)
+  reselectOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reselectContainer: {
+    backgroundColor: colors.bg.surface1,
+    borderRadius: 16,
+    padding: 20,
+    width: '85%',
+    maxHeight: '60%',
+  },
+  reselectTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.text.primary,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  reselectOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: colors.bg.deepest,
+    marginBottom: 6,
+  },
+  reselectOptionText: {
+    color: colors.text.secondary,
+    fontSize: 14,
+  },
+  reselectClose: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  reselectCloseText: {
+    color: colors.text.secondary,
     fontSize: 14,
   },
 });

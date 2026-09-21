@@ -12,7 +12,7 @@ export { default as SectionHeader } from './SectionHeader';
 export type { SectionHeaderProps } from './SectionHeader';
 export { default as Tag } from './Tag';
 export type { TagProps } from './Tag';
-export { default as Avatar } from './Avatar';
+export { default as Avatar, seedColor } from './Avatar';
 export type { AvatarProps } from './Avatar';
 export { default as ScreenLayout } from './ScreenLayout';
 export type { ScreenLayoutProps } from './ScreenLayout';

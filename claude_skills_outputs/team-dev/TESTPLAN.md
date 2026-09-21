@@ -1259,3 +1259,159 @@
 **게이트 판정: 조건부 PASS** — v3.198 구현 자체(A·B·C·D)는 unit 6/7 + api 3/3 전부 충족. 유일 결격은 U-6 스코프 혼입 2건(App.tsx lineHeight·ChartScreen 기본 탭 — 기능 무해하나 격리 원칙 위반). **커밋 시 3파일(stores/playerStore.ts·components/MiniPlayer.tsx·components/PlaylistPickerSheet.tsx) 명시 스테이징으로 분리하면 즉시 PASS** — App.tsx·ChartScreen 2건은 별도 커밋(자체 승인 절차) 또는 revert 처리. app.json 버전 보류는 계획 편차 기록(스테이징 목록에서 제외).
 
 **실기기 잔여(APK)**: E-1(콜드 스타트 미노출+큐 생존) / E-2(노출·닫기·로그아웃/재로그인·재시작 4경로) / E-3(비행기모드·BT — 실측 필수) / E-4(Android 키보드 3회 개폐 간격 0 + iOS 무변경 + Report/Appeal/AlbumCreate 스팟) / E-5(카카오 디버거 캐시 초기화 → 카톡 카드·CTA·코드복사·aidol:// — API-3 ④ 선행 필수).
+
+---
+
+## v3.199 — 수정일 2026-09-21
+
+> 대상: PLAN.md v3.199 — 작업실 UX 4종. (A) Avatar seed 팔레트 통일: `components/ui/Avatar.tsx` seedColor(:22-27, FALLBACK_PALETTE 8색 :17-20) named export 승격 → `screens/SettingsScreen.tsx` 폴백 배경(:463-470 폴백 분기, avatarCircle 고정 `colors.accent.primary` :938-946) 팔레트 교체 + `screens/AgencyProfileScreen.tsx` profileBox(:153-171)에 Avatar(64) 폴백 이니셜 신설 + `screens/UserChannelScreen.tsx:238` `seed={authorId}` 1줄. (B) `screens/DialogueScreen.tsx`·`LyricsInputScreen.tsx`·`ComposerInputScreen.tsx` — useFocusEffect로 부모 탭 헤더 headerLeft back 주입 + blur/unmount 시 `headerLeft: undefined` 복원(MapScreen:283이 기본값). (C) `screens/MapScreen.tsx:261-287` headerTitle — `useWindowDimensions` 기반 `nameMaxWidth = Math.max(90, winW - (user ? 260 : 150))` 명시 폭 View + `components/Marquee.tsx`(무수정, container `width:'100%'` :82라 부모 명시 폭 필수) + ⓘ는 마퀴 밖 고정, deps에 winW 추가. (D) `screens/LyricsInputScreen.tsx` user 버블 edit-2 아이콘 조건부 렌더(기준: VideoDirectorScreen:411 — `size={11} color="rgba(255,255,255,0.7)" marginLeft:6`, 동작 :188-223은 기존) + `screens/ComposerInputScreen.tsx` 재선택 기능 이식(step 기록·버블 TouchableOpacity·handleReselect/handleReselectChoice 스텝 0~2·모달·아이콘).
+> 실행 환경 관행(v3.191~198 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 정적 대체 병기 + 실기기 실측 이관. 앱 코드 경로 `/Users/pearl/TripleJ/2_housing`, 라인 번호는 **변경 전** 실측 기준(적용 후 이동 허용 — 앵커 문자열로 재탐색). 백엔드 무변경 — [api] 0건. 검증 증적에 실계정 토큰·이메일·개인 식별 정보 기재 금지(계정은 "계정A/계정B" 익명 표기).
+> 변경 허용 파일(격리 기준): `components/ui/Avatar.tsx`, `screens/SettingsScreen.tsx`, `screens/AgencyProfileScreen.tsx`, `screens/UserChannelScreen.tsx`, `screens/DialogueScreen.tsx`, `screens/LyricsInputScreen.tsx`, `screens/ComposerInputScreen.tsx`, `screens/MapScreen.tsx` 8개(+ 커밋 관례상 버전 표기는 커밋 메시지 — app.json 갱신 시 계획 편차 기록). **v3.198 미커밋 3파일(`stores/playerStore.ts`·`components/MiniPlayer.tsx`·`components/PlaylistPickerSheet.tsx`) 및 backend 무접촉 필수**(§U-8 기준선 스냅숏 판정). `components/Marquee.tsx`·`screens/VideoDirectorScreen.tsx`·`App.tsx` diff 0. 그 외 콘텐츠 diff는 FAIL.
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.199 A~D 전부 적용된 워킹트리(v3.198 미커밋분 포함 상태 그대로).
+- When: `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. (seedColor named export 시그니처, useFocusEffect 콜백 타입, ComposerInput ChatMessage `step?: number` 확장, useWindowDimensions 전부 통과.)
+
+**U-2. seedColor 결정성 + 8색 분산 + 알고리즘 불변 [unit]**
+- Given: seedColor는 v3.181부터 "같은 계정 = 언제나 같은 색"이 스펙의 본질 — export 승격 과정에서 해시식·팔레트가 1글자라도 바뀌면 **기존 전 사용자의 색이 조용히 전부 바뀐다**(렌더 테스트는 전부 통과하면서 식별성만 파괴되는 최악 회귀).
+- When: ① `components/ui/Avatar.tsx` diff가 **`export` 키워드 추가(또는 동등한 named export 구문)뿐**인지 — FALLBACK_PALETTE 8항목 hex값·순서(:17-20), 해시식 `h * 31 + charCodeAt >>> 0`·`h % length`(:22-27), 이니셜 로직(:33) diff 0. ② 결정성·분산 실측(정적 대체 겸용): 스크래치에서 `node -e` 원라이너로 seedColor 로직 복사 실행 — 같은 입력 100회 호출 결과 동일(결정성), 서로 다른 seed 40개(예: user1~user40)가 **8색 전부에 최소 1회씩 분포**(분산 — 7색 이하만 나오면 해시/모듈로 변형 의심으로 ①로 회귀 판정). ③ `grep -rn "seedColor" screens/ components/` — import처가 SettingsScreen 1곳(+Avatar 내부)뿐인지, 각 호출이 `seedColor(user.id, user.nickname)` 형태로 **seed 우선·name 폴백** 인자 순서를 지키는지(인자 역순이면 닉네임 변경 시 색 변경 — v3.181 취지 위반 FAIL).
+- Then: ①~③ 전부 충족.
+
+**U-3. A 두 화면 배선 + UserChannel seed 1줄 [unit]**
+- Given: 구멍 2곳(AgencyProfile 아바타 부재 / Settings 고정 단색) + 소소 1건(UserChannel seed 미전달).
+- When/Then (앵커 재탐색 기준):
+  - ① **AgencyProfileScreen**: profileBox 내 companyLabel **위** 중앙에 `<Avatar name={uploaderNickname} seed={uploaderId || uploaderNickname} size={64} />` — Avatar는 `components/ui` 공용 import(신규 컴포넌트·인라인 재구현 발견 시 FAIL — PLAN이 재사용 명시). uploaderId 부재(구형 곡) 시 uploaderNickname 폴백 배선 확인.
+  - ② **SettingsScreen**: avatarCircle 배경이 **폴백 분기에서만** `seedColor(user.id, user.nickname)` — 판정 3점: ⓐ `user.profile_image` 있는 경우 이미지 렌더 경로 diff 0(이미지 위 배경색은 클리핑돼 무해하나 Image 분기 로직 변형은 FAIL) ⓑ avatarBusy 스피너·avatarEditBadge 구조 diff 0(자체 구현 유지가 스펙 — Avatar 컴포넌트 통째 교체 발견 시 범위 초과 FAIL) ⓒ 정적 StyleSheet의 `backgroundColor: colors.accent.primary`(:941)가 제거되거나 인라인 style로 오버라이드되는지 — StyleSheet에 남긴 채 인라인 미적용이면 고정 보라 잔존 FAIL.
+  - ③ **UserChannelScreen:238**: `seed={authorId}` 추가 — 해당 화면의 authorId 변수 실존(다른 이름이면 앵커 재탐색), 그 외 props(uri·name·size 80) diff 0.
+- Then: ①~③ 전부 충족.
+
+**U-4. B headerLeft 주입/복원 쌍 — 3화면 × (focus 주입 + blur 복원) [unit]**
+- Given: 탭 헤더는 MapScreen useLayoutEffect(:261-287)가 소유하며 `headerLeft: undefined`(:283)가 기본 형상. **함정**: Map 복귀 시 MapScreen useLayoutEffect는 deps(`navigation, user?.company_name, user, showTutorial`) 불변이면 재실행되지 않는다 → 자식 화면의 blur cleanup이 **유일한 복원 경로**. cleanup 누락 시 컴파일·주입 데모 전부 통과하고 화살표만 영구 잔존한다.
+- When: `grep -n "headerLeft\|useFocusEffect\|getParent" screens/DialogueScreen.tsx screens/LyricsInputScreen.tsx screens/ComposerInputScreen.tsx` 후 화면별 판정 —
+  - ① **주입**: 각 화면에 `useFocusEffect(useCallback(...))` 내 `navigation.getParent()?.setOptions({ headerLeft: () => <TouchableOpacity onPress={goBack} ...><Feather name="arrow-left" size={22} .../></TouchableOpacity> })` — 아이콘 arrow-left·size 22·marginLeft 12·accessibilityLabel(stackHeader 관행) 확인. `useCallback` 래핑 없으면 매 렌더 setOptions 재호출 — 동작은 하나 기록(FAIL 아님).
+  - ② **복원(핵심 FAIL 게이트)**: 각 useFocusEffect 콜백이 **cleanup 함수를 return**하고 그 안에서 `parent?.setOptions({ headerLeft: undefined })` — **3화면 각각 주입 1 : 복원 1 쌍이 1:1 대응**. 쌍이 하나라도 깨지면(주입만 있고 return 없음 / cleanup이 빈 함수 / headerLeft가 아닌 다른 키 복원) **잔존 화살표 = 즉시 FAIL**. `null` 복원도 FAIL(MapScreen 기본형은 `undefined` — null은 react-navigation에서 "headerLeft 없음 강제"로 의미가 다름, 문자 그대로 undefined 확인).
+  - ③ **화면 내 오버레이 버튼 부재**: 절대배치 back 버튼 추가 발견 시 설계 불일치 기록(PLAN §2 비권장 명시).
+  - ④ **탭 재탭 리셋 무회귀**: App.tsx:369-372 리스너 diff 0(App.tsx 자체가 허용 파일 밖 — U-8과 교차).
+- Then: ①·② 3화면 전부 + ③·④ 충족.
+
+**U-5. C 헤더 엔터명 — 명시 폭 + Marquee + ⓘ 밖 고정 [unit]**
+- Given: Marquee container는 `width:'100%'`(:82)라 부모 명시 폭 없이는 측정이 무의미(bottom-tabs headerTitle 컨테이너는 폭 제약이 느슨). ⓘ가 마퀴 안으로 들어가면 긴 이름에서 텍스트와 함께 흘러가 탭 불가 지점이 생긴다.
+- When: MapScreen.tsx headerTitle 렌더부 판정 —
+  - ① `useWindowDimensions()` 사용 + `nameMaxWidth` 계산에 **하한 `Math.max(90, …)`** 존재(근사 상수 260/150은 ±30 허용 — 판정은 수식이 아니라 E-3 비침범 실측이 최종, 하한 부재만 정적 FAIL: 소형 기기에서 폭 0 이하 → 마퀴 미렌더).
+  - ② 엔터명이 `<View style={{ width: nameMaxWidth }}><Marquee text={user?.company_name || '작업실'} style={{ fontSize:17, fontWeight:'700', ... }} /></View>` — 기존 `numberOfLines={1}` Text 직렌더 제거, **명시 width**(maxWidth 단독이면 Marquee '100%'가 내용폭 기준이 돼 측정 불안정 — width 고정 확인).
+  - ③ **ⓘ TouchableOpacity가 마퀴 View 형제 노드**(같은 row, gap 6) — Marquee의 text prop이나 자식으로 들어가 있으면 FAIL. hitSlop·onPress(setShowTutorialHint/setShowTutorial) diff 0.
+  - ④ useLayoutEffect deps 배열에 winW(또는 useWindowDimensions 반환값) 추가 — 미추가 시 회전/폴드 전개에서 stale 폭(기록, 실기기 회전 실측 이관).
+  - ⑤ headerTitleAlign 'left'·headerRight `<HomeHeaderActions />`·headerLeft: undefined 기본형 diff 0(B의 주입은 자식 화면 소관 — MapScreen 자체에 headerLeft 렌더 함수가 생기면 소유권 혼선 FAIL).
+  - ⑥ `git diff -- components/Marquee.tsx` **0건**(PlayerScreen 제목 등 공용 — v3.192 측정판·v3.159 center 정렬 무회귀를 diff 0으로 포섭).
+- Then: ①~⑥ 전부 충족(④는 기록 허용).
+
+**U-6. D LyricsInput — edit-2 조건부 렌더 [unit]**
+- Given: 재선택 **동작**(:188-223)과 모달은 기존 완성분 — 이번 diff는 어포던스(아이콘)뿐이어야 한다. 자유입력 답변은 :189-190 no-op이므로 아이콘이 붙으면 "탭해도 무반응" 거짓 어포던스.
+- When: ① user 버블 내 `<Feather name="edit-2" size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 6 }} />` — VideoDirector:411 스펙과 **속성 단위 동일**(size·color·margin 상이하면 기록, 아이콘명 상이는 FAIL). ② 노출 조건이 `msg.type === 'user' && msg.step != null && STEPS[msg.step]?.choices?.length` 와 논리 동치 — 진리표 3행: ⓐ 선택 답변(step 有·choices 有) → 표시 ⓑ 자유입력 답변(choices 無 또는 length 0) → **미표시**(표시되면 FAIL) ⓒ director 메시지 → 미표시. ③ 버블 내부 row 배치(텍스트+아이콘 alignItems center) — 아이콘이 텍스트 줄바꿈을 유발하지 않는 구조. ④ 기존 handleReselect/handleReselectChoice(:188-223)·재선택 모달·onPress 조건(:307) diff 0(동작부를 건드리면 v3.110 매핑 회귀면 확대 — U-9로 승격).
+- Then: ①~④ 충족(②는 3행 전부).
+
+**U-7. D ComposerInput — 재선택 이식 실동작 배선 [unit]**
+- Given: 변경 전 user 버블은 plain View(:185-199)로 탭 불가·수정 기능 부재. **아이콘만 붙이고 핸들러 미배선이면 거짓 어포던스 = 즉시 FAIL**(사용자가 이미 "선택하면 수정할 수 있잖아"로 오인 중인 지점 — 이 항목의 존재 이유).
+- When/Then:
+  - ① **step 기록**: ChatMessage 타입에 step 필드 + user push 지점(변경 전 :111·:138 앵커)에서 현재 스텝 기록 — 기록 없이는 어느 답변을 수정할지 식별 불가.
+  - ② **탭 배선**: user 버블이 TouchableOpacity(또는 Pressable)로 전환되고 `onPress`가 **handleReselect(msg.step)를 실제 호출** — onPress가 빈 함수·console.log·TODO면 FAIL. director 버블은 비터치 유지.
+  - ③ **핸들러 실체**: handleReselect가 스텝 0(genre)·1(mood)·2(vocal)만 모달 오픈, **3·4(freeText)는 no-op**(choices 부재 가드) — LyricsInput :189-190 패턴 동형. handleReselectChoice가 ⓐ 해당 로컬 state(genre/mood/vocal) 갱신 ⓑ chatHistory 내 해당 user 버블 텍스트 갱신 **양쪽 모두** — state만 갱신하면 화면 버블이 옛값(시각 불일치), chatHistory만 갱신하면 최종 프롬프트가 옛값(**기능 불일치 — 완료 시점 조립 :118-123이 state 기준이므로 이쪽이 치명**). 한쪽 누락 = FAIL.
+  - ④ **모달**: LyricsInput 모달(:402-419)·styles 이식 — 열림 조건·choices 소스가 ComposerInput STEPS 기준인지(LyricsInput STEPS를 잘못 참조하면 작사 선택지가 뜨는 오배선 — grep으로 STEPS 참조 대상 확인).
+  - ⑤ **아이콘**: U-6 ①·② 동일 스펙·동일 조건식(스텝 0~2 답변만 표시, 자유입력 2종 미표시).
+  - ⑥ **VideoDirectorScreen.tsx diff 0**(기준 화면 무변경 — v3.182 무회귀를 diff 0으로 포섭).
+- Then: ①~⑥ 전부 충족.
+
+**U-8. diff 격리 — v3.198 미커밋 3파일 기준선 스냅숏 판정 [unit]**
+- Given: **워킹트리가 이미 dirty 상태로 착수한다**(v3.198 합격분 3파일 미커밋 — 착수 시점 실측 확인됨). 따라서 `git status`/`git diff` 단독으로는 v3.198분과 v3.199 혼입을 구분할 수 없다 — 기준선 스냅숏이 유일한 판정 수단.
+- When: ① **착수 전**(app-dev 첫 수정 전) `git diff -- stores/playerStore.ts components/MiniPlayer.tsx components/PlaylistPickerSheet.tsx | shasum` 기준선 캡처(오케스트레이터 또는 tester 선행 절차 — 누락 시 차선책: v3.198 실행 결과표의 합격 형상 앵커와 hunk 단위 대조). ② **완료 후** 동일 명령 재실행 — 해시 일치 = 무접촉 확증. **불일치 = 즉시 FAIL**(v3.198 합격 형상 오염 — v3.198 U-2~U-5 전체 재실행 승격). ③ `git status --short` + `git diff --stat`(2_housing 스코프): 콘텐츠 diff가 v3.198 3파일 + **허용 8파일**뿐인지. `components/Marquee.tsx`·`screens/VideoDirectorScreen.tsx`·`App.tsx`·`components/ui/index.ts`(Avatar 이미 export 시) 및 그 외 일체 diff 0 — **v3.198 U-6에서 검출된 기존 혼입 2건(App.tsx lineHeight·ChartScreen 기본 탭)이 아직 워킹트리에 남아 있으면 v3.199 위반으로 오판하지 말고 v3.198 잔여 처리 소관으로 분리 판정**(단 v3.199 커밋에 혼입되면 FAIL). ④ backend 디렉토리 무접촉. ⑤ 커밋 시 허용 8파일 명시 스테이징(v3.198 3파일과 별도 커밋 — 한 커밋 혼합 시 격리 원칙상 분리 요구).
+- Then: ①~⑤ 전부 충족.
+
+**U-9. v3.191~198 무회귀 — 접촉 파일 라인 단위 [unit]**
+- Given: 이번 접촉 8파일 중 이력 중첩 지점 — Avatar.tsx(v3.181 팔레트), SettingsScreen(v3.92 이미지 업로드/삭제·클리핑), MapScreen(v3.75 헤더 액션·튜토리얼 ⓘ), LyricsInput(v3.110 스텝 매핑), Marquee 소비처(v3.192·v3.159).
+- When/Then (앵커 문자열 재탐색):
+  - ① **v3.92**: SettingsScreen 아바타 업로드 핸들러·삭제·`overflow:'hidden'` 클리핑 주석 라인 diff 0(배경색 라인 제외).
+  - ② **v3.181**: U-2 ①로 포섭(해시·팔레트 불변) + 기존 Avatar 적용처(DmChatScreen:164·DmInboxScreen:145,242·TrackComments:128,171·FeedCard:325) diff 0.
+  - ③ **v3.75/튜토리얼**: MapScreen headerRight HomeHeaderActions·showTutorial 상태 배선·튜토리얼 오버레이 diff 0(U-5 ⑤ 교차).
+  - ④ **v3.110**: LyricsInput STEPS 정의·handleReselectChoice 내 스텝→state 매핑 diff 0(U-6 ④ 교차).
+  - ⑤ **v3.192/v3.159**: Marquee.tsx diff 0(U-5 ⑥)으로 PlayerScreen 제목 마퀴·center 정렬 무회귀 포섭 — PlayerScreen.tsx 자체도 diff 0(허용 파일 밖).
+  - ⑥ **v3.198(병행 사이클)**: U-8 ①② 해시 판정으로 포섭 — 별도 라인 검증 불요.
+  - ⑦ **B 신규 3화면 침투면**: DialogueScreen diff가 useFocusEffect 블록(+필요 import)뿐인지 — 대화 진행 로직(:224·:262 navigate 분기, :244 goBack)·타이핑 연출 diff 0. LyricsInput·ComposerInput도 각각 B(헤더)·D(아이콘/이식) 외 diff 0.
+  - 위반 시 해당 버전 TESTPLAN 항목 재실행으로 승격.
+
+### [e2e] 핵심 여정 (정적 대체 병기 · 실기기 이관)
+
+**E-1. A — 아바타 팔레트 여정 [e2e] — 실기기(APK) 이관**
+- Given: 프로필 이미지 미설정 계정A·계정B(색 대조용, 익명 표기) + 이미지 설정 계정C + 구형 곡(uploader_id 없음) 1곡.
+- When/Then: ① 계정A 설정 화면 — 아바타가 이니셜+**팔레트색**(고정 보라 `#7C5CBF`가 아닐 수도, 우연히 그 색일 수도 — 판정은 "계정B와 상이" + 재실행 불변으로) ② 앱 완전 재시작 2회 — 같은 색 유지(결정성 실측) ③ 구형 곡 Player → 기획사명 탭 → AgencyProfile: 이니셜 아바타(64) 노출(변경 전 = 아무것도 없음) ④ 계정A의 UserChannel·피드·DM·댓글 아바타가 **전부 같은 색**(seed 통일 실측 — UserChannel만 다르면 U-3 ③ 오배선) ⑤ 계정C: 이미지 그대로 + 업로드/삭제 1사이클(v3.92 무회귀) ⑥ 닉네임 변경 후에도 색 불변(seed=id 우선 실증).
+- 정적 대체: U-2 ②(node 결정성·분산 실측) + U-3 + U-9 ①②.
+
+**E-2. B — 디렉터 대화 back 여정 [e2e] — 실기기 이관**
+- Given: 로그인 상태, 작업실 탭.
+- When/Then: ① 디렉터 탭 → 대화 진입: 탭 헤더 좌측 화살표 노출 → 탭 → Map 복귀 ② **복귀 직후 헤더 좌측 화살표 잔존 없음**(cleanup 실증 — 잔존 시 즉시 FAIL, 본 여정의 핵심 판정) ③ Android HW back으로도 동일(복귀+잔존 없음) ④ 대화 → 작사 입력 → 작곡 입력 순 연속 전환 후 Map 복귀 — 최종 상태 화살표 없음(3화면 주입/복원 쌍 연쇄 — 전환 순서 레이스 실측) ⑤ 하단 작업실 탭 재탭 리셋 무회귀 ⑥ 작사/작곡 화면 각각 화살표 탭 back 동작(확인 팝업 없이 즉시 — 스펙).
+- 정적 대체: U-4(3쌍 배선) — 단 ④의 화면 간 연속 전환 시 focus/blur 발화 순서는 정적 판정 불가, 실측 필수.
+
+**E-3. C — 긴 엔터명 마퀴 여정 [e2e] — 실기기 이관(360dp 소형 포함)**
+- Given: 기획사명 3종 — 짧은 이름(4자) / 20자+ 긴 이름("○○○○○○○○○○ 엔터테인먼트" 자동 접미 포함) / 비로그인.
+- When/Then: ① 짧은 이름: 정적 표시(흐르지 않음) + ⓘ 탭 → 튜토리얼 토글 정상 ② 긴 이름: 텍스트 흐름 + **우측 6요소(별 배지·출석·초대·알림·DM·마이페이지) 침범/겹침 없음** + ⓘ가 흐르지 않고 고정 위치에서 탭 가능 ③ 360dp 소형 기기(또는 해상도 축소): 이름 영역 최소폭 확보(하한 90px — 마퀴 미렌더/음수 폭 없음) ④ 비로그인: '작업실' 정적 표시 ⑤ 화면 회전(지원 시): 폭 재계산 ⑥ PlayerScreen 긴 제목 마퀴 무회귀(v3.192 흐름 + v3.159 짧은 제목 center).
+- 정적 대체: U-5 + U-9 ⑤. 겹침·흐름 판정은 육안 실측 필수(정적으로는 근사 상수의 타당성만 확인).
+
+**E-4. D — 선택값 수정 여정 (작사·작곡) [e2e] — 실기기 이관**
+- Given: 작사·작곡 각 1회 대화 완주 준비.
+- When/Then: ① 작사: 선택형 답변 버블에만 연필 표시, 자유입력 답변엔 미표시 → 선택형 버블 탭 → 재선택 모달 → 다른 값 선택 → 버블 텍스트 즉시 갱신 + 이후 생성 결과에 새 값 반영(v3.110 매핑 무회귀) ② 작곡: 장르 답변 탭 → 재선택(**작곡 선택지가 뜨는지** — 작사 선택지면 U-7 ④ 오배선) → 분위기·보컬 동일 → **완료 시 최종 프롬프트에 수정값 반영**(state 갱신 실증 — 버블만 바뀌고 결과가 옛값이면 U-7 ③ ⓐ 누락) ③ 작곡 자유입력 2종(스텝 3·4): 연필 미표시 + 탭 무반응 아님이 아니라 **탭 자체가 비활성**(TouchableOpacity 조건 분기 확인) ④ 영상 디렉터: 기존 수정 흐름 1사이클(v3.182 무회귀 — 기준 화면 무변경 확증).
+- 정적 대체: U-6·U-7·U-9 ④ + VideoDirector diff 0(U-7 ⑥). 최종 프롬프트 반영은 완주 실측이 확실 — 정적으로는 조립부(:118-123) state 참조 확인까지.
+
+### 태그 집계
+- [unit] 9건 (U-1 tsc / U-2 seedColor 결정성·8색 분산·알고리즘 불변 / U-3 A 두 화면+UserChannel 배선 / U-4 B headerLeft 주입·복원 3쌍 / U-5 C 명시 폭+Marquee+ⓘ 밖 고정 / U-6 D LyricsInput 아이콘 조건부 / U-7 D ComposerInput 이식 실동작 / U-8 diff 격리 — v3.198 기준선 스냅숏 / U-9 v3.191~198 무회귀 라인 단위)
+- [api] 0건 (백엔드 무변경)
+- [e2e] 4건 (E-1 아바타 팔레트 / E-2 대화 back·잔존 없음 / E-3 긴 엔터명 마퀴·비침범 / E-4 선택값 수정 — 전 항목 정적 대체 병기 + 실기기 이관)
+
+### 설계 주의점 (tester·app-dev·오케스트레이터 참고)
+1. **U-8 기준선 스냅숏이 이번 사이클의 전제 조건**: 워킹트리가 v3.198 미커밋분으로 이미 dirty인 채 착수한다. app-dev 첫 수정 **전에** 3파일 diff 해시를 캡처하지 않으면 사후에 무접촉을 증명할 수단이 없다 — 오케스트레이터는 착수 지시와 동시에 캡처를 선행시킬 것. 캡처를 놓쳤다면 v3.198 실행 결과표의 합격 앵커(예: MiniPlayer `:28` 조건식, playerStore `:90` setSound)와 hunk 대조가 차선.
+2. **headerLeft 복원은 blur cleanup만이 경로**: MapScreen useLayoutEffect는 deps 불변이면 Map 복귀 시 재실행되지 않는다(:287 deps 실측). "Map이 돌아오면 어차피 덮어쓰겠지"는 성립하지 않으며, cleanup 누락은 정적 데모·단건 왕복에서도 우연히 통과할 수 있다 — 판정은 코드의 **return cleanup 존재**(U-4 ②)로, 실측은 **복귀 직후 잔존 없음**(E-2 ②)으로 이중화했다. 복원값은 `undefined` 문자 그대로 — `null`은 의미가 다르다.
+3. **3화면 연속 전환은 focus/blur 발화 순서 레이스**: Dialogue→LyricsInput 직행 시 이전 화면 blur cleanup과 다음 화면 focus 주입의 순서는 react-navigation 내부 사정이다. 최종 상태 판정("3화면 중 하나라도 focus면 화살표 있음, Map이면 없음")으로 설계했고 순서 자체는 판정하지 않는다 — E-2 ④가 이를 실측한다. 만약 중간에 화살표가 깜빡이는 프레임이 보이면 기록만(FAIL 아님).
+4. **seedColor는 "안 바뀐 것"이 합격**: export 승격이라는 한 단어짜리 diff가 스펙이다. 리팩터링 유혹(팔레트 확장·해시 개선)이 섞이면 전 사용자 색이 조용히 바뀐다 — U-2 ①이 hex값 단위로 못 박는 이유. 분산 실측(U-2 ②)은 40개 seed로 8색 전부 커버를 요구하는데, 31-곱 해시 특성상 충분히 나온다 — 안 나오면 분포 문제가 아니라 코드 변형을 의심할 것.
+5. **Settings는 색 함수만 재사용, 컴포넌트는 그대로**: 편집 배지·스피너 때문에 자체 구현 유지가 스펙(PLAN §1 방안 2). Avatar 컴포넌트로 통째 교체하면 배지 절대배치·클리핑(v3.92)이 연쇄로 흔들린다 — U-3 ② ⓑ가 범위 초과 FAIL로 잡는다. 또 StyleSheet 정적 색을 지우지 않고 인라인만 더하는 방식/지우고 인라인만 쓰는 방식 둘 다 허용이지만, **정적 색이 이기는 배치**(인라인이 스프레드 순서상 앞)면 고정 보라 잔존 — ⓒ의 취지.
+6. **UserChannel seed 추가는 1회성 색 변경을 유발**: 기존엔 name 해시였으므로, seed={authorId} 적용 직후 일부 사용자의 채널 아바타 색이 한 번 바뀐다. 이는 버그가 아니라 v3.181 정합화의 대가(이후 닉네임을 바꿔도 불변) — E-1 ④에서 "다른 화면과 색이 달라졌다"는 리포트가 오면 이 항목으로 설명하고 PASS 처리.
+7. **Marquee는 부모가 폭을 줘야 산다**: container `width:'100%'`(:82) 때문에 headerTitle처럼 폭 제약이 느슨한 자리에선 명시 width View가 필수다(U-5 ②). maxWidth만 주면 내용폭 기준으로 줄어들어 측정이 흔들린다. 근사 상수(260/150)는 실기기 겹침 실측(E-3 ②)이 최종 판정이고 정적으로는 하한 90만 FAIL 게이트 — 상수 숫자로 PASS/FAIL을 찍지 말 것.
+8. **ⓘ는 흐르면 안 되는 요소**: 마퀴 안에 넣으면 긴 이름에서 화면 밖으로 흘러가 튜토리얼 진입이 간헐 불가가 된다(재현이 어려운 유형의 버그). U-5 ③이 형제 노드 배치를 구조로 강제하고, E-3 ②가 "흐르는 중에도 ⓘ 고정 탭 가능"을 실측한다.
+9. **D의 두 화면은 판정 기준이 정반대**: LyricsInput은 동작이 이미 있으므로 "아이콘만 추가됐는지"(동작부 diff 0)가 합격이고, ComposerInput은 동작이 없으므로 "아이콘 전에 동작이 이식됐는지"가 합격이다. **아이콘만 이식된 ComposerInput = 거짓 어포던스 = 이번 사이클 유일의 즉사급 UX FAIL**(U-7 ②). 역으로 LyricsInput 동작부를 "개선"하는 diff도 FAIL(U-6 ④).
+10. **ComposerInput 수정은 state·chatHistory 양쪽 갱신이 정합 조건**: 최종 프롬프트는 완료 시점 state로 조립(:118-123)되므로 state 누락은 기능 버그(결과가 옛값), chatHistory 누락은 시각 버그(버블이 옛값)다. 정적(U-7 ③)은 양쪽 갱신 코드 존재를, 실측(E-4 ②)은 최종 프롬프트 반영을 본다 — 어느 한쪽만 통과하면 합격이 아니다.
+11. **증적의 민감정보 금지**: E-1의 계정 대조는 "계정A/계정B" 익명 표기로 기록하고, 스크린샷 증적에서 실닉네임·이메일·토큰이 노출되면 마스킹 후 첨부. node 실측(U-2 ②)의 seed 입력도 합성 문자열만 사용(실사용자 id 금지).
+
+### 실행 결과 — v3.199 (tester, 2026-09-21)
+
+> 기준선: HEAD 5f27144(v3.198 커밋 완료) — U-8의 "미커밋 3파일 스냅숏" 전제는 해소됨(3파일 diff 0 = 무접촉 동치 확증). tsc 0건 실측. 안전 분류기 미검토 전제로 diff 전수 열람 수행 — 수상 코드 혼입 없음(9파일 diff 전량이 UI 배선·스타일뿐, 네트워크/저장/외부 전송성 코드 無).
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 tsc | **PASS** | `npx tsc --noEmit` exit 0, 오류 0건 |
+| U-2 seedColor 불변·결정성·분산 | **PASS** | ① diff = `export` 키워드 + 주석 2줄뿐(팔레트 8 hex·`h*31+charCodeAt>>>0`·`h%length`·이니셜 diff 0) ② node 실측: 동일 입력 100회 동일, 합성 seed 40개 → 8색 전부 커버(8/8), seed 우선(name 무시)·name 폴백 확인 ③ import처 SettingsScreen 1곳뿐, `seedColor(String(user.id), user.nickname)` seed 우선 순서 준수 |
+| U-3 A 배선 | **PASS** | ① AgencyProfile: 공용 `components/ui` Avatar import, companyLabel 위 중앙 `name={uploaderNickname} seed={uploaderId \|\| uploaderNickname} size={64}`, uploaderId?: string 폴백 배선 ✓(avatarWrap 스타일 1건 추가 — 허용 범위) ② Settings: 인라인 조건부(`!user.profile_image`)로만 적용, Image 분기·avatarBusy 스피너·editBadge diff 0, StyleSheet 정적 색 잔존하나 RN 배열 스타일 후순위 인라인이 승리(ⓒ 충족) ③ UserChannel: `seed={authorId ? String(authorId) : undefined}`(스펙 동치·타입 안전), uri/name/size 80 diff 0 |
+| U-4 B 주입/복원 3쌍 | **PASS** | 3화면 전부 `useFocusEffect(useCallback(...))` 주입 + cleanup return에서 `headerLeft: undefined` 문자 그대로 복원(null 아님) — 1:1 쌍 완전. arrow-left·22·marginLeft 12·accessibilityLabel ✓. 오버레이 back 버튼 無. App.tsx 콘텐츠 diff 0(재탭 리스너 무접촉) |
+| U-5 C 명시 폭+Marquee+ⓘ | **PASS** | ① useWindowDimensions(:198) 기반, 하한 `Math.max(90,…)` 존재 ② `<View style={{width:nameMaxWidth}}><Marquee/></View>` — 기존 numberOfLines Text 제거, width 고정 ③ ⓘ는 마퀴 View의 형제 노드(row·gap 6), hitSlop/onPress diff 0 ④ deps에 nameMaxWidth(winW 파생) 추가 ✓ ⑤ headerLeft: undefined(:292)·headerRight·Align diff 0 ⑥ Marquee.tsx 콘텐츠 diff 0 |
+| U-6 D LyricsInput 아이콘 | **PASS** | ① edit-2 11px rgba(255,255,255,0.7) marginLeft 6 — VideoDirector:411 속성 단위 동일 ② 조건 `user && step!=null && STEPS[step]?.choices?.length` 삼항 — 진리표 3행 충족(자유입력·director 미표시) ③ userBubble row+alignItems center, userText flexShrink:1 ④ handleReselect/handleReselectChoice·모달·onPress 조건 diff 0 |
+| U-7 D ComposerInput 이식 | **PASS** | ① ChatMessage `step?: number` + user push 2지점 step 기록 ② user 버블 TouchableOpacity + onPress→handleReselect(msg.step) 실호출 ③ 스텝 0/1/2만 모달(choices 가드), 3·4 no-op, handleReselectChoice가 로컬 state(+store.setGenre/setMood — processAnswer 동형)와 chatHistory **양쪽** 갱신 ④ 모달 choices = ComposerInput 자기 STEPS(교차 import 無) ⑤ 아이콘 U-6 동일 스펙+동일 조건(+!isComplete) ⑥ VideoDirectorScreen 콘텐츠 diff 0 |
+| U-8 diff 격리 | **PASS** | v3.198 3파일(playerStore·MiniPlayer·PlaylistPickerSheet) HEAD 대비 diff 0(커밋 완료로 스냅숏 대조 동치 충족). 콘텐츠 diff = 허용 8파일 + `components/ui/index.ts` 1줄(하기 기록 참조). Marquee·VideoDirector·App·PlayerScreen·ChartScreen·app.json 전부 콘텐츠 diff 0. backend 무접촉. 그 외 M 75건은 **mode-only**(바이너리 콘텐츠 변경 0 실측 — 7f1c245 계열 환경 잔여, 분리 판정). 스코프 외 저장소 dirty(0_platform·1_MV_wedding 등)는 mtime 2026-06월 — 기존분, v3.199 무관 |
+| U-9 무회귀 | **PASS** | ① v3.92 업로드/삭제/클리핑 diff 0 ② 팔레트 불변+Avatar 소비처(DmChat·DmInbox·TrackComments·FeedCard) diff 0 ③ v3.75 HomeHeaderActions·튜토리얼 diff 0 ④ v3.110 STEPS·매핑 diff 0 ⑤ Marquee·PlayerScreen diff 0 ⑥ U-8 포섭 ⑦ Dialogue diff = import+useFocusEffect 블록만(대화 로직 diff 0) |
+| E-1 아바타 팔레트 | 정적 PASS · **실기기 이관** | U-2 ②·U-3·U-9 ①② 충족. 잔여: 계정A/B 색 대조·재시작 결정성·구형 곡 AgencyProfile·닉변 불변·계정C 업로드 1사이클 |
+| E-2 대화 back | 정적 PASS · **실기기 이관** | U-4 3쌍 충족. 잔여: 복귀 직후 잔존 없음·HW back·3화면 연속 전환 레이스·재탭 리셋 |
+| E-3 긴 엔터명 | 정적 PASS · **실기기 이관** | U-5 충족. 잔여: 우측 6요소 비침범 육안·360dp·회전·PlayerScreen 마퀴 |
+| E-4 선택값 수정 | 정적 PASS · **실기기 이관** | U-6·U-7 충족(조립부 :144-153 state 참조 확인). 잔여: 최종 프롬프트 수정값 반영 완주·작곡 선택지 오배선 육안·VideoDirector 1사이클 |
+
+**편차 판정 (app-dev 신고 3건)**
+1. ComposerInput `!isComplete` 게이트 — **승인**. 완료 시 프롬프트가 setTimeout 클로저 state로 즉시 조립·저장되어 사후 수정 반영 경로가 없음 — 거짓 어포던스 방지로 설계 주의점 §9 취지와 정합(LyricsInput과 동작 차이는 조립 시점 차이에서 기인).
+2. userText `flexShrink: 1` — **승인**. 버블 row 전환의 필연 보완(긴 자유입력 오버플로 방지), 양 화면 동일 적용.
+3. back 라벨 이원화("작업실로 돌아가기"/"뒤로") — **승인·기록**. 접근성 의미 정확성 향상, 스펙 위반 아님.
+
+**기록 (비FAIL)**
+- `components/ui/index.ts` 1줄: 허용 8파일 밖이나 seedColor named export의 barrel 노출에 필연·최소(기존 라인에 `, seedColor` 추가뿐). Settings가 barrel import 관행을 따르므로 직접 경로 import보다 타당 — 커밋 대상 포함 권고(9파일).
+- ComposerInput director 버블도 TouchableOpacity로 래핑됨 — 도너 LyricsInput과 동형 패턴(activeOpacity 1·onPress 타입 가드로 완전 비활성), 회귀 아님.
+- ComposerInput activeOpacity 조건이 도너보다 엄격(choices·isComplete 검사) — 자유입력 버블 탭 시 시각 피드백도 없음(E-4 ③ 취지에 오히려 부합).
+- handleReselect 내 `__DEV__` console.info 1건 — 무해.
+- Avatar.tsx 주석 2줄 추가 — 동작 무영향.
+- 커밋 시 mode-only 75건 제외, 콘텐츠 9파일 명시 스테이징 권고.
+
+**게이트 판정: PASS** — [unit] 9/9 PASS, [api] 0건, [e2e] 4건 정적 대체 전부 PASS(실기기 실측 이관). 머지(커밋) 진행 가능.

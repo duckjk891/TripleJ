@@ -19,7 +19,9 @@ const FALLBACK_PALETTE = [
   '#5CBF8A', '#5CA8BF', '#5C6EBF', '#8E5CBF',
 ];
 
-function seedColor(seed?: string | null, name?: string): string {
+// v3.199: named export 승격 — Avatar를 통째로 못 쓰는 자체 구현(설정 아바타의 편집 배지·스피너)에서도
+// 동일 팔레트 규칙을 재사용하기 위함. 해시·팔레트는 무변경(같은 계정 = 항상 같은 색).
+export function seedColor(seed?: string | null, name?: string): string {
   const key = seed || name || '?';
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;

@@ -17,6 +17,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import Character, { DirectorType } from '../components/Character';
 import HomeHeaderActions from '../components/HomeHeaderActions';
+import Marquee from '../components/Marquee';
 import { useDirectorsStore } from '../stores/directorsStore';
 import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
@@ -258,6 +259,11 @@ export default function MapScreen({ navigation }: Props) {
   }, [user]);
 
   // Studio 탭 헤더: (엔터명 + 도움말ⓘ) 좌측 / 별·출석·초대·마이페이지 우측
+  // v3.199(C): 긴 기획사명이 우측 HomeHeaderActions(로그인 시 대략 220~260px)를 침범하지 않게
+  // winW 기반 명시 폭 안에 Marquee(넘칠 때만 흐름·짧으면 정적). Marquee container가 width:'100%'라
+  // 부모가 명시 폭을 줘야 동작 — bottom-tabs headerTitle 컨테이너는 폭 제약이 느슨해 필수.
+  // 360dp 소형 기기에서도 최소 90px 확보. ⓘ는 마퀴 밖 고정(흐르는 텍스트와 분리, 항상 같은 자리에서 탭 가능).
+  const nameMaxWidth = Math.max(90, screenWidth - (user ? 260 : 150));
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent) return;
@@ -266,9 +272,12 @@ export default function MapScreen({ navigation }: Props) {
       // 도움말(ⓘ) 아이콘을 엔터 이름 오른편에 배치 (말풍선 제거)
       headerTitle: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text.primary }} numberOfLines={1}>
-            {user?.company_name || '작업실'}
-          </Text>
+          <View style={{ width: nameMaxWidth }}>
+            <Marquee
+              text={user?.company_name || '작업실'}
+              style={{ fontSize: 17, fontWeight: '700', color: colors.text.primary }}
+            />
+          </View>
           {user && (
             <TouchableOpacity
               onPress={() => { setShowTutorialHint(false); setShowTutorial((v) => !v); }}
@@ -284,7 +293,7 @@ export default function MapScreen({ navigation }: Props) {
       // v3.75: 우측 액션은 차트와 동일한 공용 컴포넌트(별·출석·초대·알림·메시지·마이페이지)로 통일
       headerRight: () => <HomeHeaderActions navigation={parent} />,
     });
-  }, [navigation, user?.company_name, user, showTutorial]);
+  }, [navigation, user?.company_name, user, showTutorial, nameMaxWidth]); // v3.199(C): 회전/폭 변화 반영
 
   // 다음 액션 디렉터 펄스 애니메이션
   useEffect(() => {

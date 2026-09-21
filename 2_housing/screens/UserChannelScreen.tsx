@@ -235,7 +235,8 @@ export default function UserChannelScreen() {
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 120 }}>
       {/* 헤더 */}
       <View style={styles.header}>
-        <Avatar uri={mediaUri(profile?.image)} name={displayName} size={80} />
+        {/* v3.199(A): seed=계정 id — 닉네임 변경에도 폴백 색 불변(v3.181 취지) */}
+        <Avatar uri={mediaUri(profile?.image)} name={displayName} size={80} seed={authorId ? String(authorId) : undefined} />
         <AppText variant="title2" style={{ marginTop: spacing.md }}>{displayName}</AppText>
         {profile?.bio ? <AppText variant="footnote" tone="secondary" center style={{ marginTop: 4 }}>{profile.bio}</AppText> : null}
 

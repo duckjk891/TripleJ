@@ -8,7 +8,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { AppText } from '../components/ui';
+import { AppText, Avatar } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
@@ -151,6 +151,10 @@ export default function AgencyProfileScreen({ route, navigation }: any) {
         ListHeaderComponent={
           <>
             <View style={styles.profileBox}>
+              {/* v3.199(A): 이 화면은 기획사 이미지 데이터가 없음 — 공용 Avatar 이니셜+seed 팔레트가 곧 기본값 */}
+              <View style={styles.avatarWrap}>
+                <Avatar name={uploaderNickname} seed={uploaderId || uploaderNickname} size={64} />
+              </View>
               <AppText style={styles.companyLabel}>{uploaderNickname} 엔터테인먼트</AppText>
               <View style={styles.statsBox}>
                 <View style={styles.statCol}>
@@ -222,6 +226,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1,
     borderWidth: 1, borderColor: colors.border.subtle,
   },
+  avatarWrap: { alignItems: 'center', marginBottom: 10 }, // v3.199(A)
   companyLabel: {
     fontSize: 18, fontWeight: '700', color: colors.accent.primary,
     marginBottom: 12, textAlign: 'center',

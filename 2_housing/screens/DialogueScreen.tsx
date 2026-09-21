@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import {
   StyleSheet,
   View,
@@ -76,6 +78,29 @@ export default function DialogueScreen({ route, navigation }: Props) {
   const [isTyping, setIsTyping] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // v3.199(B): 대화 중 상단 명시적 뒤로가기 — Studio 탭 헤더(headerLeft)에 back 주입.
+  // 아이콘·마진·사이즈는 stackHeader 관행(App.tsx) 동일. blur/unmount 시 반드시 undefined 복원 —
+  // MapScreen useLayoutEffect는 deps 불변이면 재실행되지 않아, 미복원 시 Map 복귀 후 화살표가 잔존한다.
+  useFocusEffect(
+    useCallback(() => {
+      const parent = navigation.getParent();
+      parent?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={{ marginLeft: 12 }}
+            accessibilityLabel="작업실로 돌아가기"
+          >
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+      return () => {
+        parent?.setOptions({ headerLeft: undefined });
+      };
+    }, [navigation])
+  );
 
   const mapScale = screenWidth / MAP_WIDTH;
   const mapDisplayHeight = MAP_HEIGHT * mapScale;
