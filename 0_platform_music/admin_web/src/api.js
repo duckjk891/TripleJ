@@ -72,6 +72,10 @@ export const fetchEvidenceBlob = (reportId, idx) =>
 export const fetchMediaBlob = (objectName) =>
   API.get(`/admin/media/${objectName}`, { responseType: 'blob' });
 
+// ---- advertisers (브랜드/광고주) ----
+export const getAdvertisers = (params) => API.get('/admin/ads/advertisers', { params });
+export const getAdvertiser = (userId, params) => API.get(`/admin/ads/advertisers/${userId}`, { params });
+
 // ---- items (착장) ----
 export const getItems = (params) => API.get('/admin/items', { params });
 export const getItemOwners = () => API.get('/admin/items/owners');

@@ -97,10 +97,37 @@ def _product_name_of(row: dict) -> str:
     return f"{brand} {gender_raw} {cat}{suffix}".strip()
 
 
+# 업체별 CSV 헤더 편차 흡수 — 정규화된 헤더명 → 표준 컬럼명
+HEADER_ALIASES = {
+    "구분": "구분", "플랫폼": "구분", "쇼핑몰": "구분",
+    "성별": "성별",
+    "부위": "부위", "카테고리": "부위", "분류": "부위",
+    "아이템명": "아이템명", "상품명": "아이템명", "제품명": "아이템명", "이름": "아이템명",
+    "브랜드": "브랜드", "브랜드명": "브랜드",
+    "색상": "색상", "컬러": "색상",
+    "순위": "순위", "랭킹": "순위",
+    "디테일페이지url": "디테일페이지URL", "상품url": "디테일페이지URL",
+    "제품url": "디테일페이지URL", "링크": "디테일페이지URL", "url": "디테일페이지URL",
+    "이미지url": "이미지URL", "이미지": "이미지URL", "이미지주소": "이미지URL",
+    "이미지링크": "이미지URL", "사진": "이미지URL", "사진url": "이미지URL",
+}
+
+
+def _normalize_headers(row: dict) -> dict:
+    """헤더명을 표준 컬럼명으로 치환 (공백 제거·소문자 비교). 미지의 헤더는 유지."""
+    out = {}
+    for k, v in row.items():
+        if k is None:
+            continue
+        key = HEADER_ALIASES.get(k.strip().replace(" ", "").lower(), k.strip())
+        out.setdefault(key, v)
+    return out
+
+
 def _parse_rows(raw: bytes):
     """CSV 바이트 → (유효 row dict 목록, 에러 목록). 쓰기 없음 — dry-run 공용."""
     text = raw.decode("utf-8-sig", errors="replace")
-    rows = list(csv.DictReader(io.StringIO(text)))
+    rows = [_normalize_headers(r) for r in csv.DictReader(io.StringIO(text))]
     valid, errors = [], []
     for i, row in enumerate(rows, start=2):  # 헤더 다음 줄부터 = 2행
         platform = (row.get("구분") or "").strip()

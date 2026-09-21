@@ -148,13 +148,30 @@ function ImportPanel({ onImported }) {
 
   const pct = job && job.total ? Math.round(((job.processed || 0) / job.total) * 100) : 0;
 
+  const downloadTemplate = () => {
+    const rows = [
+      ['구분', '성별', '부위', '아이템명', '브랜드', '색상', '순위', '디테일페이지URL', '이미지URL'],
+      ['무신사', '여성', '여성_상의', '오버핏 티셔츠', '예시브랜드', '화이트', '1', 'https://www.musinsa.com/products/12345', 'https://example.com/image1.jpg'],
+      ['29cm', '남성', '남성_신발', '레더 스니커즈', '예시브랜드2', '블랙', '', 'https://www.29cm.co.kr/product/catalog/98765', 'https://example.com/image2.jpg'],
+    ];
+    const csv = '﻿' + rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'maidol_아이템_임포트_양식.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="card">
       <h3 className="section-title">CSV 임포트 (착장 데이터 갱신)</h3>
       <p className="cell-sub" style={{ marginBottom: 10 }}>
-        컬럼: 구분(무신사·29cm·w컨셉·에이블리·지그재그·크림) · 성별 · 부위 · 아이템명 · 브랜드 · 색상 · 순위 · 디테일페이지URL · 이미지URL
+        구분(무신사·29cm·w컨셉·에이블리·지그재그·크림) · 성별 · 부위 · 아이템명 · 브랜드 · 색상 · 순위 · 디테일페이지URL · 이미지URL
+        — 다른 헤더명(상품명·카테고리·상품URL·이미지 등)도 자동 인식됩니다. 이미지URL·구분·부위는 필수.
       </p>
       <div className="filters" style={{ marginBottom: 0 }}>
+        <button className="btn" onClick={downloadTemplate}>양식 다운로드</button>
         <input ref={fileRef} type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <select className="select" value={mode} onChange={(e) => setMode(e.target.value)}>
           <option value="append">추가 (append)</option>

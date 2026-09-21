@@ -8,6 +8,7 @@ import ReportsPage from './pages/Reports';
 import TracksPage from './pages/Tracks';
 import UsersPage from './pages/Users';
 import ItemsPage from './pages/Items';
+import BrandsPage from './pages/Brands';
 
 function Protected({ children }) {
   const { isAuthed } = useAuth();
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/tracks" element={<Protected><TracksPage /></Protected>} />
           <Route path="/users" element={<Protected><UsersPage /></Protected>} />
           <Route path="/items" element={<Protected><ItemsPage /></Protected>} />
+          <Route path="/brands" element={<Protected><BrandsPage /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>

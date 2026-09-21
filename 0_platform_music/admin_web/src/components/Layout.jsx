@@ -7,6 +7,7 @@ const MENU = [
   { to: '/tracks', label: '곡 관리', icon: '🎵' },
   { to: '/users', label: '사용자 관리', icon: '👥' },
   { to: '/items', label: '착장 아이템', icon: '👕' },
+  { to: '/brands', label: '브랜드/광고주', icon: '🏷️' },
 ];
 
 export default function Layout({ children }) {
