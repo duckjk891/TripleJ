@@ -19,8 +19,16 @@ import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui
 import TrackRow, { trackRowStyles } from '../components/TrackRow';
 import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
+import TutorialOverlay from '../components/TutorialOverlay';
 // v3.96(A-20): 홈(차트) 최신 앨범 가로 섹션 — GET /albums/latest, 탭 시 앨범 상세로
 import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
+
+// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (렌더마다 새 배열 생성 방지 — 모듈 상수)
+const TUTORIAL_STEPS = [
+  { title: '차트 구경하기', desc: 'MAIDOL 아티스트들의 인기곡과 최신 앨범을 모아 보여줘요.' },
+  { title: '탭해서 재생', desc: '곡을 탭하면 바로 재생이 시작돼요.' },
+  { title: '곡 담기', desc: '곡의 더보기(⋮) 버튼으로 재생목록이나 내 플레이리스트에 담을 수 있어요.' },
+];
 
 interface ChartTrack {
   id: string;
@@ -372,6 +380,8 @@ export default function ChartScreen() {
           : t))}
       />
 
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
+      <TutorialOverlay screenKey="chart" steps={TUTORIAL_STEPS} />
     </ScreenLayout>
   );
 }

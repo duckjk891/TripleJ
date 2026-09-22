@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
+// v3.204(④): 답변 편집 UX 통일 — step 0(곡 변경) 외에는 확인 팝업 없이 즉시 편집 모달
+import AnswerEditModal, { AnswerEditExtraAction } from '../components/AnswerEditModal';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
@@ -63,6 +65,13 @@ const resetCoverExtras = (syncStore = true) => {
 
 // v3.169(대표): 인물 표정 선택지 — 아티스트 포함 시 구도 다음 질문
 const EXPRESSION_OPTIONS = ['환하게 웃는', '은은한 미소', '시크한 무표정', '아련한 눈빛', '강렬한 카리스마'];
+
+// v3.204(④): 답변 편집 분류 — step 0(곡 변경)만 파괴적 확인 팝업 유지(이후 선택 전부 초기화),
+// 나머지 선택지형은 즉시 AnswerEditModal(setStep 금지). 자유 입력은 1.8·1.82·1.85·1.9·2만.
+const COVER_EDIT_STEPS = new Set([1, 1.5, 1.7, 1.75, 1.8, 1.82, 1.85, 1.9, 2]);
+const COVER_FREETEXT_STEPS = new Set([1.8, 1.82, 1.85, 1.9, 2]);
+const EDIT_SKIP_LABEL = '건너뛰기';
+const EDIT_STYLE_SKIP_LABEL = '이대로 만들기 (건너뛰기)';
 
 const LOADING_STEPS = [
   { label: '구상', message: '커버 이미지를 구상하고 있어요...' },
@@ -169,6 +178,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.202(H-④): 비파괴 되감기 컨텍스트 — 1조 MusicGeneration commitExchange 패턴 동일.
   // 활성 중에는 답변 핸들러가 대화를 덧붙이는 대신 해당 버블/에코만 치환하고 resumeStep으로 복귀.
   const rewindRef = useRef<{ idx: number; target: number; resumeStep: number } | null>(null);
+  // v3.204(④): 선택지형 답변 편집 모달이 보여주는 스텝(null=닫힘) — setStep과 독립(입력 영역 유지)
+  const [editStep, setEditStep] = useState<number | null>(null);
 
   // v3.202(H-⑤): 성공 확정 시에만 커버 컨텍스트 전체 클리어 (실패는 coverStyle만 해제해
   // 재진입 자동 재요청(재차감)을 막고, 대화·곡 선택·아티스트 선택은 보존 → 이어서 수정 가능)
@@ -217,6 +228,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     return () => { alive = false; };
   }, []);
   const [refining, setRefining] = useState(false);
+  // v3.204(⑤): refine 이중 제출 봉인 — refining state는 ⭐ confirm await 대기 중의 재진입
+  // (입력창 Enter·적용 버튼 재탭)을 못 막는다(setRefining이 confirm 뒤에 실행). 동기 ref 가드를
+  // confirm await 전에 세우고 취소·완료·실패 모든 경로(finally)에서 해제한다.
+  const refineSubmitGuardRef = useRef(false);
+  // v3.204(⑤): refine 네트워크 단절 → cover-history 폴링 회수 중 안내 (refineHint 대체 표기)
+  const [refinePollingNotice, setRefinePollingNotice] = useState<string | null>(null);
   const [reverting, setReverting] = useState(false);
   // v3.120: 앨범 모드 확정(PATCH /albums/{id}/cover) 진행 중 — 중복 탭 방지
   const [applying, setApplying] = useState(false);
@@ -595,15 +612,17 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const handleWardrobeKeep = () => {
     if (commitRewindAnswer('이 의상 그대로')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: '이 의상 그대로', step: 1.7 }]);
-    proceedToLyricsQ(); // v3.151(대표): 의상 다음은 가사 포함 여부
+    proceedToLyricsQ(undefined, 1.7); // v3.151(대표): 의상 다음은 가사 포함 여부
   };
 
-  // v3.151(대표): 가사 포함 질문을 앞으로 — 포함하면 디테일(구도~색감) 질문 생략,
+  // v3.151(대표): 가사 포함 질문을 앞으로 — 포함하면 디테일(배경~색감) 질문 생략,
   // 미포함이면 디테일 질문 진행. 앨범 모드/곡 없음은 가사 개념이 없어 디테일로 직행.
   // v3.202(H-①): track 인자 우선 — handleTrackSelect 직후 stale selectedTrack 참조 픽스.
-  const proceedToLyricsQ = (track?: MyTrack | null) => {
+  // v3.204(③): 디테일 첫 질문 = 배경(1.85). echoOf = 직전 사용자 답변 step(진입 컨텍스트) —
+  // 앨범 마운트 직행처럼 선행 답변이 없으면 미지정.
+  const proceedToLyricsQ = (track?: MyTrack | null, echoOf?: number) => {
     if (albumMode || !(track?.id || selectedTrack?.id || musicStore.coverTrackId)) {
-      proceedToShot();
+      proceedToBg(echoOf);
       return;
     }
     setChatHistory((prev) => [
@@ -635,10 +654,23 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
   };
 
+  // v3.204(③): 세부 질문 순서 재배선 — 배경(1.85)이 디테일 체인의 첫 질문.
+  // 스텝 번호 값은 불변(영속 coverStep·performRewind 호환) — 배선만 교체.
+  // 새 체인: 1.75 '직접' → 배경(1.85) → 구도(1.8) → [인물 시 표정(1.82)] → 색감(1.9) → 자유(2).
+  // echoOf = 직전 사용자 답변 step(1.75 가사 skip / 1.7 의상 / 1 아티스트 제외 등 진입 컨텍스트별).
+  const proceedToBg = (echoOf?: number) => {
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', ...(echoOf != null ? { echoOfStep: echoOf } : {}) },
+    ]);
+    setStep(1.85);
+  };
+
   const proceedToShot = () => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '어떤 구도로 담을까요? 딱히 없으면 건너뛰어도 좋아요!' },
+      // v3.204(③): 선행이 배경(1.85) 답변 — echoOfStep 정합(비파괴 되감기 식별 메타)
+      { type: 'director', text: '어떤 구도로 담을까요? 딱히 없으면 건너뛰어도 좋아요!', echoOfStep: 1.85 },
     ]);
     setStep(1.8);
   };
@@ -648,30 +680,30 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     applyExtras({ shot });
     console.info('[Cover] 구도 선택', { shot });
     if (commitRewindAnswer(shot || '건너뛰기')) return; // v3.202(H-④)
-    // v3.169(대표): 아티스트 포함이면 표정 질문(1.82) 경유, 아니면 바로 배경(1.85)
+    // v3.169(대표): 아티스트 포함이면 표정 질문(1.82) 경유.
+    // v3.204(③): 배경은 이미 앞(1.85)에서 답함 — 미포함이면 색감(1.9)으로.
     const hasPerson = !!useMusicStore.getState().coverCharacterObjectName;
-    setChatHistory((prev) => [
-      ...prev,
-      { type: 'user', text: shot || '건너뛰기', step: 1.8 },
-      { type: 'director', text: hasPerson
-        ? '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!'
-        : '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', echoOfStep: 1.8 },
-    ]);
-    setStep(hasPerson ? 1.82 : 1.85);
+    if (hasPerson) {
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: shot || '건너뛰기', step: 1.8 },
+        { type: 'director', text: '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!', echoOfStep: 1.8 },
+      ]);
+      setStep(1.82);
+      return;
+    }
+    setChatHistory((prev) => [...prev, { type: 'user', text: shot || '건너뛰기', step: 1.8 }]);
+    proceedToPalette(1.8);
   };
 
-  // v3.169: 표정 선택/직접 입력 → 배경 질문으로
+  // v3.169: 표정 선택/직접 입력 → (v3.204(③)) 색감 질문으로
   const handleExpressionPick = (expression: string | null) => {
     setExpressionText('');
     applyExtras({ expression });
     console.info('[Cover] 표정 선택', { expression });
     if (commitRewindAnswer(expression || '건너뛰기')) return; // v3.202(H-④)
-    setChatHistory((prev) => [
-      ...prev,
-      { type: 'user', text: expression || '건너뛰기', step: 1.82 },
-      { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', echoOfStep: 1.82 },
-    ]);
-    setStep(1.85);
+    setChatHistory((prev) => [...prev, { type: 'user', text: expression || '건너뛰기', step: 1.82 }]);
+    proceedToPalette(1.82);
   };
 
   // 배경 — 사진 업로드 (DocumentPicker image/* 관행)
@@ -693,7 +725,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       console.info('[Cover] 배경 사진 업로드 완료', { object: data.object_name });
       if (commitRewindAnswer('배경 사진을 올렸어요')) return; // v3.202(H-④)
       setChatHistory((prev) => [...prev, { type: 'user', text: '배경 사진을 올렸어요', step: 1.85 }]);
-      proceedToPalette();
+      proceedToShot(); // v3.204(③): 배경 다음은 구도
     } catch (err: any) {
       console.error('[Cover] 배경 사진 업로드 실패', { status: err?.response?.status, message: err?.message });
       showAlert('오류', err?.response?.data?.error || '사진 업로드에 실패했어요. 다시 시도하거나 말로 설명해주세요.');
@@ -709,20 +741,31 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setBgText('');
     if (commitRewindAnswer(v)) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: v, step: 1.85 }]);
-    proceedToPalette();
+    proceedToShot(); // v3.204(③): 배경 다음은 구도
   };
 
   const handleBgSkip = () => {
     applyExtras({ bgPrompt: null, bgObjectName: null });
     if (commitRewindAnswer('건너뛰기')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: '건너뛰기', step: 1.85 }]);
-    proceedToPalette();
+    proceedToShot(); // v3.204(③): 배경 다음은 구도
   };
 
-  const proceedToPalette = () => {
+  // v3.204(④): 편집 모달의 배경 자유 입력 — handleBgText와 동일 규칙(300자 제한), 값만 인자로
+  const handleBgPick = (text: string) => {
+    const v = text.trim().slice(0, 300);
+    if (!v) return;
+    applyExtras({ bgPrompt: v, bgObjectName: null });
+    if (commitRewindAnswer(v)) return;
+    setChatHistory((prev) => [...prev, { type: 'user', text: v, step: 1.85 }]);
+    proceedToShot();
+  };
+
+  // v3.204(③): 선행 스텝이 표정(1.82) 또는 구도(1.8)로 갈라짐 — echoOfStep 파라미터화
+  const proceedToPalette = (echoOf: number) => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!', echoOfStep: 1.85 },
+      { type: 'director', text: '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!', echoOfStep: echoOf },
     ]);
     setStep(1.9);
   };
@@ -737,10 +780,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   // 가사 반영 — LLM 추가 호출 없이 가사 발췌를 이미지 프롬프트에 직접 동봉 (무비용)
-  // v3.202(H-②): fromStep 2 = 자유 서술(step 2) 화면의 '가사 내용 기반으로 생성' 버튼 경유 —
-  // 1.75와 동등 기능(발췌 동봉), 이미 마지막 단계라 질문 재출력 없이 step 2에 머문다.
-  const handleLyricsUse = async (fromStep: number = 1.75) => {
-    const answerText = fromStep === 2 ? '가사 내용 기반으로 생성' : '가사 내용 반영';
+  // v3.204(②): step 2의 '가사 내용 기반으로 생성' 중복 버튼 제거 — 가사 반영 여부는 트랙 모드에서
+  // 항상 1.75에서 질문되므로 마지막 스텝 재노출은 중복·모순(사용자 지적). 1.75 전용으로 단순화.
+  const handleLyricsUse = async () => {
+    const answerText = '가사 내용 반영';
     const rewinding = !!rewindRef.current; // v3.202(H-④): 되감기 중이면 버블 치환으로 커밋
     if (!rewinding) {
       setChatHistory((prev) => [...prev, { type: 'user', text: answerText, step: 1.75 }]);
@@ -781,7 +824,6 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       applyExtras({ lyricsExcerpt: null });
     }
     if (rewinding) { commitRewindAnswer(answerText); return; }
-    if (fromStep === 2) return; // 이미 자유 서술 단계 — proceedToFinal 질문 재출력 없음
     proceedToFinal();
   };
 
@@ -792,15 +834,15 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       useMusicStore.getState().setCoverLyricsId(null);
     }
     if (commitRewindAnswer('아니요, 직접 정할게요')) {
-      // v3.202(H-④): '반영→직접'으로 되감은 경우 — 디테일(구도~색감)을 아직 답한 적 없으면
+      // v3.202(H-④): '반영→직접'으로 되감은 경우 — 디테일(배경~색감)을 아직 답한 적 없으면
       // 이어서 질문 진행(마지막 setStep이 우선), 이미 답이 있으면 원위치 복귀 유지.
       if (coverExtras.shot == null && coverExtras.palette == null && coverExtras.bgPrompt == null && coverExtras.bgObjectName == null) {
-        proceedToShot();
+        proceedToBg(1.75); // v3.204(③): 첫 디테일 질문 = 배경
       }
       return;
     }
     setChatHistory((prev) => [...prev, { type: 'user', text: '아니요, 직접 정할게요', step: 1.75 }]);
-    proceedToShot(); // v3.151: 미포함 → 디테일 질문(구도~색감)
+    proceedToBg(1.75); // v3.204(③): 미포함 → 디테일 질문(배경→구도→색감)
   };
 
   // ── v3.151: 답변 말풍선 탭 → 그 단계부터 다시 선택 (작곡 디렉터 v3.148과 동일 UX) ──
@@ -853,21 +895,121 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setStep(target);
   };
 
+  // v3.204(④): step 0(곡 변경)만 기존 파괴적 확인 팝업 유지 — 이후 선택 전부 초기화되므로.
+  // 나머지 선택지형은 확인 팝업 없이 즉시 AnswerEditModal(setStep 금지 — 하단 입력 영역 유지).
   const handleUserBubbleTap = (idx: number) => {
     const msg = chatHistory[idx];
     if (msg?.type !== 'user' || msg.step == null || mode === 'loading') return;
-    const destructive = msg.step === 0;
-    showAlert(
-      destructive ? '곡을 다시 고를까요?' : '이 답변만 다시 고를까요?',
-      destructive
-        ? `"${msg.text}"\n\n곡을 바꾸면 이후의 선택은 초기화되고 처음부터 다시 진행해요.`
-        : `"${msg.text}"\n\n이 답변만 새 값으로 바뀌고, 이후의 대화와 선택은 그대로 유지돼요.`,
-      [
-        { text: '취소', style: 'cancel' },
-        { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
-      ]
-    );
+    if (msg.step === 0) {
+      showAlert(
+        '곡을 다시 고를까요?',
+        `"${msg.text}"\n\n곡을 바꾸면 이후의 선택은 초기화되고 처음부터 다시 진행해요.`,
+        [
+          { text: '취소', style: 'cancel' },
+          { text: '다시 선택', onPress: () => performRewind(idx, 0) },
+        ]
+      );
+      return;
+    }
+    if (!COVER_EDIT_STEPS.has(msg.step)) return; // 알 수 없는 스텝 방어
+    // 연쇄 되감기(편집 중 다른 버블 탭) — 복귀 지점은 최초의 원래 진행 위치 유지
+    const resumeStep = rewindRef.current ? rewindRef.current.resumeStep : step;
+    rewindRef.current = { idx, target: msg.step, resumeStep };
+    console.info('[Cover] 답변 편집 모달 열기', { idx, target: msg.step, resumeStep });
+    setEditStep(msg.step);
   };
+
+  // v3.204(④): 편집 모달 선택지 — 각 스텝 입력 영역의 기존 선택지 재사용
+  const editChoicesForStep = (s: number): string[] => {
+    switch (s) {
+      case 1: return ['네, 아티스트 포함', '아니요, 빼고'];
+      case 1.5: return ['아티스트①로', '아티스트②로'];
+      case 1.7: return ['이 의상 그대로'];
+      case 1.75: return ['가사 내용 반영하기', '아니요, 직접 정할게요'];
+      case 1.8:
+        return [...SHOT_OPTIONS, ...(musicStore.coverCharacterObjectName ? [] : [SHOT_NO_PERSON]), EDIT_SKIP_LABEL];
+      case 1.82: return [...EXPRESSION_OPTIONS, EDIT_SKIP_LABEL];
+      case 1.85: return [EDIT_SKIP_LABEL];
+      case 1.9: return [...PALETTE_OPTIONS, EDIT_SKIP_LABEL];
+      case 2: return [...STYLE_OPTIONS, EDIT_STYLE_SKIP_LABEL];
+      default: return [];
+    }
+  };
+
+  // v3.204(④): 특수 버튼 — 1.85(배경) '사진 올리기', 1.7(의상) '꾸미기 가기'
+  const editExtraActionsForStep = (s: number): AnswerEditExtraAction[] | undefined => {
+    if (s === 1.85) {
+      return [{
+        label: '사진 올리기',
+        onPress: async () => {
+          // 업로드 성공 시 handleBgPhoto가 commitRewindAnswer로 커밋 — 그때만 모달 닫기
+          // (피커 취소/실패 시 되감기 유지 — 모달에서 계속 고르거나 취소 가능)
+          await handleBgPhoto();
+          if (!rewindRef.current) setEditStep(null);
+        },
+      }];
+    }
+    if (s === 1.7) {
+      return [{
+        label: '의상 바꾸러 가기 (아티스트 꾸미기)',
+        onPress: () => {
+          setEditStep(null);
+          handleWardrobeChange(); // 화면 이동 흐름 — 내부에서 rewindRef 해제(일반 진행 전환)
+        },
+      }];
+    }
+    return undefined;
+  };
+
+  // v3.204(④): 편집 모달 onPick — 기존 핸들러 호출 → commitRewindAnswer 치환 + 원위치 복귀.
+  // 연쇄(1 '아티스트 포함'→1.5 슬롯)는 핸들러의 setStep을 아래 effect가 감지해 모달 연속 노출.
+  const handleEditPick = (choice: string) => {
+    const s = editStep;
+    if (s == null) return;
+    console.info('[Cover] 답변 편집', { step: s, choice });
+    setEditStep(null); // 커밋/연쇄 여부와 무관하게 일단 닫기 — 연쇄면 effect가 다시 연다
+    switch (s) {
+      case 1: handleArtistChoice(choice === '네, 아티스트 포함'); break;
+      case 1.5: handleSlotSelect(choice === '아티스트①로' ? 'real' : 'virtual'); break;
+      case 1.7: handleWardrobeKeep(); break;
+      case 1.75:
+        if (choice === '가사 내용 반영하기') handleLyricsUse();
+        else handleLyricsSkip();
+        break;
+      case 1.8: handleShotPick(choice === EDIT_SKIP_LABEL ? null : choice); break;
+      case 1.82: handleExpressionPick(choice === EDIT_SKIP_LABEL ? null : choice); break;
+      case 1.85:
+        if (choice === EDIT_SKIP_LABEL) handleBgSkip();
+        else handleBgPick(choice); // 자유 입력(말로 설명)
+        break;
+      case 1.9: handlePalettePick(choice === EDIT_SKIP_LABEL ? null : choice); break;
+      case 2: handleStyleConfirm(choice === EDIT_STYLE_SKIP_LABEL ? '' : choice); break;
+    }
+  };
+
+  const handleEditCancel = () => {
+    const rw = rewindRef.current;
+    rewindRef.current = null;
+    setEditStep(null);
+    // 연쇄 도중 취소(1→1.5 등에서 step이 이동한 상태) — 원래 진행 위치로 복귀
+    if (rw && rw.resumeStep !== step) setStep(rw.resumeStep);
+  };
+
+  // v3.204(④): 편집 모달 연쇄/종료 동기화 — 되감기 중 핸들러가 setStep으로 연쇄하면
+  // (1 '아티스트 포함'→1.5 슬롯) 새 스텝 선택지로 모달을 이어서 연다. 커밋 후에는 항상 닫는다.
+  useEffect(() => {
+    const rw = rewindRef.current;
+    if (!rw) {
+      if (editStep != null) setEditStep(null);
+      return;
+    }
+    if (COVER_EDIT_STEPS.has(step)) {
+      if (editStep !== step) setEditStep(step);
+    } else if (editStep != null) {
+      setEditStep(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   const proceedToFinal = () => {
     setChatHistory((prev) => [
@@ -902,7 +1044,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       setChosenSlot(null);
       if (commitRewindAnswer('아티스트 빼고')) return; // v3.202(H-④): 값 치환 후 원위치 복귀
       setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 빼고', step: 1 }]);
-      proceedToLyricsQ(); // v3.151: 미포함도 가사 질문부터
+      proceedToLyricsQ(undefined, 1); // v3.151: 미포함도 가사 질문부터
       return;
     }
     // v3.81: 아티스트 1명=슬롯 1개 모델 — 두 명 있으면 아티스트 선택(step 1.5), 한 명이면 자동 선택
@@ -1073,10 +1215,54 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     navigation.popToTop();
   };
 
+  // v3.204(⑤): refine 네트워크 단절 복구 — POST /upload/refine-cover가 서버에서 132~141초 걸려
+  // 클라이언트 연결이 먼저 끊겨도(실측 ERR_NETWORK) 서버는 정상 완료 + ⭐5 차감을 마친다
+  // (9/22 03:05 이중 차감 실측). 실패 확정 대신 GET /upload/cover-history/{id}를 15초×최대 12회
+  // (v3.202 I-lite와 동일 리듬) 폴링해 current_version > 요청 직전 기준선이면 완성본을 회수한다
+  // — 재요청 금지 = 재차감 금지. 응답 계약: {current_version, cover_object_name, cover_refine_history}.
+  const tryRecoverRefineFromHistory = async (sessionId: string, baseVersion: number, rp: string) => {
+    const POLL_INTERVAL_MS = 15000;
+    const POLL_MAX = 12;
+    for (let attempt = 1; attempt <= POLL_MAX; attempt++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        const res = await api.get(`/upload/cover-history/${sessionId}`);
+        const currentVersionSrv: number | null =
+          typeof res.data?.current_version === 'number' ? res.data.current_version : null;
+        const obj: string | null = res.data?.cover_object_name ?? null;
+        console.info('[Cover] refine 폴링 복구', { attempt, baseVersion, currentVersion: currentVersionSrv });
+        if (currentVersionSrv !== null && currentVersionSrv > baseVersion && obj) {
+          setCoverObjectName(obj);
+          setCoverImageUrl(coverPreviewUrl(obj));
+          setCurrentVersion(currentVersionSrv);
+          setViewVersion(currentVersionSrv);
+          const serverHistory = res.data?.cover_refine_history;
+          if (Array.isArray(serverHistory) && serverHistory.length > 0) {
+            setCoverHistory(serverHistory);
+          } else {
+            // 응답에 히스토리가 없으면 로컬로 push (defensive — handleRefine 성공 경로 관행)
+            setCoverHistory((prev) => [
+              ...prev,
+              { version: currentVersionSrv, object_name: obj, refine_prompt: rp, created_at: new Date().toISOString() },
+            ]);
+          }
+          usePointsStore.getState().fetchBalance(); // 서버는 이미 차감 완료 — 잔액 표시 동기화
+          return true;
+        }
+      } catch (pollErr: any) {
+        console.warn('[Cover] refine 폴링 복구 조회 실패', {
+          attempt, status: pollErr?.response?.status, code: pollErr?.code,
+        });
+      }
+    }
+    return false;
+  };
+
   // v3.89: 미세조정 — 텍스트 지시로 현재 커버를 다듬어 새 버전 생성 (multi-turn i2i)
   const handleRefine = async () => {
     const rp = refineInput.trim();
     if (!rp || refining || reverting) return;
+    if (refineSubmitGuardRef.current) return; // v3.204(⑤): confirm 대기 중 재진입(Enter/적용) 무시
     if (!coverSessionId) {
       showAlert('안내', '커버 세션 정보가 없어요. 다시 생성 후 시도해주세요.');
       return;
@@ -1085,66 +1271,91 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       showAlert('입력 확인', `수정 요청은 ${REFINE_PROMPT_MAX_LEN}자 이하로 입력해주세요.`);
       return;
     }
-    // v3.169(대표 확정): 미세조정도 ⭐ 소모 — 실행 전 confirm (서버에 키 없으면 무고지·바로 진행)
-    if (typeof refineCost === 'number') {
-      const ok = await new Promise<boolean>((resolve) => {
-        showAlert('미세조정', `미세조정 시 ⭐${refineCost}이 소모돼요. 진행할까요?`, [
-          { text: '취소', style: 'cancel', onPress: () => resolve(false) },
-          { text: '진행', onPress: () => resolve(true) },
-        ]);
-      });
-      if (!ok) return;
-    }
-    setRefining(true);
-    console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
-    const t0 = Date.now();
+    // v3.204(⑤): 이중 제출 봉인 — confirm await 앞에서 세팅, 취소·완료·실패 전 경로 finally 해제
+    refineSubmitGuardRef.current = true;
     try {
-      const res = await api.post(
-        '/upload/refine-cover',
-        { cover_session_id: coverSessionId, refine_prompt: rp },
-        { timeout: 600000 } // 이미지 모델이 느릴 수 있음 — generate와 동일하게 10분
-      );
-      // defensive 파싱 — 서버 응답이 예상과 다르면 기존 버전 유지
-      const newObj: string | null = res.data?.cover_object_name ?? null;
-      const newVer: number | null =
-        typeof res.data?.current_version === 'number' ? res.data.current_version : null;
-      if (!newObj || newVer === null) {
-        throw new Error('서버 응답 형식이 올바르지 않습니다.');
+      // v3.169(대표 확정): 미세조정도 ⭐ 소모 — 실행 전 confirm (서버에 키 없으면 무고지·바로 진행)
+      if (typeof refineCost === 'number') {
+        const ok = await new Promise<boolean>((resolve) => {
+          showAlert('미세조정', `미세조정 시 ⭐${refineCost}이 소모돼요. 진행할까요?`, [
+            { text: '취소', style: 'cancel', onPress: () => resolve(false) },
+            { text: '진행', onPress: () => resolve(true) },
+          ]);
+        });
+        if (!ok) return;
       }
-      console.log('[Cover] refine-cover OK', Date.now() - t0, 'ms', {
-        cover_session_id: coverSessionId, version: newVer,
-      });
-      setCoverObjectName(newObj);
-      setCoverImageUrl(coverPreviewUrl(newObj));
-      setCurrentVersion(newVer);
-      setViewVersion(newVer);
-      const serverHistory = res.data?.cover_refine_history;
-      if (Array.isArray(serverHistory) && serverHistory.length > 0) {
-        setCoverHistory(serverHistory);
-      } else {
-        // 응답에 히스토리가 없으면 로컬로 push (defensive)
-        setCoverHistory((prev) => [
-          ...prev,
-          { version: newVer, object_name: newObj, refine_prompt: rp, created_at: new Date().toISOString() },
-        ]);
+      setRefining(true);
+      console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
+      const t0 = Date.now();
+      const baseVersion = currentVersion; // v3.204(⑤): 폴링 회수 판정 기준선 (요청 직전 버전)
+      try {
+        const res = await api.post(
+          '/upload/refine-cover',
+          { cover_session_id: coverSessionId, refine_prompt: rp },
+          { timeout: 600000 } // 이미지 모델이 느릴 수 있음 — generate와 동일하게 10분
+        );
+        // defensive 파싱 — 서버 응답이 예상과 다르면 기존 버전 유지
+        const newObj: string | null = res.data?.cover_object_name ?? null;
+        const newVer: number | null =
+          typeof res.data?.current_version === 'number' ? res.data.current_version : null;
+        if (!newObj || newVer === null) {
+          throw new Error('서버 응답 형식이 올바르지 않습니다.');
+        }
+        console.log('[Cover] refine-cover OK', Date.now() - t0, 'ms', {
+          cover_session_id: coverSessionId, version: newVer,
+        });
+        setCoverObjectName(newObj);
+        setCoverImageUrl(coverPreviewUrl(newObj));
+        setCurrentVersion(newVer);
+        setViewVersion(newVer);
+        const serverHistory = res.data?.cover_refine_history;
+        if (Array.isArray(serverHistory) && serverHistory.length > 0) {
+          setCoverHistory(serverHistory);
+        } else {
+          // 응답에 히스토리가 없으면 로컬로 push (defensive)
+          setCoverHistory((prev) => [
+            ...prev,
+            { version: newVer, object_name: newObj, refine_prompt: rp, created_at: new Date().toISOString() },
+          ]);
+        }
+        usePointsStore.getState().fetchBalance(); // v3.169: ⭐ 차감 반영
+        setRefineInput('');
+      } catch (err: any) {
+        console.error('[Cover] refine-cover FAIL', {
+          cover_session_id: coverSessionId,
+          message: err?.message,
+          code: err?.code,
+          status: err?.response?.status,
+          data: err?.response?.data,
+        });
+        // v3.204(⑤): 네트워크 단절/타임아웃 — 실패 확정 전에 서버 완성본 폴링 회수 시도
+        if (isRecoverableNetErr(err)) {
+          setRefinePollingNotice('연결이 불안정했어요. 서버에서 완성본을 확인하고 있어요…');
+          const recovered = await tryRecoverRefineFromHistory(coverSessionId, baseVersion, rp);
+          setRefinePollingNotice(null);
+          if (recovered) {
+            setRefineInput(''); // 회수 = 성공 처리 (재요청 없음 = 재차감 없음)
+            return;
+          }
+          console.warn('[Cover] refine 폴링 복구 실패 — 오류 확정');
+          showAlert(
+            '미세조정 실패',
+            (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
+              '\n기존 버전은 그대로 유지돼요.' +
+              '\n별이 이미 사용됐다면 버전 기록에 잠시 후 나타날 수 있어요.'
+          );
+          return;
+        }
+        showAlert(
+          '미세조정 실패',
+          (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
+            '\n기존 버전은 그대로 유지돼요.'
+        );
+      } finally {
+        setRefining(false);
       }
-      usePointsStore.getState().fetchBalance(); // v3.169: ⭐ 차감 반영
-      setRefineInput('');
-    } catch (err: any) {
-      console.warn('[Cover] refine-cover FAIL', {
-        cover_session_id: coverSessionId,
-        message: err?.message,
-        code: err?.code,
-        status: err?.response?.status,
-        data: err?.response?.data,
-      });
-      showAlert(
-        '미세조정 실패',
-        (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
-          '\n기존 버전은 그대로 유지돼요.'
-      );
     } finally {
-      setRefining(false);
+      refineSubmitGuardRef.current = false;
     }
   };
 
@@ -1391,9 +1602,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                   )}
                 </TouchableOpacity>
               </View>
-              {refining && (
+              {(refining || refinePollingNotice) && (
                 <AppText style={styles.refineHint}>
-                  커버를 다듬고 있어요. 몇 분 정도 걸릴 수 있어요.
+                  {/* v3.204(⑤): 폴링 회수 중에는 상황 안내로 대체 */}
+                  {refinePollingNotice ?? '커버를 다듬고 있어요. 몇 분 정도 걸릴 수 있어요.'}
                 </AppText>
               )}
             </View>
@@ -1659,13 +1871,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 <AppText style={styles.sendBtnText}>확인</AppText>
               </TouchableOpacity>
             </View>
-            {/* v3.202(H-②): 마지막 단계에서도 가사 반영 진입 가능 — 1.75 질문을 놓친(스킵된)
-                사용자를 위한 동등 버튼(handleLyricsUse 경유, 추가 비용 없음) */}
-            {!albumMode && !!(selectedTrack?.id || musicStore.coverTrackId) && (
-              <TouchableOpacity style={styles.optionBtnOutline} onPress={() => handleLyricsUse(2)} activeOpacity={0.8}>
-                <AppText style={styles.optionBtnOutlineText}>가사 내용 기반으로 생성</AppText>
-              </TouchableOpacity>
-            )}
+            {/* v3.204(②): '가사 내용 기반으로 생성' 버튼 제거 — 가사 반영 여부는 1.75에서
+                항상 질문되므로 여기 재노출은 중복·모순. 변경은 1.75 버블 편집으로 일원화. */}
             {/* v3.150: 자유 서술 없이도 생성 가능 — 전 항목 선택사항 원칙 */}
             <TouchableOpacity style={styles.optionBtnOutline} onPress={() => handleStyleConfirm('')} activeOpacity={0.8}>
               <AppText style={styles.optionBtnOutlineText}>이대로 만들기 (건너뛰기)</AppText>
@@ -1673,6 +1880,16 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           </>
         ) : null}
       </View>
+
+      {/* v3.204(④): 선택지형 답변 편집 모달 — 작사 디렉터 재선택 모달과 동일 규격(공용 컴포넌트) */}
+      <AnswerEditModal
+        visible={editStep != null}
+        choices={editStep != null ? editChoicesForStep(editStep) : []}
+        freeText={editStep != null && COVER_FREETEXT_STEPS.has(editStep)}
+        extraActions={editStep != null ? editExtraActionsForStep(editStep) : undefined}
+        onPick={handleEditPick}
+        onCancel={handleEditCancel}
+      />
     </KeyboardAvoidingView>
   );
 }

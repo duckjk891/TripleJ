@@ -45,8 +45,16 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
 import Marquee from '../components/Marquee';
 import TrackComments from '../components/common/TrackComments';
+import TutorialOverlay from '../components/TutorialOverlay';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
+const TUTORIAL_STEPS = [
+  { title: '재생 위치 이동', desc: '재생바를 드래그해서 원하는 구간으로 이동할 수 있어요.' },
+  { title: '가사·제작 노트', desc: '하단 바를 탭하면 가사와 제작 노트, 댓글을 볼 수 있어요.' },
+  { title: '담기와 공유', desc: '지금 듣는 곡을 플레이리스트에 담거나 밖으로 공유해보세요.' },
+];
 
 interface AdItem {
   id: string;
@@ -1464,6 +1472,9 @@ export default function PlayerScreen({ route, navigation }: any) {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
+      <TutorialOverlay screenKey="player" steps={TUTORIAL_STEPS} />
     </View>
   );
 }

@@ -12,6 +12,8 @@ import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
+// v3.204(①): 후보 재생바 시크 — PlayerScreen 검증 패턴(Slider + isSeekingRef + seekValue 버퍼) 이식
+import Slider from '@react-native-community/slider';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
@@ -123,6 +125,11 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  // v3.204(①): 시크 — PlayerScreen :188~197 패턴 이식(드래그 버퍼 + 라이브 ref)
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekValue, setSeekValue] = useState(0);   // 드래그 중 슬라이더 위치(웹 리셋 방지)
+  const isSeekingRef = useRef(false);              // 콜백 클로저 stale 방지(라이브 값)
+  const seekFromRef = useRef(0);                   // 드래그 시작 위치 — LISTEN seek from_ms 기록용
   // v3.93: 2-variant 클립 비교 — GET /generate/{id}의 variants 배열(길이 2)이 있으면
   // 트랙 확정 전 A/B 비교 청취를 제공하고, 저장 시 선택한 variant_index로 확정한다.
   const [variantCount, setVariantCount] = useState(1);
@@ -139,17 +146,27 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const candidateId = (index: number): string | null =>
     store.generationId ? `${store.generationId}:v${index}` : null;
 
-  const logListen = (action: 'play' | 'pause' | 'ended', index: number, positionMs: number) => {
+  const logListen = (
+    action: 'play' | 'pause' | 'ended' | 'seek',
+    index: number,
+    positionMs: number,
+    seekFromMs?: number
+  ) => {
     const cid = candidateId(index);
     if (!cid) return;
-    // seek: 진행바가 비인터랙티브(탭 시킹 UI 없음)라 seek 이벤트는 현재 발생 지점이 없다 —
-    // 시킹 UI 도입 시 from_ms/to_ms와 함께 기록(문서 §6.2).
+    // v3.204(①): 시킹 UI 도입 — seek는 onSlidingComplete에서만 1회 {from_ms, to_ms}로 기록
+    // (드래그 중 기록 금지 — 폭주 방지). 서버 sessions.py LISTEN_ACTIONS에 seek 허용,
+    // from_ms/to_ms는 음이 아닌 정수 필수(문서 §6.2 정합).
     // v3.200(X-1): candidate_id는 §5.2 정본대로 target에 — payload에 넣으면 서버 400.
-    logCreationEvent(
-      'LISTEN',
-      { action, position_ms: Math.max(0, Math.round(positionMs || 0)) },
-      { candidate_id: cid }
-    );
+    const payload =
+      action === 'seek'
+        ? {
+            action,
+            from_ms: Math.max(0, Math.round(seekFromMs || 0)),
+            to_ms: Math.max(0, Math.round(positionMs || 0)),
+          }
+        : { action, position_ms: Math.max(0, Math.round(positionMs || 0)) };
+    logCreationEvent('LISTEN', payload, { candidate_id: cid });
   };
 
   const logCandidateSelect = (index: number) => {
@@ -202,7 +219,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           (status) => {
             if (!mounted) return;
             if (status.isLoaded) {
-              setPosition(status.positionMillis || 0);
+              // v3.204(①): 드래그 중엔 재생바를 status로 덮어쓰지 않음 (PlayerScreen :389 동일)
+              if (!isSeekingRef.current) setPosition(status.positionMillis || 0);
               setDuration(status.durationMillis || 0);
               if (status.didJustFinish) {
                 setIsPlaying(false);
@@ -237,6 +255,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     setIsPlaying(false);
     setPosition(0);
     setDuration(0);
+    // v3.204(①): 전환 중 드래그 잔존 상태 초기화 — 새 클립에 이전 시크 버퍼가 새지 않게
+    isSeekingRef.current = false;
+    setIsSeeking(false);
+    setSeekValue(0);
     loadAudio();
 
     return () => {
@@ -371,6 +393,34 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
     return `${min}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // v3.204(①): duration이 비유한(Infinity/NaN)·0이면 시크 불가 — 슬라이더 disabled
+  const seekable = Number.isFinite(duration) && duration > 0;
+
+  // v3.204(①): PlayerScreen :888 패턴 — 드래그 시작(라이브 ref 선세팅 + 시작 위치 백업)
+  const handleSlidingStart = () => {
+    isSeekingRef.current = true;
+    seekFromRef.current = position;
+    setSeekValue(position);
+    setIsSeeking(true);
+  };
+
+  // v3.204(①): PlayerScreen :874 패턴 — 드래그 완료 지점부터 재생(낙관 반영 후 실제 seek).
+  // 일시정지 상태에서도 위치만 이동(setPositionAsync는 재생 상태와 무관). LISTEN seek 1회 기록.
+  const handleSeek = async (value: number) => {
+    const from_ms = Math.max(0, Math.round(seekFromRef.current || 0));
+    const to_ms = Math.max(0, Math.round(value || 0));
+    setPosition(value);
+    isSeekingRef.current = false;
+    setIsSeeking(false);
+    console.info('[MusicResult] seek', { variant: selectedVariant, from_ms, to_ms });
+    logListen('seek', selectedVariant, to_ms, from_ms);
+    try {
+      if (sound) await sound.setPositionAsync(value);
+    } catch (err: any) {
+      console.error('[MusicResult] seek 실패', { message: err?.message });
+    }
   };
 
   const handleRegenerate = () => {
@@ -615,16 +665,22 @@ export default function MusicResultScreen({ navigation, route }: Props) {
                     </View>
                     {active && (
                       <View style={{ marginTop: 10 }}>
-                        <View style={styles.progressBar}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              { width: duration > 0 ? `${(position / duration) * 100}%` : '0%' },
-                            ]}
-                          />
-                        </View>
+                        {/* v3.204(①): View 폭 % 비인터랙티브 바 → Slider 시크 (PlayerScreen 패턴) */}
+                        <Slider
+                          style={styles.seekSlider}
+                          minimumValue={0}
+                          maximumValue={seekable ? duration : 1}
+                          value={isSeeking ? seekValue : position}
+                          onValueChange={(v) => { if (isSeekingRef.current) setSeekValue(v); }}
+                          onSlidingStart={handleSlidingStart}
+                          onSlidingComplete={handleSeek}
+                          disabled={!seekable}
+                          minimumTrackTintColor={colors.accent.primary}
+                          maximumTrackTintColor={colors.border.subtle}
+                          thumbTintColor={colors.accent.primary}
+                        />
                         <View style={styles.timeRow}>
-                          <AppText style={styles.timeText}>{formatTime(position)}</AppText>
+                          <AppText style={styles.timeText}>{formatTime(isSeeking ? seekValue : position)}</AppText>
                           <AppText style={styles.timeText}>{formatTime(duration)}</AppText>
                         </View>
                       </View>
@@ -651,22 +707,23 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               <AppText style={styles.trackSubtitle}>
                 {composerName} | {store.tempo} 템포
               </AppText>
-              {/* Progress bar */}
+              {/* Progress bar — v3.204(①): Slider 시크 (PlayerScreen 패턴) */}
               <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: duration > 0
-                          ? `${(position / duration) * 100}%`
-                          : '0%',
-                      },
-                    ]}
-                  />
-                </View>
+                <Slider
+                  style={styles.seekSlider}
+                  minimumValue={0}
+                  maximumValue={seekable ? duration : 1}
+                  value={isSeeking ? seekValue : position}
+                  onValueChange={(v) => { if (isSeekingRef.current) setSeekValue(v); }}
+                  onSlidingStart={handleSlidingStart}
+                  onSlidingComplete={handleSeek}
+                  disabled={!seekable}
+                  minimumTrackTintColor={colors.accent.primary}
+                  maximumTrackTintColor={colors.border.subtle}
+                  thumbTintColor={colors.accent.primary}
+                />
                 <View style={styles.timeRow}>
-                  <AppText style={styles.timeText}>{formatTime(position)}</AppText>
+                  <AppText style={styles.timeText}>{formatTime(isSeeking ? seekValue : position)}</AppText>
                   <AppText style={styles.timeText}>{formatTime(duration)}</AppText>
                 </View>
               </View>
@@ -950,17 +1007,10 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 20,
   },
-  progressBar: {
+  // v3.204(①): 시크 슬라이더 — PlayerScreen slider(:1588) 규격 동일
+  seekSlider: {
     width: '100%',
-    height: 6,
-    backgroundColor: colors.border.subtle,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent.primary,
-    borderRadius: 3,
+    height: 40,
   },
   timeRow: {
     flexDirection: 'row',

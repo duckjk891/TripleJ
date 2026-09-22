@@ -23,6 +23,14 @@ import { AppText, EmptyState, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
+import TutorialOverlay from '../components/TutorialOverlay';
+
+// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
+const TUTORIAL_STEPS = [
+  { title: '재생목록 관리', desc: '지금 듣는 재생목록과 내가 만든 플레이리스트를 여기서 관리해요.' },
+  { title: '비회원 안내', desc: '로그인하지 않은 상태의 재생목록은 앱을 다시 시작하면 사라져요. 로그인하면 계속 보관돼요.' },
+  { title: '플레이리스트 재생', desc: '플레이리스트를 재생하면 현재 재생목록이 그 곡들로 바뀌어요.' },
+];
 import { useLikesStore } from '../stores/likesStore';
 
 interface Playlist {
@@ -308,6 +316,9 @@ export default function PlaylistScreen({ navigation }: any) {
           onPress: (t) => handleRemoveTrackFromPlaylist(String(t.id)),
         }] : undefined}
       />
+
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
+      <TutorialOverlay screenKey="playlist" steps={TUTORIAL_STEPS} />
     </View>
   );
 }

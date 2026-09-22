@@ -16,7 +16,14 @@ import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
+import TutorialOverlay from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
+
+// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
+const TUTORIAL_STEPS = [
+  { title: '곡 찾기', desc: '제목·아티스트·태그로 검색하거나, 느낌 칩을 골라 어울리는 곡을 찾아보세요.' },
+  { title: '탭해서 재생', desc: '검색 결과를 탭하면 바로 재생돼요. 더보기(⋮)로 담을 수도 있어요.' },
+];
 
 interface Track {
   id: string;
@@ -290,6 +297,9 @@ export default function SearchScreen() {
           ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) }
           : t))}
       />
+
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
+      <TutorialOverlay screenKey="search" steps={TUTORIAL_STEPS} />
     </ScreenLayout>
   );
 }

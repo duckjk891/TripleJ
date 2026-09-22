@@ -32,6 +32,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
+import TutorialOverlay, { TutorialOverlayHandle } from '../components/TutorialOverlay';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
@@ -50,6 +51,14 @@ const WALK_ZONES: Record<string, Array<[number, number]>> =
   require('../assets/director_walk_zones.json');
 const MAP_WIDTH = 704;
 const MAP_HEIGHT = 2208;
+
+// v3.204 ⑥: 인라인 튜토리얼 Modal의 4개 항목을 공용 TutorialOverlay 스텝으로 이관 (문구 유지)
+const TUTORIAL_STEPS = [
+  { title: '작업실에 오신 걸 환영해요', desc: '각 디렉터를 탭해서 작업을 맡기세요.' },
+  { title: '다음 작업', desc: '빛나는 디렉터가 다음 작업할 분이에요.' },
+  { title: '결과 확인', desc: '작업을 맡기면 결과를 바로 확인할 수 있어요.' },
+  { title: '디렉터 휴식', desc: '작업을 완성하면 그 디렉터가 잠시 휴식해요. 휴식 중엔 탭해서 단축할 수 있어요.' },
+];
 
 const DIRECTOR_NAMES: Record<DirectorType, string> = {
   artist: '아티스트 디렉터',
@@ -228,9 +237,8 @@ export default function MapScreen({ navigation }: Props) {
       return () => { cancelled = true; };
     }, [user])
   );
-  const [showTutorial, setShowTutorial] = useState(false);
-  const [showTutorialHint, setShowTutorialHint] = useState(true);
-  const tutorialShownRef = useRef(false);
+  // v3.204 ⑥: 인라인 튜토리얼 Modal → 공용 TutorialOverlay 이관 (ⓘ는 ref.show()로 재노출)
+  const tutorialRef = useRef<TutorialOverlayHandle>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 영입 시스템
@@ -283,7 +291,7 @@ export default function MapScreen({ navigation }: Props) {
           </View>
           {user && (
             <TouchableOpacity
-              onPress={() => { setShowTutorialHint(false); setShowTutorial((v) => !v); }}
+              onPress={() => tutorialRef.current?.show()}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel="도움말"
             >
@@ -304,7 +312,7 @@ export default function MapScreen({ navigation }: Props) {
     });
     // v3.201(C): deps의 user 객체 identity 제거(→ !!user) — 클로저는 user truthiness와 company_name만
     // 사용하므로 충분. identity 유지 시 setUser류 갱신마다 불필요 재실행(와이프 트리거)됐다.
-  }, [navigation, user?.company_name, !!user, showTutorial, nameMaxWidth]); // v3.199(C): 회전/폭 변화 반영
+  }, [navigation, user?.company_name, !!user, nameMaxWidth]); // v3.199(C): 회전/폭 변화 반영 · v3.204: 튜토리얼은 ref 기반이라 deps 불필요
 
   // v3.201(C): "포커스 화면만 헤더에 쓴다" 불변식의 clear 담당 — Map으로 돌아왔을 때만 화살표 제거.
   // 3화면(Dialogue/LyricsInput/ComposerInput)의 blur cleanup을 제거한 대신(경합 주 원인),
@@ -732,33 +740,8 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       </Modal>
 
-      {/* 첫 방문 튜토리얼 */}
-      <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => setShowTutorial(false)}>
-        <View style={styles.tutorialOverlay}>
-          <View style={styles.tutorialBox}>
-            <Text style={styles.tutorialTitle}>작업실에 오신 걸 환영해요!</Text>
-            <View style={styles.tutorialItem}>
-              <Text style={styles.tutorialNum}>1</Text>
-              <Text style={styles.tutorialText}>각 디렉터를 탭해서 작업을 맡기세요</Text>
-            </View>
-            <View style={styles.tutorialItem}>
-              <Text style={styles.tutorialNum}>2</Text>
-              <Text style={styles.tutorialText}>빛나는 디렉터가 다음 작업할 분이에요</Text>
-            </View>
-            <View style={styles.tutorialItem}>
-              <Text style={styles.tutorialNum}>3</Text>
-              <Text style={styles.tutorialText}>작업을 맡기면 결과를 바로 확인할 수 있어요</Text>
-            </View>
-            <View style={styles.tutorialItem}>
-              <Text style={styles.tutorialNum}>4</Text>
-              <Text style={styles.tutorialText}>작업을 완성하면 그 디렉터가 잠시 휴식해요. 휴식 중엔 탭해서 단축할 수 있어요</Text>
-            </View>
-            <TouchableOpacity style={styles.tutorialBtn} onPress={() => setShowTutorial(false)}>
-              <Text style={styles.tutorialBtnText}>시작하기</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* 첫 방문 튜토리얼 — v3.204 ⑥: 공용 TutorialOverlay로 이관 (ⓘ 탭 시 ref로 재노출) */}
+      <TutorialOverlay ref={tutorialRef} screenKey="map" steps={TUTORIAL_STEPS} />
     </View>
   );
 }
@@ -955,64 +938,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.text.muted,
     marginBottom: 14,
-  },
-  tutorialOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  tutorialBox: {
-    backgroundColor: colors.bg.surface1,
-    borderRadius: 18,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
-    borderWidth: 1,
-    borderColor: colors.border.accent,
-  },
-  tutorialTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-    marginBottom: 18,
-    textAlign: 'center',
-  },
-  tutorialItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  tutorialNum: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.accent.primary,
-    color: colors.text.primary,
-    fontSize: 13,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    lineHeight: 28,
-    marginRight: 12,
-  },
-  tutorialText: {
-    flex: 1,
-    color: colors.text.secondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  tutorialBtn: {
-    marginTop: 12,
-    backgroundColor: colors.accent.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  tutorialBtnText: {
-    color: colors.text.primary,
-    fontSize: 15,
-    fontWeight: 'bold',
   },
   guestTouchOverlay: {
     ...StyleSheet.absoluteFillObject,

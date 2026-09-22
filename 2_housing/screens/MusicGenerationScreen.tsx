@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
+// v3.204(④): 답변 편집 UX 통일 — 선택지형 스텝은 확인 팝업 없이 즉시 편집 모달(작사 디렉터 기준)
+import AnswerEditModal from '../components/AnswerEditModal';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
@@ -47,6 +49,19 @@ export const VOCAL_OPTIONS = ['남성', '여성'];
 const INSTRUMENTAL_OPTION = 'Instrumental (연주곡)';
 
 const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A major', 'B major', 'C minor', 'D minor', 'E minor', 'F minor', 'G minor', 'A minor', 'B minor'];
+
+// v3.204(④): 답변 편집 분류 —
+// · 선택지형(즉시 AnswerEditModal, setStep 금지 — 하단 입력 영역 유지):
+//   3(보컬)·100(서브 성별)·4(보컬 스타일)·101(서브 스타일)·220(목소리 방식)·
+//   300(장르)·301(분위기)·310(곡 길이)·11(키)·302(장르/분위기 확인)
+// · 복합형(확인 팝업 없이 performRewind 즉시 실행 + 수정 배너):
+//   0(제목)·1(가사)·5(참고)·6(제외)·7/8/9/10(슬라이더)·200(아티스트)·210(클론)·12(페르소나)
+const CHOICE_EDIT_STEPS = new Set([3, 100, 4, 101, 220, 300, 301, 310, 11, 302]);
+// 자유 입력 허용 — 메인 플로우에 자유 입력이 있는 스텝만. enum 매핑 스텝(3·100·220·302·310·11) 비노출.
+const EDIT_FREETEXT_STEPS = new Set([300, 301, 4, 101]);
+// 310(곡 길이)·11(키) 모달 선택지 라벨 — 메인 플로우의 '자동' 스킵과 동치
+const DURATION_AUTO_LABEL = '자동 (길이를 맡겨요)';
+const KEY_AUTO_LABEL = '자동 키';
 
 // v3.203: 연주곡 곡 길이 선택지(분) — Suno V6가 duration 파라미터를 직접 지원(10~360초),
 // 상한 360초 = 6분이 근거. 선택값은 초로 환산해 musicStore.durationSec에 저장(자동=null).
@@ -136,6 +151,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.202(E/F): 비파괴 되감기 컨텍스트 — 탭한 버블 idx·되감은 step·복귀할 원래 step.
   // 활성 중에는 답변 핸들러가 대화를 덧붙이는 대신 해당 버블/에코만 치환하고 resumeStep으로 복귀.
   const rewindRef = useRef<{ idx: number; target: number; resumeStep: number } | null>(null);
+  // v3.204(④): 선택지형 답변 편집 모달이 보여주는 스텝(null=닫힘) — setStep과 독립(입력 영역 유지)
+  const [editStep, setEditStep] = useState<number | null>(null);
   // v3.202(J): 연주곡 진입 스냅샷 — ComposeLyricsPick '가사 없이 만들기' 경로(가사 공백 상태로 진입).
   // 마운트 시점에 고정해, 이후 보컬 스텝의 Instrumental 선택(가사 유지·무보컬)과 구분한다.
   const instrumentalEntryRef = useRef(
@@ -371,14 +388,154 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setStep(target);
   };
 
+  // v3.204(④): 확인 팝업 삭제 — 선택지형은 즉시 편집 모달(setStep 금지), 복합형은 즉시
+  // performRewind + 입력 영역 상단 수정 배너. 커밋·복귀는 기존 commitExchange 되감기 분기 재사용.
   const handleUserBubbleTap = (idx: number) => {
     const msg = chatHistory[idx];
     if (msg?.type !== 'user' || msg.step == null) return;
-    showAlert('이 답변만 다시 고를까요?', `"${msg.text}"\n\n이 답변만 새 값으로 바뀌고, 이후의 대화와 선택은 그대로 유지돼요.`, [
-      { text: '취소', style: 'cancel' },
-      { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
-    ]);
+    const target = msg.step;
+    if (CHOICE_EDIT_STEPS.has(target)) {
+      // 연쇄 되감기(편집 중 다른 버블 탭) — 복귀 지점은 최초의 원래 진행 위치 유지
+      const resumeStep = rewindRef.current ? rewindRef.current.resumeStep : step;
+      repickRef.current = false;
+      rewindRef.current = { idx, target, resumeStep };
+      if (target === 300 || target === 301) setCustomPickInput('');
+      console.info('[MusicGeneration] 답변 편집 모달 열기', { idx, target, resumeStep });
+      setEditStep(target);
+      return;
+    }
+    performRewind(idx, target);
   };
+
+  // v3.204(④): 복합형 되감기 취소 — 배너 [취소] → 되감기 해제 + 원래 진행 위치 복귀
+  const cancelRewind = () => {
+    const rw = rewindRef.current;
+    if (!rw) return;
+    console.info('[MusicGeneration] 답변 수정 취소', { target: rw.target, resume: rw.resumeStep });
+    rewindRef.current = null;
+    setStep(rw.resumeStep);
+  };
+
+  // v3.204(④): 수정 배너용 스텝 라벨
+  const stepEditLabel = (s: number): string => {
+    switch (s) {
+      case 0: return '제목';
+      case 1: return '가사';
+      case 3: return '보컬';
+      case 4: return '보컬 스타일';
+      case 5: return '참고 음악';
+      case 6: return '제외 스타일';
+      case 7: return '자유도';
+      case 8: return '대중성·실험성';
+      case 9: return '참고음 세기';
+      case 10: return 'BPM';
+      case 11: return '키';
+      case 12: return '내 목소리';
+      case 100: return '서브 보컬';
+      case 101: return '서브 보컬 스타일';
+      case 200: return '아티스트';
+      case 210: return '내 목소리';
+      case 220: return '목소리 방식';
+      case 300: return '장르';
+      case 301: return '분위기';
+      case 302: return '장르·분위기';
+      case 310: return '곡 길이';
+      default: return '이';
+    }
+  };
+
+  // v3.204(④): 편집 모달 선택지 — 해당 스텝의 기존 선택지 배열 재사용
+  const editChoicesForStep = (s: number): string[] => {
+    switch (s) {
+      case 3: return [...VOCAL_OPTIONS, INSTRUMENTAL_OPTION];
+      case 100: return [...VOCAL_OPTIONS];
+      case 4: return [...VOCAL_STYLES];
+      case 101: return [...VOCAL_STYLES];
+      case 220: return ['간편 목소리 (보컬 스타일 선택)', '내 목소리 (클로닝한 목소리)'];
+      case 300: return [...GENRE_OPTIONS];
+      case 301: return [...MOOD_OPTIONS];
+      case 310: return [...DURATION_OPTIONS.map((m) => `${m}분`), DURATION_AUTO_LABEL];
+      case 11: return [...KEY_OPTIONS, KEY_AUTO_LABEL];
+      case 302: return ['네, 이대로 갈게요', '아니요, 다른 장르·분위기로 만들래요'];
+      default: return [];
+    }
+  };
+
+  // v3.204(④): 편집 모달 onPick — 기존 스텝 핸들러를 그대로 호출 → commitExchange 되감기
+  // 분기(비파괴 치환 + resumeStep 복귀)가 자동 수행. 연쇄(setStep)는 아래 effect가 모달을 갱신.
+  const invokeEditPick = (s: number, choice: string) => {
+    switch (s) {
+      case 3: handleVocalSelect(choice); break;
+      case 100: handleSubVocalSelect(choice); break;
+      case 4: handleVocalStyleSelect(choice); break;
+      case 101: handleSubVocalStyleSelect(choice); break;
+      case 220:
+        if (choice.startsWith('내 목소리')) handleMyVoiceEntry();
+        else handleVoiceModeQuick();
+        break;
+      case 300: handleGenrePick(choice.slice(0, 30)); break; // 자유 입력 30자 제한(handleCustomPickSubmit 동일)
+      case 301: handleMoodPick(choice.slice(0, 30)); break;
+      case 310: {
+        if (choice === DURATION_AUTO_LABEL) handleDurationPick(null);
+        else {
+          const min = parseInt(choice, 10);
+          handleDurationPick(Number.isFinite(min) ? min : null);
+        }
+        break;
+      }
+      case 11: {
+        // handleKeyConfirm은 musicalKey state를 읽어 편집 경로에선 stale — 값 명시 재현(동일 시맨틱)
+        if (choice === KEY_AUTO_LABEL) {
+          setMusicalKeyOn(false);
+          advanceStep('자동 키', musicStore.instrumental ? 13 : 12);
+        } else {
+          setMusicalKey(choice);
+          setMusicalKeyOn(true);
+          advanceStep(`키: ${choice}`, musicStore.instrumental ? 13 : 12);
+        }
+        break;
+      }
+      case 302:
+        if (choice.startsWith('네')) handleGenreConfirmYes();
+        else handleGenreConfirmNo();
+        break;
+    }
+  };
+
+  const handleEditPick = (choice: string) => {
+    const s = editStep;
+    if (s == null) return;
+    console.info('[MusicGeneration] 답변 편집', { step: s, choice });
+    // 커밋/연쇄 여부와 무관하게 일단 닫기 — 연쇄(setStep)면 아래 effect가 다음 스텝 모달을 다시 연다
+    setEditStep(null);
+    invokeEditPick(s, choice);
+  };
+
+  const handleEditCancel = () => {
+    const rw = rewindRef.current;
+    rewindRef.current = null;
+    setEditStep(null);
+    // 연쇄 도중 취소(302→300 등에서 step이 이동한 상태) — 원래 진행 위치로 복귀
+    if (rw && rw.resumeStep !== step) setStep(rw.resumeStep);
+  };
+
+  // v3.204(④): 편집 모달 연쇄/종료 동기화 — 되감기 중 핸들러가 setStep으로 연쇄하면
+  // 새 스텝이 선택지형일 때 모달을 이어서 연다(302 '다시 고르기'→300, 300→301 등).
+  // 복합 스텝 연쇄(220 '내 목소리'→210)는 모달 대신 배너+입력 영역 경로.
+  // 커밋(rewindRef 해제) 후에는 항상 닫는다.
+  useEffect(() => {
+    const rw = rewindRef.current;
+    if (!rw) {
+      if (editStep != null) setEditStep(null);
+      return;
+    }
+    if (CHOICE_EDIT_STEPS.has(step)) {
+      if (editStep !== step) setEditStep(step);
+    } else if (editStep != null) {
+      setEditStep(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Step 0: Title confirm → step 1(가사 확인)
   // 편집한 제목을 lyricsStore에 반영 (이걸 안 하면 MyMusic / LyricsResult에서 원본만 보임)
@@ -1832,8 +1989,29 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         ))}
       </ScrollView>
 
+      {/* v3.204(④): 복합형 답변 수정 배너 — 되감기 중(모달 비노출 시)에만. [취소] = 원위치 복귀 */}
+      {rewindRef.current != null && editStep == null && (
+        <View style={styles.rewindBanner}>
+          <AppText style={styles.rewindBannerText}>
+            {stepEditLabel(rewindRef.current.target)} 답변을 수정 중이에요
+          </AppText>
+          <TouchableOpacity onPress={cancelRewind} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <AppText style={styles.rewindBannerCancel}>취소</AppText>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Current step input */}
       {renderInputArea()}
+
+      {/* v3.204(④): 선택지형 답변 편집 모달 — 작사 디렉터 재선택 모달과 동일 규격(공용 컴포넌트) */}
+      <AnswerEditModal
+        visible={editStep != null}
+        choices={editStep != null ? editChoicesForStep(editStep) : []}
+        freeText={editStep != null && EDIT_FREETEXT_STEPS.has(editStep)}
+        onPick={handleEditPick}
+        onCancel={handleEditCancel}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1841,6 +2019,22 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   // v3.148: 내 답변 말풍선 수정 힌트
   editHint: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 4, textAlign: 'right' },
+  // v3.204(④): 복합형 답변 수정 배너 (입력 영역 상단)
+  rewindBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginBottom: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    backgroundColor: colors.bg.surface1,
+  },
+  rewindBannerText: { flex: 1, color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
+  rewindBannerCancel: { color: colors.text.secondary, fontSize: 12, fontWeight: '700', paddingHorizontal: 8 },
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,

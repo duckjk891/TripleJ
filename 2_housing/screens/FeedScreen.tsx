@@ -17,7 +17,15 @@ import { playTrackNow } from '../services/playback';
 import Fab from '../components/Fab';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
+import TutorialOverlay from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
+
+// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
+const TUTORIAL_STEPS = [
+  { title: '소식 둘러보기', desc: '피드에서 다른 기획사와 아티스트의 새 소식을 볼 수 있어요.' },
+  { title: '내 곡 공유', desc: '오른쪽 아래 버튼으로 내 곡과 소식을 피드에 올려보세요.' },
+  { title: '반응하기', desc: '마음에 드는 소식에는 좋아요와 댓글로 반응할 수 있어요.' },
+];
 
 interface FeedTrack {
   id: string;
@@ -310,6 +318,9 @@ export default function FeedScreen() {
           />
         </TouchableOpacity>
       ) : null}
+
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
+      <TutorialOverlay screenKey="feed" steps={TUTORIAL_STEPS} />
     </ScreenLayout>
   );
 }

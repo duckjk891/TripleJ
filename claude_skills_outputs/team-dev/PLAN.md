@@ -3403,3 +3403,101 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - 연주곡 결과 화면·발매 흐름의 "가사" 표기 정리(빈 가사 섹션 숨김) — 이번 범위 밖.
 - MusicResult/발매 제목 편집 UI(제목 확인 스텝 축소의 전제) — 사용자 결정 사항.
 - MusicGenerationScreen의 죽은 녹음 핸들러 3종(:881/:906/:930 — 렌더 미참조) 정리 — 별도 청소 사이클.
+
+
+---
+
+## v3.204 (2026-09-22) — 디렉터 대화 편집 UX 통일(작사 방식) + 커버 질문 순서·중복 버튼 정리 + 미세조정 오류 복구 + 후보 재생바 시크 + 튜토리얼 오버레이 신설
+
+> 작성: planner(팀 리드). 사용자 요청 6항목: ① 작곡 후보 2곡 재생바 시크 ② 이미지 디렉터 마지막 질문의 '가사 기반' 버튼 제거 ③ 세부 질문 순서 배경→구도 ④ 답변 편집을 작사 디렉터의 재선택 팝업 방식으로 통일(할지말지 확인 팝업 금지) ⑤ 이미지 미세조정 반복 오류 수정 ⑥ 최초 접속 시 페이지별 튜토리얼 오버레이.
+> 소스오브트루스: 앱 `/Users/pearl/TripleJ/2_housing/`(frontend, 직전 0b4d59d v3.203), 백엔드 프로덕션 `ssh maidol-ec2` `/home/ubuntu/maidol/backend_9004/`(git 아님, **이번 사이클 서버 읽기 전용 — 서버 쓰기는 권한 차단 상태**, 로컬 백엔드 워크트리 사용 금지).
+> v3.203 이월분(서버 2차 배포 사용자 대기·E-3 Suno 스모크)은 이번 계획과 별개 — 건드리지 않는다(참고만).
+
+### Plan verification findings (파일:라인 + 현재 동작 — 전 항목 실측)
+
+**① 후보 2곡 재생바 (MusicResultScreen.tsx, 1097줄)**
+- 비교 카드 진행바 :618~631, 단일 플레이어 진행바 :655~672 — 둘 다 `View` 폭 % 채우기(비인터랙티브). 시크 UI 없음.
+- 재생: expo-av `Audio.Sound.createAsync`(:196~214, 상태 콜백이 :205에서 position 갱신). `generationStreamUrl(generationId, variant)` 프록시 스트림(:182).
+- `@react-native-community/slider` **5.0.1 이미 설치**(package.json:15). 검증된 시크 관행 = PlayerScreen.tsx(:24 import, :1060 Slider, :866 `handleSeek`→`setPositionAsync`, :880 `handleSlidingStart`+`isSeekingRef`로 콜백 튐 방지, :188 `seekValue` 드래그 버퍼). **PanResponder 자체 구현 불필요 — 기존 라이브러리·기존 관행 재사용 확정.**
+- LISTEN 계측: `logListen`(:142~153)의 주석 :145~146이 "시킹 UI 도입 시 from_ms/to_ms와 함께 seek 기록(문서 §6.2)"을 이미 예약. **서버 실측**: sessions.py:34 `LISTEN_ACTIONS = {"play","pause","seek","ended"}` — seek 허용, :129~130 `from_ms`/`to_ms` 음이 아닌 정수 필수. 이벤트 폭주 방지 = `onSlidingComplete`에서만 1회 기록(드래그 중 미기록).
+- 스트림 Range: generate.py:1224 `stream_generation`은 StreamingResponse 전체 전송(Range/206 미지원). 단 PlayerScreen 주석(:539) 실측대로 네이티브는 버퍼링 기반 seek 정상 — 후보 클립은 5~6MB라 초기에 전부 버퍼링됨. 백엔드 무변경.
+- duration Infinity 가드 :368~369 존재 — Slider `maximumValue`는 유한값 필수 → duration 비유한/0이면 슬라이더 disabled 처리 필요.
+
+**② 이미지 디렉터 '가사 기반' 버튼 중복 (CoverGenerationScreen.tsx, 1795줄)**
+- step 1.75(초반, :604~614 `proceedToLyricsQ`)에서 "가사 내용을 반영해서 만들까요?"를 **트랙 모드에서 항상** 질문(트랙은 step 0에서 반드시 선택되므로 스킵 경로 없음 — :605 albumMode/무트랙만 예외).
+- 그런데 마지막 스텝 2(자유 서술) 렌더 :1662~1668에 v3.202(H-②)가 넣은 '가사 내용 기반으로 생성' 버튼이 또 노출 — 넣을 때 근거였던 "1.75를 놓친 사용자"는 실측상 존재하지 않는 경로(1.75는 트랙 모드에서 항상 출력). 1.75에서 이미 '반영'을 답했든 '직접'을 답했든 재노출 → 사용자 지적대로 중복·모순. **버튼 및 `handleLyricsUse(fromStep=2)` 분기(:742~743 answerText, :784 early return) 제거 확정.**
+- 1.75에서 '반영'을 답한 뒤 마음이 바뀌면: 해당 답변 버블 탭 편집(④)으로 해결 — 기능 손실 없음.
+
+**③ 세부 질문 순서 (CoverGenerationScreen.tsx)**
+- 현재 체인(1.75 '직접 정할게요' 이후): `proceedToShot`(:638, 구도 1.8) → `handleShotPick`(:646, 인물 있으면 표정 1.82 / 없으면 배경 1.85) → `handleExpressionPick`(:664 → 배경 1.85) → `handleBgPhoto/Text/Skip`(:678/:705/:715 → `proceedToPalette` :722, 색감 1.9) → `handlePalettePick`(:730 → `proceedToFinal` 2).
+- 스텝 식별자는 숫자 값(1.8=구도, 1.85=배경 고정)이고 렌더는 step 값 스위치(:1550~1629), 되감기(`performRewind` :825)도 target step 값 기준 → **순서 교체는 체인 배선만 바꾸면 되고 스텝 번호·영속 coverStep·프롬프트 조립(doGenerate payload :404~409, 개별 필드라 순서 무관)에 영향 없음.**
+- 주의: 디렉터 질문 버블의 `echoOfStep` 메타(비파괴 되감기의 에코 식별)가 선행 스텝 값과 일치해야 함 — 배선 변경 시 함께 갱신(현재 `proceedToShot`은 echoOfStep 미부여, `proceedToPalette`는 1.85 하드코딩 :725 → 호출부 파라미터화 필요).
+- `handleLyricsSkip` 되감기 분기(:794~800)의 "디테일 무응답 시 이어서 질문" 진입점도 proceedToShot → 새 1번 질문(배경)으로 교체 대상.
+
+**④ 답변 편집 UX 통일 — 기준: 작사 디렉터 (LyricsInputScreen.tsx, 723줄)**
+- 기준 구현: 답변 버블 탭 → `handleReselect`(:220) → **즉시 재선택 Modal**(:455~518 — 선택지 목록 + v3.201 자유 입력 행 + 취소, v3.202 flex-end 오버레이 + `useAndroidKeyboardLift` + 동적 maxHeight :475) → `handleReselectChoice`(:226~256)가 store 반영 + 해당 user 버블 text만 교체(비파괴). **확인 팝업 없음.**
+- 작곡(MusicGenerationScreen.tsx:374~381 `handleUserBubbleTap`)·이미지(CoverGenerationScreen.tsx:856~870): 탭 → `showAlert('이 답변만 다시 고를까요?', ... 취소/다시 선택)` **확인 팝업 후** `performRewind`로 하단 입력 영역을 그 스텝으로 전환하는 방식 — 사용자가 금지한 "할지말지 팝업" 실측 확인.
+- 두 화면 모두 v3.202/v3.203의 비파괴 치환 인프라 보유: 작곡 `commitExchange`(:298~324, rewindRef 활성 시 버블+echoOfStep 에코 치환 후 resumeStep 복귀), 이미지 `commitRewindAnswer`(:569~581) — **팝업에서 값을 고르면 기존 핸들러를 rewindRef 활성 상태로 그대로 호출하면 치환·복귀가 자동 성립.** 신규 커밋 경로 불필요.
+- 스텝 유형 실측 — 팝업(선택지)형으로 옮길 수 있는 스텝과 불가 스텝이 갈림:
+  - 작곡 renderInputArea(:1062, case :1074~1649): 단순 선택지 = 3(보컬)·100·4(스타일)·101·220·300(장르)·301(분위기)·310(곡길이)·11(키)·302(그대로/다시). 복합 UI = 0(제목 입력)·1(가사 편집)·5(참고 업로드)·6(제외 태그)·7/8/9/10(슬라이더)·200(아티스트 목록)·210(클론 목록)·12(페르소나).
+  - 이미지: 선택지형 = 1(포함/빼고)·1.5(슬롯)·1.7(의상 2택)·1.75(반영/직접)·1.8(구도)·1.82(표정)·1.85(배경 — 사진/텍스트/건너뛰기)·1.9(색감)·2(스타일+자유). 복합 = 0(곡 목록 — 유일한 **파괴적** 스텝, :826~847 이후 선택 전부 초기화).
+- 결론(자율 확정): 공용 `AnswerEditModal` 추출(작사 모달 마크업·스타일 그대로 — 재사용 3곳 충족) + 선택지형 스텝은 탭 → 즉시 이 모달. 복합 스텝은 탭 → **확인 팝업 없이** 즉시 되감기 + 입력 영역 위 "수정 중" 배너(취소 제공). 예외 1곳: 이미지 step 0(곡 변경)만 파괴적이라 확인 팝업 유지 — 작사에는 파괴적 스텝이 없어 "작사와 동일" 원칙과 충돌하지 않고, 실수 탭으로 대화 전체가 날아가는 사고 방지가 우선.
+
+**⑤ 이미지 미세조정 반복 오류 — 원인 실측 (앱 + 프로덕션 서버 로그)**
+- 앱 `handleRefine`(CoverGenerationScreen.tsx:1077~1149): `POST /upload/refine-cover`(timeout 10분). 서버 upload.py:849, 동기 처리(생성과 동일 계열), ⭐5 선차감.
+- **서버 로그 실측(docker logs maidol-app, -t)**: 2026-09-22 03:05:09 refine 차감(ref 0fe9dfe0) → **35초 뒤** 03:05:44 같은 세션·같은 prompt_len=22로 두 번째 차감(ref 540904a6) → 03:07:31/03:07:57 **둘 다 성공, 둘 다 new_version=1**(이력 버전 충돌) — 도합 ⭐10 차감. 그리고 최근 14일 access 로그에 `POST /api/upload/refine-cover` 라인이 **0건**(generate-cover도 0건 — 장시간 동기 POST의 응답이 클라이언트에 도달하지 못하는 v3.202 I-lite 실측과 동일 계열).
+- 재구성: refine 실소요 132~141초 >> 클라이언트 연결이 도중 단절(v3.202 실측 11/44/153s ERR_NETWORK와 동일) → 앱은 매번 '미세조정 실패' 표시 → 사용자 재시도 → **차감은 반복되고 결과는 못 받는 루프** = "계속 오류".
+- 이중 제출 경로 추가 확인: `handleRefine`의 `refining` 가드(:1079)는 ⭐ confirm `await`(:1090~1096) **앞**에서만 검사 — confirm 대기 중 Enter(onSubmitEditing :1380)와 적용 버튼(:1384)으로 재진입하면 confirm 2개가 뜨고 동시 요청 가능(서버 로그의 35초 간격은 재시도로 보이나, 이 경합도 함께 봉인).
+- v3.202 I-lite 폴링 복구(:324~361)는 **doGenerate 경로 전용** — refine 미커버 확인.
+- 회수 수단 실측: 서버에 `GET /upload/cover-history/{cover_session_id}`(upload.py:1103) 존재 — `current_version`·`cover_object_name`·`cover_refine_history` 반환. **앱 수정만으로 복구 가능(백엔드 무변경) 확정.** 서버 측 결함(동시 refine이 같은 버전 번호를 쓰는 경합, refine 멱등키 부재)은 쓰기 차단 상태라 이번 배포 없음 → 서버 백로그로 기재.
+- refine-cover 정상 완료도 되는 환경이 있음(9/22 03:07 성공 로그) — 즉 "항상 실패"가 아니라 "장시간 요청이 회선에 따라 실패"로, 복구 폴링이 정답(재요청=재차감 금지).
+
+**⑥ 튜토리얼 오버레이 — 현황 실측**
+- 기존 유사물: MapScreen.tsx:231~233 `showTutorial` + :736~760 인라인 Modal(작업실 4항목, ⓘ 버튼 :286으로 수동 토글) — **자동 1회 노출·영속 플래그 없음**, 다른 화면에는 전무.
+- AsyncStorage 관행: `@react-native-async-storage/async-storage` 2.2.0, authStore.ts:4처럼 `.catch(() => {})` 무해 처리 관행.
+- 탭 구조(App.tsx:300~395): Chart(차트)·Playlist(플레이리스트)·Feed(피드)·Search(검색)·Studio(작업실→Map)·MyMusic(숨김 탭). Player는 RootStack 별도 화면.
+- 라이브러리(react-native-copilot 등) 검토 → **자체 구현 확정**: 대상이 5~6화면·카드형이면 RN Modal(transparent, statusBarTranslucent)로 충분하고, 스포트라이트(타깃 측정) 라이브러리는 Expo 54·기존 헤더 주입 구조와 충돌 리스크 대비 이득 없음. v3.201~202 교훈 반영: Modal 내 KAV 금지(입력 없음이라 무관), safe-area 인셋 직접 처리.
+
+### 확정 스펙 (자율 판단 근거 포함)
+1. **(①) MusicResult 시크**: 비교 카드 활성 진행바 + 단일 플레이어 진행바를 `Slider`로 교체(PlayerScreen 패턴 이식: `isSeekingRef`+`seekValue`로 드래그 중 콜백 튐 방지, `onSlidingComplete`→`setPositionAsync`). duration 비유한/0이면 disabled. LISTEN `{action:'seek', from_ms, to_ms}`를 onSlidingComplete에서만 1회 기록(:145 예약 주석 이행 — 폭주 없음). 재생 중이 아니어도 시크 허용(위치만 이동).
+2. **(②) step 2의 '가사 내용 기반으로 생성' 버튼 삭제** + handleLyricsUse의 fromStep 파라미터·분기 제거(1.75 전용으로 단순화). 가사 반영 변경은 1.75 버블 편집으로 일원화.
+3. **(③) 세부 체인 재배선**: 1.75 '직접' → **배경(1.85)** → **구도(1.8)** → (인물 있으면) 표정(1.82) → 색감(1.9) → 자유 서술(2). 스텝 번호 불변·배선과 echoOfStep만 교체. 앨범 모드/무트랙 직행(:605)도 배경부터.
+4. **(④) 편집 UX 통일**:
+   - 신규 `components/AnswerEditModal.tsx` — LyricsInput 재선택 모달(:455~518 + reselect* 스타일)을 그대로 추출. props: `visible, title('다시 선택하기'), choices, freeText?, extraActions?(라벨+onPress — 배경 '사진 올리기', 의상 '꾸미기 가기' 용), onPick(text), onCancel`. 키보드 리프트·동적 maxHeight 로직 포함.
+   - LyricsInputScreen: 자체 모달 JSX를 이 컴포넌트 호출로 치환(마크업 동일 추출이라 회귀 0 목표 — 동작·스타일 diff 검증 필수).
+   - 작곡/이미지: `handleUserBubbleTap`에서 showAlert 확인 팝업 **삭제**. 선택지형 스텝 → `rewindRef = {idx, target, resumeStep: step}`만 세팅(**setStep 안 함** — 하단 입력 영역 유지)하고 모달 오픈; onPick은 기존 스텝 핸들러(handleShotPick·handleGenrePick 등)를 그대로 호출 → commitExchange/commitRewindAnswer의 되감기 분기가 치환·복귀 수행. onCancel은 rewindRef=null. 핸들러 후에도 rewindRef가 살아 있으면(연쇄: 이미지 1→1.5, 작곡 302→300 등) 모달 스텝을 rewindRef.target으로 갱신해 이어서 노출.
+   - 복합 스텝(작곡 0·1·5·6·7·8·9·10·200·210·12) → 확인 팝업 없이 기존 `performRewind` 즉시 실행 + 입력 영역 상단에 수정 배너(`"○○ 답변을 수정 중이에요"` + [취소] — 취소 시 rewindRef=null·setStep(resumeStep)). 실수 탭 복귀 수단 확보.
+   - 이미지 step 0(곡 변경)만 파괴적 확인 팝업 유지(위 근거).
+   - freeText 허용 스텝 = 메인 플로우에 자유 입력이 있는 스텝만(작곡 300·301·4·101, 이미지 1.8·1.82·1.85·1.9·2). enum 매핑 스텝(작곡 3·100·220·302·310·11, 이미지 1·1.5·1.7·1.75)은 자유 입력 비노출 — LyricsInput의 듀엣/랩/길이 비노출 원칙(:492 주석)과 동일 근거.
+5. **(⑤) 미세조정 복구 — 앱 측만**:
+   - `handleRefine` 이중 제출 봉인: confirm await 전에 `refineSubmitGuardRef` 세팅(취소/완료 시 해제) — confirm 대기 중 재진입 차단.
+   - 실패 catch에서 `isRecoverableNetErr`이면 즉시 실패 확정 대신 **`GET /upload/cover-history/{coverSessionId}` 폴링**(15s×최대 12회 — I-lite와 동일 리듬, 요청 직전 `currentVersion`을 기준선으로 `current_version > 기준선`이면 회수): 성공 시 새 버전 채택(objectName·history·version state 갱신 + `fetchBalance()`), **재요청 없음=재차감 없음**. 폴링 중 refineHint를 '연결이 불안정했어요. 서버에서 완성본을 확인하고 있어요…'로 표시. 회수 실패 시에만 기존 실패 알럿(문구에 '별이 이미 사용됐다면 버전 기록에 잠시 후 나타날 수 있어요' 1줄 추가).
+   - **서버 백로그(이번 배포 없음 — 쓰기 차단)**: (a) refine 동시 요청이 같은 new_version을 쓰는 경합(9/22 실측: version 1 이중 기록) — 세션 단위 락 or 멱등키, (b) 이중 차감 환불 검토(user c19acda4 ⭐5 × 1건), (c) 장시간 동기 POST의 응답 유실 — 비동기 잡+폴링 전환 검토. 사용자 승인 후 별도 사이클.
+6. **(⑥) 튜토리얼 오버레이**:
+   - 신규 `components/TutorialOverlay.tsx`: RN Modal(transparent·fade·statusBarTranslucent) + 반투명 딤 + 하단 카드(제목/설명/진행 도트/[다음]·마지막 [시작하기]/[건너뛰기]). props `screenKey, steps:{title, desc}[]`. 마운트 시 AsyncStorage `maidol_tutorial_seen_v1:<screenKey>` 확인(try/catch, 읽기 실패 시 **미노출** — 오탐 노출보다 안전) → 미열람이면 자동 1회 노출, 닫힘(건너뛰기 포함) 시 플래그 기록. `show()` 명령형 재노출 지원(ref).
+   - 스포트라이트(요소 하이라이트) 없이 카드형 스텝 안내로 확정 — MapScreen 기존 tutorialBox 관행 연장, 측정 기반 하이라이트는 과설계.
+   - 대상 6화면·문구(짧고 기능 중심, 이모지 금지, MAIDOL 표기): Chart(차트 구경→탭 재생→담기), Playlist(재생목록/플레이리스트 관리→비회원 재생목록은 재시작 시 사라짐→플레이리스트 재생=큐 교체), Feed(소식 보기→내 곡 공유→반응), Search(곡·아티스트 검색→결과 탭 재생), Map(기존 ⓘ 4항목을 steps로 이관 — 인라인 Modal 삭제, ⓘ 버튼은 overlay.show() 재노출로 연결), Player(재생바 드래그 이동→가사 보기→담기·공유). 문구 최종은 dev 재량(규칙 준수 전제).
+   - showAlert 규칙과 별개인 전용 오버레이(메모리 규칙 예외 명시). '튜토리얼 다시 보기' 설정 항목은 백로그(Map은 ⓘ로 이미 재노출 가능).
+7. 항상 규칙: MAIDOL 문자열, 이모지 금지(⭐ 예외), 저작권 단정 금지, 시크릿 금지.
+
+### 변경 매트릭스
+| 파일 | 변경 | 항목 | 담당 | 로그 추적자 |
+|---|---|---|---|---|
+| screens/MusicResultScreen.tsx | 진행바 2곳 Slider 교체 + seek LISTEN(from_ms/to_ms) | ① | app-dev 1조 | `[MusicResult] seek` |
+| components/AnswerEditModal.tsx (신규) | 작사 재선택 모달 추출(선택지+자유입력+extraActions) | ④ | app-dev 1조 | — |
+| screens/LyricsInputScreen.tsx | 자체 모달 → AnswerEditModal 치환(회귀 0) | ④ | app-dev 1조 | 기존 로그 유지 |
+| screens/MusicGenerationScreen.tsx | 확인 팝업 삭제, 선택지형=모달/복합형=배너 되감기 | ④ | app-dev 1조 | `[MusicGeneration] 답변 편집` |
+| screens/CoverGenerationScreen.tsx (편집 UX부) | 확인 팝업 삭제(step 0 제외)·모달 적용 | ④ | app-dev 1조 (2조 커밋 후) | `[Cover] 답변 편집` |
+| screens/CoverGenerationScreen.tsx (체인·버튼·refine부) | step2 가사 버튼 제거, 배경→구도 재배선+echoOfStep, refine 이중제출 가드+cover-history 폴링 복구 | ②③⑤ | app-dev 2조 | `[Cover] refine 폴링 복구` |
+| components/TutorialOverlay.tsx (신규) | 공용 오버레이+AsyncStorage 1회 노출 | ⑥ | app-dev 3조 | `[Tutorial] shown/skip` |
+| screens/ChartScreen·PlaylistScreen·FeedScreen·SearchScreen·MapScreen·PlayerScreen.tsx | TutorialOverlay 장착(Map은 기존 인라인 Modal 이관) | ⑥ | app-dev 3조 | 동일 |
+| (서버) — | 변경 없음(읽기 전용) — refine 경합·환불·비동기화는 백로그 | ⑤ | backend-dev 없음 | — |
+
+### 작업 순서·충돌 관리
+- **2조 → 1조 순차**(둘 다 CoverGenerationScreen.tsx 대규모 수정 — 2조 커밋 후 1조가 그 위에서 편집 UX 적용). 3조는 전 구간 병렬(신규 파일+탭 화면들, 겹침 없음. MapScreen은 3조 전유).
+- 커밋: 조별 1커밋 이상, frontend 브랜치 자동 push 관행.
+
+### 후속(별도 과제 — 이번 범위 밖)
+- 서버: refine 버전 경합·멱등키·이중 차감 환불·장시간 POST 비동기화(위 ⑤ 백로그 — 사용자 승인 필요).
+- 설정 화면 '튜토리얼 다시 보기' 일괄 리셋.
+- generation 스트림 Range(206) 지원 — 긴 곡(6분) 후보에서 미버퍼 구간 시크 지연이 실측되면 그때.

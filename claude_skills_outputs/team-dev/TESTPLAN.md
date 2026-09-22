@@ -2035,3 +2035,75 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 **E-4. [항목5] 일반 흐름 회귀 여정 [e2e]** — 정적 대체: U-6·A-3 ② 완료로 갈음. 실기기 수동 절차: 일반 가사 곡 흐름 전 스텝 순서·질문 육안 불변(v3.202 대비 스크린 대조) + 되감기 1회 정상. 실생성 추가 과금 없이 **배포 후 실트래픽 서버 로그 grep으로 일반곡 Suno duration 키 부재 확인**(A-5 ④와 동일 증적 공유) — 기존 사용자 곡이 2분 클램프되지 않는지 배포 직후 최우선 감시.
 
 **게이트**: U-1~U-8 + A-1~A-4 전부 PASS 시 머지 허용, **A-1~A-3 PASS 전 prod 배포 금지**, 배포 직후 A-5 필수(FAIL 시 즉시 롤백). E-1~E-4는 정적 대체 완료 조건으로 비차단(실기기·실과금분은 사용자 판단 하 이관, 단 E-3 스모크 1회는 이번 사이클 완료 조건). 핵심 FAIL 게이트 8건 — **A-1 ⓑ**(draft 오발사=과금 사고) / **A-3 ②**(일반곡 duration 전달=전 곡 2분 클램프) / **A-3 ⑤**(자동 판별식 부재) / **A-4 ③**(429 게이트 우회) / **U-3 ①②**(durationSec 리셋 누락·일반곡 body 120 불변) / **U-5 ②**(Instrumental 해제 시 durationSec null 누락) / **U-6 ①**(일반 스텝 순서·문구 침범) — 1건이라도 FAIL이면 커밋·배포 금지.
+
+## v3.204 — 수정일 2026-09-22
+
+> 대상: PLAN.md v3.204 — **디렉터 대화 편집 UX 통일(작사 방식) + 커버 질문 순서·중복 버튼 정리 + 미세조정 오류 복구 + 후보 재생바 시크 + 튜토리얼 오버레이 신설**. ① MusicResultScreen 진행바 2곳(:618~631 비교 카드·:655~672 단일 플레이어)을 `@react-native-community/slider`로 교체 — PlayerScreen 검증 패턴(isSeekingRef·seekValue·onSlidingComplete→setPositionAsync) 이식, LISTEN `{action:'seek', from_ms, to_ms}`를 onSlidingComplete에서만 1회 기록. ② CoverGeneration step 2의 '가사 내용 기반으로 생성' 버튼 + handleLyricsUse fromStep 분기 제거(1.75로 일원화). ③ 커버 세부 질문 체인 재배선: '직접'→**배경(1.85)→구도(1.8)→(인물 시)표정(1.82)→색감(1.9)**→자유(2) — **스텝 번호 불변**, 배선·echoOfStep만 교체. ④ 신규 `components/AnswerEditModal.tsx`(작사 재선택 모달 추출)로 작곡·이미지 답변 편집 통일 — 확인 팝업 삭제, 선택지형=즉시 편집 모달(rewindRef 세팅·setStep 안 함), 복합형=무확인 되감기+수정 배너(취소 복귀), 이미지 step 0만 확인 팝업 유지, **작사 회귀 0**. ⑤ refine 이중 제출 가드(refineSubmitGuardRef) + ERR_NETWORK 시 `GET /upload/cover-history/{id}` 폴링(15s×12) 회수 — **재요청 없음=재차감 없음**. ⑥ 신규 `components/TutorialOverlay.tsx` + 6화면(Chart/Playlist/Feed/Search/Map/Player) AsyncStorage `maidol_tutorial_seen_v1:<screenKey>` 1회 노출, Map 인라인 Modal 이관·ⓘ 재노출.
+> **이번 사이클 서버 무변경(읽기 전용 — 쓰기 권한 차단)**: 백엔드 diff 0이 그 자체로 게이트. [api]는 기존 계약의 **읽기 전용 확인**(LISTEN seek 수용·cover-history 스키마)에 한정하고, refine 경합·환불은 서버 백로그(이번 판정 대상 아님).
+> 실행 환경 관행(v3.191~203 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 **코드 정적 검증 대체 병기 + 실기기 수동 절차 이관**. 앱 코드 `/Users/pearl/TripleJ/2_housing`(frontend, 직전 0b4d59d v3.203). **시크릿·실계정 크리덴셜 기재 금지**(계정은 `TEST_USER_EMAIL` 플레이스홀더로만 표기), 실사용자 데이터 접근 금지. LISTEN seek·refine 실측 증적에는 generation_id/cover_session_id를 병기해 앱 로그↔서버 응답을 귀속한다.
+
+### [unit] 앱 정적 검증 (머지 게이트 — 이번 사이클 피라미드 본체)
+
+**U-1. 선행 게이트 — v3.203 커밋 기준선 + 타입 무결성 [unit]**
+- Given: 직전 커밋 0b4d59d(v3.203) 클린 기준선 위에서만 이번 diff 귀속 판정(U-9)이 성립. 2조→1조 순차(CoverGenerationScreen 공유) 관계로 조별 커밋 사이에도 재실행.
+- When: ① `git log --oneline -1` + `git status --short`(2_housing 스코프)로 클린 기준선 확인(미커밋 잔존 시 착수 금지·반려). ② 각 조 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: ① 클린 기준선 ② exit 0.
+
+**U-2. [항목1] MusicResult 시크 — Slider 2곳 + LISTEN seek 1회 기록 [unit]**
+- Given: 진행바 2곳 모두 비인터랙티브 View 폭 %였음. PlayerScreen 검증 관행(:24 import·:866 handleSeek·:880 isSeekingRef·:188 seekValue) 이식이 스펙 — PanResponder 자체 구현 발견 시 스펙 위반 반려. logListen :145~146 예약 주석("시킹 UI 도입 시 from_ms/to_ms와 함께 seek 기록")의 이행이며, 서버 sessions.py:34는 seek 허용·:129~130 from_ms/to_ms **음이 아닌 정수 필수**(위반=400).
+- When: `screens/MusicResultScreen.tsx` — ① 비교 카드·단일 플레이어 진행바가 둘 다 Slider로 교체(2곳 전수 — 1곳만 교체 시 FAIL). ② 드래그 중 콜백 튐 방지: onSlidingStart→isSeekingRef 세팅 + 상태 콜백(:205 position 갱신)이 시킹 중 Slider value를 덮지 않는 가드, onSlidingComplete→setPositionAsync 배선(PlayerScreen 형상과 구조 대조). ③ **탭 시크**(드래그 없이 바 탭)도 onSlidingComplete 경로로 수렴하는지. ④ **일시정지 중 시크**: isPlaying 게이트 없이 위치만 이동(재생 강제 시작 0건). ⑤ variant 전환 직후: 전환 시 sound 재생성(:196~214)과 이전 variant의 pending seek가 새 sound에 오발사되지 않는 가드(sound 참조 동일성 확인). ⑥ **duration 비유한/0 → Slider disabled**(:368~369 가드 연장 — maximumValue에 Infinity/NaN 유입 경로 0건 논증). ⑦ LISTEN seek 기록이 **onSlidingComplete 1곳에만** 존재(드래그 중·상태 콜백에서 호출 0건 — 폭주 방지), payload `{action:'seek', from_ms, to_ms}` 둘 다 `Math.round`류 정수화 + 음수 클램프(0 미만 유입 시 0 — 서버 400 방지). ⑧ 기존 play/pause/ended 계측 호출부 diff 0.
+- Then: ①~⑧ 전부 충족 — **⑦ 정수·비음수 보장(400 방지)이 FAIL 게이트**.
+
+**U-3. [항목2] step 2 '가사 기반' 버튼 제거 [unit]**
+- Given: step 1.75가 트랙 모드에서 항상 노출(:605 albumMode/무트랙만 예외)이므로 step 2의 중복 버튼(v3.202 H-②)은 근거 소멸 — 버튼 + `handleLyricsUse(fromStep=2)` 분기(:742~743·:784) 제거 확정.
+- When: `screens/CoverGenerationScreen.tsx` — ① step 2 렌더(:1662~1668 상당)에서 '가사 내용 기반으로 생성' 버튼 **부재**(트랙 모드 — 1.75에서 '반영' 답한 케이스·'직접' 답한 케이스 양쪽 렌더 경로 추적). ② handleLyricsUse가 1.75 전용으로 단순화(fromStep 파라미터·early return 분기 제거 — 잔존 데드코드 발견 시 기록). ③ step 2 기존 구성 존속: 스타일 칩·자유 서술 입력·'이대로 만들기' 무변경. ④ 1.75 '반영' 선택 시 가사 발췌가 doGenerate payload에 실리는 기존 경로 diff 0(버튼 제거가 payload 조립을 건드리면 FAIL). ⑤ 앨범 모드(가사 없음) step 2도 정상(버튼은 원래 트랙 전용이었는지 — 앨범 경로 회귀 0).
+- Then: ①~④ 전부 충족(⑤ 교차).
+
+**U-4. [항목3] 세부 질문 재배선 — 배경→구도, 스텝 번호 불변 [unit]**
+- Given: 스텝 식별자(1.8=구도·1.82=표정·1.85=배경·1.9=색감)는 렌더 스위치·performRewind·영속 coverStep이 전부 값 기준으로 물려 있으므로 **번호 재할당은 금지**(배선·echoOfStep만 교체). echoOfStep 갱신 누락 = 비파괴 되감기 에코 치환 실패.
+- When: ① 체인 추적: 1.75 '직접' → `proceedToBg`류(1.85) → 배경 3출구(`handleBgPhoto`/`handleBgText`/`handleBgSkip`) **모두** next=구도(1.8) → `handleShotPick` — 인물 포함이면 표정(1.82)→색감(1.9), **인물 미포함이면 표정 스킵**→색감(1.9) → `proceedToFinal`(2). ② **스텝 번호 불변**: 1.8/1.82/1.85/1.9의 의미 재할당 0건(grep — 렌더 스위치 :1550~1629 case 값과 질문 문구 쌍이 종전과 동일). ③ echoOfStep 갱신 전수: 각 질문 버블의 echoOfStep이 **새 선행 스텝**과 일치(구도 질문 에코=1.85 답변에 귀속 등 — proceedToPalette의 1.85 하드코딩(:725) 파라미터화, 구 proceedToShot의 echoOfStep 미부여 해소 확인). ④ 버블 편집으로 **배경만 교체** 시(U-6 배선 경유) 이후 구도·표정·색감 대화 보존(비파괴 치환 — slice/절단 0건). ⑤ 앨범 모드/무트랙 직행(:605)도 배경부터 시작. ⑥ handleLyricsSkip 되감기 분기(:794~800)의 재진입점이 배경(1.85)으로 교체. ⑦ doGenerate payload(:404~409) 필드 매핑은 개별 필드라 순서 무관 — 배경/구도/표정/색감 각 답이 종전과 동일 필드에 실림(스왑 오염 0).
+- Then: ①~⑦ 전부 충족 — **② 스텝 번호 변경 발견 = 즉시 FAIL 게이트**(영속 coverStep·되감기 전면 오염).
+
+**U-5. [항목4-a] AnswerEditModal 추출 — 작사 완전 회귀 0 [unit] — FAIL 게이트**
+- Given: 작사 재선택 모달(LyricsInputScreen :455~518 + reselect* 스타일)은 v3.201 자유 입력·v3.202 flex-end+키보드 리프트+동적 maxHeight까지 합격 형상 — 추출 치환 후 **동작·스타일 diff 0**이 목표이자 게이트.
+- When: ① `components/AnswerEditModal.tsx` props 계약 = `visible, title, choices, freeText?, extraActions?, onPick(text), onCancel` + `useAndroidKeyboardLift`·동적 maxHeight 내장(스펙 문자 대조). ② LyricsInputScreen 치환부: 마크업 구조·스타일 값이 추출 전과 **동일**(JSX 트리·스타일 객체 diff — 오버레이 flex-end·자유 입력 행·취소 버튼·듀엣/랩/길이 자유입력 비노출 원칙(:492) 전부 존속). ③ handleReselect(:220)→모달→handleReselectChoice(:226~256) 흐름 무변경: store 반영 + 해당 user 버블 text만 교체(비파괴)·확인 팝업 0건. ④ 작사 화면의 다른 hunk 0(치환 외 접촉 시 귀속 판정).
+- Then: ①~④ 전부 충족 — **②③ 작사 동작·스타일 회귀가 이번 사이클 제1 FAIL 게이트**(기준 구현이 깨지면 통일의 근거 자체가 소멸).
+
+**U-6. [항목4-b] 작곡·이미지 편집 배선 — 선택지형 모달·복합형 배너 [unit]**
+- Given: 종전 handleUserBubbleTap(작곡 :374~381·이미지 :856~870)의 showAlert 확인 팝업("이 답변만 다시 고를까요?")은 사용자가 금지한 UX — 삭제. 선택지형은 rewindRef만 세팅(**setStep 안 함** — 하단 입력 영역 유지)하고 모달, onPick은 **기존 스텝 핸들러 그대로 호출** → commitExchange(:298~324)/commitRewindAnswer(:569~581)의 되감기 분기가 치환·복귀를 자동 수행(신규 커밋 경로 금지).
+- When: ① showAlert 확인 팝업 호출 **삭제**(양 화면 grep — 단 이미지 step 0 제외). ② 선택지형 스텝 집합 문자 대조: 작곡 3·100·4·101·220·300·301·310·11·302 / 이미지 1·1.5·1.7·1.75·1.8·1.82·1.85·1.9·2 → 탭 시 rewindRef={idx,target,resumeStep} 세팅+모달 오픈, setStep 호출 0건. ③ onPick→기존 핸들러(handleGenrePick·handleShotPick 등) 호출 → 비파괴 치환(user 버블+echoOfStep 에코 쌍 교체·절단 0건)+resumeStep 복귀. ④ **onCancel = rewindRef=null·상태 무변화**(버블·store·step 전부 원상 — 탭만 하고 취소 시 diff 0). ⑤ **연쇄 되감기**: 이미지 1(포함/빼고)→1.5(슬롯), 작곡 302→300 — 핸들러 후 rewindRef 생존 시 모달 스텝을 rewindRef.target으로 갱신해 연속 노출(체인 단절·모달 닫힘 후 방치 0). ⑥ 복합형(작곡 0·1·5·6·7·8·9·10·200·210·12) → **확인 팝업 없이** performRewind 즉시 + 입력 영역 상단 수정 배너("○○ 답변을 수정 중이에요"+[취소]) — 취소 시 rewindRef=null·setStep(resumeStep) 복귀. ⑦ 이미지 step 0(곡 변경)만 확인 팝업 유지 + 기존 파괴적 초기화(:826~847) 무변경. ⑧ freeText 허용 스텝만 자유 입력 노출(작곡 300·301·4·101, 이미지 1.8·1.82·1.85·1.9·2 — enum 매핑 스텝 비노출), extraActions 배선(배경 '사진 올리기'·의상 '꾸미기 가기'). ⑨ result 모드(생성 완료 후 재진입) 버블 탭 동작: 편집 진입이 성립하거나 명시적 차단 — 크래시·무반응 방치 0.
+- Then: ①~⑨ 전부 충족 — ④⑤가 사고 다발 지점(집중 판정).
+
+**U-7. [항목5] refine 이중 제출 가드 + cover-history 폴링 회수 [unit] — FAIL 게이트(재차감)**
+- Given: 프로덕션 실측(9/22 03:05, ref 0fe9dfe0→540904a6) — refine 실소요 132~141초에 클라이언트 단절 → 앱 '실패' 표시 → 재시도 → **차감 반복·결과 유실 루프**. 기존 refining 가드(:1079)는 ⭐ confirm await(:1090~1096) **앞**만 검사 — confirm 대기 중 Enter(:1380)·적용 버튼(:1384) 재진입 구멍. v3.202 I-lite 폴링(:324~361)은 doGenerate 전용이라 refine 미커버. **서버 무변경 — 회수는 GET /upload/cover-history/{id}(upload.py:1103) 재사용.**
+- When: ① **이중 제출 봉인**: refineSubmitGuardRef가 confirm await **이전**에 세팅되고 취소/완료/실패 전 경로에서 해제(경로 전수 — 해제 누락 시 영구 잠김 역결함 FAIL). confirm 대기 중 Enter·버튼 재진입 시 요청 0건·confirm 중복 0건 논증. ② 실패 catch 분기: `isRecoverableNetErr`(ERR_NETWORK/timeout 류)일 때만 폴링 진입, 그 외(4xx 등)는 기존 실패 처리 유지. ③ 폴링 스펙: 요청 **직전** currentVersion을 기준선 캡처 → 15s×최대 12회 `GET /upload/cover-history/{coverSessionId}` → `current_version > 기준선`이면 회수(objectName·history·version state 갱신 + fetchBalance()) — **재요청 호출 0건 = 재차감 0**(폴링 루프 내 POST /upload/refine-cover 부재 grep). ④ 폴링 중 refineHint = '연결이 불안정했어요. 서버에서 완성본을 확인하고 있어요…' 표시·성공 시 해제. ⑤ 회수 실패(12회 소진) 시에만 실패 알럿 + '별이 이미 사용됐다면 버전 기록에 잠시 후 나타날 수 있어요' 1줄 추가(showAlert — 시스템 Alert 금지 규칙 준수). ⑥ 정상 성공 경로 회귀: 버전 증가·차감 1회·이력 갱신 diff 0. ⑦ revert·버전 내비게이션(이전/다음 버전 보기) 회귀 0 — 폴링 회수로 채운 버전에서도 동작. ⑧ doGenerate I-lite 폴링(:324~361) **무접촉**(U-9 ③ 교차).
+- Then: ①~⑦ 전부 충족(⑧ 교차) — **①(가드 구멍 잔존)·③(폴링 내 재요청 존재=재차감)이 FAIL 게이트**.
+
+**U-8. [항목6] TutorialOverlay — 1회 노출·플래그 독립·Map 이관 [unit]**
+- Given: 신규 공용 오버레이(RN Modal transparent·fade·statusBarTranslucent + 딤 + 하단 카드). AsyncStorage `maidol_tutorial_seen_v1:<screenKey>` — try/catch, **읽기 실패 시 미노출**(오탐 노출보다 안전). showAlert 규칙과 별개인 전용 오버레이(메모리 규칙 예외 — 시스템 Alert 아님).
+- When: ① `components/TutorialOverlay.tsx`: props `screenKey, steps:{title,desc}[]` + [다음]/마지막 [시작하기]/[건너뛰기]/진행 도트, `show()` 명령형 재노출(ref), 닫힘(건너뛰기 **포함**) 시 플래그 기록 — 기록 경로 전수(건너뛰기만 기록 누락 시 매번 재노출 FAIL). ② AsyncStorage 읽기·쓰기 try/catch + 읽기 실패 시 미노출 논증(`.catch(() => {})` 관행 — authStore.ts:4 형상). ③ 6화면 장착 전수: Chart·Playlist·Feed·Search·Map·Player — screenKey가 화면별 **상이**(플래그 독립 — 키 중복 시 한 화면 열람이 타 화면을 잠그는 FAIL). ④ **Map 이관**: 기존 인라인 Modal(:736~760)·showTutorial state 삭제 + ⓘ 버튼(:286)이 `overlay.show()`로 재배선(4항목 steps 이관 — 내용 유실 0), 재노출은 열람 플래그와 무관하게 동작. ⑤ 문구 검수: **이모지 0건(⭐ 예외)·'AIDOL' 노출 0건**·MAIDOL 표기·기능 중심 단문(PLAN 화면별 골자와 부합). ⑥ Modal 내 KAV 부재(v3.201~202 교훈 — 입력 없음)·safe-area 인셋 직접 처리. ⑦ 비로그인 게이트 간섭 0: Chart·Search는 비로그인 진입 가능 화면 — 오버레이가 로그인 팝업·차단과 겹치지 않는 조건 논증(z-order·노출 타이밍). ⑧ Android 백버튼: Modal onRequestClose 배선(닫힘=건너뛰기 취급·플래그 기록 — 앱 종료 오발 0).
+- Then: ①~⑧ 전부 충족 — ①(건너뛰기 미기록)·③(키 충돌)이 주요 함정.
+
+**U-9. diff 격리 + v3.202/v3.203 무회귀 + coverStep 구순서 영속 호환 [unit] — FAIL 게이트**
+- Given: 접촉 예상 — `screens/MusicResultScreen.tsx`·`components/AnswerEditModal.tsx`(신규)·`components/TutorialOverlay.tsx`(신규)·`screens/LyricsInputScreen.tsx`·`screens/MusicGenerationScreen.tsx`·`screens/CoverGenerationScreen.tsx`·탭 6화면(Chart/Playlist/Feed/Search/Map/Player) — **서버 파일 접촉 0**(읽기 전용 사이클).
+- When: ① `git status --short`+`git diff --stat`: 콘텐츠 diff가 위 목록 내(목록 외 접촉 시 커밋 메시지 명기 조건부 — 관례). **백엔드·0_platform 무접촉**(1건이라도 서버 diff 발견 시 즉시 FAIL — 쓰기 차단 위반). ② v3.203 무회귀: 연주곡 체인(제목→장르→분위기→310→참고곡→BPM)·step 310 되감기·durationSec 배선·ComposeLyricsPick 제목 클리어 — 전부 diff 0(작곡 편집 배선(U-6)이 310 선택지형 모달에 편승하는 것은 허용, 체인·store 배선 변경은 불허). ③ v3.202 무회귀: I-lite doGenerate 폴링(:324~361) diff 0·coverStep 영속·CoverGeneration fix1~5·모달 키보드 리프트 — 폴링 신설(U-7)이 I-lite 코드를 공유 리팩토링했다면 doGenerate 경로 재판정. ④ **coverStep 구순서 영속 복원 호환(필수)**: 구순서(구도→표정→배경→색감) 진행 중 저장된 coverStep=1.8/1.82/1.85/1.9 각각을 새 코드가 복원하는 시나리오 전수 — 스텝 번호 불변(U-4 ②)이므로 해당 스텝 렌더는 성립해야 하고, 복원 후 next는 **새 배선**을 따름(예: 구순서 1.8 복원 → 표정/색감으로 진행 → 배경 미답 상태로 payload 도달 시 undefined 가드·미포함 처리 — 크래시·'undefined' 문자열 노출 0 논증). 데드엔드(복원 후 어느 출구로도 2에 못 가는 스텝) 0건. ⑤ 발매 플로우(커버 확정→발매)·429 피로 게이트(앱 측 대응 UI) diff 0. ⑥ MusicResult 기존 재생 로직(:196~214 sound 생성·variant 전환·ended 처리) — Slider 교체 외 hunk 0.
+- Then: ①~⑥ 전부 충족 — **①(서버 diff)·④(구순서 복원 크래시/데드엔드)가 FAIL 게이트**.
+
+### [api] 서버 읽기 전용 계약 확인 (최소 — 이번 사이클 서버 무변경)
+
+**A-1. LISTEN seek 수용 + cover-history 스키마 + 429 게이트 존속 [api]**
+- Given: 서버는 무변경이므로 "앱이 의존하는 기존 계약이 실제로 그 형상인가"만 curl로 확정(계약 오독이 앱 구현을 오염시키는 것 방지). 테스트 계정(`TEST_USER_EMAIL`)만 사용, 실사용자 데이터 접근·서버 쓰기 금지(LISTEN 기록·조회는 테스트 계정 자기 데이터 한정).
+- When: ① LISTEN seek 1건 실전송: 테스트 계정 세션으로 `{action:'seek', from_ms: 1000, to_ms: 45000}` POST → **2xx**(400 없음) — 경계 보강: from_ms=0 케이스 1건 추가(음이 아닌 정수 계약의 하한 실측). 소수/음수는 앱이 원천 차단(U-2 ⑦)하므로 서버 거절 실측은 참고용 1건만. ② `GET /upload/cover-history/{cover_session_id}`(테스트 계정 소유 세션) → 200 + `current_version`·`cover_object_name`·`cover_refine_history` 필드 존재(U-7 폴링이 파싱하는 키 전수 대조). ③ 429 피로 게이트 존속 확인은 **읽기 전용 한계**로 실호출 유발 금지 — 코드 실측(생성 계열 엔드포인트 게이트 배선 grep, ssh 읽기)으로 갈음. ④ refine-cover 실호출 0건(과금·서버 부하 — U-7은 정적+E-3 수동으로만).
+- Then: ①② 충족(③ 코드 확인 갈음, ④ 준수) — ②의 키 부재 발견 시 U-7 구현 착수 전 계약 재협의(FAIL 아님·차단).
+
+### [e2e] 핵심 여정 (정적 대체 + 실기기 수동 절차 이관)
+
+**E-1. [항목1] 후보 시크 여정 [e2e]** — 정적 대체: U-2 완료로 갈음. 실기기 수동 절차: 테스트 계정 → 작곡 완료 화면(후보 2곡) → ⓐ 비교 카드 진행바 드래그 시크·탭 시크 ⓑ 일시정지 상태에서 시크(위치만 이동·자동 재생 없음) ⓒ variant 전환 직후 즉시 시크(이전 곡 위치 오염 없음) ⓓ 단일 플레이어 진행바 동일 4점 ⓔ 드래그 중 썸 튐 없음(콜백 억제 체감) ⓕ [BTDebug]/서버에서 seek LISTEN **정확히 1건**(from_ms/to_ms 정수·드래그 1회당 1건) ⓖ 기존 재생/일시정지/곡 끝 동작 무변.
+
+**E-2. [항목2·3·4] 커버 디렉터 여정 [e2e]** — 정적 대체: U-3·U-4·U-6 완료로 갈음. 실기기 수동 절차: 트랙 모드 진입 → 1.75 '직접' → **배경→구도→(인물 포함 시)표정→색감→자유 서술** 순서 육안 + 인물 미포함 재실행 시 표정 스킵 + 배경 3출구(사진/텍스트/건너뛰기) 각각 다음=구도 확인 → step 2에서 '가사 기반' 버튼 **부재** 확인 → 배경 답변 버블 탭 → **확인 팝업 없이** 즉시 편집 모달 → 다른 값 선택 → 배경만 교체·이후 대화 보존 육안 → 곡(step 0) 버블 탭 → 확인 팝업 노출(유일 예외) 확인. 작곡 화면에서 선택지형(장르) 즉시 모달·복합형(제목) 배너+취소 복귀·연쇄(302→300) 연속 모달 각 1회. **작사 화면 재선택 3종(선택지/자유 입력/취소) 종전과 동일 체감** — 회귀 의심 시 즉시 U-5 재판정.
+
+**E-3. [항목5] refine 단절 복구 여정 [e2e]** — 정적 대체: U-7 완료로 갈음(폴링·가드는 코드 논증이 본체). 실기기 수동 절차(⭐5 × 1~2회 과금 — 테스트 계정 한정): ⓐ 정상 refine 1회 → 성공·버전 +1·잔액 −5 정확(재차감 0). ⓑ (선택 — 사용자 판단 하) refine 요청 직후 기내 모드 토글로 단절 재현 → '서버에서 완성본을 확인하고 있어요…' 힌트 → 회선 복구 후 폴링 회수로 새 버전 채택·**잔액 추가 차감 0**·fetchBalance 동기화 확인. ⓒ confirm 팝업 대기 중 Enter·적용 버튼 연타 → confirm 1개·요청 1건. ⓑ 미실행 시 U-7 ③ 정적 판정 + 배포 후 프로덕션 로그의 동일 세션 이중 차감 재발 여부 관찰(9/22 패턴 grep)로 갈음.
+
+**E-4. [항목6] 튜토리얼 클린 설치 여정 [e2e]** — 정적 대체: U-8 완료로 갈음. 실기기 수동 절차: **앱 데이터 삭제(클린 설치 상당)** → 6화면(차트→플레이리스트→피드→검색→작업실 지도→플레이어) 순회 — 각 최초 진입 시 1회 노출·[다음] 진행·마지막 [시작하기] 닫힘, 1개 화면은 [건너뛰기]로 닫기 → **전 화면 재진입 시 미노출**(건너뛰기 화면 포함) → 앱 완전 재시작 후에도 미노출(영속) → Map ⓘ 탭 → 재노출 정상 → 비로그인 상태로 차트·검색 진입 — 오버레이·로그인 유도 겹침 없음 → Android 백버튼으로 닫기 1회(앱 종료 아님·재진입 미노출) → 전 카드 문구에 이모지·AIDOL 0건 육안.
+
+**게이트**: U-1~U-9 + A-1 전부 PASS 시 머지 허용(frontend 자동 push 관례 — 서버 배포 없음). E-1~E-4는 정적 대체 완료 조건으로 비차단(실기기·실과금분은 사용자 판단 하 이관). 핵심 FAIL 게이트 6건 — **U-5 ②③**(작사 재선택 모달 회귀 — 기준 구현 파손) / **U-9 ④**(coverStep 구순서 영속 복원 크래시·데드엔드) / **U-7 ①③**(refine 이중 제출 구멍·폴링 내 재요청=재차감) / **U-2 ⑦**(LISTEN seek 비정수·음수 유입=서버 400) / **U-4 ②**(스텝 번호 재할당 — 영속·되감기 전면 오염) / **U-9 ①**(서버 파일 diff — 읽기 전용 위반) — 1건이라도 FAIL이면 커밋 금지. 서버 백로그 3건(refine 버전 경합·이중 차감 환불·장시간 POST 비동기화)은 이번 판정 대상 아님 — 차기 사이클 사용자 승인 후 별도 TESTPLAN.

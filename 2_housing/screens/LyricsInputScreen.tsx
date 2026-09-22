@@ -11,13 +11,12 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Modal,
-  useWindowDimensions,
 } from 'react-native';
 import { AppText } from '../components/ui';
+// v3.204(④): 재선택 모달을 공용 AnswerEditModal로 추출 — 마크업·스타일 그대로(회귀 0)
+import AnswerEditModal from '../components/AnswerEditModal';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { colors } from '../theme/colors';
 import {
@@ -110,8 +109,6 @@ type Props = NativeStackScreenProps<any, 'LyricsInput'>;
 
 export default function LyricsInputScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
-  // v3.202(B): 재선택 모달 동적 maxHeight 클램프용 — PlaylistPickerSheet 검증 패턴
-  const { height: winH } = useWindowDimensions();
   const store = useLyricsStore();
   const [step, setStep] = useState(0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -125,10 +122,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
   useEffect(() => { store.setStyle(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const [reselectStep, setReselectStep] = useState<number | null>(null);
-  // v3.201(B): 재선택 모달 자유 입력 — 제출은 handleReselectChoice(trim) 그대로 재사용(신규 분기 없음)
-  const [reselectInput, setReselectInput] = useState('');
-  // v3.201(B): 재선택 모달도 Android edge-to-edge Modal — 키보드 열림 시 컨테이너를 위로 리프트(§1 훅 공용)
-  const reselectKbPad = useAndroidKeyboardLift(reselectStep != null);
+  // v3.204(④): 재선택 모달 렌더는 공용 AnswerEditModal로 이관 — 키보드 리프트·동적 maxHeight·
+  // 자유 입력(trim·빈값 disabled)은 모달 내부가 담당. 반영 로직(handleReselectChoice)은 유지.
 
   // v3.199(B): "디렉터와 이야기하는 중"의 연장 — Studio 탭 헤더에 back 주입(DialogueScreen 동일 패턴).
   // goBack만 수행(확인 팝업은 과설계 — chatHistory는 로컬 state라 이탈 시 초기화됨을 아는 동작).
@@ -252,22 +247,11 @@ export default function LyricsInputScreen({ navigation }: Props) {
       )
     );
     setReselectStep(null);
-    setReselectInput(''); // v3.201(B): 모달 닫힘 시 자유 입력 리셋(선택지 탭·자유 입력 제출 공통)
   };
 
-  // v3.201(B): 취소·백드롭·백버튼 공통 닫기 — 미반영 + 입력 리셋
+  // v3.201(B): 취소·백드롭·백버튼 공통 닫기 — 미반영 (자유 입력 리셋은 모달 내부 담당)
   const closeReselect = () => {
     setReselectStep(null);
-    setReselectInput('');
-  };
-
-  // v3.201(B): 자유 입력 제출 — 검증(trim·빈값 disabled)은 handleCustomSubmit과 동일 규칙,
-  // 반영은 기존 handleReselectChoice(store 매핑·chatHistory 교체·모달 닫기) 완전 재사용
-  const handleReselectInputSubmit = () => {
-    const text = reselectInput.trim();
-    if (!text) return;
-    if (__DEV__) console.info('[LyricsInput] 재선택 자유 입력 제출', { reselectStep });
-    handleReselectChoice(text);
   };
 
   const handleChoicePress = (choice: string) => {
@@ -451,71 +435,16 @@ export default function LyricsInputScreen({ navigation }: Props) {
           )}
         </View>
       )}
-      {/* 재선택 모달 — v3.201(B): 자유 입력 행 추가 + 키보드 회피(iOS KAV padding / Android kbPad 리프트) */}
-      <Modal visible={reselectStep != null} transparent animationType="fade" onRequestClose={closeReselect}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          pointerEvents="box-none"
-        >
-          {/* v3.202(B): overlay center→flex-end 전환 — center에서는 marginBottom 리프트가 kbPad/2만
-              유효(Yoga가 상하 여백을 분배 — v3.202 원인 확정 B). flex-end에서는 100% 유효(담기 시트 검증). */}
-          <TouchableOpacity
-            style={[styles.reselectOverlay, { paddingBottom: insets.bottom + 24 }]}
-            activeOpacity={1}
-            onPress={closeReselect}
-          >
-            {/* Android: flex-end + marginBottom(kbPad)으로 키보드 열림 중 컨테이너 상향 — Modal 내 KAV padding 재도입 금지(v3.198)
-                v3.202(B): 키보드 열림 중에는 maxHeight를 남는 화면(winH - 키보드 - 하단 인셋 - 24)과
-                기본 60% 중 작은 값으로 클램프 — 컨테이너 상단이 화면 밖으로 밀리는 것 방지(PlaylistPickerSheet :109 동일식) */}
-            <View
-              style={[
-                styles.reselectContainer,
-                { marginBottom: reselectKbPad },
-                reselectKbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (reselectKbPad + insets.bottom) - 24) },
-              ]}
-            >
-              <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
-              <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
-                {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.reselectOption}
-                    onPress={() => handleReselectChoice(choice)}
-                  >
-                    <AppText style={styles.reselectOptionText}>{choice}</AppText>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              {/* v3.201(B): 자유 입력 — 노출 조건은 메인 플로우와 동치(듀엣 2·랩 8·길이 9는 enum 매핑
-                  스텝이라 자유 텍스트가 boolean/duration 오매핑을 유발 → 비노출). autoFocus 금지(선택지 탭이 1차 UX). */}
-              {reselectStep != null && reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9 && (
-                <View style={styles.inputRow}>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="직접 입력..."
-                    placeholderTextColor={colors.text.muted}
-                    value={reselectInput}
-                    onChangeText={setReselectInput}
-                    returnKeyType="send"
-                    onSubmitEditing={handleReselectInputSubmit}
-                  />
-                  <TouchableOpacity
-                    style={[styles.sendButton, !reselectInput.trim() && styles.sendButtonDisabled]}
-                    onPress={handleReselectInputSubmit}
-                    disabled={!reselectInput.trim()}
-                  >
-                    <AppText style={styles.sendButtonText}>확인</AppText>
-                  </TouchableOpacity>
-                </View>
-              )}
-              <TouchableOpacity style={styles.reselectClose} onPress={closeReselect}>
-                <AppText style={styles.reselectCloseText}>취소</AppText>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
+      {/* 재선택 모달 — v3.204(④): 공용 AnswerEditModal (v3.201(B)/v3.202(B) 마크업·스타일 그대로 추출).
+          자유 입력 노출 조건은 메인 플로우와 동치 — 듀엣 2·랩 8·길이 9는 enum 매핑 스텝이라
+          자유 텍스트가 boolean/duration 오매핑을 유발 → 비노출 원칙 유지. */}
+      <AnswerEditModal
+        visible={reselectStep != null}
+        choices={(reselectStep != null && STEPS[reselectStep]?.choices) || []}
+        freeText={reselectStep != null && reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9}
+        onPick={handleReselectChoice}
+        onCancel={closeReselect}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -658,48 +587,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
   },
-  reselectOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    // v3.202(B): center → flex-end — marginBottom 키보드 리프트가 전량 유효하도록(Yoga 산식).
-    // 하단 여백은 렌더부 인라인 paddingBottom(insets.bottom+24)이 담당.
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  reselectContainer: {
-    backgroundColor: colors.bg.surface1,
-    borderRadius: 16,
-    padding: 20,
-    width: '85%',
-    maxHeight: '60%',
-  },
-  reselectTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  reselectOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: colors.bg.deepest,
-    marginBottom: 6,
-  },
-  reselectOptionText: {
-    color: colors.text.secondary,
-    fontSize: 14,
-  },
-  reselectClose: {
-    marginTop: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  reselectCloseText: {
-    color: colors.text.secondary,
-    fontSize: 14,
-  },
+  // v3.204(④): reselect* 스타일은 components/AnswerEditModal.tsx로 이관(그대로 추출)
   bookEntryButton: {
     flexDirection: 'row',
     alignItems: 'center',
