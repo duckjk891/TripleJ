@@ -27,6 +27,9 @@ import { navigationRef } from './services/navigationRef';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+// v3.207(⑤): 키보드 근본 전환 — RN Keyboard 이벤트 대신 네이티브 WindowInsetsAnimationCompat 기반
+// react-native-keyboard-controller. 루트 Provider 1회 설치(소비처는 DmChat·Modal 5종).
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { DirectorType } from './components/Character';
 import MiniPlayer from './components/MiniPlayer';
 import HomeHeaderActions from './components/HomeHeaderActions';
@@ -34,6 +37,8 @@ import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore, restoreSession } from './stores/authStore';
+// v3.207 ⑪: 튜토리얼 first-run 게이트 — 부팅 1회 판별(신규 설치 vs 기존 유저)
+import { initTutorialGate } from './utils/tutorialGate';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
@@ -505,7 +510,9 @@ export default function App() {
   useOAuthCallback();
   // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
-  useEffect(() => { restoreSession(); }, []);
+  // v3.207 ⑪: 튜토리얼 first-run 게이트를 restoreSession보다 먼저 — 완전 신규 설치(스토리지 empty)
+  // 판별이 다른 부팅 쓰기(persist 등)에 오염되기 전에 마커를 확정한다(멱등 — 오버레이도 재호출).
+  useEffect(() => { initTutorialGate(); restoreSession(); }, []);
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
   useEffect(() => {
     initPlaybackReconciler();
@@ -516,6 +523,8 @@ export default function App() {
   const syncRoute = () => setCurrentRoute(navigationRef.getCurrentRoute()?.name);
   return (
     <SafeAreaProvider>
+      {/* v3.207(⑤): KeyboardProvider — edge-to-edge는 라이브러리가 자동 감지(react-native-is-edge-to-edge) */}
+      <KeyboardProvider>
       <StatusBar style="light" />
       <NavigationContainer ref={navigationRef} linking={linking} onReady={syncRoute} onStateChange={syncRoute}>
         <View style={{ flex: 1 }}>
@@ -583,6 +592,7 @@ export default function App() {
           <AppDialogHost />
         </View>
       </NavigationContainer>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

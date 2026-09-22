@@ -5,14 +5,11 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   Modal,
-  useWindowDimensions,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { AppText } from './ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { colors } from '../theme/colors';
 
 /**
@@ -47,10 +44,9 @@ export default function AnswerEditModal({
   onCancel,
 }: AnswerEditModalProps) {
   const insets = useSafeAreaInsets();
-  // v3.202(B): 재선택 모달 동적 maxHeight 클램프용 — PlaylistPickerSheet 검증 패턴
-  const { height: winH } = useWindowDimensions();
-  // v3.201(B): Android edge-to-edge Modal — 키보드 열림 시 컨테이너를 위로 리프트(§1 훅 공용)
-  const kbPad = useAndroidKeyboardLift(visible);
+  // [KeyboardCtl] v3.207(⑤): useAndroidKeyboardLift(marginBottom 리프트·동적 maxHeight) 제거 —
+  // RN Keyboard 이벤트 의존이 SDK 54 edge-to-edge+Fabric 실기기에서 실패 확정.
+  // keyboard-controller KAV(behavior='padding')로 iOS·Android 리프트 일원화(Modal 내 동작).
   const [input, setInput] = useState('');
 
   // 닫힘/선택 공통 — 자유 입력 리셋(선택지 탭·자유 입력 제출·취소 공통)
@@ -70,26 +66,23 @@ export default function AnswerEditModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={cancel}>
+      {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV(behavior='padding') — iOS·Android 공통.
+          keyboardVerticalOffset=-insets.bottom: overlay 자체 paddingBottom(insets.bottom+24)과의
+          이중 계상 상쇄(컨테이너 하단 = 키보드 상단 + 24). maxHeight 60%는 줄어든 overlay 기준이라
+          동적 클램프 불요. */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
+        keyboardVerticalOffset={-insets.bottom}
         pointerEvents="box-none"
       >
-        {/* v3.202(B): overlay center→flex-end — marginBottom 리프트가 100% 유효(담기 시트 검증) */}
+        {/* v3.202(B): overlay center→flex-end — 하단 정렬 유지(키보드 리프트와 정합) */}
         <TouchableOpacity
           style={[styles.reselectOverlay, { paddingBottom: insets.bottom + 24 }]}
           activeOpacity={1}
           onPress={cancel}
         >
-          {/* Android: flex-end + marginBottom(kbPad) 리프트 — Modal 내 KAV padding 재도입 금지(v3.198)
-              키보드 열림 중에는 maxHeight를 남는 화면과 기본 60% 중 작은 값으로 클램프 */}
-          <View
-            style={[
-              styles.reselectContainer,
-              { marginBottom: kbPad },
-              kbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (kbPad + insets.bottom) - 24) },
-            ]}
-          >
+          <View style={styles.reselectContainer}>
             <AppText style={styles.reselectTitle}>{title}</AppText>
             <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
               {choices.map((choice, idx) => (

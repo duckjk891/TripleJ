@@ -2341,3 +2341,128 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **머지 게이트(앱 1파일)**: U-1~U-6 + A-1 전부 PASS 시 머지 허용(frontend 자동 push 관례 — 서버 배포 없음). E-1~E-4는 정적 대체 완료 조건으로 비차단 이관하되 **E-2(착용 방식 프롬프트 포함)·E-4 ②(미선택 불변)는 U-4의 실기기 확증으로 PASS 기록 필수**.
 - **핵심 FAIL 게이트 5건**: ① **U-2 ②**(이모지 잠금 아이콘 사용 ≥1건 — Feather lock 벡터만 허용) ② **U-5 ①③**(v3.205 성별 자동 필터 한정 파괴·5단계 드릴다운 파괴 — 위시·SAMPLE 폴백 포함) ③ **U-4 ② / E-2**(desc 직렬화 누락 — 착용 방식 선택했는데 프롬프트 미반영) ④ **U-4 ④**(미선택 시 desc 오염 — 기존 프롬프트 문자 변형) ⑤ **U-6 ②③**(직전 사이클 합격 파일 diff·서버 파일 diff = 격리 위반). 1건이라도 FAIL이면 커밋 금지.
 - 사용자 결정 이월 사안(PLAN §결정): 서버 ALLOWED_AD_CATEGORIES 1줄 개방·헤어 잠금 확인·모자/가방 참조 이미지 필드·'비스듬히 쓰기' 채택 여부 — 본 사이클 판정 대상 아님(승인 시 차기 TESTPLAN에서 A-1 ①의 400 전제가 뒤집히므로 재실측 필요 명기).
+
+## v3.207 (2026-09-22) — 실기기 피드백 12건: 코치마크·first-run 게이트·차트 신곡·keyboard-controller 근본 전환·신고 이미지 첨부·비밀번호 재설정·테스트 데이터 정리 + APK/AAB
+
+> 대상: PLAN.md v3.207(:3813~) 12항목 — ① 튜토리얼 코치마크(anchor 스포트라이트·화살표) ② 차트 신곡 기본 탭 ③ 테스트 피드 4건 삭제 ④ official 발신 DM 1,111건 삭제 ⑤ react-native-keyboard-controller 전환(구훅 2종 폐기) ⑥ 신고(DM) 이미지 첨부(서버+앱) ⑦ 비밀번호 재설정(서버+앱) ⑧ 작곡 step 3 연주곡 선택지 제거 ⑨ 작사 듀엣(무변경 확인) ⑩ 성별 필터 서버 폴백+칩 발견성 ⑪ 튜토리얼 first-run 게이트 ⑫ 작업실 ⓘ 제거.
+> 실행 전제: 앱 `/Users/pearl/TripleJ/2_housing`(frontend, v3.206 합격 형상 기준선). 서버 수정 2건(⑥ dm-image·⑦ password-reset)과 데이터 삭제 2건(③④)은 **오케스트레이터가 사용자 최종 확인 후 별도 실행** — [api] 시나리오는 배포/실행 완료 후 착수(전이면 "대기"로 보고), test-designer/tester의 사전 서버 접근은 **프로덕션 무인증 GET만**(쓰기·ssh 파일 수정 0, 삭제 검증 mongo 조회는 컨테이너 python **읽기 전용**). ⑤는 네이티브 모듈 — [e2e] ⑤ 검증은 **keyboard-controller 포함 신규 APK(eas preview)** 에서만 유효(구빌드 검증 무효), AAB(production)는 산출 확인.
+> 시크릿·실계정 크리덴셜 기재 금지 — `TEST_USER_EMAIL`/`TEST_USER_PASSWORD`/`NEW_PASSWORD` 플레이스홀더만 표기. **재설정 코드 6자리 값은 어떤 증적·보고서·스크린샷에도 기재 금지**(dev 모드 서버 로그에서 읽어 즉시 사용, 증적 표기는 `******` 마스킹). 실사용자 데이터 접근 금지(자기 테스트 계정 한정).
+
+### [unit] 앱 정적 검증 (머지 게이트 — 서버 배포·데이터 삭제와 독립 트랙)
+
+**U-1. 선행 게이트 — 클린 기준선 + tsc exit 0 + 의존성 격리 [unit]**
+- Given: v3.206 합격 형상 클린 기준선 위에서만 diff 귀속 판정(U-9)이 성립. 접촉 허용 목록 = PLAN 변경 매트릭스: App.tsx·components/TutorialOverlay.tsx·utils/tutorialAnchors.ts(신규)·utils/tutorialGate.ts(신규)·screens/MapScreen.tsx·ChartScreen.tsx·SearchScreen.tsx·PlayerScreen.tsx·FeedScreen.tsx·PlaylistScreen.tsx·components/TrackRow.tsx·screens/DmChatScreen.tsx·Modal 5종(PlaylistPickerSheet/ReportModal/AppealModal/AnswerEditModal/AlbumCreateModal)·hooks 구훅 2종(삭제)·components/auth/AuthPanel.tsx·screens/SettingsScreen.tsx·services/authService.ts·screens/MusicGenerationScreen.tsx·screens/ArtistCodyScreen.tsx·package.json.
+- When: ① `git log --oneline -1`+`git status --short`(2_housing 스코프) 클린 기준선(미커밋 잔존 시 착수 금지·반려). ② 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`. ③ package.json diff = `react-native-keyboard-controller` 정확 1건 추가뿐(타 의존성 버전 변동 0) + lock 파일 정합.
+- Then: ② **exit 0** — Mode 유니온('forgot'|'forgotSent')·TutorialStep 확장(anchorKey/placement)·ChartTrack.created_at 등 타입 변경이 전 소비처와 정합함을 컴파일로 확정.
+
+**U-2. [항목⑤] keyboard-controller 전환 전수 — 구훅 소비처 0·KeyboardProvider·Modal 5종 [unit] — FAIL 게이트(전환 누락·혼용)**
+- Given: 실패 인과 = RN `Keyboard` 이벤트 의존(PLAN F5 — edge-to-edge 기기에서 미발화/좌표계 불일치, 두 세대 훅 모두 실기기 실패). 전환 스펙: 네이티브 WindowInsetsAnimationCompat 기반 keyboard-controller로 일원화, 구훅 2종 완전 폐기.
+- When: ① **`grep -rn "useAndroidKeyboardLift\|useKeyboardOverlapLift"` 2_housing 전역 → 소비처 0건 + `hooks/useAndroidKeyboardLift.ts`·`hooks/useKeyboardOverlapLift.ts` 파일 자체 삭제** 확인 — 1건이라도 잔존 = 혼용 FAIL(신구 이중 보정 재발 인과). ② App.tsx 루트 `KeyboardProvider` 래핑 정확 1곳(라이브러리 요구 위치 — NavigationContainer 대비 상/하위 어느 쪽인지 근거와 함께 기록). ③ **Modal 5종 전수 체크리스트 표**: PlaylistPickerSheet(:32)·ReportModal(:43)·AppealModal·AnswerEditModal·AlbumCreateModal 각각 keyboard-controller API(`useKeyboardState` 또는 라이브러리 KAV)로 전환 — 5/5 전환 확인, 1종 누락 = FAIL(RN Modal 별도 window가 실패 뿌리 — F5). ④ DmChatScreen: RN KeyboardAvoidingView·overlap 훅 참조 0 + keyboard-controller `KeyboardAvoidingView(behavior='padding')` 교체, 기존 `[DmChat]` 로그·dmSocket 배선·pending 대화 분기 diff 0. ⑤ 신규 경로에 RN `Keyboard.addListener` 재유입 0(실패 인과 복귀 차단 — 신규 diff 기준 grep). ⑥ iOS 경로: 동일 컴포넌트로 통일 — Platform 분기 잔존 시 의도·근거 기록(기존 iOS KAV 회귀는 E-1 ⓔ 실기기 확증). ⑦ 로그 추적자 `[KeyboardCtl]` 배선.
+- Then: ①~⑦ 전부 충족 — **①(구훅 잔존)·③(Modal 5종 중 전환 누락)이 FAIL 게이트**.
+
+**U-3. [항목⑪] tutorialGate — getAllKeys 판정 경계 3케이스 [unit] — FAIL 게이트(기존 유저 오판)**
+- Given: 판별 유일 근거 = **진짜 신규 설치만 AsyncStorage 완전 empty**(PLAN F1 — auth-token은 로그아웃 시 삭제, player-storage-v1은 비회원 재생만 해도 생성). 스펙: `maidol_first_run_v1` 마커 확정 — 미존재 시 getAllKeys() 검사, 튜토리얼 키 제외 키 1개 이상 → 'existing'(seen 6키 일괄 선기록), 완전 빈 → 'fresh'.
+- When: ① **판정 경계 케이스 표 3종 문자 추적**: ⓐ **기존 키 보유자** — `player-storage-v1` 1개만 존재(비회원 재생 이력) / `auth-token-v1` 존재 / zustand persist 키만 존재 각각 → 전부 'existing' 판정 + `maidol_tutorial_seen_v1:{player|chart|feed|playlist|search|map}` 6키 일괄 기록 → TutorialOverlay 자동 노출 effect 미동작. ⓑ **완전 신규** — getAllKeys() `[]` → 'fresh' + 화면별 최초 1회 노출 유지(설치 후 2번째 접속의 첫 방문 화면 포함 — 기본안 해석). ⓒ **재설치** — 스토리지 초기화로 ⓑ와 동일 상태 → 'fresh'(스펙상 신규 취급 — 서버 조회 등으로 기존 유저 복원하는 로직 부재 확인·명기, 사용자 결정 사안 ⑤ 반려 시 재협의). ② **제외 필터 경계**: 판정에서 제외하는 키가 정확히 `maidol_tutorial_seen_v1:` prefix + `maidol_first_run_v1` 자신뿐 — 제외 과다(예: `maidol_` prefix 전체 제외)로 기존 유저가 'fresh' 되는 경로 0건 문자 확인. ③ 레이스: 마커 미확정(판정 진행 중/부팅 직후) 시 오버레이 **미노출**(보수 기본값 계승 — restoreSession과 순서 무관 논증). ④ getAllKeys throw(스토리지 오류) 시 catch 처리 방향('existing' 취급 = 보수)이 스펙 정합인지 판정·기록. ⑤ 마커 기록 후 재부팅 시 getAllKeys 재검사 생략(마커 우선) — 매 부팅 전체 스캔 아닌지 확인. ⑥ 로그 `[TutorialGate]` {verdict, keyCount} 배선 — 토큰 값·키 값 로그 출력 0.
+- Then: ①~⑥ 전부 충족 — **①ⓐ·②(기존 키 보유자가 'fresh' 판정되는 경로 ≥1건) = FAIL 게이트**.
+
+**U-4. [항목①] 코치마크 — anchor registry·fallback 경로 [unit]**
+- Given: 스펙 = TutorialStep `anchorKey?`/`placement?` + utils/tutorialAnchors registry(registerAnchor/getAnchor, measureInWindow) + 4분할 딤 스포트라이트 + 화살표, **anchor 미등록/측정 실패 시 현행 카드형 graceful fallback**. anchor 스텝 범위 = 화면당 1~2개 한정(40% 룰).
+- When: ① registry 계약: TrackRow 옵션 prop으로 **첫 행(index 0)만** 등록(전 행 등록 발견 시 과설계 기록), 화면별 anchor 스텝이 차트 ⋮·검색 ⋮·플레이어 주요 버튼·피드 글쓰기 범위 내(전 스텝 앵커화 = 범위 고정 위반 반려). ② **fallback 경로 문자 추적 — 판정 중심**: getAnchor(key) 미등록(null)·rect 0×0·화면 밖 좌표 각각 → 스포트라이트·화살표 미렌더 + 기존 균일 딤+하단 카드로 강하(크래시·빈 오버레이 0) — 리스트 로딩 전 자동 노출 타이밍(anchor 등록 전)이 대표 케이스임을 명기. ③ 4분할 딤 산식: anchor rect 구멍 좌표 화면 경계 클램프 + placement 상/하 자동 판정식 문자 확인. ④ 화면 언마운트/리스트 갱신 시 stale rect 처리(다음 진입 화살표 오지시 경로) 판정·기록. ⑤ 기존 skip·Android 백버튼 skip·캐러셀 진행 diff 0, 텍스트 전용 스텝은 현행 유지. ⑥ ⑪ 게이트와의 결합: 'fresh'에서만 자동 노출(U-3 교차) — anchor 유무와 무관.
+- Then: ①~⑥ 전부 충족 — ②(fallback 부재로 미등록 시 크래시/허공 지시)가 판정 중심.
+
+**U-5. [항목⑩] 성별 필터 — 서버 폴백 최우선 연결 + 칩 상시 노출 조건 [unit]**
+- Given: 미발견 원인 = 서버에 gender="여성" 있는데 앱 3단 폴백이 서버 캐릭터를 미조회 → null → 칩 자체 미노출(PLAN F10 — characterTaskStore persist 미등록). 스펙: (a) 서버 캐릭터 gender 폴백 1순위 (b) 상의/하의/신발 피커 칩 **상시 노출**.
+- When: ① 폴백 체인 문자 대조: **서버 캐릭터 gender(기존 GET /character 응답 재사용) → apiResult.gender → taskStore.pendingGender → artistProfileStore** — 서버 값이 최우선 + 신규 네트워크 호출 최소화(화면 진입마다 신규 fetch 남발 시 기록). ② **칩 상시 노출 조건식**: 노출 게이트(:634 상당)에서 `artistGender &&` 의존 제거 — gender null이어도 GENDER_FILTER_CATS(상의/하의/신발) 피커에서 칩 렌더: null → "성별 미설정 · 전체 표시"(탭 시 프로필 성별 설정 유도 안내 — showAlert, 시스템 Alert 0) / 판별 → 현행 "◯◯용만"↔"전체 보기" 토글. ③ null 시 필터 미적용(전량 노출) 안전 원칙 불변 + 피커 재진입 기본 ON 복귀(v3.205 U-8 ③) diff 0. ④ 회귀: genderMatches 재사용(이중 규칙 0)·드릴다운 5단계·위시탭·SAMPLE 폴백·v3.206 악세서리(GENDER_FILTER_CATS 3종 한정 — 악세서리 미추가·서브탭·동시 선택·착용 방식) 전부 diff 0. ⑤ 로그 `[ArtistCody] 성별 자동 필터` {g, cat, before, after} 유지 + 폴백 출처(server|task|local) 기록 여부.
+- Then: ①~⑤ 전부 충족 — ①(서버 폴백 연결)·②(칩 상시 노출 조건)이 판정 중심, ④는 U-9 교차 FAIL 게이트.
+
+**U-6. [항목⑧] 연주곡 선택지 제거 — step 3·편집 모달 동반 + 카드 경로 생존 [unit] — FAIL 게이트(편집 모달 잔존·카드 경로 파괴)**
+- Given: 3곳 동반 수정(:1286 렌더 배열·:450 편집 모달 case 3·:49 상수), ComposeLyricsPick "가사 없이 만들기 (연주곡)" 카드는 존치 — 연주곡 진입 일원화.
+- When: ① step 3 렌더 배열 = VOCAL_OPTIONS(남/여 2종)만 — INSTRUMENTAL_OPTION 참조 0. ② **편집 모달 case 3 동반 제거** — 누락 시 재선택 모달로 연주곡 우회 진입 잔존 = FAIL. ③ :49 상수·미사용 참조 정리(dead code 잔존 시 기록). ④ :926-931 연주곡 해제 방어 분기 **유지**(삭제 발견 시 되감기 유입 가드 소실 = FAIL). ⑤ **카드 경로 생존 — 가사 없이 카드로 연주곡 생성 가능**: ComposeLyricsPickScreen.tsx:279-288 카드 diff 0 + setInstrumental(true) → v3.203 5문항 한정 체인(300→301→310→5→10→13, musicStore.instrumental 기준) 회귀 0 — 선택지 제거가 연주곡 **기능 자체를 소멸시키지 않음** 논증(가사 유지 무보컬 서브 유스케이스 소멸은 사용자 결정 사안 ④ — 승인 전제 명기). ⑥ VOCAL_OPTIONS(:45) 불변(타 화면 공유 상수).
+- Then: ①~⑥ 전부 충족 — **②(편집 모달 우회 잔존)·④(방어 분기 소실)·⑤(카드 경로 파괴) = FAIL 게이트**.
+
+**U-7. [항목⑦] AuthPanel forgot 모드 — 상태 전이 전수 + 비밀번호 로그 0 [unit] — FAIL 게이트(민감정보 로그)**
+- Given: 스펙 — Mode에 'forgot'|'forgotSent' 추가(:24), 로그인 폼 하단 "비밀번호를 잊으셨나요?" 링크(:273-280 사이), 이메일 입력→코드+새 비밀번호→완료 후 login 복귀, "아이디는 가입하신 이메일입니다" 안내 1줄. services/authService.ts passwordResetRequest/Confirm.
+- When: ① **상태 전이 표 전수**: login→(링크)→forgot→(요청)→forgotSent→(confirm 성공)→login 복귀 / 각 단계 취소·뒤로 → login / **request 실패(네트워크 외 4xx)도 forgotSent 진행 여부** — 존재 비노출 UX 정합 판정·기록 / 기존 'gate'|'form'|'blocked'|'pending' 모드 diff 0. ② onModeChange 시그니처 변경 소비처 전수 + SettingsScreen 헤더 타이틀 매핑에 신규 모드 2종 추가(누락 시 undefined 헤더 경로 = tsc 또는 런타임 확인). ③ **민감정보 로그 0**: 신규 diff 내 console 출력에 password/new_password/code **값** 포함 0건(정밀 판독 — `[Auth]` 로그 이메일 마스킹 여부는 기록 사안, 비밀번호·코드 평문 로그 1건 = FAIL). ④ 앱이 request 응답 body에서 코드를 읽는 경로 0건(dev 모드 포함 응답 비포함 계약 — A-1 ⑦ 교차). ⑤ 안내 문구: 이메일 라벨 하단 "아이디는 가입하신 이메일입니다" 배선. ⑥ confirm 입력 선검증(비밀번호 규칙) 여부·서버 400 문구 표시 경로 확인(크래시 0).
+- Then: ①~⑥ 전부 충족 — **③이 FAIL 게이트**.
+
+**U-8. [항목②⑨⑫] 국소 항목 정적 [unit]**
+- **②** ChartScreen: 기본 탭 `useState<ChartTab>('new')`(:74) + TABS 순서 신곡 맨 앞·Top100 2번째 존치 + 폴백 endpoint(:96) 신곡 + 튜토리얼 문구(:27-31)·빈 상태(:312-314) 신곡 기준 + ChartTrack `created_at?` 옵션 필드·TrackRow footer 상대 발매일(서버 무수정 — `/tracks/?sort=created_at` 기존 계약).
+- **⑫** MapScreen: :292-300 ⓘ 블록 삭제 + tutorialRef(:241)·Handle import(:35) 정리(미사용 import 잔존 기록). **TutorialOverlay 컴포넌트(:744) 존치 필수** — ⓘ만 제거해야 하며 오버레이 통째 제거 시 ①⑪ 파괴 = FAIL. 재보기 수단 소멸은 의도된 동작(⑪ 정합) 명기. 헤더 마퀴 레이아웃 회귀 0.
+- **⑨** 무변경 확인: LyricsInputScreen 듀엣 스텝(:63-66,:161)·MusicGenerationScreen 듀엣 체인(:359,:752,:963-989,:1558-1596 step 100/101) **diff 0** — 산출물은 "메인/서브보컬 질문은 작곡 디렉터 step 3→100→101에서 정상 노출" 판정 보고뿐(코드 변경 발견 시 스펙 위반 반려).
+
+**U-9. diff 격리 + 직전 사이클 회귀 0 [unit] — FAIL 게이트**
+- Given: 접촉 허용 = U-1 목록. 직전 합격 형상(v3.203/204/205/⑤개정/206)과 이번 매트릭스가 **겹치는 파일 3종**(DmChatScreen·SettingsScreen·ArtistCodyScreen)은 이번 항목 hunk만 허용.
+- When: ① `git status --short`+`git diff --stat`(2_housing 스코프): 목록 외 접촉 0 — 특히 **서버 파일·0_platform 무접촉**(로컬 서버 소스 diff 1건 = 즉시 FAIL, 서버 수정은 오케스트레이터 별도 트랙), `services/playback.ts`·`services/audioMode.ts`·`components/feed/FeedCard.tsx`·`screens/UserChannelScreen.tsx` diff 0. ② **겹침 파일 hunk 단위 귀속 판독**: DmChatScreen(⑤ 전환+⑥ 첨부 외 hunk 0 — 프리다운로드·dmSocket 불변)·SettingsScreen(⑦ 헤더 타이틀 매핑 외 0 — '공지사항' 행·startCsInquiry 문의 동선 불변)·ArtistCodyScreen(⑩ 외 0 — v3.206 악세서리 서브탭·착용 방식·잠금 카드 불변). ③ **직전 사이클 합격 기능 diff 0 전수**: v3.203 연주곡 5문항 체인·durationSec / v3.204 AnswerEditModal 3화면·MusicResult 시크·refine 가드 / v3.205 다음곡 프리다운로드·성별 자동 필터 코어·공지 채널 3파일 / v3.206 꾸미기 개편 — **단 ⑤ 리프트 전환이 정당하게 건드리는 hunk(AnswerEditModal 등 Modal 5종의 키보드 코드)는 예외 허용, 그 외 로직 hunk 0**. ④ ③④ 삭제 스크립트·증적 git 미추적(scratchpad 한정) + 크리덴셜·토큰·실계정 이메일·재설정 코드 값 출력 0(`TEST_USER_EMAIL` 표기만). ⑤ `npx tsc --noEmit` 최종 형상 재실행 exit 0(U-1 ② 재확인).
+- Then: ①~⑤ 전부 충족 — **①(서버/목록 외 diff)·③(직전 사이클 회귀)이 FAIL 게이트**.
+
+### [api] 서버 검증 (⑥⑦ 배포 후·③④ 실행 후 — 전이면 "대기" 보고)
+
+**A-0. 실행 게이트 [api] — 최상위 FAIL 게이트(무승인 실행)**
+- Given: 서버 코드 배포(⑥⑦)·프로덕션 데이터 삭제(③④)는 전부 **오케스트레이터가 사용자 최종 확인 후 실행**(PLAN 소스오브트루스 규정 — 특히 ③ #4 공지테스트 글, ④ 1,111건은 사용자 결정 사안 1·2). test-designer/tester의 사전 접근은 무인증 GET만.
+- When: 배포·삭제 실행 전 사용자 승인 기록 확인 + 배포 전 사전 스냅샷(무인증 GET — `/health` 200, 기존 API 스키마, 서버 파일 mtime은 오케스트레이터 ssh 읽기 위임).
+- Then: **승인 전 배포·삭제·프로덕션 쓰기 1건 = 최상위 FAIL(비가역 사고)**. 승인 대기 중이면 A-1~A-6 "대기"로 보고하고 [unit] 트랙만 진행.
+
+**A-1. [항목⑦] 재설정 정상 체인 — 요청→dev 로그 코드→검증→새 비밀번호 로그인 [api]**
+- Given: 배포 완료 + dev 모드(SMTP 자격 미제공 — 실메일 0, 코드는 서버 로그만·응답 미포함). `TEST_USER_EMAIL` 계정(password_hash 보유 일반 계정).
+- When: ① `POST /auth/password-reset/request {email: TEST_USER_EMAIL}` → 200. ② dev 모드 서버 로그(docker logs — 오케스트레이터 경유 읽기)에서 6자리 코드 확인 — **증적에는 `******` 마스킹, 값 기재 금지**. ③ `POST /auth/password-reset/confirm {email, code, new_password: NEW_PASSWORD}` → 200(validate_password 통과·bcrypt 갱신). ④ 구 비밀번호 로그인 → 401 + `NEW_PASSWORD` 로그인 → 200 토큰 발급(**체인 완결**). ⑤ 사용 완료 코드 재사용 → 거부(1회성). ⑥ 15분 만료는 실대기 대신 코드 판독으로 갈음(TTL 저장·비교식 문자 확인 — 만료 코드 confirm 거부 경로 존재). ⑦ request/confirm 응답 body에 코드 미포함(dev 모드 포함 — 포함 1건 = FAIL, U-7 ④ 교차). ⑧ 검증 후 비밀번호 원복(테스트 계정 관리).
+- Then: ①~⑧ 전부 충족 — ④ 체인 완결이 판정 중심.
+
+**A-2. [항목⑦] 계정 존재 비노출·rate limit·소셜 안내 [api] — FAIL 게이트(존재 노출)**
+- When: ① **존재하지 않는 이메일** request → 실존 계정과 **HTTP 상태·body 스키마·문구 프로그램적 비교 완전 동일**(응답 시간차 현저성도 기록 — 타이밍 채널) — **차이 1건 = 계정 열거 취약점 FAIL**. ② 잘못된 코드 confirm 반복 → **5회 초과 시 제한 발동**(6회째는 정답 코드도 거부 — 코드 무효화/차단 실측). ③ request 연타 rate limit 실측(횟수·윈도 기록 — 무제한이면 판정 회부: 메일 폭탄·코드 스팸 벡터). ④ **소셜 전용 계정**(password_hash NULL) request → 응답은 ①과 동일(응답으로 소셜 여부도 비노출) + dev 로그/메일 본문에 "소셜 가입 계정" 안내 분기 확인. ⑤ confirm의 new_password 규칙 위반 → 400 + 규칙 안내(이 시점은 코드 검증 후이므로 존재 노출 아님 명기). ⑥ 서버 로그 grep: 평문 비밀번호 출력 0(코드 6자리는 dev 모드 의도 출력이라 예외, **비밀번호 1건 = FAIL**).
+- Then: ①~⑥ 전부 충족 — **①이 FAIL 게이트**.
+
+**A-3. [항목⑥] dm-image 업로드 검증·이미지 메시지 왕복·하위호환 [api] — FAIL 게이트(prefix 우회)**
+- Given: 배포 완료. 신규 `/upload/dm-image`(feed-image 계약 복제, prefix `dm/{user_id}/`) + SendMessageBody `image_object_name?` + send_message 확장(text 또는 image 필수).
+- When: ① 정상 업로드: jpg/png/webp 각 1건 ≤15MB → 200 + object_name prefix `dm/{본인 user_id}/` 확인 + 재인코딩 산출물 MinIO 실존. ② **한도 검증**: 15MB 초과 → 거부(4xx), 비이미지(pdf·확장자 위장 바이너리) → 거부 — 오류 응답이 5xx 크래시가 아닌 정돈된 4xx. ③ **이미지 메시지 왕복**: `POST /dm/{official 대화}/messages {image_object_name}` → 저장 + 조회 직렬화에 `image_url`(browser_image_url) + 대화 last_message_text "(사진)" + WS payload에 이미지 필드 포함(수신측 실시간 반영 전제). ④ **본인 prefix·실존 검증**: 타 유저 prefix object_name 지정 → 거부, MinIO 미실존 object → 거부 — **우회 1건 = 타인 이미지 도용 경로 FAIL**. ⑤ text·image 규칙: text만(구형 계약) 정상 / image만 정상 / 둘 다 정상 / **둘 다 없음 → 400**. ⑥ **구형 텍스트 메시지 하위호환**: image 필드 없는 기존 body 정상 + 배포 전 저장된 텍스트 메시지 조회 직렬화 불변(신규 필드 optional — null/부재로 응답, 구형 앱 파싱 파괴 없음 논증). ⑦ admin CS 툴 직렬화 공유 여부 실측 — 동일 image_url 필드 노출(admin_cs.py). ⑧ 기존 텍스트 전용 전송·2000자 검증 회귀 0.
+- Then: ①~⑧ 전부 충족 — **④가 FAIL 게이트**.
+
+**A-4. [항목③] 피드 4건 삭제 후 잔존 0 + 보존 검증 [api] — FAIL 게이트(보존 대상 오삭제)**
+- Given: A-0 승인 + 오케스트레이터가 `purge_feed_document` 경유 실행 완료. 삭제 대상 feed_id 4건(6a69b3c7c03621e095f0295c·6a8588fc227bebd79cd1b7fe·6a8c118399933f837326bc6d·6a955c0113b9e03ee75306c9).
+- When(컨테이너 python **읽기 전용** + API GET): ① **잔존 0 검증 쿼리**: feeds에서 4건 id 조회 0건 + comments/likes에 해당 feed_id 잔존 문서 0 + notifications target_id 잔존 0 + MinIO 이미지 정리 증적(purge 로그). ② **보존 검증**: feeds 잔존 = **정확히 4건**(official 공지 3건 + lovvepearl "펄킴 신곡" 1건) — **공지 3건 본문이 v3.205 등록분과 프로그램적 diff 0**(오염·부분 삭제 0), 펄킴 글 id 존속. ③ `GET /api/feeds/timeline`·`GET /api/feeds/user/{official_id}?kind=community` 200 + 공지 3건 노출 유지·순서 불변. ④ 실행 증적이 purge_feed_document 경유임을 확인(mongo 직접 delete 발견 시 절차 위반 기록 — 연쇄 정리 누락 위험).
+- Then: ①~④ 전부 충족 — **②(official 공지 3건·펄킴 글 중 1건이라도 소실·변형) = FAIL 게이트(비가역)**.
+
+**A-5. [항목④] official DM 1,111건 삭제 후 검증 [api] — FAIL 게이트(peer 21건 오삭제)**
+- Given: A-0 승인 + 실행 완료. 삭제 전 스냅샷 필수: peer 발신 21건 message id 목록 + 대화 143개별 official/peer 건수 집계(오케스트레이터 실행 스크립트 산출물 — 검증 대조 기준).
+- When(읽기 전용): ① dm_messages `sender_id=official_id` 잔존 **0건**(1,111건 전량 삭제 확인). ② **peer 발신 21건 전수 보존** — 삭제 전 스냅샷 id 목록과 1:1 대조(1건 소실 = FAIL). ③ 대화방 정리 정합: 잔존 메시지 0건 대화 → dm_conversations 삭제 / 잔존 있는 대화(peer 메시지 보유) → last_message_text/last_at가 **잔존 최신 메시지와 일치하게 재계산** + unread 리셋 — 전 대화 전수 스캔으로 불일치 0. ④ `TEST_USER_EMAIL` 계정 인박스 API: official 테스트 대화 부재 + **문의하기 재진입 → pair_key upsert로 새 대화 정상 생성**(dm_service.py:347-382 경로 — 삭제가 신규 문의를 막지 않음). ⑤ admin_notices 원본 레코드 불변(삭제 범위 밖 — 사용자 원문 = DM만). ⑥ 집계 보고: 삭제 1,111 / 대화 삭제 N / 보정 대화 M / 보존 peer 21 수치표.
+- Then: ①~⑥ 전부 충족 — **②가 FAIL 게이트**.
+
+**A-6. 서버 회귀 스모크 [api]**
+- When: 배포 후 ① `/health` 200 + 차트(`/tracks/?sort=created_at`)·트랙 목록·`GET /business/ads/active`(gender 필드 존속 — ⑩ 계약 전제)·`GET /dm/official` 기존 스키마 불변. ② auth 기존 로그인·register·me 회귀 0(⑦ 추가가 기존 라우트 미파괴). ③ DM 기존 텍스트 전송·인박스 조회 회귀 0(⑥ 확장이 구계약 미파괴 — A-3 ⑥ 교차). ④ 서버 로그 traceback 0 + 컨테이너 재시작 이력이 배포 1회분만.
+- Then: 전부 충족.
+
+### [e2e] 실기기 (keyboard-controller 포함 신규 APK 필수 — 구빌드 검증 무효)
+
+**E-0. 빌드 게이트 [e2e]**: eas preview(**APK**)·production(**AAB**) 산출 성공 + preview APK에 react-native-keyboard-controller 네이티브 포함 확인(빌드 로그 autolinking 목록). 이하 E-1~E-8은 이 APK 설치 기기 기준 — 구 APK로 수행한 ⑤ 검증 결과는 무효 처리.
+
+**E-1. [항목⑤] 키보드 가림 — 신고 입력창·담기 시트 키보드 위 노출 [e2e] — 이번 사이클 최상위 완료 조건·최상위 FAIL 게이트**
+- Given: v3.201 훅·v3.205 훅 **2회 연속 실기기 실패 후 3번째 시도**(근본 전환). 검증면: 문제 실기기(재현 기기) 필수 + API 34 에뮬 + iOS.
+- When/Then:
+  - ⓐ **신고 입력창**: 설정 → 문의하기(오류 신고) → 사유 선택 → DmChat(프리필 `[오류신고: 사유] `) → 입력 포커스 → **입력바 전체가 키보드 위 완전 노출**(가림 0) → 키보드 닫힘 후 잔존 간격 0 → 장문 입력·연속 전송 중 튐 없음.
+  - ⓑ **담기 시트(PlaylistPickerSheet)**: 트랙 ⋮ → 담기 → 새 재생목록 이름 입력 포커스 → **시트·입력창이 키보드 위 노출**.
+  - ⓒ Modal 나머지 4종(ReportModal·AppealModal·AnswerEditModal·AlbumCreateModal) 각 1회 동일 3점(노출·잔존 0·이중 보정 없음).
+  - ⓓ 제스처/3버튼 내비 각각 + 진입 직후 입력바가 내비바에 안 깔림(edge-to-edge 회귀).
+  - ⓔ iOS: 기존 KAV 대비 회귀 0(과잉 여백·이중 리프트 없음 — U-2 ⑥ 실기기 확증).
+- **FAIL 게이트: 문제 기기에서 가림 재현 1건 = 이번 사이클 최상위 FAIL. 3회째 실패이므로 훅 미세수정 재시도 금지 — 즉시 replan 대상**(PLAN F5 판정 계승: RN Keyboard 이벤트 기반 JS 보정 복귀 금지, 네이티브 레벨 재설계 회부)임을 보고서에 명기.
+
+**E-2. [항목①] 코치마크 화살표 실요소 지시 [e2e]**
+- 실기기 절차(신규 설치 상태): 차트 첫 진입 → 코치마크 스포트라이트 구멍·화살표가 **첫 행 ⋮(TrackRow more-vertical) 버튼 실좌표를 정확히 가리킴**(오프셋 눈대중 기록 — 허공/다른 요소 지시 = FAIL) → 검색 화면 ⋮ 동일 → 플레이어·피드 글쓰기 anchor 스텝 각 1회 → **기내 모드 등으로 리스트 로딩 지연 상태 진입 → 카드형 fallback 정상 강하**(크래시 0 — 화살표 없는 카드형은 PASS) → Android 백버튼 skip 동작.
+
+**E-3. [항목⑪] first-run 게이트 [e2e] — FAIL 게이트(기존 유저 노출)**
+- ⓐ **기존 계정 단말**(구버전 위 업데이트 설치 — AsyncStorage 잔존): 로그인 상태로 player/chart/feed/playlist/search/map 전 화면 순회 → 튜토리얼 **0회**(1회라도 노출 = FAIL). ⓑ **신규 설치**(스토리지 클리어 또는 신규 단말): 화면별 최초 1회 노출 + 2회째 방문 미노출. ⓒ 재설치(삭제→재설치): 신규 취급 노출(스펙 기록 — U-3 ①ⓒ 확증). ⓓ 비회원 재생 1회 후 앱 삭제 없이 재시작: 'existing' 전환 없음(fresh 마커 유지 — 마커 우선 확인).
+
+**E-4. [항목②] 차트 첫 진입 신곡 [e2e]**: 앱 재시작 → 차트 탭 첫 진입 = **신곡 탭 활성**(top100 아님) + NEW 뱃지 + 최신 앨범 가로 섹션 + 발매일 footer → Top 100 탭 전환·복귀 정상 → 당겨서 리프레시 신곡 기준 → 빈 상태 문구(해당 시).
+
+**E-5. [항목⑥] 신고 대화방 이미지 첨부 [e2e]**: 신고 DM 대화방 → 입력바 첨부 버튼 → 이미지 선택(DocumentPicker image/*) → 업로드→전송 → **본인 말풍선 이미지 표시**(최대폭 제한 렌더) → 앱 재진입 후 히스토리 이미지 잔존 → 인박스 미리보기 "(사진)" → admin CS 툴 수신 확인 → 15MB 초과·비이미지 선택 시 정돈된 거부 안내(크래시 0) → 텍스트 없이 이미지 단독 전송 정상 → 텍스트 전용 전송 회귀 0.
+
+**E-6. [항목⑦] 비밀번호 재설정 전 과정 [e2e]**: 로그아웃 → 로그인 화면 "비밀번호를 잊으셨나요?" 링크 → `TEST_USER_EMAIL` 입력·요청 → forgotSent 화면 → (dev 모드) 서버 로그에서 코드 확인(증적 마스킹) → 코드+새 비밀번호 입력 → 완료 후 login 모드 복귀 → **새 비밀번호로 로그인 성공** → 틀린 코드 1회 오류 안내(크래시 0) → "아이디는 가입하신 이메일입니다" 문구 노출 → 검증 후 비밀번호 원복.
+
+**E-7. [항목⑩] 성별 칩 실기기 [e2e]**: **서버 gender=여성 아티스트 보유 계정**으로 앱 재시작(taskStore 휘발 상태 재현 — 미발견 조건) → 꾸미기 → 상의 피커 → **칩 "여성용만" 노출 + 필터 동작**(남성용 미노출·공용 노출) → '전체 보기' 토글·재진입 기본 복귀 → gender null 캐릭터 → **"성별 미설정 · 전체 표시" 칩 노출**(상시 노출 확증) + 전량 표시 + 탭 시 설정 유도 안내 → 악세서리 피커 칩 미노출(v3.206 불변) → 드릴다운 5단계·위시탭·SAMPLE 폴백 회귀 0.
+
+**E-8. [항목⑫⑧⑨] 스모크 [e2e]**: ⑫ 작업실 헤더 **ⓘ 부재** + 기획사명 마퀴 레이아웃 회귀 0. ⑧ 작곡 step 3 선택지 **남·여 2개만** + 답변 편집 모달 재선택에도 연주곡 부재 + "가사 없이 만들기 (연주곡)" 카드 → 5문항 체인 진입 정상(생성 미실행 — 과금 0). ⑨ 작사 듀엣 선택 → 작곡 디렉터 step 3 "듀엣 곡이네요! 메인 보컬 성별…" → step 100(서브 성별)→101(서브 스타일) 노출 확인 — 무변경 검증 보고.
+
+### 게이트 요약
+
+- **머지 게이트(앱)**: U-1~U-9 전부 PASS 시 머지 허용(frontend 자동 push 관례). 서버 트랙: A-0 승인 → 배포 → A-1~A-3·A-6 / 데이터 트랙: A-0 승인 → 실행 → A-4·A-5 — 앱 머지와 독립(승인 대기 시 "대기" 보고).
+- **완료 조건: E-0(신규 APK·AAB 산출) + E-1(⑤ 키보드) 실기기 PASS가 이번 사이클 최상위 완료 조건** — ⑤만은 정적 대체 불가(v3.201·v3.205 두 번의 정적 PASS가 실기기에서 뒤집힌 전력). 나머지 E-2~E-8은 정적 대체 병기·실기기 이관 항목이나 E-3 ⓐ(기존 유저 0회)·E-2 화살표 정확성은 PASS 기록 필수.
+- **핵심 FAIL 게이트 5+3건**: ① **E-1**(키보드 가림 재현 — 3회째 실패 = **replan 회부**, 미세수정 금지) ② **U-3 ①②/E-3 ⓐ**(기존 유저에게 튜토리얼 노출) ③ **A-4 ②·A-5 ②**(보존 대상 오삭제 — official 공지 3건·펄킴 글·peer DM 21건) ④ **A-2 ①**(응답 차이로 계정 존재 노출) ⑤ **U-9 ①③**(직전 사이클 회귀·diff 격리 위반) — 추가 게이트: **U-2 ①③**(구훅 잔존·Modal 전환 누락), **A-3 ④**(dm-image prefix 우회), **U-7 ③/A-2 ⑥**(비밀번호 평문 로그), **A-0**(무승인 배포·삭제 = 최상위). 1건이라도 FAIL이면 커밋·배포·출고 금지(A군 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
+- 이월·결정 대기: SMTP 실자격(⑦ dev 모드 출고 여부)·③ #4·④ go/no-go·⑧ 가사 유지 무보컬 소멸·⑪ 해석 — 사용자 결정 사안 1~5 회신 전 해당 [api]·실행 항목은 "대기". 차기 이월(판정 대상 아님): ① 잔여 스텝 앵커 확대·피드 ⋯ 튜토리얼·⑦ SES 전환.

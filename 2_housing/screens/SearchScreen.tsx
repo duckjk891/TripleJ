@@ -16,13 +16,16 @@ import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
-import TutorialOverlay from '../components/TutorialOverlay';
+import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
+// v3.207 ①: 코치마크 anchor — 검색바 스포트라이트(결과 ⋮는 TrackRow prop 경유)
+import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 
 // v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-const TUTORIAL_STEPS = [
-  { title: '곡 찾기', desc: '제목·아티스트·태그로 검색하거나, 느낌 칩을 골라 어울리는 곡을 찾아보세요.' },
-  { title: '탭해서 재생', desc: '검색 결과를 탭하면 바로 재생돼요. 더보기(⋮)로 담을 수도 있어요.' },
+// v3.207 ①: 스텝별 anchor — 1스텝 검색바(상시 존재), 2스텝 결과 첫 행 ⋮(검색 전엔 미등록 → 카드 fallback)
+const TUTORIAL_STEPS: TutorialStep[] = [
+  { title: '곡 찾기', desc: '제목·아티스트·태그로 검색하거나, 느낌 칩을 골라 어울리는 곡을 찾아보세요.', anchorKey: 'search-input', placement: 'below' },
+  { title: '탭해서 재생', desc: '검색 결과를 탭하면 바로 재생돼요. 더보기(⋮)로 담을 수도 있어요.', anchorKey: 'search-row-more' },
 ];
 
 interface Track {
@@ -65,6 +68,9 @@ export default function SearchScreen() {
   const [categories, setCategories] = useState<string[]>(CATEGORY_FALLBACK);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
+  // v3.207 ①: 검색바 코치마크 anchor — onLayout 시 창 좌표 등록, unmount 시 해제
+  const searchBarRef = useRef<View>(null);
+  useEffect(() => () => unregisterAnchor('search-input'), []);
   const [showBulkPicker, setShowBulkPicker] = useState(false); // 결과 전체 담기
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
@@ -175,12 +181,14 @@ export default function SearchScreen() {
   };
 
   // 행 디자인은 차트와 동일한 공용 TrackRow — 순위 개념이 없어 좌측 순번은 비운다
-  const renderTrack = ({ item }: { item: Track }) => (
+  const renderTrack = ({ item, index }: { item: Track; index: number }) => (
     <TrackRow
       track={item}
       liked={!!likedMap[item.id]}
       onPress={() => handlePress(item)}
       onMore={() => setActionTrack(item)}
+      // v3.207 ①: 튜토리얼 '더보기(⋮)' 스포트라이트 — 결과 첫 행만 anchor 등록
+      moreAnchorKey={index === 0 ? 'search-row-more' : undefined}
     />
   );
 
@@ -213,7 +221,11 @@ export default function SearchScreen() {
 
   return (
     <ScreenLayout>
-      <View style={styles.searchBar}>
+      <View
+        ref={searchBarRef}
+        onLayout={() => measureAndRegister('search-input', searchBarRef.current)}
+        style={styles.searchBar}
+      >
         <Feather name="search" size={18} color={colors.text.muted} />
         <TextInput
           style={styles.input}

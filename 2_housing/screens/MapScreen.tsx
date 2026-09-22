@@ -32,7 +32,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import TutorialOverlay, { TutorialOverlayHandle } from '../components/TutorialOverlay';
+import TutorialOverlay from '../components/TutorialOverlay';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
@@ -237,8 +237,7 @@ export default function MapScreen({ navigation }: Props) {
       return () => { cancelled = true; };
     }, [user])
   );
-  // v3.204 ⑥: 인라인 튜토리얼 Modal → 공용 TutorialOverlay 이관 (ⓘ는 ref.show()로 재노출)
-  const tutorialRef = useRef<TutorialOverlayHandle>(null);
+  // v3.207 ⑫: 헤더 ⓘ 재보기 버튼 제거 — tutorialRef도 함께 정리(재보기 수단 소멸은 ⑪과 정합, 의도된 동작)
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 영입 시스템
@@ -266,7 +265,7 @@ export default function MapScreen({ navigation }: Props) {
     }
   }, [user]);
 
-  // Studio 탭 헤더: (엔터명 + 도움말ⓘ) 좌측 / 별·출석·초대·마이페이지 우측
+  // Studio 탭 헤더: 엔터명 좌측(도움말ⓘ는 v3.207 ⑫ 제거) / 별·출석·초대·마이페이지 우측
   // v3.199(C): 긴 기획사명이 우측 HomeHeaderActions(로그인 시 대략 220~260px)를 침범하지 않게
   // winW 기반 명시 폭 안에 Marquee(넘칠 때만 흐름·짧으면 정적). Marquee container가 width:'100%'라
   // 부모가 명시 폭을 줘야 동작 — bottom-tabs headerTitle 컨테이너는 폭 제약이 느슨해 필수.
@@ -280,7 +279,7 @@ export default function MapScreen({ navigation }: Props) {
     if (!parent) return;
     parent.setOptions({
       headerTitleAlign: 'left',
-      // 도움말(ⓘ) 아이콘을 엔터 이름 오른편에 배치 (말풍선 제거)
+      // v3.207 ⑫: 헤더는 엔터명 마퀴만 (도움말 ⓘ 제거)
       headerTitle: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <View style={{ width: nameMaxWidth }}>
@@ -289,15 +288,7 @@ export default function MapScreen({ navigation }: Props) {
               style={{ fontSize: 17, fontWeight: '700', color: colors.text.primary }}
             />
           </View>
-          {user && (
-            <TouchableOpacity
-              onPress={() => tutorialRef.current?.show()}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel="도움말"
-            >
-              <Text style={{ fontSize: 18, color: colors.text.secondary, fontWeight: '300' }}>{'ⓘ'}</Text>
-            </TouchableOpacity>
-          )}
+          {/* v3.207 ⑫: 도움말 ⓘ 제거 — 튜토리얼은 ⑪ first-run 게이트 하 최초 1회만 노출 */}
         </View>
       ),
       // v3.201(C): headerLeft: undefined 작성 제거 — Dialogue는 transparentModal이라 Map이 아래에
@@ -740,8 +731,8 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       </Modal>
 
-      {/* 첫 방문 튜토리얼 — v3.204 ⑥: 공용 TutorialOverlay로 이관 (ⓘ 탭 시 ref로 재노출) */}
-      <TutorialOverlay ref={tutorialRef} screenKey="map" steps={TUTORIAL_STEPS} />
+      {/* 첫 방문 튜토리얼 — v3.207 ⑫: ⓘ 재보기 제거, ⑪ first-run 게이트 하 최초 노출용으로만 존치 */}
+      <TutorialOverlay screenKey="map" steps={TUTORIAL_STEPS} />
     </View>
   );
 }
@@ -812,35 +803,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // 헤더 내부 튜토리얼 힌트 말풍선 (꼬리가 오른쪽 ⓘ 아이콘을 가리킴)
-  headerHintBubble: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    shadowColor: colors.bg.deepest,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
-    elevation: 5,
-  },
-  headerHintText: {
-    color: colors.text.primary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  headerHintTail: {
-    // 오른쪽을 향하는 삼각형 (말풍선 오른쪽 옆)
-    width: 0,
-    height: 0,
-    borderTopWidth: 5,
-    borderBottomWidth: 5,
-    borderLeftWidth: 6,
-    borderTopColor: 'transparent',
-    borderBottomColor: 'transparent',
-    borderLeftColor: colors.accent.primary,
-    marginLeft: -1,
-  },
+  // v3.207 ⑫: 헤더 힌트 말풍선 스타일 3종(headerHintBubble/Text/Tail) 삭제 — ⓘ 제거로 참조 0인 죽은 코드 정리
 
   // 헤더 별 배지 Pill
   starPill: {

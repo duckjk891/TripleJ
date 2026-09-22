@@ -918,7 +918,9 @@ export default function SettingsScreen({ navigation }: any) {
         {/* 로그인/회원가입 — MAIDOL 구성(연령 게이트·약관 동의·소셜 로그인 포함) 공용 패널 */}
         <AuthPanel
           onSuccess={() => navigation.goBack()}
-          onModeChange={(m) => setAuthTitle(m === 'login' ? '로그인' : '회원가입')}
+          onModeChange={(m) =>
+            setAuthTitle(m === 'login' ? '로그인' : m === 'forgot' ? '비밀번호 재설정' : '회원가입')
+          }
         />
         <CompanyFooter onOpenPolicy={setPolicy} />
         {/* v3.200: 'ai' 항목은 로그인 뷰 전용이지만, 시트 열린 채 로그아웃되는 엣지 방어 */}

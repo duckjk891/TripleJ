@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
 import {
   getSignupConfig, requestGuardianConsent, getGuardianConsentStatus, guardianTokenFromUrl,
+  requestPasswordReset, confirmPasswordReset,
 } from '../../services/authService';
 import { showAlert } from '../../utils/appAlert';
 import { CONSENT_VERSION, SIGNUP_CONSENT_KEYS, REQUIRED_CONSENT_KEYS } from '../../constants/consentTexts';
@@ -21,7 +22,8 @@ import { AppText, Button } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
-type Mode = 'login' | 'gate' | 'form' | 'blocked' | 'pending';
+// v3.207(⑦): 'forgot'(이메일 입력→코드 발송 요청) | 'forgotSent'(코드+새 비밀번호 입력) 추가
+type Mode = 'login' | 'gate' | 'form' | 'blocked' | 'pending' | 'forgot' | 'forgotSent';
 
 // 보호자 휴대폰 — 숫자만 10~11자리(서버는 8~20자 허용이나 국내 휴대폰 기준으로 좁힘)
 const GUARDIAN_PHONE_RE = /^[0-9]{10,11}$/;
@@ -37,8 +39,8 @@ const REFERRAL_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
 
 interface AuthPanelProps {
   onSuccess?: () => void;
-  /** 헤더 타이틀 연동용 — 로그인/가입 화면 전환 통지 */
-  onModeChange?: (mode: 'login' | 'register') => void;
+  /** 헤더 타이틀 연동용 — 로그인/가입/비밀번호 재설정 화면 전환 통지 (v3.207 ⑦: 'forgot' 추가) */
+  onModeChange?: (mode: 'login' | 'register' | 'forgot') => void;
 }
 
 export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
@@ -46,13 +48,21 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const [mode, setModeRaw] = useState<Mode>('login');
   const setMode = (m: Mode) => {
     setModeRaw(m);
-    onModeChange?.(m === 'login' ? 'login' : 'register');
+    onModeChange?.(
+      m === 'login' ? 'login' : m === 'forgot' || m === 'forgotSent' ? 'forgot' : 'register'
+    );
   };
   const [localError, setLocalError] = useState('');
 
   // 공통 필드
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  // v3.207(⑦) 비밀번호 재설정 — 코드·새 비밀번호는 로그인 password와 분리 보관
+  const [resetCode, setResetCode] = useState('');
+  const [resetPw, setResetPw] = useState('');
+  const [resetPwConfirm, setResetPwConfirm] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   // 게이트(생년월일·내외국인·성별)
   const [birthY, setBirthY] = useState('');
@@ -108,6 +118,61 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     if (__DEV__) console.info('[AuthPanel] login 시도', { emailLen: email.length });
     const ok = await login(email.trim(), password);
     if (ok) onSuccess?.();
+  };
+
+  // ── v3.207(⑦) 비밀번호 재설정 ──
+  // 서버 계약: request는 계정 존재 여부와 무관하게 항상 동일 응답(비노출) —
+  // 소셜 전용 계정(password_hash NULL)은 메일로 "소셜 가입 계정" 안내가 가고, 앱은 정적 안내만 표시.
+  const handleForgotRequest = async () => {
+    resetError();
+    const em = email.trim();
+    if (!em) { setLocalError('가입하신 이메일을 입력해주세요.'); return; }
+    if (__DEV__) console.info('[Auth] 비밀번호 재설정 코드 요청', { emailLen: em.length });
+    setResetLoading(true);
+    try {
+      await requestPasswordReset(em);
+      setResetCode('');
+      setResetPw('');
+      setResetPwConfirm('');
+      setMode('forgotSent');
+    } catch (err: any) {
+      console.error('[Auth] 재설정 코드 요청 실패', { status: err?.response?.status, message: err?.message });
+      setLocalError(
+        err?.response?.data?.error || err?.response?.data?.detail
+          || '재설정 코드 요청에 실패했습니다. 잠시 후 다시 시도해주세요.'
+      );
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleForgotConfirm = async () => {
+    resetError();
+    const code = resetCode.trim();
+    if (!/^[0-9]{6}$/.test(code)) { setLocalError('메일로 받은 6자리 코드를 입력해주세요.'); return; }
+    if (resetPw !== resetPwConfirm) { setLocalError('비밀번호가 일치하지 않습니다.'); return; }
+    if (!(resetPw.length >= 8 && /[a-zA-Z]/.test(resetPw) && /[0-9]/.test(resetPw))) {
+      setLocalError('비밀번호는 8자 이상이며 영문과 숫자를 모두 포함해야 합니다.'); return;
+    }
+    if (__DEV__) console.info('[Auth] 비밀번호 재설정 확정 시도', { codeLen: code.length, pwLen: resetPw.length });
+    setResetLoading(true);
+    try {
+      await confirmPasswordReset(email.trim(), code, resetPw);
+      setResetCode('');
+      setResetPw('');
+      setResetPwConfirm('');
+      setPassword('');
+      setMode('login');
+      showAlert('비밀번호 변경 완료', '새 비밀번호로 다시 로그인해주세요.');
+    } catch (err: any) {
+      console.error('[Auth] 비밀번호 재설정 확정 실패', { status: err?.response?.status, message: err?.message });
+      setLocalError(
+        err?.response?.data?.error || err?.response?.data?.detail
+          || '코드가 올바르지 않거나 만료되었습니다. 코드를 다시 요청해주세요.'
+      );
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   const handleGateNext = async () => {
@@ -272,10 +337,76 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
           value={password} onChangeText={setPassword} secureTextEntry />
         <Button label={isLoading ? '로그인 중...' : '로그인'} fullWidth disabled={isLoading} onPress={handleLogin} />
         <SocialLoginButtons logPrefix="AuthPanel:login" />
+        {/* v3.207(⑦): 비밀번호 재설정 진입 링크 */}
+        <TouchableOpacity style={styles.forgotLink} onPress={() => { resetError(); setMode('forgot'); }}>
+          <AppText variant="footnote" tone="secondary">비밀번호를 잊으셨나요?</AppText>
+        </TouchableOpacity>
         <View style={styles.footer}>
           <AppText variant="footnote" tone="secondary">아직 계정이 없으신가요? </AppText>
           <TouchableOpacity onPress={() => { resetError(); setMode('gate'); }}>
             <AppText variant="footnote" tone="accent">회원가입</AppText>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ── v3.207(⑦) 비밀번호 재설정: 이메일 입력 → 코드 발송 요청 ──
+  if (mode === 'forgot') {
+    return (
+      <View>
+        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+          가입하신 이메일로 6자리 재설정 코드를 보내드려요.
+        </AppText>
+        {showError ? <AppText variant="footnote" style={styles.error}>{showError}</AppText> : null}
+        <Label>이메일</Label>
+        <TextInput style={styles.input} placeholder="가입하신 이메일을 입력하세요" placeholderTextColor={colors.text.muted}
+          value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+        {/* 아이디 찾기 갈음 안내(확정 스펙) — 아이디 = 이메일 */}
+        <AppText variant="caption" tone="muted" style={{ marginBottom: spacing.sm }}>
+          아이디는 가입하신 이메일입니다.
+        </AppText>
+        <AppText variant="caption" tone="muted" style={{ lineHeight: 18, marginBottom: spacing.md }}>
+          소셜 로그인(구글·카카오)으로 가입한 계정은 비밀번호가 없어 재설정할 수 없어요. 소셜 로그인으로 이용해주세요.
+        </AppText>
+        <Button label={resetLoading ? '요청 중...' : '재설정 코드 받기'} fullWidth disabled={resetLoading} onPress={handleForgotRequest} />
+        <View style={styles.footer}>
+          <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
+            <AppText variant="footnote" tone="accent">로그인으로 돌아가기</AppText>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ── v3.207(⑦) 비밀번호 재설정: 코드 + 새 비밀번호 입력 ──
+  if (mode === 'forgotSent') {
+    return (
+      <View>
+        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+          입력하신 이메일로 재설정 코드를 보냈어요. 메일이 오지 않으면 스팸함을 확인하거나 코드를 다시 요청해주세요. 코드는 15분 동안 유효합니다.
+        </AppText>
+        {showError ? <AppText variant="footnote" style={styles.error}>{showError}</AppText> : null}
+        <Label>재설정 코드</Label>
+        <TextInput style={styles.input} placeholder="메일로 받은 6자리 코드" placeholderTextColor={colors.text.muted}
+          maxLength={6} keyboardType="number-pad" value={resetCode}
+          onChangeText={(v) => setResetCode(v.replace(/\D/g, '').slice(0, 6))} />
+        <Label>새 비밀번호</Label>
+        <TextInput style={styles.input} placeholder="비밀번호 (8자 이상, 영문+숫자 포함)" placeholderTextColor={colors.text.muted}
+          value={resetPw} onChangeText={setResetPw} secureTextEntry />
+        <Label>새 비밀번호 확인</Label>
+        <TextInput style={styles.input} placeholder="새 비밀번호를 다시 입력하세요" placeholderTextColor={colors.text.muted}
+          value={resetPwConfirm} onChangeText={setResetPwConfirm} secureTextEntry />
+        {resetPwConfirm && resetPw !== resetPwConfirm ? (
+          <AppText variant="caption" style={styles.error}>비밀번호가 일치하지 않습니다.</AppText>
+        ) : null}
+        <Button label={resetLoading ? '변경 중...' : '비밀번호 변경'} fullWidth disabled={resetLoading} onPress={handleForgotConfirm} />
+        <TouchableOpacity style={styles.forgotLink} onPress={handleForgotRequest} disabled={resetLoading}>
+          <AppText variant="footnote" tone="secondary">코드 다시 받기</AppText>
+        </TouchableOpacity>
+        <View style={styles.footer}>
+          <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
+            <AppText variant="footnote" tone="accent">로그인으로 돌아가기</AppText>
           </TouchableOpacity>
         </View>
       </View>
@@ -488,6 +619,8 @@ const styles = StyleSheet.create({
   },
   error: { color: colors.status.error, marginBottom: spacing.sm },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.lg, marginBottom: spacing.md },
+  // v3.207(⑦): 비밀번호 재설정 진입/재요청 링크
+  forgotLink: { alignSelf: 'center', marginTop: spacing.md, paddingVertical: spacing.xs },
   birthRow: { flexDirection: 'row', gap: spacing.sm },
   // minWidth:0 필수 — 웹 input은 고유 최소폭(size 속성)이 있어 flex 축소가 막혀 '일' 칸이 화면 밖으로 밀린다
   birthInput: { flex: 1, minWidth: 0 },

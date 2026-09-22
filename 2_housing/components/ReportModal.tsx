@@ -2,13 +2,12 @@
 // 사유 5종 라디오 선택 + '기타'일 때만 상세 입력(최대 500자) → POST /reports/
 // 주의: reason_text 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { AppText, Button } from './ui';
 import LoginStartButton from './LoginStartButton';
 import { colors } from '../theme/colors';
@@ -34,19 +33,10 @@ interface Props {
 export default function ReportModal({ visible, targetType, targetId, onClose }: Props) {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
-  // v3.202(B안2): Android '기타' 입력 중 키보드 가림 — center 정렬은 유지하고 카드를
-  // 키보드 위 가시영역의 중앙으로 리프트. lift=(kbPad+insets.bottom)/2 = 가시영역 재중앙값이라
-  // 필요량을 넘지 않음(과리프트 클램프 충족: lift ≤ kbPad ⇔ kbHeight ≥ 2·insets.bottom 항상 참).
-  // kbPad>0 시 maxHeight 동적 클램프 병행 — 카드가 커도 상단을 넘지 않는다. iOS는 KAV 경로 무변경(kbPad=0).
-  const insets = useSafeAreaInsets();
-  const { height: winH } = useWindowDimensions();
-  const kbPad = useAndroidKeyboardLift(visible);
-  const kbLiftStyle = kbPad > 0
-    ? {
-        transform: [{ translateY: -Math.round((kbPad + insets.bottom) / 2) }],
-        maxHeight: Math.max(240, winH - kbPad - insets.bottom - insets.top - 24),
-      }
-    : null;
+  // [KeyboardCtl] v3.207(⑤): v3.202 수동 리프트(translateY/(kbPad+insets)/2·동적 maxHeight) 제거 —
+  // RN Keyboard 이벤트 의존이 SDK 54 edge-to-edge+Fabric 실기기에서 실패 확정.
+  // keyboard-controller KAV(behavior='padding')가 backdrop 높이를 키보드만큼 줄여
+  // center 정렬 카드가 남은 가시영역 중앙으로 자동 재배치된다(iOS·Android 공통, Modal 내 동작).
   const [reasonCode, setReasonCode] = useState<string | null>(null);
   const [reasonText, setReasonText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -88,10 +78,10 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
-      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+      {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
-        <TouchableOpacity style={[styles.card, kbLiftStyle]} activeOpacity={1} onPress={() => {}}>
+        <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>신고하기</AppText>
 
           {!user ? (
@@ -158,7 +148,8 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
-  card: { width: '100%', maxWidth: 360, backgroundColor: colors.bg.surface1, borderRadius: radius.xxl, padding: spacing.xl },
+  // v3.207(⑤): maxHeight 100% — KAV padding으로 줄어든 backdrop을 카드가 넘지 않게(동적 클램프 대체)
+  card: { width: '100%', maxWidth: 360, maxHeight: '100%', backgroundColor: colors.bg.surface1, borderRadius: radius.xxl, padding: spacing.xl },
   title: { marginBottom: spacing.lg },
   desc: { marginBottom: spacing.lg },
   doneSub: { marginBottom: spacing.xl, lineHeight: 20 },

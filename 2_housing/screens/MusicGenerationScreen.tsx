@@ -43,10 +43,9 @@ const MOODS = ['밝고 경쾌한', '슬프고 우울한', '몽환적·신비로�
 // v3.84: 간편 목소리(프리셋) 화면에서도 동일 세팅을 쓰도록 export (VoiceManageScreen)
 export const VOCAL_STYLES = ['소프트', '파워풀', '위스퍼', '그루비', '클리어', '허스키'];
 export const VOCAL_OPTIONS = ['남성', '여성'];
-// v3.202(J): 작곡 대화 보컬 스텝 전용 선택지 — VOCAL_OPTIONS는 VoiceManageScreen(:333)·
-// ArtistResultScreen(:1287)이 성별(남/여→male/female) 매핑으로 공유하므로 배열에 직접
-// 추가하지 않는다(아티스트 보컬 설정 UI 오노출 방지). step 3 렌더에서만 로컬 확장.
-const INSTRUMENTAL_OPTION = 'Instrumental (연주곡)';
+// v3.207(⑧): step 3 보컬 선택지에서 Instrumental(연주곡) 제거 — 연주곡 진입은
+// ComposeLyricsPickScreen '가사 없이 만들기 (연주곡)' 카드로 일원화(INSTRUMENTAL_OPTION 상수 삭제).
+// 되감기로 연주곡 → 성별 재선택 시 해제 방어 분기는 handleVocalSelect에 유지.
 
 const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A major', 'B major', 'C minor', 'D minor', 'E minor', 'F minor', 'G minor', 'A minor', 'B minor'];
 
@@ -447,7 +446,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.204(④): 편집 모달 선택지 — 해당 스텝의 기존 선택지 배열 재사용
   const editChoicesForStep = (s: number): string[] => {
     switch (s) {
-      case 3: return [...VOCAL_OPTIONS, INSTRUMENTAL_OPTION];
+      case 3: return [...VOCAL_OPTIONS]; // v3.207(⑧): 편집 모달에서도 연주곡 선택지 제거
       case 100: return [...VOCAL_OPTIONS];
       case 4: return [...VOCAL_STYLES];
       case 101: return [...VOCAL_STYLES];
@@ -903,26 +902,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
 
   // Step 3: Vocal select (메인 보컬) — v3.143: 성별 다음은 목소리 방식 질문(step 220)
+  // v3.207(⑧): Instrumental(연주곡) 선택 분기 제거 — 선택지가 남성/여성 2개뿐이라 도달 불가.
+  // 연주곡은 ComposeLyricsPickScreen '가사 없이 만들기' 카드(setInstrumental) 경로만 사용.
   const handleVocalSelect = (vocal: string) => {
-    if (vocal === INSTRUMENTAL_OPTION) {
-      // v3.202(J)→v3.203: 가사가 있어도 무보컬(연주곡) 선택 가능 — vocalOff 처리 후 보컬 관련
-      // 스텝(220/4/12)을 건너뛰고 곡 길이(step 310)로 직행. 가사는 유지(가사 기반 연주곡).
-      console.info('[MusicGeneration] 보컬: Instrumental(연주곡) 선택 — vocalOff, 곡 길이 질문(310)으로');
-      musicStore.setInstrumental(true);
-      setUseVocal(false);
-      setSelectedVocalGender('');
-      setSelectedVocalStyle('');
-      commitExchange(
-        { type: 'user', text: INSTRUMENTAL_OPTION, step: 3 },
-        [
-          { type: 'director', text: '좋아요! 보컬 없이 연주곡으로 만들게요.' },
-          { type: 'director', text: questionForStep(310) },
-        ],
-        310
-      );
-      return;
-    }
-    // v3.202(J): 되감기로 Instrumental → 성별 재선택 시 연주곡 해제(새 값 세팅)
+    // v3.202(J): 되감기로 Instrumental → 성별 재선택 시 연주곡 해제(새 값 세팅) — v3.207에도 유지
     if (musicStore.instrumental) {
       musicStore.setInstrumental(false);
       // v3.203: 연주곡 전용 곡 길이도 함께 해제 — 일반곡에 duration이 실리는 끈적 방지
@@ -1281,9 +1264,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               contentContainerStyle={styles.choicesContainer}
               showsVerticalScrollIndicator={false}
             >
-              {/* v3.202(J): 공유 배열(VOCAL_OPTIONS)은 VoiceManage/ArtistResult가 성별 매핑으로
-                  쓰므로 무변경 — 작곡 스텝 렌더에서만 Instrumental(연주곡) 로컬 확장 */}
-              {[...VOCAL_OPTIONS, INSTRUMENTAL_OPTION].map((vocal, idx) => (
+              {/* v3.207(⑧): 연주곡 선택지 제거 — 남성/여성 2개만. 연주곡 진입은
+                  ComposeLyricsPick '가사 없이 만들기' 카드로 일원화 */}
+              {VOCAL_OPTIONS.map((vocal, idx) => (
                 <TouchableOpacity
                   key={vocal}
                   style={[styles.choiceButton, selectedVocalGender === vocal && styles.choiceButtonSelected]}

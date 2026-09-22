@@ -1,6 +1,6 @@
 // [FeedScreen] 피드 타임라인 — /api/feeds/timeline (인스타형 혼합: is_public 최신 + 팔로잉 작성자 최상단).
 // 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -17,15 +17,21 @@ import { playTrackNow } from '../services/playback';
 import Fab from '../components/Fab';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
-import TutorialOverlay from '../components/TutorialOverlay';
+import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
+// v3.207 ①: 코치마크 anchor — 글쓰기 Fab 스포트라이트(비로그인·Fab 숨김 시 미등록 → 카드 fallback)
+import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 
 // v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-const TUTORIAL_STEPS = [
+// v3.207 ①: '내 곡 공유' 스텝에 글쓰기 Fab anchor
+const TUTORIAL_STEPS: TutorialStep[] = [
   { title: '소식 둘러보기', desc: '피드에서 다른 기획사와 아티스트의 새 소식을 볼 수 있어요.' },
-  { title: '내 곡 공유', desc: '오른쪽 아래 버튼으로 내 곡과 소식을 피드에 올려보세요.' },
+  { title: '내 곡 공유', desc: '오른쪽 아래 버튼으로 내 곡과 소식을 피드에 올려보세요.', anchorKey: 'feed-compose' },
   { title: '반응하기', desc: '마음에 드는 소식에는 좋아요와 댓글로 반응할 수 있어요.' },
 ];
+
+// Fab(components/Fab.tsx)의 고정 지름 — anchor rect를 아이콘 중심에서 버튼 크기로 확장할 때 사용
+const FAB_SIZE = 56;
 
 interface FeedTrack {
   id: string;
@@ -91,6 +97,29 @@ export default function FeedScreen() {
   const syncLikes = useLikesStore((s) => s.sync);
   const nowId = usePlayerStore((s) => s.track?.id);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  // v3.207 ①: 글쓰기 Fab anchor — Fab은 ref를 내주지 않으므로(공용 컴포넌트 불변) 내부 아이콘을
+  // 측정해 버튼 지름(56)으로 확장 등록한다. Fab이 숨는 조건(미니플레이어 표시)과 비로그인 땐 해제.
+  const fabIconRef = useRef<View>(null);
+  const fabHidden = usePlayerStore((s) => !!(s.track && s.sound)); // components/Fab.tsx 숨김 조건과 동일
+  const registerFabAnchor = useCallback(() => {
+    try {
+      (fabIconRef.current as any)?.measureInWindow?.((x: number, y: number, w: number, h: number) => {
+        if (!(w > 0) || !(h > 0)) return;
+        registerAnchor('feed-compose', {
+          x: x + w / 2 - FAB_SIZE / 2,
+          y: y + h / 2 - FAB_SIZE / 2,
+          width: FAB_SIZE,
+          height: FAB_SIZE,
+        });
+      });
+    } catch (err: any) {
+      console.error('[Tutorial] feed-compose anchor 측정 실패', { message: err?.message });
+    }
+  }, []);
+  useEffect(() => {
+    if (!user || fabHidden) unregisterAnchor('feed-compose');
+    return () => unregisterAnchor('feed-compose');
+  }, [user, fabHidden]);
 
   const fetchFeed = useCallback(async () => {
     // 피드는 비로그인도 우선 노출(공개 타임라인). 스크롤/클릭 시 로그인 CTA를 띄운다.
@@ -301,7 +330,10 @@ export default function FeedScreen() {
       {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
       {user ? (
         <Fab onPress={() => navigation.navigate('FeedCompose')} accessibilityLabel="피드 작성">
-          <Feather name="edit-3" size={22} color="#fff" />
+          {/* v3.207 ①: 튜토리얼 anchor 측정용 래퍼 — collapsable={false}로 네이티브 뷰 보존 */}
+          <View ref={fabIconRef} collapsable={false} onLayout={registerFabAnchor}>
+            <Feather name="edit-3" size={22} color="#fff" />
+          </View>
         </Fab>
       ) : null}
 

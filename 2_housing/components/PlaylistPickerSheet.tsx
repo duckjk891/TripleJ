@@ -1,9 +1,14 @@
 // [PlaylistPickerSheet] 곡(들)을 플레이리스트에 담는 바텀시트 — 기존 목록 선택 또는 새로 만들어 담기.
 // 단일 곡·여러 곡(검색 결과 전체 담기) 모두 지원. trackIds 길이에 따라 문구만 달라진다.
+// [KeyboardCtl] v3.207(⑤): useAndroidKeyboardLift(RN Keyboard 이벤트 셈법) 제거 —
+// SDK 54 edge-to-edge+Fabric 실기기에서 keyboardDidShow 미발화/좌표 불일치로 실패 확정.
+// keyboard-controller KeyboardAvoidingView(behavior='padding', 네이티브 IME 인셋 직수신,
+// RN Modal 별도 window에서도 동작)로 iOS·Android 리프트 일원화. maxHeight 동적 클램프도
+// 불요 — KAV padding으로 backdrop 자체가 줄어 시트 60% 상한이 남은 화면 기준이 된다.
 import { useEffect, useState } from 'react';
-import { Modal, View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { Modal, View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
 import { AppText, Button } from './ui';
@@ -18,18 +23,9 @@ interface Props {
 
 export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Props) {
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
-  const { height: winH } = useWindowDimensions();
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
-  // v3.198→v3.201(A): Android 키보드 수동 리프트 — 로직은 공용 훅 useAndroidKeyboardLift로 추출
-  // (show: kbHeight - insets.bottom, hide: 0 리셋, visible 게이트·리스너 쌍 해제 그대로).
-  // v3.201(A) 근본 수정: kbPad를 paddingBottom 합산 → 시트 marginBottom(시트 전체 리프트)으로 이동.
-  // paddingBottom 합산은 maxHeight 60% 클램프에 걸려(키보드 ~35-40% + 콘텐츠) 시트 높이가 고정되고
-  // 맨 아래 자식인 입력행(createRow)이 시트 경계 밖 = 키보드 뒤에 남았다. marginBottom은 콘텐츠
-  // 높이를 바꾸지 않아 클램프와 무관하게 입력행이 항상 키보드 위. hide 시 0 리셋 → 잔존 간격
-  // 구조적 불가(v3.198 보장) 유지. iOS는 KAV padding 경로 무변경(kbPad 항상 0).
-  const kbPad = useAndroidKeyboardLift(visible);
   const many = trackIds.length > 1;
 
   useEffect(() => {
@@ -94,20 +90,21 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      {/* v3.196→v3.198: KAV는 iOS 전용으로 복귀 — Android는 위 keyboardDidShow/Hide 수동 패딩(kbPad)이 담당
-          (Android KAV padding이 키보드 닫힘 후 잔존 간격을 남기는 문제 해소, 키보드 가림 해소 목적은 유지) */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+      {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV(behavior='padding') — iOS·Android 공통.
+          keyboardVerticalOffset=-insets.bottom: IME 인셋에 내비바 영역이 포함 → 시트 자체
+          paddingBottom(insets.bottom+xl)과의 이중 계상 상쇄(v3.201 kbHeight-insets.bottom 셈법과 동치).
+          닫힘 시 padding이 0으로 복귀 → 잔존 간격 구조적 불가. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+        keyboardVerticalOffset={-insets.bottom}
+        pointerEvents="box-none"
+      >
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
         {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴)
-            v3.201(A): kbPad는 marginBottom(시트 전체 리프트)로 — paddingBottom 합산은 maxHeight 클램프에
-            걸려 입력행이 키보드 뒤에 남는다(§1). 키보드 열림 중에는 maxHeight를 남는 화면(winH - 키보드)
-            안으로 동적 클램프해 '키보드 + 시트 60%'가 화면 상한을 넘는 극단도 방지. */}
+            v3.207(⑤): maxHeight 60%는 KAV padding으로 줄어든 backdrop 기준이라 동적 클램프 불요 */}
         <TouchableOpacity
-          style={[
-            styles.sheet,
-            { paddingBottom: insets.bottom + spacing.xl, marginBottom: kbPad },
-            kbPad > 0 && { maxHeight: Math.min(winH * 0.6, winH - (kbPad + insets.bottom) - 24) },
-          ]}
+          style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]}
           activeOpacity={1}
           onPress={() => {}}
         >

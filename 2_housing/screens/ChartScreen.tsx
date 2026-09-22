@@ -19,16 +19,30 @@ import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui
 import TrackRow, { trackRowStyles } from '../components/TrackRow';
 import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
-import TutorialOverlay from '../components/TutorialOverlay';
+import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.96(A-20): 홈(차트) 최신 앨범 가로 섹션 — GET /albums/latest, 탭 시 앨범 상세로
 import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
 
 // v3.204 ⑥: 첫 방문 튜토리얼 스텝 (렌더마다 새 배열 생성 방지 — 모듈 상수)
-const TUTORIAL_STEPS = [
-  { title: '차트 구경하기', desc: 'MAIDOL 아티스트들의 인기곡과 최신 앨범을 모아 보여줘요.' },
+// v3.207 ②: 신곡 포커스 문구 + ①: '곡 담기' 스텝에 ⋮ 스포트라이트 anchor(첫 행 — 미등록 시 카드 fallback)
+const TUTORIAL_STEPS: TutorialStep[] = [
+  { title: '신곡부터 만나기', desc: '차트는 신곡 탭으로 시작해요. MAIDOL 아티스트들의 최신 곡과 앨범을 가장 먼저 만나보세요.' },
   { title: '탭해서 재생', desc: '곡을 탭하면 바로 재생이 시작돼요.' },
-  { title: '곡 담기', desc: '곡의 더보기(⋮) 버튼으로 재생목록이나 내 플레이리스트에 담을 수 있어요.' },
+  { title: '곡 담기', desc: '곡의 더보기(⋮) 버튼으로 재생목록이나 내 플레이리스트에 담을 수 있어요.', anchorKey: 'chart-row-more' },
 ];
+
+// v3.207 ②: 신곡 탭 발매일 footer — created_at 상대 표기(서버 무수정, 필드 없으면 미표기)
+const formatReleasedAgo = (iso?: string): string | null => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const diffDay = Math.floor((Date.now() - t) / 86400000);
+  if (diffDay <= 0) return '오늘 발매';
+  if (diffDay < 7) return `${diffDay}일 전 발매`;
+  if (diffDay < 30) return `${Math.floor(diffDay / 7)}주 전 발매`;
+  const d = new Date(t);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} 발매`;
+};
 
 interface ChartTrack {
   id: string;
@@ -46,17 +60,20 @@ interface ChartTrack {
   // v3.106: 트랙→앨범 역참조 필드 — 2026-08 실측 기준 서버 미제공(charts/tracks _serialize_track에 없음).
   // 백엔드가 album_id를 내려주면 handleTrackPress의 앨범 분기가 그대로 동작한다.
   album_id?: string;
+  // v3.207 ②: 신곡 탭 발매일 footer용 — /tracks/?sort=created_at 응답에 포함(차트 탭엔 없어도 무해)
+  created_at?: string;
 }
 
 type ChartTab = 'top100' | 'daily' | 'weekly' | 'monthly' | 'new' | 'queue';
 
+// v3.207 ②: 신곡 포커스 — 신곡 탭을 맨 앞으로(기본 탭), TOP 100은 2번째로 존치
 const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
+  { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
   { key: 'top100', label: 'TOP 100', endpoint: '/charts/top100' },
   // v3.97(B-3): 일간 차트 — backend charts.py VALID_CHART_TYPES('daily') / MAIDOL ChartPage 탭과 동일 순서(일간→주간→월간)
   { key: 'daily', label: '일간', endpoint: '/charts/daily' },
   { key: 'weekly', label: '주간', endpoint: '/charts/weekly' },
   { key: 'monthly', label: '월간', endpoint: '/charts/monthly' },
-  { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
   { key: 'queue', label: '내 재생목록', endpoint: '' }, // 로컬 큐(playerStore) — API 없음
 ];
 
@@ -71,7 +88,7 @@ export default function ChartScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<ChartTab>('top100');
+  const [activeTab, setActiveTab] = useState<ChartTab>('new'); // v3.207 ②: 기본 탭 = 신곡
   const [tracks, setTracks] = useState<ChartTrack[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -93,7 +110,8 @@ export default function ChartScreen() {
       setLoading(false);
       return;
     }
-    const endpoint = TABS.find((t) => t.key === tab)?.endpoint || '/charts/top100';
+    // v3.207 ②: 폴백 endpoint도 신곡 기준으로 통일 (기본 탭 전환과 정합)
+    const endpoint = TABS.find((t) => t.key === tab)?.endpoint || '/tracks/?sort=created_at&limit=100';
     if (__DEV__) console.info('[ChartScreen] fetchChart 호출', { tab, endpoint });
     try {
       setLoading(true);
@@ -226,6 +244,8 @@ export default function ChartScreen() {
         : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
       : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
 
+    // v3.207 ②: 신곡 탭 발매일 footer (created_at 상대 표기 — 필드 없으면 미표기)
+    const releasedText = activeTab === 'new' ? formatReleasedAgo(item.created_at) : null;
     return (
       <TrackRow
         track={item}
@@ -233,6 +253,11 @@ export default function ChartScreen() {
         liked={!!likedMap[item.id]}
         onPress={() => handleTrackPress(item)}
         onMore={() => setActionTrack(item)}
+        footer={releasedText
+          ? <AppText variant="caption" tone="muted" style={styles.releasedFooter}>{releasedText}</AppText>
+          : undefined}
+        // v3.207 ①: 튜토리얼 '곡 담기' 스포트라이트 — 첫 행 ⋮만 anchor 등록
+        moreAnchorKey={index === 0 ? 'chart-row-more' : undefined}
       />
     );
   };
@@ -309,8 +334,11 @@ export default function ChartScreen() {
             </>
           );
         }
+        // v3.207 ②: 빈 상태 문구 — 기본 진입 탭(신곡) 기준 분기
         return isQueue
           ? <EmptyState title="재생목록이 비어있어요" hint="차트나 검색에서 곡을 재생하면 여기에 쌓여요" />
+          : activeTab === 'new'
+          ? <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="아직 신곡이 없습니다" hint="새 곡이 발매되면 여기에 가장 먼저 표시됩니다" />
           : <EmptyState icon={<Feather name="bar-chart-2" size={44} color={colors.text.muted} />} title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
       })()}
 
@@ -425,6 +453,7 @@ const styles = StyleSheet.create({
   coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
   info: { flex: 1, marginRight: spacing.sm },
   artist: { marginTop: 3 },
+  releasedFooter: { marginTop: 3 }, // v3.207 ②: 신곡 탭 발매일 footer
   statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
   statLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   action: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },

@@ -1,3 +1,8 @@
+// [useKeyboardOverlapLift] v3.207(⑤): 미사용(소비처 0) — react-native-keyboard-controller 전환으로 대체.
+// 실패 인과: 실측 겹침 방식이어도 트리거가 RN Keyboard 이벤트라, SDK 54 edge-to-edge 강제+Fabric 조합
+// 실기기에서 keyboardDidShow 미발화/좌표계 불일치 시 리프트가 0으로 남는다(새 APK 재현 확정).
+// 신규 소비 금지 — keyboard-controller KeyboardAvoidingView/useKeyboardState를 사용할 것. 파일은 기록용 보존.
+// ---- 이하 v3.205(①) 원문 ----
 // [useKeyboardOverlapLift] v3.205(①): Android 한정 — 키보드와 대상 뷰의 "실측 겹침"만큼만 들어올리는 훅.
 // useAndroidKeyboardLift(v3.201, Modal 전용 셈법: kbHeight - insets.bottom)와의 차별점:
 // 전체 화면에서는 창 리사이즈(adjustResize) 동작 여부가 기기별로 갈린다 —

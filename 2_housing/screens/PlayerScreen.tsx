@@ -45,15 +45,18 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
 import Marquee from '../components/Marquee';
 import TrackComments from '../components/common/TrackComments';
-import TutorialOverlay from '../components/TutorialOverlay';
+import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
+// v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
+import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-const TUTORIAL_STEPS = [
+// v3.207 ①: '담기와 공유' 스텝에 담기 버튼 anchor (측정 실패 시 카드 fallback)
+const TUTORIAL_STEPS: TutorialStep[] = [
   { title: '재생 위치 이동', desc: '재생바를 드래그해서 원하는 구간으로 이동할 수 있어요.' },
   { title: '가사·제작 노트', desc: '하단 바를 탭하면 가사와 제작 노트, 댓글을 볼 수 있어요.' },
-  { title: '담기와 공유', desc: '지금 듣는 곡을 플레이리스트에 담거나 밖으로 공유해보세요.' },
+  { title: '담기와 공유', desc: '지금 듣는 곡을 플레이리스트에 담거나 밖으로 공유해보세요.', anchorKey: 'player-add' },
 ];
 
 interface AdItem {
@@ -197,6 +200,9 @@ export default function PlayerScreen({ route, navigation }: any) {
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
   const durationWarnedRef = useRef<string | null>(null); // v3.192: duration 괴리 경고 1회 가드(트랙당)
+  // v3.207 ①: 담기 버튼 튜토리얼 anchor ref — onLayout 시 등록, unmount 시 해제
+  const addBtnRef = useRef<View>(null);
+  useEffect(() => () => unregisterAnchor('player-add'), []);
   const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -1143,7 +1149,14 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
 
         {/* v3.193: 담기 = 플레이리스트 담기(회원) / 비회원은 기존 안내 팝업 → 큐 폴백 */}
-        <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist} accessibilityLabel="담기">
+        {/* v3.207 ①: 튜토리얼 '담기와 공유' 스포트라이트 anchor */}
+        <TouchableOpacity
+          ref={addBtnRef as any}
+          onLayout={() => measureAndRegister('player-add', addBtnRef.current)}
+          style={styles.actionBtn}
+          onPress={handleAddToPlaylist}
+          accessibilityLabel="담기"
+        >
           <View style={styles.actionIconBox}>
             <Feather name="folder-plus" size={24} color={colors.text.muted} />
           </View>

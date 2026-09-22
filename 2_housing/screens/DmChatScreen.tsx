@@ -1,13 +1,21 @@
 // [DmChat] DM 대화방 — MAIDOL DmChatView 이식(RN).
 // 말풍선 스레드 + 입력(Enter 전송, 2000자) + 메시지 요청 수락/거절/차단 바 + ⋯ 차단하기 + 상대 메시지 신고.
 // 갱신: 화면 포커스 중 8초 폴링(모바일 관용 — MAIDOL은 WS+30s 폴링, WS는 후속).
+// v3.207(⑤): 키보드 근본 전환 — v3.201 useAndroidKeyboardLift(Modal 셈법)·v3.205 useKeyboardOverlapLift(실측 겹침)
+//   모두 실기기(새 APK)에서 실패 확정: 둘 다 RN Keyboard 이벤트 의존인데 SDK 54 edge-to-edge 강제 + Fabric
+//   조합에서 keyboardDidShow 미발화/좌표계 불일치가 발생해 lift가 0으로 남았다. react-native-keyboard-controller의
+//   KeyboardAvoidingView는 네이티브 WindowInsetsAnimationCompat로 IME 지오메트리를 직접 수신(창 리사이즈·RN
+//   Keyboard 이벤트 미의존)하므로 이 실패 인과 자체를 우회한다. iOS도 동일 컴포넌트로 통일(behavior='padding').
+// v3.207(⑥): 신고(CS DM) 이미지 첨부 — feed-image 관행 복제(DocumentPicker image/* → POST /upload/dm-image →
+//   object_name → 메시지 body image_object_name) + 말풍선 이미지 렌더(서버 직렬화 image_url).
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { View, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useKeyboardOverlapLift } from '../hooks/useKeyboardOverlapLift';
+import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
@@ -23,6 +31,44 @@ interface DmMessage {
   text: string;
   created_at: string;
   read?: boolean;
+  // v3.207(⑥): 이미지 메시지 — 서버 직렬화 계약(image_object_name + image_url, image_url은
+  // proxy 모드면 상대경로·presign 모드면 절대 URL — feed image 블록 관행과 동일)
+  image_object_name?: string | null;
+  image_url?: string | null;
+}
+
+// v3.207(⑥): 첨부 선검증 — 백엔드 /upload/dm-image 계약(feed-image 복제: jpg/png/webp ≤15MB)과 짝
+const DM_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const DM_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
+
+interface AttachedImage {
+  localUri: string;
+  name: string;
+  mime: string;
+  status: 'uploading' | 'done' | 'failed';
+  objectName?: string;
+}
+
+/** 이미지 메시지 → 표시용 절대 URL (상대경로면 BACKEND_BASE_URL 접두 — feedImageUri 관행) */
+const dmImageUri = (m: Pick<DmMessage, 'image_url'>): string | null => {
+  const u = m?.image_url;
+  if (u) return u.startsWith('http') ? u : `${BACKEND_BASE_URL}${u}`;
+  return null;
+};
+
+/** 말풍선 이미지 — 가로폭 고정·비율 유지(getSize, 극단 비율 클램프 — FeedImageBlock 관행 축소판) */
+function DmMessageImage({ uri }: { uri: string }) {
+  const [ratio, setRatio] = useState(1);
+  useEffect(() => {
+    let alive = true;
+    Image.getSize(
+      uri,
+      (w, h) => { if (alive && w > 0 && h > 0) setRatio(Math.min(Math.max(w / h, 0.6), 3)); },
+      (err: any) => { if (__DEV__) console.info('[DmChat] 이미지 getSize 실패', { message: err?.message }); },
+    );
+    return () => { alive = false; };
+  }, [uri]);
+  return <Image source={{ uri }} style={[styles.msgImage, { aspectRatio: ratio }]} resizeMode="cover" />;
 }
 
 // 서버 시각은 타임존 표기 없는 UTC — 'Z' 보정
@@ -35,9 +81,6 @@ const fmtClock = (iso: string) => {
 export default function DmChatScreen() {
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
-  // v3.205(①): Android 15+ edge-to-edge에서 adjustResize 미동작 → 키보드-입력바 겹침 실측 리프트.
-  // API 34 이하(창 리사이즈 정상)는 겹침 0 → 리프트 0. iOS는 기존 KAV padding 경로 그대로.
-  const { lift: kbLift, targetRef: inputBarRef } = useKeyboardOverlapLift('[DmChat]');
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const user = useAuthStore((s) => s.user);
@@ -49,6 +92,8 @@ export default function DmChatScreen() {
   // v3.95(A-14): CS 오류신고 진입 시 "[오류신고: 사유] " 프리필(자동 전송 X — 사용자가 이어 작성)
   const [text, setText] = useState<string>(route.params?.prefill ?? '');
   const [sending, setSending] = useState(false);
+  // v3.207(⑥): 이미지 첨부 — 1장 첨부 → 업로드(상태 칩) → 전송 시 image_object_name 동봉
+  const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -87,16 +132,92 @@ export default function DmChatScreen() {
     if (messages.length) setTimeout(() => listRef.current?.scrollToEnd?.({ animated: false }), 80);
   }, [messages.length]);
 
+  // v3.207(⑥): 이미지 업로드 — FeedCompose uploadImage 관행 복제(web/native FormData 분기),
+  // 엔드포인트만 /upload/dm-image (서버 계약: feed-image 복제, prefix dm/{user_id}/)
+  const uploadImage = async (entry: AttachedImage) => {
+    if (__DEV__) console.info('[DmChat] 이미지 업로드 시작', { name: entry.name, mime: entry.mime });
+    try {
+      const formData = new FormData();
+      if (Platform.OS === 'web') {
+        const blob = await (await fetch(entry.localUri)).blob();
+        formData.append('file', blob, entry.name);
+      } else {
+        formData.append('file', { uri: entry.localUri, name: entry.name, type: entry.mime } as any);
+      }
+      const res = await api.post('/upload/dm-image', formData, {
+        headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      });
+      const objectName = res.data?.object_name;
+      if (!objectName) throw new Error('object_name 누락');
+      console.info('[DmChat] 이미지 업로드 성공', { objectName });
+      setAttachedImage((prev) => (prev && prev.localUri === entry.localUri ? { ...prev, status: 'done', objectName } : prev));
+    } catch (err: any) {
+      console.error('[DmChat] 이미지 업로드 실패', { status: err?.response?.status, message: err?.message });
+      setAttachedImage((prev) => (prev && prev.localUri === entry.localUri ? { ...prev, status: 'failed' } : prev));
+      showAlert('오류', err?.response?.data?.error || '이미지 업로드에 실패했습니다. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
+    }
+  };
+
+  const pickImage = async () => {
+    if (attachedImage) {
+      showAlert('안내', '이미지는 한 번에 1장씩 보낼 수 있어요.');
+      return;
+    }
+    // expo-image-picker 미설치 — 기존 이미지 선택 관행(FeedCompose DocumentPicker image/*) 재사용
+    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+    if (res.canceled || !res.assets || !res.assets[0]) return;
+    const f = res.assets[0];
+    const mime = f.mimeType || '';
+    if (mime && !DM_IMAGE_TYPES.includes(mime)) {
+      showAlert('안내', '지원하지 않는 이미지 형식입니다. (jpg/png/webp)');
+      return;
+    }
+    if (typeof f.size === 'number' && f.size > DM_IMAGE_MAX_BYTES) {
+      showAlert('안내', '이미지 크기는 15MB 이하여야 합니다.');
+      return;
+    }
+    const entry: AttachedImage = {
+      localUri: f.uri, name: f.name || 'image.jpg', mime: mime || 'image/jpeg',
+      status: 'uploading',
+    };
+    setAttachedImage(entry);
+    uploadImage(entry);
+  };
+
+  const retryImage = () => {
+    if (!attachedImage || attachedImage.status !== 'failed') return;
+    if (__DEV__) console.info('[DmChat] 이미지 업로드 재시도', { name: attachedImage.name });
+    const entry: AttachedImage = { ...attachedImage, status: 'uploading' };
+    setAttachedImage(entry);
+    uploadImage(entry);
+  };
+
   const send = async () => {
     const t = text.trim();
-    if (!t || sending) return;
+    // v3.207(⑥): 서버 계약 — text 또는 image 필수(둘 다 동봉 가능)
+    if ((!t && !attachedImage) || sending) return;
+    if (attachedImage && attachedImage.status === 'uploading') {
+      showAlert('안내', '이미지 업로드가 끝난 뒤 보낼 수 있어요.');
+      return;
+    }
+    if (attachedImage && attachedImage.status === 'failed') {
+      showAlert('안내', '이미지 업로드에 실패했어요. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
+      return;
+    }
+    const imageObjectName = attachedImage?.status === 'done' ? attachedImage.objectName : undefined;
+    if (!t && !imageObjectName) return;
     setSending(true);
-    if (__DEV__) console.info('[DmChat] 전송', { cid, len: t.length });
+    if (__DEV__) console.info('[DmChat] 전송', { cid, len: t.length, hasImage: !!imageObjectName });
     try {
-      const res = await api.post(`/dm/conversations/${cid}/messages`, { text: t });
+      const res = await api.post(`/dm/conversations/${cid}/messages`, {
+        ...(t ? { text: t } : {}),
+        ...(imageObjectName ? { image_object_name: imageObjectName } : {}),
+      });
       const m = res.data?.message;
       if (m) setMessages((prev) => [...prev, m]);
       setText('');
+      setAttachedImage(null);
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
@@ -141,10 +262,17 @@ export default function DmChatScreen() {
 
   const renderMsg = ({ item }: { item: DmMessage }) => {
     const mine = user && String(item.sender_id) === String(user.id);
+    // v3.207(⑥): 이미지 메시지 — 이미지 위·텍스트 아래(텍스트 없는 이미지 단독 메시지 지원)
+    const imgUri = dmImageUri(item);
     return (
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubblePeer]}>
-          <AppText variant="footnote" style={mine ? styles.textMine : undefined}>{item.text}</AppText>
+          {imgUri ? <DmMessageImage uri={imgUri} /> : null}
+          {item.text ? (
+            <AppText variant="footnote" style={[imgUri ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
+              {item.text}
+            </AppText>
+          ) : null}
         </View>
         <View style={styles.msgMeta}>
           <AppText variant="caption" tone="muted">{fmtClock(item.created_at)}</AppText>
@@ -159,8 +287,17 @@ export default function DmChatScreen() {
   };
 
   return (
-    // v3.205(①): edge-to-edge(app.json edgeToEdgeEnabled)에서 하단 내비바에 입력바가 깔리지 않게 insets.bottom 패딩
-    <KeyboardAvoidingView style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    // v3.207(⑤): keyboard-controller KAV(behavior='padding', iOS·Android 공통) — 네이티브 IME 인셋 기반이라
+    // edge-to-edge/창 리사이즈 여부와 무관하게 겹침만큼 정확히 리프트. 주의: 이 KAV는 열림 중 자신의
+    // paddingBottom을 애니메이션 값으로 덮어쓰므로 insets.bottom 패딩은 내부 View가 담당한다.
+    // keyboardVerticalOffset=-insets.bottom: IME 인셋에는 내비바 영역이 포함 → 내부 insets.bottom 패딩과
+    // 합산 시 이중 계상되는 만큼 상쇄(입력바 하단 = 키보드 상단 정합, v3.201 셈법과 동치).
+    <KeyboardAvoidingView
+      style={[styles.container, { paddingTop: insets.top }]}
+      behavior="padding"
+      keyboardVerticalOffset={-insets.bottom}
+    >
+      <View style={{ flex: 1, paddingBottom: insets.bottom }}>
       {/* 헤더 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="목록으로" style={{ padding: 4 }}>
@@ -221,25 +358,65 @@ export default function DmChatScreen() {
 
       {/* 입력바 — 수신 pending은 수락 전 답장 불가(백엔드 403과 일치) */}
       {!isPendingReceived ? (
-        // v3.205(①): 겹침 실측 리프트는 marginBottom으로만 합산(paddingBottom 합산 금지 — v3.201 §1 교훈).
-        // styles.inputBar의 margin: spacing.lg 중 bottom만 여기서 재정의(기본 간격 유지 + 리프트).
-        <View ref={inputBarRef} style={[styles.inputBar, { marginBottom: spacing.lg + kbLift }]}>
-          <TextInput
-            style={styles.input}
-            placeholder="메시지 입력..."
-            placeholderTextColor={colors.text.muted}
-            value={text}
-            onChangeText={setText}
-            maxLength={2000}
-            multiline
-          />
-          <TouchableOpacity onPress={send} disabled={sending || !text.trim()} accessibilityLabel="보내기" style={{ padding: 6 }}>
-            <Feather name="send" size={20} color={text.trim() ? colors.accent.primary : colors.text.muted} />
-          </TouchableOpacity>
+        <View>
+          {/* v3.207(⑥): 첨부 이미지 미리보기 칩 — 업로드 상태(스피너/실패 재시도) + X 제거 */}
+          {attachedImage ? (
+            <View style={styles.attachRow}>
+              <TouchableOpacity
+                onPress={retryImage}
+                disabled={attachedImage.status !== 'failed'}
+                accessibilityLabel={attachedImage.status === 'failed' ? '이미지 업로드 재시도' : '첨부 이미지'}
+              >
+                <Image source={{ uri: attachedImage.localUri }} style={styles.attachThumb} />
+                {attachedImage.status === 'uploading' ? (
+                  <View style={styles.attachOverlay}><ActivityIndicator size="small" color="#fff" /></View>
+                ) : attachedImage.status === 'failed' ? (
+                  <View style={styles.attachOverlay}><Feather name="refresh-cw" size={16} color={colors.status.error} /></View>
+                ) : null}
+              </TouchableOpacity>
+              <AppText variant="caption" tone={attachedImage.status === 'failed' ? undefined : 'muted'}
+                style={[{ flex: 1 }, attachedImage.status === 'failed' ? { color: colors.status.error } : null]} numberOfLines={1}>
+                {attachedImage.status === 'uploading' ? '업로드 중...'
+                  : attachedImage.status === 'failed' ? '업로드 실패 — 썸네일을 눌러 재시도'
+                  : attachedImage.name}
+              </AppText>
+              <TouchableOpacity onPress={() => setAttachedImage(null)} accessibilityLabel="첨부 제거" style={{ padding: 4 }}>
+                <Feather name="x" size={16} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {/* v3.207(⑤): 수동 리프트(marginBottom+kbLift) 제거 — keyboard-controller KAV padding이 담당 */}
+          <View style={styles.inputBar}>
+            <TouchableOpacity onPress={pickImage} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
+              <Feather name="image" size={20} color={attachedImage ? colors.text.muted : colors.text.secondary} />
+            </TouchableOpacity>
+            <TextInput
+              style={styles.input}
+              placeholder="메시지 입력..."
+              placeholderTextColor={colors.text.muted}
+              value={text}
+              onChangeText={setText}
+              maxLength={2000}
+              multiline
+            />
+            <TouchableOpacity
+              onPress={send}
+              disabled={sending || (!text.trim() && attachedImage?.status !== 'done')}
+              accessibilityLabel="보내기"
+              style={{ padding: 6 }}
+            >
+              <Feather
+                name="send"
+                size={20}
+                color={text.trim() || attachedImage?.status === 'done' ? colors.accent.primary : colors.text.muted}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
 
       <ReportModal visible={!!reportMsg} targetType="dm_message" targetId={String(reportMsg || '')} onClose={() => setReportMsg(null)} />
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -270,6 +447,19 @@ const styles = StyleSheet.create({
   bubblePeer: { backgroundColor: colors.bg.surface1 },
   textMine: { color: '#fff' },
   msgMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  // v3.207(⑥): 말풍선 이미지 — 화면 폭 대비 고정폭, 비율은 DmMessageImage가 getSize로 결정
+  msgImage: { width: 200, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
+  attachRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginTop: spacing.sm,
+    padding: spacing.sm, backgroundColor: colors.bg.surface1,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  attachThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.bg.surface2 },
+  attachOverlay: {
+    ...StyleSheet.absoluteFillObject, borderRadius: radius.sm,
+    backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',
+  },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm,
     margin: spacing.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,

@@ -26,6 +26,7 @@ import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
+import { listArtists } from '../services/characterService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 
@@ -234,10 +235,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // v3.90: 전체 | 위시리스트 탭 + 5단계 드릴다운 상태
   const [pickerTab, setPickerTab] = useState<'all' | 'wish'>('all');
   const [drill, setDrill] = useState<DrillState>(EMPTY_DRILL);
-  // v3.205(⑤): 아티스트 성별 자동 필터 — apiResult.gender → pendingGender → artistProfileStore 3단 폴백.
-  // (apiResult 타입에는 gender 미정의 — 서버가 내려주면 1순위로 반영, 없으면 자연 폴백)
+  // v3.205(⑤)→v3.207(⑩): 아티스트 성별 자동 필터 — 서버 캐릭터 gender(1순위) →
+  // apiResult.gender → pendingGender → artistProfileStore 4단 폴백.
+  // 앱 재시작 후엔 apiResult/pendingGender가 비어(characterTaskStore persist 미등록) null이 되던
+  // 문제를 서버 조회값(GET /character/list — 직렬화에 gender 기존 포함)으로 해소.
   const profileGender = useArtistProfileStore((s) => s.profiles[taskStore.characterKind]?.gender);
+  const [serverGender, setServerGender] = useState<'남' | '여' | null>(null);
   const artistGender =
+    serverGender ??
     normalizeArtistGender((apiResult as any)?.gender) ??
     normalizeArtistGender(taskStore.pendingGender) ??
     normalizeArtistGender(profileGender);
@@ -245,6 +250,39 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const [genderFilterOn, setGenderFilterOn] = useState(true);
 
   const isLoggedIn = useAuthStore((s) => !!s.token);
+
+  // v3.207(⑩): 화면 진입 시 1회 — 보유 캐릭터 목록에서 대상 캐릭터의 gender를 판별.
+  // 대상 우선순위: 재생성 대상(targetCharacterId) → 현재 kind의 기본 캐릭터 → 현재 kind 중
+  // gender 보유 캐릭터 → 앱 기본 캐릭터 → gender 보유 첫 캐릭터. 실패는 무해(기존 폴백 유지).
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { characters } = await listArtists();
+        const kind = useCharacterTaskStore.getState().characterKind;
+        const targetId = useCharacterTaskStore.getState().targetCharacterId;
+        const pick =
+          (targetId ? characters.find((c) => c.character_id === targetId) : undefined) ||
+          characters.find((c) => c.kind === kind && c.is_default) ||
+          characters.find((c) => c.kind === kind && !!normalizeArtistGender(c.gender)) ||
+          characters.find((c) => c.is_default) ||
+          characters.find((c) => !!normalizeArtistGender(c.gender));
+        const g = normalizeArtistGender(pick?.gender);
+        if (!cancelled) setServerGender(g);
+        if (__DEV__) {
+          console.info('[ArtistCody] 성별 자동 필터 — 서버 gender 폴백', {
+            characterId: pick?.character_id ?? null,
+            gender: g,
+            total: characters.length,
+          });
+        }
+      } catch (err: any) {
+        console.error('[ArtistCody] 서버 캐릭터 gender 조회 실패:', err?.response?.status, err?.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isLoggedIn]);
   const wished = useWishlistStore((s) => s.wished);
   const wishBusy = useWishlistStore((s) => s.busy);
   const wishItemsAll = useWishlistStore((s) => s.items);
@@ -973,17 +1011,34 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                   {' '}내 위시리스트{isLoggedIn && wishListLoaded && !wishListError ? ` (${wishItemsForCat.length})` : ''}
                 </AppText>
               </TouchableOpacity>
-              {/* v3.205(⑤): 성별 필터 토글 칩 — 성별 판별 성공 + 대상 카테고리에서만 노출 */}
-              {artistGender && pickerCat && GENDER_FILTER_CATS.includes(pickerCat) ? (
-                <TouchableOpacity
-                  style={[styles.genderChip, genderFilterOn && styles.genderChipActive]}
-                  onPress={() => setGenderFilterOn((v) => !v)}
-                  accessibilityLabel="성별 필터 전환"
-                >
-                  <AppText style={[styles.genderChipText, genderFilterOn && styles.genderChipTextActive]}>
-                    {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
-                  </AppText>
-                </TouchableOpacity>
+              {/* v3.205(⑤)→v3.207(⑩): 성별 필터 칩 — 대상 카테고리(상의/하의/신발)에서 상시 노출.
+                  성별 판별 시 = 기존 "◯◯용만/전체 보기" 토글, 미상 시 = "성별 미설정" 안내 칩(발견성). */}
+              {pickerCat && GENDER_FILTER_CATS.includes(pickerCat) ? (
+                artistGender ? (
+                  <TouchableOpacity
+                    style={[styles.genderChip, genderFilterOn && styles.genderChipActive]}
+                    onPress={() => setGenderFilterOn((v) => !v)}
+                    accessibilityLabel="성별 필터 전환"
+                  >
+                    <AppText style={[styles.genderChipText, genderFilterOn && styles.genderChipTextActive]}>
+                      {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
+                    </AppText>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.genderChip}
+                    onPress={() => {
+                      if (__DEV__) console.info('[ArtistCody] 성별 자동 필터 — 미설정 칩 탭(안내)');
+                      showAlert(
+                        '성별 미설정',
+                        '아티스트 성별이 설정되지 않아 전체 아이템을 보여드리고 있어요.\n아티스트 프로필에서 성별을 설정하면 성별 맞춤 필터를 사용할 수 있어요.'
+                      );
+                    }}
+                    accessibilityLabel="성별 미설정 안내"
+                  >
+                    <AppText style={styles.genderChipText}>성별 미설정 · 전체 표시</AppText>
+                  </TouchableOpacity>
+                )
               ) : null}
             </View>
 

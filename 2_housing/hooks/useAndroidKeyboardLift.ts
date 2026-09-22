@@ -1,3 +1,8 @@
+// [useAndroidKeyboardLift] v3.207(⑤): 미사용(소비처 0) — react-native-keyboard-controller 전환으로 대체.
+// 실패 인과: RN Keyboard 이벤트(keyboardDidShow) 의존 → SDK 54 edge-to-edge 강제+Fabric 조합
+// 실기기에서 미발화/endCoordinates 좌표계 불일치로 리프트 0 잔존(사용자 실기기+새 APK 재현 확정).
+// 신규 소비 금지 — keyboard-controller KeyboardAvoidingView/useKeyboardState를 사용할 것. 파일은 기록용 보존.
+// ---- 이하 v3.201(A) 원문 ----
 // [useAndroidKeyboardLift] v3.201(A): Android 한정 "키보드 위로 들어올리기" 공용 훅.
 // PlaylistPickerSheet v3.198의 수동 kbPad 로직을 그대로 추출 — Modal(별도 window)에서
 // Android KAV padding이 키보드 닫힘 후 잔존 간격을 남기는 문제(v3.196→198) 때문에

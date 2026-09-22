@@ -230,3 +230,47 @@ export async function recordConsents(
     throw err;
   }
 }
+
+// ── v3.207(⑦) 비밀번호 재설정 — 서버 계약(PLAN v3.207, backend 조 병렬 구현) ──
+//   POST /auth/password-reset/request {email}
+//     → 항상 200 동일 응답(계정 존재 여부 비노출). 6자리 코드 메일 발송(15분 만료·시도 5회 제한).
+//       password_hash NULL(소셜 전용) 계정은 메일에 "소셜 가입 계정" 안내가 감.
+//   POST /auth/password-reset/confirm {email, code, new_password}
+//     → 200 성공 / 400 코드 불일치·만료·시도 초과·비밀번호 규칙 위반(validate_password).
+// 보안: 코드·비밀번호 값은 절대 로그에 남기지 않는다(길이만).
+
+/** POST /auth/password-reset/request — 재설정 코드 발송 요청 (응답은 존재 여부 비노출 균일) */
+export async function requestPasswordReset(email: string): Promise<{ message?: string }> {
+  if (__DEV__) console.info('[Auth] passwordReset request start', { emailLen: email.length });
+  try {
+    const res = await api.post('/auth/password-reset/request', { email });
+    if (__DEV__) console.info('[Auth] passwordReset request accepted');
+    return res.data ?? {};
+  } catch (err: any) {
+    console.error('[Auth] passwordReset request failed', { status: err?.response?.status, message: err?.message });
+    throw err;
+  }
+}
+
+/** POST /auth/password-reset/confirm — 코드 검증 + 새 비밀번호 설정 */
+export async function confirmPasswordReset(
+  email: string,
+  code: string,
+  newPassword: string
+): Promise<{ message?: string }> {
+  if (__DEV__) {
+    console.info('[Auth] passwordReset confirm start', {
+      emailLen: email.length, codeLen: code.length, pwLen: newPassword.length,
+    });
+  }
+  try {
+    const res = await api.post('/auth/password-reset/confirm', {
+      email, code, new_password: newPassword,
+    });
+    if (__DEV__) console.info('[Auth] passwordReset confirm success');
+    return res.data ?? {};
+  } catch (err: any) {
+    console.error('[Auth] passwordReset confirm failed', { status: err?.response?.status, message: err?.message });
+    throw err;
+  }
+}

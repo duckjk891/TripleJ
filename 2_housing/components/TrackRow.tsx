@@ -1,9 +1,11 @@
 // [TrackRow] 곡 목록 한 줄 — 차트·검색 등 곡을 나열하는 모든 화면이 같은 디자인을 쓰도록 공용화.
 // 구성: 좌측 슬롯(순위/NEW/▶/번호) | 커버 48 | 마퀴 제목 + 아티스트 | 재생수·좋아요수 | 더보기(⋮)
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
 import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { BACKEND_BASE_URL } from '../services/api';
+// v3.207 ①: 튜토리얼 코치마크 anchor — 옵션 prop이 있을 때만 ⋮ 버튼 좌표를 등록(기본 무부하)
+import { TutorialAnchorKey, measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 import { AppText } from './ui';
 import Marquee from './Marquee';
 import { colors } from '../theme/colors';
@@ -47,9 +49,17 @@ interface Props {
   footer?: ReactNode;
   /** v3.70: 커버 우하단 소형 재생 배지 — 탭하면 재생됨을 시각화(피드 등). 'pause'=재생 중 표시 */
   playBadge?: 'play' | 'pause';
+  /** v3.207 ①: 이 행의 더보기(⋮) 버튼을 튜토리얼 anchor로 등록(보통 첫 행 index 0만) */
+  moreAnchorKey?: TutorialAnchorKey;
 }
 
-export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge }: Props) {
+export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge, moreAnchorKey }: Props) {
+  // v3.207 ①: ⋮ anchor 등록 — onLayout 시 창 좌표 측정, unmount 시 해제(오버레이는 fallback으로 강등)
+  const moreRef = useRef<View>(null);
+  useEffect(() => {
+    if (!moreAnchorKey) return;
+    return () => unregisterAnchor(moreAnchorKey);
+  }, [moreAnchorKey]);
   return (
     <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={onPress}>
       {left}
@@ -80,7 +90,13 @@ export default function TrackRow({ track, left, liked, onPress, onMore, footer, 
         </View>
       </View>
       {onMore ? (
-        <TouchableOpacity style={styles.action} accessibilityLabel="더보기" onPress={(e) => { e.stopPropagation?.(); onMore(); }}>
+        <TouchableOpacity
+          ref={moreAnchorKey ? (moreRef as any) : undefined}
+          onLayout={moreAnchorKey ? () => measureAndRegister(moreAnchorKey, moreRef.current) : undefined}
+          style={styles.action}
+          accessibilityLabel="더보기"
+          onPress={(e) => { e.stopPropagation?.(); onMore(); }}
+        >
           <Feather name="more-vertical" size={20} color={colors.text.muted} />
         </TouchableOpacity>
       ) : null}

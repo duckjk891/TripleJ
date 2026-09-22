@@ -3,10 +3,9 @@
 // 서버 계약: text 1~2000자, 신고당 1회(중복 409 · 비소유 403 · blind 아님 400 · 성공 201 {appeal_id}).
 // 주의: 소명 텍스트 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import api from '../services/api';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -55,18 +54,10 @@ interface Props {
 }
 
 export default function AppealModal({ report, onClose, onSubmitted }: Props) {
-  // v3.202(B안2): Android 소명 입력 중 키보드 가림 — center 유지 + 카드를 키보드 위
-  // 가시영역 중앙으로 리프트((kbPad+insets.bottom)/2 — 필요량 이하 클램프 자동 충족) +
-  // kbPad>0 시 maxHeight 동적 클램프 병행. iOS는 기존 KAV(padding) 경로 무변경(kbPad=0).
-  const insets = useSafeAreaInsets();
-  const { height: winH } = useWindowDimensions();
-  const kbPad = useAndroidKeyboardLift(!!report);
-  const kbLiftStyle = kbPad > 0
-    ? {
-        transform: [{ translateY: -Math.round((kbPad + insets.bottom) / 2) }],
-        maxHeight: Math.max(240, winH - kbPad - insets.bottom - insets.top - 24),
-      }
-    : null;
+  // [KeyboardCtl] v3.207(⑤): v3.202 수동 리프트(translateY·동적 maxHeight) 제거 —
+  // RN Keyboard 이벤트 의존이 SDK 54 edge-to-edge+Fabric 실기기에서 실패 확정.
+  // keyboard-controller KAV(behavior='padding')가 backdrop을 줄여 center 카드가
+  // 키보드 위 가시영역 중앙으로 자동 재배치(iOS·Android 공통, Modal 내 동작).
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -105,10 +96,10 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
 
   return (
     <Modal visible={!!report} transparent animationType="fade" onRequestClose={close}>
-      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+      {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
-        <TouchableOpacity style={[styles.card, kbLiftStyle]} activeOpacity={1} onPress={() => {}}>
+        <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>소명하기</AppText>
 
           {done ? (
@@ -184,7 +175,8 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
-  card: { width: '100%', maxWidth: 360, backgroundColor: colors.bg.surface1, borderRadius: radius.xxl, padding: spacing.xl },
+  // v3.207(⑤): maxHeight 100% — KAV padding으로 줄어든 backdrop을 카드가 넘지 않게(동적 클램프 대체)
+  card: { width: '100%', maxWidth: 360, maxHeight: '100%', backgroundColor: colors.bg.surface1, borderRadius: radius.xxl, padding: spacing.xl },
   title: { marginBottom: spacing.lg },
   target: {
     gap: 2, backgroundColor: colors.bg.deepest, borderRadius: radius.md,

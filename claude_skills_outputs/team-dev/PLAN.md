@@ -3807,3 +3807,146 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 3. **(차기 후보) 모자/가방 참조 이미지 첨부 필드(hat/bag_object_name) 서버 확장**: 현재는 텍스트 묘사만이라 실데이터 적재 후 제품 재현 정확도가 상의/하의/신발 대비 낮음.
 4. 모자 착용 방식 '비스듬히 쓰기' 1개 추가 여부(원문 "등" 해석 — 반려 시 바로/거꾸로 2개만).
 
+
+---
+
+## v3.207 (2026-09-22) — 실기기 피드백 12건: 튜토리얼 개편(코치마크·최초1회·ⓘ제거)·차트 신곡 포커스·키보드 가림 근본 전환·신고 이미지 첨부·비밀번호 재설정·데이터 정리(테스트 글·official DM) + APK/AAB
+
+> 작성: planner(팀 리드). 사용자 요청 2개 메시지 12항목: ① 튜토리얼 코치마크(화살표/대상 표시) ② 차트 신곡 포커스 ③ official 외 "테스트" 글 삭제 ④ official→개인 DM 삭제 ⑤ 신고 input·담기 시트 키보드 가림(재발) ⑥ 신고 이미지 첨부 ⑦ 아이디·비밀번호 찾기 ⑧ 작곡 보컬선택에서 연주곡 제거 ⑨ 작사 듀엣 메인/서브보컬 질문 확인 ⑩ 성별 필터 미발견 ⑪ 튜토리얼 완전 최초 접속자 한정 ⑫ 작업실 ⓘ 제거. 마감: APK + AAB 빌드(배포용).
+> 소스오브트루스: 앱 `/Users/pearl/TripleJ/2_housing/`(frontend 브랜치), 서버 프로덕션 `maidol-ec2:/home/ubuntu/maidol/backend_9004`(**이번 사이클 분석은 읽기 전용 — 서버 코드 수정·배포·데이터 삭제 실행은 오케스트레이터가 사용자 최종 확인 후 별도 수행**), 프로덕션 DB(mongo aimu·pg) 실측 완료.
+
+### Plan verification findings (파일:라인·프로덕션 실측)
+
+**F1. ①⑪⑫ 튜토리얼 시스템 (components/TutorialOverlay.tsx 187줄, v3.204 신설)**
+- 현재 구조: `TutorialStep = {title, desc}` 텍스트 전용(:15-18) — **anchor/좌표/measure 코드 0건**, 헤더 주석 :2에 "스포트라이트/요소 측정 없음" 명시. 렌더 = 전체 균일 딤(rgba 0,0,0,0.6, :141-145) + 하단 카드 캐러셀(:104,146-154). 화살표·하이라이트 없음 → 사용자 지적("점 세 개 위치를 가리키는 표시가 있어야 이해")과 정확히 일치.
+- 노출 조건: AsyncStorage `maidol_tutorial_seen_v1:{player|chart|feed|playlist|search|map}` **화면별 1회**(:31,:53,:73). 앱 전체 1회 아님. 전용 store/유틸 없음 — 로직 전부 이 파일 안.
+- "점 세 개" 문구 실체: ChartScreen.tsx:30 "더보기(⋮) 버튼으로 재생목록이나…", SearchScreen.tsx:25 "더보기(⋮)로 담을 수도" — 대상 버튼은 공용 components/TrackRow.tsx:82-86(행 우측 끝 Feather more-vertical, 리스트 아이템 내부). 피드 카드 가로 ⋯ 는 별개(components/feed/FeedCard.tsx:283).
+- ⑫ 작업실 ⓘ: 작업실 = MapScreen(App.tsx:373 tabBarLabel). ⓘ 버튼 = MapScreen.tsx:292-300(헤더 기획사명 우측, 로그인 시만, `tutorialRef.current?.show()`). **전 앱에서 유일한 튜토리얼 재보기 수단이며 그마저 map 4스텝만 재생** — 제거 시 재보기 소멸이지만 ⑪(최초 1회 한정)과 방향 일치, 사용자가 명시 요청 → 제거 확정.
+- ⑪ 기존 유저 판별 실측: 최초 실행 판정 로직 전무(SplashScreen 순수 애니메이션, App.tsx:504-513 restoreSession만). launch count/install id/expo-application 없음. 직접 키 2종(`auth-token-v1` — 로그아웃 시 삭제되어 단독 부적합, `maidol_tutorial_seen_v1:*`) + zustand persist 12종(`player-storage-v1`은 **비회원 재생만 해도 생성**, guestNoticeAck 포함). → **진짜 신규 설치만 AsyncStorage가 완전히 비어 있음** = getAllKeys() 기반 판별이 유일하게 신뢰 가능.
+
+**F2. ② 차트 (screens/ChartScreen.tsx 457줄) — 앱 단독 변경으로 충분**
+- 탭 6종 TABS(:51-61): top100/일간/주간/월간/**신곡**/내 재생목록. 기본 탭 `useState<ChartTab>('top100')`(:74) — 한 줄 스위치. **신곡 탭 이미 존재**: `/tracks/?sort=created_at&limit=100`(:59, 서버 지원 확인) + NEW 뱃지(:221-222) + 최신 앨범 가로 섹션(:259-285, `/albums/latest`).
+- 기본 탭 'new' 전환 시 연쇄: :129(포커스 시 앨범 로드), :138(리프레시), :96(폴백 endpoint), 튜토리얼 문구 :27-31, 빈 상태 :312-314. 서버 무수정.
+
+**F3. ③ 테스트 글 — 프로덕션 mongo aimu.feeds 실측 (전체 8건)**
+- official 계정 = users `56fea014-…`(nickname maidol_official). 삭제 후보 = official 아닌 작성자 + "테스트" 포함 **4건**(하단 '데이터 삭제 후보 목록' 참조). 보존: official 공지 3건(v3.205 등록분) + lovvepearl "펄킴 신곡…" 1건. 삭제 수단: feeds.py:631 `purge_feed_document`(피드+댓글+likes+알림+MinIO 이미지 일괄 파기) 재사용 — mongo 직접 delete 금지.
+
+**F4. ④ official DM — 프로덕션 실측: 대화 143개, official 발신 1,111건 전수 테스트 산출물**
+- 스키마: dm_conversations(pair_key unique, participants, unread, last_message_text/last_at, status) + dm_messages(conversation_id, sender_id, text, read, notice_id?) — dm_service.py:14-16.
+- official 발신 1,111건 분류: notice_id 브로드캐스트 825건("공지테스트1/2", "공지발송테스트3/4", "발송테스트5", "전체공지테스트7") + 무notice 브로드캐스트 262건("전체발송 테스트1" 132, "공지테스트" 119, "고객사 전체공지 테스트" 11) + v174/v177/v194/v195 E2E 지정발송·회귀 답장 등 24건(그중 "[공식답변] 문의 감사합니다…" 1건, "안녕하세요, MAIDOL 고객센터입니다. E2E 테스트 답장…" 1건 — **모두 테스트 픽스처, 실제 고객 응대 아님**). → **전량 삭제 안전 판정**.
+- 상대(개인) 발신 21건("[CS테스트]…", "[오류신고: 재생 오류]…" 등) — official 발신이 아니므로 **보존**(사용자 원문 범위 밖).
+- 부작용 처리: official 메시지 삭제 후 (a) 잔존 메시지 0건 대화 → 대화 도큐먼트도 삭제(pair_key upsert 구조라 문의하기 재진입 시 자동 재생성 — dm_service.py:347-382 실측), (b) 잔존 있는 대화 → last_message_text/last_at 재계산 + unread 리셋. admin_notices 원본 레코드는 대상 아님(사용자 원문 = DM만).
+
+**F5. ⑤ 키보드 가림 — 오늘 빌드 APK에서도 재현 확정(오케스트레이터 전달). 두 세대 훅 모두 실패 → 근본 전환 판정**
+- 현황: DmChatScreen.tsx:40+:226 `useKeyboardOverlapLift`(marginBottom 실측 겹침 리프트, v3.205) / Modal 5종(PlaylistPickerSheet:32, ReportModal:43, AppealModal, AnswerEditModal, AlbumCreateModal) `useAndroidKeyboardLift`(kbHeight−insets.bottom, v3.201). app.json: `edgeToEdgeEnabled: true` + `softwareKeyboardLayoutMode: "resize"` + `newArchEnabled: true`. expo ~54.0.37 / RN 0.81.5.
+- 실패 인과(원리 재검토): (1) SDK 54는 Android edge-to-edge **상시 강제**(targetSdk 35) — opt-out 불가, `softwareKeyboardLayoutMode:"resize"`는 edge-to-edge에서 창 실리사이즈를 보장하지 못함(Android 15에서 adjustResize의 창 축소가 동작하지 않는 플랫폼 변경, v3.205 F에서 이미 확인). (2) 두 훅 모두 **RN `Keyboard` 이벤트에 전적으로 의존** — RN Android의 keyboardDidShow는 역사적으로 창 레이아웃 변화 감지 기반이라, 창이 리사이즈되지 않는 edge-to-edge 기기에서 **미발화 또는 endCoordinates 좌표계 불일치**(Fabric+edge-to-edge 조합 보고 다수)가 발생하면 lift가 0으로 남는다 — "리프트 로직은 있는데 안 올라간다"는 실기기 증상과 정합. (3) Modal 5종은 별도 window라 root 리사이즈 경로 밖 + 동일한 Keyboard 이벤트 의존 → 같은 뿌리로 동반 실패. 즉 **JS 측 Keyboard 이벤트 기반 수동 보정은 이 기기 계열에서 구조적으로 신뢰 불가** — 3번째 미세수정 시도는 금지.
+- 근본 전환 후보 비교: (a) **react-native-keyboard-controller 도입 — 채택**: 네이티브 WindowInsetsAnimationCompat로 IME 지오메트리를 창 리사이즈 여부와 무관하게 직접 수신(RN Keyboard 이벤트 미의존 — 위 실패 인과 자체를 우회), Fabric/new arch 지원, RN Modal 내부 동작, expo autolinking(설정 플러그인 불요) — **네이티브 모듈이라 새 빌드 필수인데 이번 사이클이 APK/AAB 빌드 사이클이라 타이밍 정합**. (b) softwareKeyboardLayoutMode/edgeToEdge 조합 정리 — SDK 54에서 edge-to-edge opt-out 불가라 성립 안 함(기각). (c) 기존 훅 3차 수정 — 동일 이벤트 의존이라 재발 인과 미해소(기각).
+- 검증 가능성: 실기기(문제 기기) + API 34 에뮬 이중 확인을 테스트 항목에 명시. keyboard-controller는 `KeyboardProvider` 루트 래핑 필요(App.tsx).
+
+**F6. ⑥ 신고 이미지 첨부 — "신고" = CS 오류신고 DM 확정, 서버 확장 필요**
+- 신고 동선: SettingsScreen.tsx:361-392 — 사유 선택 → `/dm/official` → DmChat 프리필 "[오류신고: 사유] "(자동전송 X). ReportModal(콘텐츠 신고, POST /reports/)과 별개 — 키보드 가림·이미지 첨부 대상은 DmChat.
+- 서버 실측: dm.py SendMessageBody = `{text}` 뿐(:100-101), dm_service.send_message(:493-537) text 전용(1~2000자) — **이미지 미지원**. 재사용 인프라: upload.py:720 `/upload/feed-image`(jpg/png/webp ≤15MB, 재인코딩, MinIO images 버킷) + media_urls.browser_image_url(:136) + feeds.py v3.111 image 블록 검증 관행(본인 prefix + MinIO 실존).
+- 앱 실측: FeedComposeScreen.tsx:159 첨부 관행 = **DocumentPicker image/*** (expo-image-picker 미설치 — :179 주석) → POST /upload/feed-image → object_name. DmChatScreen 말풍선 렌더 :146(텍스트 전용, 280줄).
+
+**F7. ⑦ 비밀번호 재설정 — 서버 엔드포인트·메일 인프라 모두 부재(실측)**
+- 서버 auth.py 실측: password 관련 라우트 0건(login :324, register :144, me, consents, guardian-consent, profile-image 등뿐). **메일 발송 코드 전무** — requirements에 boto3 있으나 얼굴인증(Rekognition) 전용(.env `AWS_FACE_*` 키만), SMTP/SES/sendgrid 0건. 보호자 동의도 mock consent_url 반환 방식.
+- 소셜 계정 판별 근거 서버에 존재: users.password_hash **NULL = 소셜 전용 계정**(auth.py:341 로그인 시 `not row["password_hash"]` 거부, :1014 NULL 세팅) → 재설정 요청 시 "소셜 가입 계정" 분기 가능. 앱 AuthUser에는 provider/has_password 필드 없음(stores/authStore.ts:6-21).
+- 앱 실측: 로그인 = SettingsScreen 비로그인 분기의 AuthPanel(components/auth/AuthPanel.tsx 510줄, mode='login'|'gate'|'form'|'blocked'|'pending') — **비밀번호/아이디 찾기 링크 0건**(:275-280 footer는 회원가입만). 로그인 후 "비밀번호 변경" 메뉴도 더미(SettingsScreen.tsx:525-531 "준비 중"). 아이디 = 이메일(login body {email,password}) → **"아이디 찾기"는 별도 화면 불요, 안내 문구로 갈음**.
+
+**F8. ⑧ 작곡 보컬선택 연주곡 (screens/MusicGenerationScreen.tsx 2,495줄)**
+- step 3 선택지 = `[...VOCAL_OPTIONS, INSTRUMENTAL_OPTION]` → 남성/여성/**Instrumental (연주곡)**(:49,:1286) + 편집 모달 case 3(:450)에도 동일 노출.
+- 연주곡 별도 진입점 생존 확인: ComposeLyricsPickScreen.tsx:279-288 "가사 없이 만들기 (연주곡)" 카드(상시 노출) → setInstrumental(true)(:238). **보컬 선택지에서 빼도 연주곡 기능 접근 유지**. v3.203 5문항 한정 체인(300→301→310→5→10→13)은 전부 `musicStore.instrumental` 플래그 기준이라 무영향.
+- 단 소멸하는 서브 유스케이스: "이미 쓴 가사를 유지한 채 무보컬 버전"(step 3 경로만 가사 보존 — instrumentalEntryRef :158-160, proceedGenerate :1155) → 사용자 결정 사안 ④.
+- 동반 수정 필수: :1286 렌더 배열, :450 편집 모달(누락 시 재선택 모달로 우회 진입 잔존), :49 상수. :926-931 연주곡 해제 방어 분기는 유지(되감기 유입 가드). VOCAL_OPTIONS(:45)는 타 화면 공유라 불변.
+
+**F9. ⑨ 작사 듀엣 — 판정: 작사 디렉터에는 메인/서브보컬 질문 없음, 작곡 디렉터에 있음(정상 동작)**
+- 작사(LyricsInputScreen.tsx): step 2 "혼자 부르는 곡인가요, 둘이…"(:63-66, DUET_OPTIONS=솔로/듀엣) → isDuet 저장(:161). STEPS 11문항 선형(:54-106) — 듀엣 후속 질문 없음. duet 불리언만 가사 API로 전달(백엔드가 [Female]/[Male] 라벨 분배 — LyricsLoadingScreen.tsx:82-90).
+- 작곡(MusicGenerationScreen.tsx): lyricsStore.isDuet 읽어 step 3 질문이 "듀엣 곡이네요! 메인 보컬 성별을 선택해주세요."로 변경(:359,:752), 메인 스타일 후 step 100(서브 성별)→101(서브 스타일) 분기(:963-989, 렌더 :1558-1596). → **사용자 질문에 대한 답: 질문이 나오는 위치가 작사가 아니라 작곡 디렉터이며, 거기서 정상 노출됨.** 보고만 하고 코드 무변경(문구로 "듀엣 곡이네요!" 맥락 안내가 이미 있음). 선택: 작사 완료 시점 안내 한 줄 추가는 과설계로 판단 — 제외.
+
+**F10. ⑩ 성별 필터 미발견 원인 (screens/ArtistCodyScreen.tsx) — 프로덕션 실측 포함**
+- 필터 칩 위치: **피커 모달 내부**(:979-984, "여성용만"/"전체 보기" 토글) — 카테고리 그리드(메인 화면)에는 없음. 노출 게이트 :634 = `artistGender && GENDER_FILTER_CATS(상의/하의/신발) && …` — **artistGender null이면 칩 자체 미노출**(v3.205 설계).
+- artistGender 3단 폴백(:239-243): apiResult.gender → taskStore.pendingGender → artistProfileStore(로컬). **characterTaskStore는 persist 미등록** → 앱 재시작 후 기존 아티스트로 진입하면 앞 2단이 null, 로컬 profileStore.gender만 남음(v3.82 이전 생성분·미입력이면 null).
+- 프로덕션 실측: mongo characters 12건 중 gender null 7 / "여성" 5. **사용자 계정(c19acda4) 아티스트 "펄킴"·"진주" 모두 gender="여성" 서버 보유** — 즉 서버엔 값이 있는데 앱 폴백이 서버 캐릭터를 조회하지 않아 null → 칩 미노출이 미발견의 유력 원인(+ 칩이 피커 안에만 있어 발견성 자체도 낮음). 서버 GET /character 직렬화에 gender 이미 포함(character.py:329,356,378,398) — **서버 무수정, 앱에서 서버 캐릭터 gender를 폴백 최우선으로 연결**.
+
+**F11. 빌드 프로파일**: eas.json preview(distribution internal, android buildType **apk**) / production(autoIncrement, buildType 미지정 = **AAB 기본**) — APK+AAB 요청과 정합, 설정 변경 불요.
+
+### 항목별 확정 스펙
+
+- **① 튜토리얼 코치마크(스포트라이트+화살표)**: TutorialOverlay 확장 — TutorialStep에 `anchorKey?: 'row-more' | …`, `placement?: 'above'|'below'` 추가. 좌표 채널은 **registry 방식**(신규 utils/tutorialAnchors.ts: `registerAnchor(key, rect)`/`getAnchor(key)`, onLayout·measureInWindow 기반) — 공용 TrackRow 시그니처 오염 최소화(첫 행 index 0만 등록). 딤은 4분할 View(anchor rect 구멍) + Feather 화살표(또는 SVG 삼각형)로 대상 지시, 카드 위치는 anchor 상/하 자동. **anchor 미등록/측정 실패 시 현행 카드형 graceful fallback**(리스트 로딩 전 노출 타이밍 대비). 적용 범위: 대상이 구체 UI인 스텝 — 차트 "곡 담기"(⋮=TrackRow 첫 행), 검색 "더보기(⋮)", 플레이어 주요 버튼, 피드 글쓰기 등 화면당 1~2 스텝(전 스텝 앵커화는 과설계 — 텍스트 스텝은 유지).
+- **② 차트 신곡 포커스**: 기본 탭 'new'(:74) + TABS 순서 신곡 맨 앞 + 폴백 endpoint 신곡으로(:96) + 튜토리얼 문구(:27-31)·빈 상태 문구 신곡 기준 수정. ChartTrack에 `created_at?` 추가해 TrackRow footer로 상대 발매일 표기(서버 무수정). Top 100 탭은 존치(2번째).
+- **③ 테스트 글 삭제**: 하단 후보 4건 — 사용자 확인 후 오케스트레이터가 purge_feed_document 경유 스크립트로 실행(컨테이너 내 python one-shot). 앱 무변경.
+- **④ official DM 삭제**: 사용자 확인 후 스크립트 — dm_messages sender=official 1,111건 삭제 → 대화별 잔존 0건이면 dm_conversations 삭제, 잔존 있으면 last_message_text/last_at 재계산+unread 리셋. peer 발신 21건 보존. 앱 무변경.
+- **⑤ 키보드 근본 전환**: `react-native-keyboard-controller` 도입(네이티브 — 이번 빌드에 포함). App.tsx 루트 `KeyboardProvider` 래핑 → DmChatScreen: RN KAV+overlap 훅 제거, keyboard-controller `KeyboardAvoidingView(behavior='padding')`로 교체. Modal 5종(PlaylistPickerSheet/ReportModal/AppealModal/AnswerEditModal/AlbumCreateModal): useAndroidKeyboardLift 제거, 라이브러리 `useKeyboardState`(또는 KeyboardAvoidingView)로 리프트 일원화 — iOS 경로도 동일 컴포넌트로 통일(기존 iOS KAV 회귀 확인 필수). 구훅 2종은 소비처 0 확인 후 삭제. 로그 추적자 `[KeyboardCtl]`.
+- **⑥ 신고(DM) 이미지 첨부**: 서버 — upload.py에 `/upload/dm-image`(feed-image 계약 복제, prefix `dm/{user_id}/`), dm.py SendMessageBody `image_object_name?` + dm_service.send_message 확장(text 또는 image 필수, image는 본인 prefix+MinIO 실존 검증, 직렬화에 image_url=browser_image_url, last_message_text "(사진)", WS payload 포함). 앱 — DmChatScreen 입력바에 첨부 버튼(DocumentPicker image/* 관행), 업로드→전송, 말풍선 이미지 렌더(최대폭 제한+탭 확대 생략 가능). 수신측(admin CS 툴) 영향은 admin_cs.py 직렬화 공유 여부 확인 후 동일 필드 노출.
+- **⑦ 비밀번호 재설정**: 서버 — `POST /auth/password-reset/request {email}`(항상 200 동일 응답 — 존재 여부 비노출, 6자리 코드 발급·15분 만료·시도 5회 제한, password_hash NULL 계정은 메일에 "소셜 가입 계정" 안내), `POST /auth/password-reset/confirm {email, code, new_password}`(validate_password 재사용, bcrypt 갱신), 신규 services/mailer.py(SMTP — .env `SMTP_HOST/PORT/USER/PASSWORD/FROM` 플레이스홀더; **자격 미제공 시 dev 모드 = 응답에 코드 미포함·로그만** → 기능 활성은 사용자 자격 제공 후). 앱 — AuthPanel `Mode`에 'forgot'|'forgotSent' 추가(:24), 로그인 폼 하단 "비밀번호를 잊으셨나요?" 링크(:273-280 사이), 이메일 입력→코드+새 비밀번호 입력→완료 후 login 모드 복귀. onModeChange 시그니처·SettingsScreen 헤더 타이틀 매핑 동반 수정. "아이디 찾기"는 이메일 라벨 하단 안내 문구 1줄("아이디는 가입하신 이메일입니다").
+- **⑧ 연주곡 제거**: :1286 배열에서 INSTRUMENTAL_OPTION 제거 + :450 편집 모달 case 3 동반 제거 + :49 상수 정리. :926-931 방어 분기 유지. ComposeLyricsPick 카드 경로 회귀 0 확인.
+- **⑨ 작사 듀엣**: 코드 무변경 — "듀엣 선택 시 메인/서브보컬 질문은 작곡 디렉터 step 3→100→101에서 정상 노출" 확인 보고.
+- **⑩ 성별 필터**: (a) 서버 캐릭터 gender를 폴백 1순위로 — 화면 진입 시 보유 캐릭터 조회값(기존 GET /character 응답 재사용, 신규 호출 최소화) → 기존 3단 폴백 앞단에 연결. (b) 발견성 — 상의/하의/신발 피커에서 **칩 상시 노출**: 성별 미상이면 "성별 미설정 · 전체 표시"(탭 시 안내 — 아티스트 프로필에서 성별 설정 유도), 판별되면 현행 "◯◯용만/전체 보기" 토글. 회귀: 드릴다운 5단계·위시탭·SAMPLE 폴백·v3.206 악세서리 무영향.
+- **⑪ 최초 접속자 한정**: 신규 utils/tutorialGate.ts + App.tsx 부팅 1회(restoreSession 옆) — `maidol_first_run_v1` 마커 확정: 미존재 시 getAllKeys() 검사, **튜토리얼 키 제외 키가 1개라도 있으면 'existing'**(기존 유저 — 6개 seen 키 일괄 선기록), 완전 빈 스토리지면 'fresh'. TutorialOverlay 자동 노출 effect(:51-64)는 마커 'fresh'일 때만 동작(레이스 방지: 마커 미확정 시 미노출 — 현행 보수 기본값 계승). 'fresh' 유저도 화면별 1회는 유지(최초 설치 세션 이후 첫 방문 화면 포함 — "2번 이상 접속자 제외"의 실질 의도 = 기존 유저 차단으로 해석, 엄격 1회 세션 한정은 과차단이라 기본안에서 제외. 반려 시 launch count 방식으로 교체 가능).
+- **⑫ 작업실 ⓘ 제거**: MapScreen.tsx:292-300 삭제 + tutorialRef(:241)·Handle import(:35) 정리. TutorialOverlay 자체(:744)는 존치(⑪ 게이트 하 최초 노출용). 재보기 수단 소멸은 ⑪과 정합 — 의도된 동작.
+
+### 변경 매트릭스 (앱)
+
+| 파일 | 변경 | 항목 | 담당 | 로그 추적자 |
+|---|---|---|---|---|
+| components/TutorialOverlay.tsx | anchorKey 스포트라이트·화살표·fallback + firstRun 게이트 | ①⑪ | app-dev 1조 | `[Tutorial]` |
+| utils/tutorialAnchors.ts (신규) | anchor registry | ① | app-dev 1조 | — |
+| utils/tutorialGate.ts (신규) | 최초 설치 판별·마이그레이션 | ⑪ | app-dev 1조 | `[TutorialGate]` |
+| App.tsx | KeyboardProvider 래핑 + tutorialGate 부팅 훅 | ⑤⑪ | app-dev 1조 | — |
+| screens/MapScreen.tsx | ⓘ 제거 + ref 정리 | ⑫ | app-dev 1조 | — |
+| screens/ChartScreen.tsx | 기본 탭 신곡·TABS 순서·문구·created_at footer + ⋮ anchor | ②① | app-dev 1조 | — |
+| screens/SearchScreen.tsx / PlayerScreen.tsx / FeedScreen.tsx / PlaylistScreen.tsx | 코치마크 anchor 등록(해당 스텝) | ① | app-dev 1조 | — |
+| components/TrackRow.tsx | 첫 행 ⋮ anchor 등록 콜백(옵션 prop) | ① | app-dev 1조 | — |
+| screens/DmChatScreen.tsx | keyboard-controller KAV 교체 + 이미지 첨부 UI·렌더 | ⑤⑥ | app-dev 2조 | `[DmChat]` |
+| components/PlaylistPickerSheet.tsx 외 Modal 4종 | 리프트 일원화(keyboard-controller) | ⑤ | app-dev 2조 | `[KeyboardCtl]` |
+| hooks/useAndroidKeyboardLift.ts·useKeyboardOverlapLift.ts | 소비처 0 확인 후 삭제 | ⑤ | app-dev 2조 | — |
+| components/auth/AuthPanel.tsx | forgot 모드 + 링크 + 아이디 안내 | ⑦ | app-dev 2조 | `[Auth]` |
+| screens/SettingsScreen.tsx | onModeChange 타입·헤더 타이틀 매핑 | ⑦ | app-dev 2조 | — |
+| services/authService.ts | passwordResetRequest/Confirm | ⑦ | app-dev 2조 | — |
+| screens/MusicGenerationScreen.tsx | INSTRUMENTAL_OPTION 제거(:1286·:450·:49) | ⑧ | app-dev 2조 | — |
+| screens/ArtistCodyScreen.tsx | 서버 gender 폴백 + 칩 상시 노출 | ⑩ | app-dev 2조 | `[ArtistCody] 성별 자동 필터` |
+| package.json | react-native-keyboard-controller 추가 | ⑤ | app-dev 2조 | — |
+
+### 서버 수정 필요 항목 (배포 1회로 묶음 — 오케스트레이터 실행)
+
+1. **dm.py + dm_service.py + upload.py**: DM 이미지 메시지(⑥) — SendMessageBody.image_object_name, send_message 확장, `/upload/dm-image`.
+2. **auth.py + services/mailer.py(신규) + config.py**: 비밀번호 재설정 2 엔드포인트 + SMTP 어댑터(⑦) — .env `SMTP_*` 플레이스홀더, 자격 미제공 시 dev 모드.
+3. (코드 아님·데이터 작업) ③ 피드 4건 purge, ④ official DM 정리 스크립트 — 사용자 확인 후.
+- 서버 무수정 확인: ②(차트 신곡 API 기존), ⑧⑨(앱), ⑩(gender 직렬화 기존).
+
+### 데이터 삭제 후보 목록 (③④ — 사용자 최종 확인용)
+
+**③ feeds 4건 (전체 8건 중; 보존 4건 = official 공지 3 + 펄킴 신곡 글):**
+| # | feed_id | 작성자 | kind | 제목/본문 머리 |
+|---|---|---|---|---|
+| 1 | 6a69b3c7c03621e095f0295c | 무신사(c3202520) | feed | "0729테스트1" |
+| 2 | 6a8588fc227bebd79cd1b7fe | v348수신자(73f78b2f) | feed | "v348 알림 팬아웃 테스트" |
+| 3 | 6a8c118399933f837326bc6d | v323(0240335f) | feed | "v361 작성 기능 테스트" |
+| 4 | 6a955c0113b9e03ee75306c9 | 무신사(c3202520) | community | "[공지테스트1] 공지테스트8월31일" |
+
+**④ official 발신 DM 1,111건 전량**(위 F4 분류 — 전부 테스트 산출물, 실 CS 응대 없음) + 잔존 0건 대화방 삭제. **peer 발신 21건 보존.**
+
+### 40% 룰 판정
+
+앱 12항목 중 8건이 국소 수정(②⑧⑨⑩⑫ 및 ⑦앱·⑥앱·⑪)이고, 중규모 2건(① 오버레이 확장, ⑤ 라이브러리 전환 6파일)+서버 2건(⑥⑦)으로 **판정: 초과 아님(가결)** — 단 ①은 "anchor 스텝 화면당 1~2개 한정+fallback"으로 범위 고정(전 스텝 앵커화 금지), ⑦ 메일 실발송은 자격 제공 전까지 dev 모드로 분리해 빌드 블로커에서 제외. 이월 후보(차기): ① 잔여 스텝 앵커 확대, 피드 ⋯ 메뉴 튜토리얼 스텝 신설, ⑦ SES 전환.
+
+### test-designer 테스트 항목
+
+1. **⑤ 실기기(문제 기기) + API 34 에뮬 + iOS**: DmChat 신고 입력·담기 시트·신고/이의/답변편집/앨범 모달 — 키보드 위 완전 노출, 닫힘 후 잔존 간격 0, 이중 보정 없음. **이번 사이클 최우선 실기기 검증.**
+2. **①⑪ 튜토리얼**: 완전 신규 설치(스토리지 empty) → 화면별 최초 1회 + ⋮ 스포트라이트·화살표 위치 정확(차트/검색). 기존 유저 시뮬(키 1개라도 존재) → 전 화면 미노출. anchor 측정 실패 시 카드형 fallback. Android 백버튼 skip.
+3. **⑫**: 작업실 헤더에 ⓘ 부재, 헤더 마퀴 레이아웃 회귀 0.
+4. **②**: 차트 진입 기본 신곡 탭 + NEW 뱃지 + 최신 앨범 섹션, Top 100 탭 전환 정상, 발매일 footer.
+5. **⑥**: 이미지 첨부→전송→양측 렌더, 15MB 초과/비이미지 거부, 텍스트 없는 이미지 단독 전송, admin CS 툴 수신 확인.
+6. **⑦**: 미존재 이메일도 동일 응답, 코드 만료·5회 제한, 소셜 계정 안내, 새 비밀번호로 재로그인. dev 모드에서 로그 코드로 E2E.
+7. **⑧**: step 3 선택지 2개(남/여) + 편집 모달에도 연주곡 부재, ComposeLyricsPick 연주곡 카드 경로 5문항 체인 회귀 0.
+8. **⑩**: 사용자 계정(서버 gender=여성) 재시작 후 진입 → 칩 "여성용만" 노출·필터 동작, gender null 캐릭터 → "성별 미설정" 칩·전량 노출, 드릴다운·위시탭 회귀 0.
+9. **③④ 실행 후**: 피드 목록 4건 부재·공지 3건 잔존, DM 인박스에서 official 테스트 대화 부재, 문의하기 재진입 시 새 대화 정상 생성.
+10. **빌드**: eas preview(APK)·production(AAB) 산출, keyboard-controller 포함 빌드에서 1~9 재확인.
+
+### 사용자 결정 필요 사안
+
+1. **③ 피드 4건 삭제 go/no-go** (특히 #4 공지테스트 — 무신사 계정 작성).
+2. **④ official DM 1,111건 전량 삭제 + 빈 대화방 정리 go/no-go** (peer 문의 21건은 보존 기본안).
+3. **⑦ 메일 발송 수단·자격**: SMTP 자격(호스트/계정) 또는 AWS SES 세팅 제공 여부 — 미제공 시 이번 빌드는 dev 모드(실메일 미발송, 서버 로그로 코드 확인)로 출고.
+4. **⑧ "가사 유지 무보컬" 서브 유스케이스 소멸 허용 여부**(연주곡 진입은 '가사 없이 만들기' 카드로 일원화 — 카드 경로는 가사를 비움).
+5. **⑪ 해석 확인**: 기본안 = "기존 유저 완전 차단 + 신규 설치자는 화면별 최초 1회"(설치 후 2번째 접속에서 처음 방문한 화면은 노출됨). 엄격한 "첫 실행 세션에서만"을 원하면 launch count 방식으로 교체.

@@ -3,11 +3,10 @@
 //   cover_source=auto면 첫 곡 커버 자동 차용. 커버 업로드/AI 생성은 생성 후 앨범 상세 '관리 > 커버 변경'에서.
 // 순서는 선택 순서 + 위/아래 버튼(드래그 라이브러리 신규 도입 금지 — dnd-kit 대체).
 import { useState, useEffect } from 'react';
-import { View, Modal, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { View, Modal, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, StyleSheet } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { showAlert } from '../utils/appAlert';
-import { useAndroidKeyboardLift } from '../hooks/useAndroidKeyboardLift';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
@@ -21,18 +20,10 @@ interface Props {
 }
 
 export default function AlbumCreateModal({ visible, onClose, onCreated }: Props) {
-  // v3.202(B안2): Android 제목/설명 입력 중 키보드 가림 — center 유지 + 카드를 키보드 위
-  // 가시영역 중앙으로 리프트((kbPad+insets.bottom)/2 — 필요량 이하 클램프 자동 충족) +
-  // kbPad>0 시 maxHeight 동적 클램프(기존 '85%'보다 우선). iOS는 기존 KAV(padding) 무변경(kbPad=0).
-  const insets = useSafeAreaInsets();
-  const { height: winH } = useWindowDimensions();
-  const kbPad = useAndroidKeyboardLift(visible);
-  const kbLiftStyle = kbPad > 0
-    ? {
-        transform: [{ translateY: -Math.round((kbPad + insets.bottom) / 2) }],
-        maxHeight: Math.max(240, winH - kbPad - insets.bottom - insets.top - 24),
-      }
-    : null;
+  // [KeyboardCtl] v3.207(⑤): v3.202 수동 리프트(translateY·동적 maxHeight) 제거 —
+  // RN Keyboard 이벤트 의존이 SDK 54 edge-to-edge+Fabric 실기기에서 실패 확정.
+  // keyboard-controller KAV(behavior='padding')가 backdrop을 줄여 center 카드가
+  // 키보드 위 가시영역 중앙으로 자동 재배치. maxHeight '85%'도 줄어든 backdrop 기준.
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState(true);
@@ -100,10 +91,10 @@ export default function AlbumCreateModal({ visible, onClose, onCreated }: Props)
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+      {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <View style={styles.backdrop}>
-        <View style={[styles.card, kbLiftStyle]}>
+        <View style={styles.card}>
           <View style={styles.headRow}>
             <AppText variant="subtitle">새 앨범 만들기</AppText>
             <TouchableOpacity onPress={onClose} accessibilityLabel="닫기" style={styles.closeBtn}>
