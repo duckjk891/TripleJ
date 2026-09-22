@@ -2544,3 +2544,31 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 - **A-5 배포 스모크 PASS**: health(로컬·외부) 200, tracks/artists/charts 기존 스키마, traceback 0. 실트래픽 보컬곡 duration 관측 기회 없음(비차단, 게이트 정적 재확인 완료).
 - **E-3 연주곡 실생성 스모크 PASS(1회)**: 테스트 계정(가입보너스 50⭐) → Jazz·Romantic·BPM90·180초 연주곡 gen `6ab20557dcf8538e36ab54a5` — 65초 만에 completed. 로그 사슬(`instrumental start` → `customMode=True instrumental=True duration=180`, model V6) 정상, 잔액 50→35(정확히 −15, 재차감·환불 0), doc(vocal/duration/point_cost/result) 정합, creation_log SESSION_START→GEN_REQUEST→GEN_RESPONSE 기록, **결과 오디오 실측 179.56s/179.96s — 요청 180s 대비 오차 0.5초 미만(Suno V6 duration 파라미터 정밀 제어 확인)**.
 - 남은 실기기 확인: 연주곡 5질문 체인 육안(E-1·E-2 상당) + '자동' 케이스 1회는 사용자 실사용에서 확인 권장(추가 과금 회피로 미실행).
+
+## v3.205 (2026-09-22) — 문의 DM 입력바·다음곡 로컬 프리다운로드·성별 자동 필터 + 공지 ④ 개정(official 채널 글) 코드분
+
+**요청 5건**: ① 신고→official DM 하단 입력창 잘림·키보드 가림 ② 백그라운드 다음곡 재생 실패 ③ 블루투스 차량 UI 곡 메타데이터 미표시 ④ 문의 방법·FAQ 공지사항 작성 ⑤ 아티스트 꾸미기 상의/하의 성별 필터.
+**④ 사용자 개정 지시(당일)**: DM 브로드캐스트 반려 — maidol_official 계정의 공지사항(채널 글)로 작성, 디폴트 팔로우 기반 채널 확인 방향.
+
+### 수행 결과
+
+- **① DmChat 입력바**: 컨테이너 `paddingBottom: insets.bottom`(edge-to-edge 내비바 잘림 해결) + 신규 `hooks/useKeyboardOverlapLift.ts`(Android 한정, 키보드-입력바 실측 겹침만큼 marginBottom 리프트 — API 34↓ 리사이즈 기기는 겹침 0→리프트 0으로 이중 보정 구조적 불가). iOS KAV 경로 불변.
+- **② 다음곡 로컬 풀 프리다운로드**(services/playback.ts): 프리로드를 `expo-file-system/legacy` downloadAsync 로컬 파일로 교체 — 스왑 재생이 네트워크 무의존("화면 꺼진 뒤 첫 전환" 구조 해결). 파일 수명 전수 관리(스킵/닫기/셔플/실패/세대 변경 시 삭제 + 기동 purge, purge-다운로드 경합 await 방어), AppState active 복귀 시 놓친 다운로드 재트리거. 한계(정직): N+2곡 연쇄는 Doze 지속 시 실패 가능 — 근본은 차기 이관.
+- **③ BT 메타데이터**: expo-av 구조상 이번 사이클 해결 불가 판정(코드 변경 없음) + audioMode.ts 웹 폴백 'AIDOL'→'MAIDOL' 1줄. **차기 본작업 후보: expo-audio 이관 스파이크**(expo-av SDK 55 제거 예정 — 이관 필수 경로, PLAN 참조).
+- **⑤ 성별 자동 필터**(ArtistCodyScreen): 아티스트 성별 3단 폴백 해석 → 상의·하의·신발 피커에 genderMatches 기본 적용('공용' 포함), '전체 보기' 토글 칩, 성별 미상 시 미적용(전량 노출), 0건 빈 상태 안내. 위시리스트·5단계 드릴다운·SAMPLE 폴백 불변.
+- **④ 개정 — planner 실측**: 디폴트 팔로우 실재(가입 자동 맞팔 auth.py:291·oauth.py:212, startup 백필, 언팔 403 가드 — prod 216명 중 215명 팔로잉). 공지 = official의 kind=community 글(UserChannel 커뮤니티 탭). 등록 경로 = 컨테이너 python insert(official 로그인 불가 설계) + 알림 팬아웃, 글은 DELETE로 회수 가능(리허설 등록·삭제 검증 선행 스펙). 기존 DM 브로드캐스트 스펙 폐기 — 미발송.
+- **④ 앱 수정(코드분)**: FeedCard '공지' 배지, 설정 '공지사항' 진입 행(GET /dm/official 경유), UserChannel `initialTab` 파라미터(미지정 시 music 불변). **오케스트레이터 픽스 1건**: PLAN B-1 스펙 결함 — 커뮤니티 글은 일반 유저도 작성 가능해 kind만으로는 전 유저 글에 배지가 붙음 → 신규 `services/officialService.ts`(official id 프로세스 캐시, 실패 60s 스로틀·비로그인 시 배지 미표시 강등)로 **작성자=official일 때만** 배지. Settings 진입도 동일 서비스로 통일.
+
+### 검증 (tester 정적 게이트)
+
+- U-1~U-9 + A-3(로컬 가능분) 전부 PASS — FAIL 게이트 6건 전수 통과: 노출 'AIDOL' 0건 / DmChat 이중 보정 불가 / 프리로드 파일 수명 전수표(고아 경로 0) / 스왑 로컬 전용 / 위시·드릴 무파괴 / 서버 파일 diff 0. `tsc --noEmit` exit 0(④ 코드분·픽스 포함 재확인).
+- ④ 개정분 RU-1~4 정적 확인: 배지 렌더 단일 지점·official 조건, 하드코딩 0, initialTab 하위호환(기존 진입 6지점 무파라미터), diff 격리.
+- 비차단 특기: iOS KAV+insets 여분 간격 가능성(E-1 ⓒ 실기기 확인), 재생 방치 시 소비 파일 1개 잔존(상한 1·purge 회수 — 누수 아님), U-8 로그 키명 경미 이탈.
+
+### 남은 것 (이월)
+
+1. **실기기 검증(사용자/tester)**: E-2 ⓑ 기내 모드 이어재생(**사이클 완료 조건**)·ⓔ 1시간 연속 재생 연쇄 한계 실측, E-1 입력바(API 35/34·iOS), E-3 성별 필터, RE-1~4 공지 동선(등록 후).
+2. **④ 데이터 등록(승인 대기)**: 사용자 최종 go + 알림 팬아웃 포함 여부 결정 → 리허설 글 등록·삭제 검증 → 본 공지 3건 등록(TESTPLAN RA-0~5). **승인 전 프로덕션 쓰기 미실행.**
+3. 서버 백로그(별도 승인): 미세조정 이중 차감 환불 1건(⭐5)·refine 비동기화, frontend.log 호스트 마운트, expo-audio 이관 스파이크.
+
+**특이사항**: 사이클 중 세션 중단(사용량 한도)→신규 세션에서 복원 이어받음. JS 변경만이라 빌드 설정 변경은 없으나 expo-updates(OTA) 미도입 — 사용자 반영에는 새 APK(EAS) 빌드 필요(정정: 최초 보고의 '재빌드 불필요'는 오기). 커밋은 2_housing 10파일 + 산출물 3종 한정(워킹 트리의 1_MV_wedding 등 별개 프로젝트 변경분 제외).

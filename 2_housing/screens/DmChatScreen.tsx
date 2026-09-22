@@ -7,6 +7,7 @@ import { View, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSh
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardOverlapLift } from '../hooks/useKeyboardOverlapLift';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
@@ -34,6 +35,9 @@ const fmtClock = (iso: string) => {
 export default function DmChatScreen() {
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
+  // v3.205(①): Android 15+ edge-to-edge에서 adjustResize 미동작 → 키보드-입력바 겹침 실측 리프트.
+  // API 34 이하(창 리사이즈 정상)는 겹침 0 → 리프트 0. iOS는 기존 KAV padding 경로 그대로.
+  const { lift: kbLift, targetRef: inputBarRef } = useKeyboardOverlapLift('[DmChat]');
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const user = useAuthStore((s) => s.user);
@@ -155,7 +159,8 @@ export default function DmChatScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    // v3.205(①): edge-to-edge(app.json edgeToEdgeEnabled)에서 하단 내비바에 입력바가 깔리지 않게 insets.bottom 패딩
+    <KeyboardAvoidingView style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* 헤더 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="목록으로" style={{ padding: 4 }}>
@@ -216,7 +221,9 @@ export default function DmChatScreen() {
 
       {/* 입력바 — 수신 pending은 수락 전 답장 불가(백엔드 403과 일치) */}
       {!isPendingReceived ? (
-        <View style={styles.inputBar}>
+        // v3.205(①): 겹침 실측 리프트는 marginBottom으로만 합산(paddingBottom 합산 금지 — v3.201 §1 교훈).
+        // styles.inputBar의 margin: spacing.lg 중 bottom만 여기서 재정의(기본 간격 유지 + 리프트).
+        <View ref={inputBarRef} style={[styles.inputBar, { marginBottom: spacing.lg + kbLift }]}>
           <TextInput
             style={styles.input}
             placeholder="메시지 입력..."

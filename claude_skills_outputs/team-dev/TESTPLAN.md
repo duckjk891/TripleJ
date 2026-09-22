@@ -2107,3 +2107,173 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 **E-4. [항목6] 튜토리얼 클린 설치 여정 [e2e]** — 정적 대체: U-8 완료로 갈음. 실기기 수동 절차: **앱 데이터 삭제(클린 설치 상당)** → 6화면(차트→플레이리스트→피드→검색→작업실 지도→플레이어) 순회 — 각 최초 진입 시 1회 노출·[다음] 진행·마지막 [시작하기] 닫힘, 1개 화면은 [건너뛰기]로 닫기 → **전 화면 재진입 시 미노출**(건너뛰기 화면 포함) → 앱 완전 재시작 후에도 미노출(영속) → Map ⓘ 탭 → 재노출 정상 → 비로그인 상태로 차트·검색 진입 — 오버레이·로그인 유도 겹침 없음 → Android 백버튼으로 닫기 1회(앱 종료 아님·재진입 미노출) → 전 카드 문구에 이모지·AIDOL 0건 육안.
 
 **게이트**: U-1~U-9 + A-1 전부 PASS 시 머지 허용(frontend 자동 push 관례 — 서버 배포 없음). E-1~E-4는 정적 대체 완료 조건으로 비차단(실기기·실과금분은 사용자 판단 하 이관). 핵심 FAIL 게이트 6건 — **U-5 ②③**(작사 재선택 모달 회귀 — 기준 구현 파손) / **U-9 ④**(coverStep 구순서 영속 복원 크래시·데드엔드) / **U-7 ①③**(refine 이중 제출 구멍·폴링 내 재요청=재차감) / **U-2 ⑦**(LISTEN seek 비정수·음수 유입=서버 400) / **U-4 ②**(스텝 번호 재할당 — 영속·되감기 전면 오염) / **U-9 ①**(서버 파일 diff — 읽기 전용 위반) — 1건이라도 FAIL이면 커밋 금지. 서버 백로그 3건(refine 버전 경합·이중 차감 환불·장시간 POST 비동기화)은 이번 판정 대상 아님 — 차기 사이클 사용자 승인 후 별도 TESTPLAN.
+
+## v3.205 — 수정일 2026-09-22
+
+> 대상: PLAN.md v3.205 — **문의 DM 입력바 가림 수정 + 백그라운드 다음곡(로컬 프리다운로드) + BT 메타데이터 판정 + 공지 3건 등록 + 꾸미기 성별 자동 필터**. ① DmChatScreen 컨테이너 `paddingBottom: insets.bottom` + 신규 `hooks/useKeyboardOverlapLift.ts`(겹침 실측 리프트 — API 34↓ 겹침 0→리프트 0, API 35+ edge-to-edge 겹침만큼) → inputBar `marginBottom`. ② playback.ts 프리로드를 **로컬 풀 프리다운로드**(`expo-file-system/legacy` downloadAsync → `file://` createAsync)로 교체 + 파일 수명 관리(discard/스왑 소비/기동 purge) + AppState active 복귀 재트리거. ③ **코드 이관 보류 판정**(expo-av로는 BT 메타데이터 불가 — 차기 expo-audio 스파이크) + audioMode.ts:46 웹 폴백 'AIDOL'→'MAIDOL' 1줄. ④ 공지 3건 브로드캐스트 — **서버 파일 무수정, 컨테이너 python으로 프로덕션 데이터 쓰기(전 유저 DM, 비가역)**. ⑤ ArtistCodyScreen 아티스트 성별 자동 필터 + '전체 보기' 토글.
+> **이번 사이클 서버 파일 무변경**(쓰기 권한 차단 — 읽기·API 호출·컨테이너 python만). ④는 파일이 아니라 **데이터 쓰기**이므로 [api]로 검증하되, **사용자 원고 승인 전 실행 금지가 전 시나리오의 전제조건**(A-1). EAS 재빌드 불필요(전 항목 JS).
+> 실행 환경 관행(v3.191~204 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 **코드 정적 검증 대체 병기 + 실기기 수동 절차 이관**. 앱 코드 `/Users/pearl/TripleJ/2_housing`(frontend, 직전 9670ccb v3.203/204 합격 형상). **시크릿·실계정 크리덴셜 기재 금지**(계정은 `TEST_USER_EMAIL` 플레이스홀더로만 표기), 실사용자 데이터 접근 금지 — 단 ④ 브로드캐스트는 성격상 전 유저 도달(승인이 곧 게이트). 프리로드 실측 증적에는 trackId + `[BTDebug]` 로그 타임스탬프를, 공지 증적에는 notice_id를 병기해 앱↔서버↔mongo를 귀속한다.
+
+### [unit] 앱 정적 검증 (머지 게이트)
+
+**U-1. 선행 게이트 — v3.204 커밋 기준선 + 타입 무결성 [unit]**
+- Given: 직전 커밋 9670ccb(v3.203/204 합격 형상) 클린 기준선 위에서만 이번 diff 귀속 판정(U-9)이 성립. 1조·2조 병렬(파일 겹침 없음)이라 조별 커밋 후에도 재실행.
+- When: ① `git log --oneline -1` + `git status --short`(2_housing 스코프)로 클린 기준선 확인(미커밋 잔존 시 착수 금지·반려). ② 각 조 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: ① 클린 기준선 ② exit 0.
+
+**U-2. [항목①] DmChat 하단 정비 — insets.bottom + 진입 경로·프리필 [unit]**
+- Given: app.json edge-to-edge(:35)로 입력바(:266~271, margin ~16px)가 내비바(3버튼 ~48px/제스처 ~24px)에 깔림 — 컨테이너(:158)는 paddingTop만 적용. 진입 경로는 설정→문의하기→`startCsInquiry`(SettingsScreen.tsx:364~385)→`navigate('DmChat', { conversation, prefill })`.
+- When: `screens/DmChatScreen.tsx` — ① 컨테이너에 `paddingBottom: insets.bottom` 추가(제스처·3버튼 공통 해결 논증 — insets 값이 두 모드 모두에서 내비바 높이를 반환). ② 프리필 `'[오류신고: 사유] '` 배선 diff 0(startCsInquiry→DmChat 파라미터 체인 무변경). ③ 수신 pending 대화(입력바 숨김 상태) 렌더 경로: paddingBottom 추가가 숨김 레이아웃을 깨지 않음(입력바 부재 시에도 이중 여백·잘림 0 논증). ④ iOS: 기존 KAV behavior='padding' 경로 무변경(iOS diff는 paddingBottom뿐 — KAV와 insets.bottom 합산으로 과잉 여백이 생기는 경로 여부 판정·주석화).
+- Then: ①~④ 전부 충족.
+
+**U-3. [항목①] useKeyboardOverlapLift 훅 — 겹침 실측·이중 보정 구조적 불가 [unit] — FAIL 게이트**
+- Given: 기존 `useAndroidKeyboardLift`(v3.201~202)는 Modal 전용 셈법(kbHeight − insets.bottom) — 전체 화면에 쓰면 API 34↓(adjustResize 동작 기기)에서 이중 보정. 신규 훅은 `keyboardDidShow`의 `endCoordinates.screenY`와 대상 뷰 `measureInWindow` 하단의 **실측 겹침만큼만** 리프트가 스펙.
+- When: 신규 `hooks/useKeyboardOverlapLift.ts` — ① Android 한정 가드(`Platform.OS !== 'android'` 시 0 고정/리스너 미등록). ② 리프트 산식이 **겹침 실측**(뷰 하단 − 키보드 상단, 음수면 0 클램프) — 고정치/kbHeight 직접 사용 발견 시 스펙 위반 FAIL. **이중 보정 구조적 불가 논증**: 창이 이미 리사이즈된 기기는 measureInWindow 하단이 키보드 위 → 겹침 0 → 리프트 0(코드 경로로 성립하는지 문자 확인). ③ `keyboardDidHide` 시 0 리셋 + 리스너 등록/해제 쌍(cleanup — v3.201 관행 계승, 해제 누락 시 화면 이탈 후 setState 경고·누수 FAIL). ④ 반환값이 inputBar **`marginBottom`에만** 적용 — paddingBottom 합산 0건(v3.201 §1 교훈 — grep으로 합산 경로 부재 확인). ⑤ 기존 `useAndroidKeyboardLift.ts` diff 0(모달 3곳 소비처 무회귀 — U-9 교차). ⑥ measureInWindow 타이밍: keyboardDidShow 시점 측정이 레이아웃 완료 후인지(ref 미준비 시 0 처리 — 크래시 0).
+- Then: ①~⑥ 전부 충족 — **②(이중 보정 성립 경로 잔존)·④(paddingBottom 합산)가 FAIL 게이트**.
+
+**U-4. [항목②] 로컬 풀 프리다운로드 배선 — legacy downloadAsync + file:// 스왑 [unit]**
+- Given: 종전 프리로드는 원격 URI createAsync(버퍼 창만 수신 — playback.ts:122~125)라 Doze 단절 시 미버퍼 구간에서 사망. 로컬 파일이면 스왑 후 재생에 네트워크 불필요가 이번 구조 해결의 본체.
+- When: `services/playback.ts` — ① import가 `expo-file-system/legacy`(ArtistLoadingScreen.tsx:15~16 관행 — v19 신 API에 downloadAsync 없음, 신 API import 발견 시 FAIL). ② `maybePreloadNext` 경로(:119~146 상당): `downloadAsync(streamProxyUrl, cacheDirectory + 'preload/' + trackId + '.mp3')` **완료 후** `createAsync({uri: 로컬 file://}, {shouldPlay:false})` — 다운로드 미완 상태로 createAsync에 원격 URI가 흘러드는 경로 0건. ③ NextPreload에 `fileUri` 보관(스왑·정리에서 참조 가능). ④ `[BTDebug]` 로그: `preload download start` / `done(bytes)` / `fail` + swap 로그 `local:true` 배선(E-2 실측 추적자). ⑤ PlayerScreen.tsx 무수정(스왑 사운드 생성이 playback.ts 내부라 투명 — 접촉 발견 시 귀속 판정). ⑥ 스왑 후 재생 경로에 네트워크 참조 0 논증(로컬 fileUri 사운드 그대로 재생 — 원격 재로드 경로가 남아 있으면 기내 모드 게이트(E-2) 정적 선행 FAIL).
+- Then: ①~⑥ 전부 충족 — **⑥이 기내 모드 이어재생 게이트의 정적 선행 판정**.
+
+**U-5. [항목②] 프리로드 파일 수명 — 소비·폐기·purge 전수, 누수 0 [unit] — FAIL 게이트**
+- Given: 캐시 파일은 곡당 수 MB — 삭제 경로 1곳이라도 누락되면 기기 저장소가 단조 증가(누수). PLAN 확정 규칙: discard 시 삭제·새 다운로드 전 이전 파일 삭제·스왑 소비분은 해당 곡 재생 종료 시 삭제·기동 시 preload/ 일괄 purge 1회.
+- When: ① `discardPreloaded`(:74 상당)에서 unload와 **함께 deleteAsync**(idempotent — 파일 부재 시 무해 처리). ② 새 다운로드 시작 전 이전 preload 파일 삭제(연속 스킵 시 파일 2개 공존 구간 0). ③ 스왑 소비된 파일은 해당 곡 **didJustFinish/새 로드 시** 삭제(재생 중 삭제로 file:// 사운드가 죽는 역결함 0 — 삭제 시점이 재생 종료 이후임을 경로 추적). ④ 앱 기동 시 `preload/` 디렉터리 일괄 purge 1회 — initPlaybackReconciler 편승 확인(고아 파일 회수). ⑤ 다운로드 도중 `loadGen` 변경 시 파일 삭제 후 중단(경합 — 스킵 연타 시나리오 코드 논증). ⑥ **삭제 경로 전수표 작성**: 수동 스킵/미니플레이어 닫기/셔플 토글/큐 교체/앱 재시작 각각이 위 ①~⑤ 중 어느 경로로 파일을 회수하는지 매핑 — 어느 시나리오도 회수 경로 없음 = 누수 FAIL. ⑦ 캐시 디렉터리가 preload 전용(다른 캐시와 분리 — 타 용도 사용 금지 관리 결정 준수).
+- Then: ①~⑦ 전부 충족 — **⑥(회수 경로 없는 시나리오 존재 = 캐시 누수)가 FAIL 게이트**.
+
+**U-6. [항목②] 백오프·원격 폴백·reconciler 재트리거 회귀 [unit]**
+- Given: 다운로드 실패는 기존 preloadFail 백오프(곡당 3회·10s)에 그대로 계상, didJustFinish 미스 시 네트워크 폴백 경로 불변, AppState active 복귀 시 프리로드 재트리거 1줄이 스펙.
+- When: ① 다운로드 실패(downloadAsync throw/비200) → 기존 백오프 카운터 계상(신규 실패 유형이 백오프를 우회해 무한 재시도하면 FAIL). ② didJustFinish 시 프리로드 부재 → 기존 원격 즉시 로드 폴백 diff 0(로컬화가 폴백 경로를 지우면 오프라인 아닌 일반 실패에서 재생 중단). ③ initPlaybackReconciler(:378~ 상당) AppState 'active' 복귀: 재생 중 + 프리로드 부재 시 `maybePreloadNext(..., {eager:true})` 재트리거 — 조건 가드(재생 중 아님/이미 프리로드 존재 시 미호출) 확인. ④ v3.202 60s 프리로드 창·조기화·백오프 형상 diff 0(로컬화 치환 외 로직 무변경). ⑤ duration 보정(v3.192)·reconciler·LISTEN 계측 무접촉.
+- Then: ①~⑤ 전부 충족.
+
+**U-7. [항목③] 이관 보류 판정 검증 — 코드 무변경 + MAIDOL 폴백 + AIDOL grep 0 [unit] — FAIL 게이트**
+- Given: ③은 "expo-av로는 불가" 판정 보고가 산출물 — 코드 변경은 audioMode.ts:46 웹 폴백 문자열 1줄뿐이어야 한다. 노출 문자열 AIDOL 금지는 상시 브랜딩 게이트(maidol-branding).
+- When: ① `services/audioMode.ts` diff가 :46 `'AIDOL'`→`'MAIDOL'` **1줄뿐**(updateMediaSession의 `Platform.OS !== 'web'` 즉시 return(:40)·주석(:5~6) 무변경 — 네이티브 미디어세션을 흉내내는 신규 코드 발견 시 이관 보류 판정 위반으로 반려). ② 웹 경로 논증: 미디어세션 artist 폴백이 'MAIDOL'로 노출(웹 빌드 실행 불가 시 코드 문자 확인으로 갈음·실측은 E-4 이관). ③ **노출 문자열 'AIDOL' 전역 grep 0**: `2_housing/` 사용자 노출 문자열 전수(`grep -rn "AIDOL"` 후 MAIDOL 부분매치 제외 정밀 판독 — 식별자/키 이름은 비노출로 구분 기록). ④ playback.ts의 [BTDebug] 로그 이름 유지(기존 이름 삭제·개명 0 — 차기 이관 스파이크의 실측 연속성).
+- Then: ①~④ 전부 충족 — **③(노출 AIDOL 1건 이상)이 FAIL 게이트**.
+
+**U-8. [항목⑤] 성별 자동 필터 — 헬퍼 폴백·기본 ON·토글·안전 폴백 [unit]**
+- Given: 서버 /ads/active는 gender 필터 파라미터 없음(앱 측 적용), ArtistCodyScreen에 수동 성별 드릴 레벨(:66)과 genderMatches(:74~80, '공용'·미지정 양쪽 포함)는 기존 존재. 성별 판별 실패 시 **필터 미적용(전체 노출)**이 안전 원칙.
+- When: `screens/ArtistCodyScreen.tsx` — ① 성별 해석 헬퍼: apiResult.gender → characterTaskStore.pendingGender → artistProfileStore.profiles[slot].gender 순 폴백 + 정규화(trim 후 '남' 시작→'남', '여' 시작→'여', 그 외/부재→null) — 순서·정규화 규칙 문자 대조(자유 입력 '여자아이돌' 같은 비정형이 '여'로 정규화되는지 케이스 표). ② null 아니면 피커 목록에 기존 `genderMatches` **기본 적용**(신규 매칭 함수 재작성 발견 시 이중 규칙 FAIL — :74 재사용 확인). ③ 토글 칩: 피커 헤더(전체|위시리스트 탭 행)에 기본 `"○성용만"`(활성) ↔ `"전체 보기"`, **피커 열 때마다 기본 ON 복귀**(토글 상태가 세션/영속에 남아 재진입 시 OFF 유지되면 FAIL). ④ null이면 칩 미노출 + 필터 미적용(전량 노출). ⑤ 적용 카테고리 **상의·하의·신발 한정**(실데이터 근거) — 무데이터 카테고리(악세서리 등)는 무필터(전량 사라지는 사고 방지 논증). ⑥ SAMPLE_ITEMS(무광고 폴백)는 gender 없음 → genderMatches '공용' 취급 자연 통과(필터 ON에서도 빈 화면 0). ⑦ 드릴다운 5단계 체인(:65~68)·수동 성별 레벨·위시리스트 탭 **불변** — 자동 필터는 openPicker 결과·드릴 소스 목록 선적용, 드릴 패싯 수치도 필터 후 기준(일관성). ⑧ 필터 후 0건 시 빈 상태 안내 렌더(크래시·빈 백지 0 — '전체 보기' 유도 문구 여부 기록). ⑨ 로그 `[ArtistCody] 성별 자동 필터` { g, cat, before, after } 배선.
+- Then: ①~⑨ 전부 충족 — **⑦(위시리스트·드릴다운 파괴)이 FAIL 게이트**.
+
+**U-9. diff 격리 + v3.203/204 무회귀 [unit] — FAIL 게이트**
+- Given: 접촉 예상 — `screens/DmChatScreen.tsx`·`hooks/useKeyboardOverlapLift.ts`(신규)·`screens/ArtistCodyScreen.tsx`·`services/playback.ts`·`services/audioMode.ts` 5파일. **서버 파일 접촉 0**(쓰기 차단 — ④는 데이터 쓰기이지 파일 아님).
+- When: ① `git status --short`+`git diff --stat`: 콘텐츠 diff가 위 목록 내(목록 외 접촉 시 커밋 메시지 명기 조건부 — 관례). **백엔드·0_platform 무접촉**(서버 diff 1건 = 즉시 FAIL). ② 공지 등록 스크립트가 **커밋에 미포함**(scratchpad 한정 — 관리 결정, git 추적 발견 시 FAIL) + 스크립트/증적에 크리덴셜·토큰 출력 0. ③ v3.204 무회귀: AnswerEditModal 3화면 배선·MusicResult Slider 2곳·refine 가드+폴링·TutorialOverlay 6화면 — 전부 diff 0. ④ v3.203 무회귀: 연주곡 체인·step 310·durationSec 배선·ComposeLyricsPick 제목 클리어 — diff 0. ⑤ 기존 `useAndroidKeyboardLift` 소비처(모달 3곳) diff 0(U-3 ⑤ 교차). ⑥ DmChat 기존 `[DmChat]` 로그·dmSocket 배선 무변경.
+- Then: ①~⑥ 전부 충족 — **①(서버 파일 diff)·②(스크립트 커밋/시크릿)가 FAIL 게이트**.
+
+### [api] 공지 브로드캐스트(프로덕션 데이터 쓰기) + 서버 무변경 확인
+
+**A-1. [항목④] 발송 전 게이트 — 사용자 원고 승인 + diff 0 검수 [api] — FAIL 게이트(무승인 발송)**
+- Given: 브로드캐스트는 **전 유저 1:1 DM fan-out, 비가역**. PLAN 확정 절차: notice-ops가 원고 검수 후 컨테이너 python(`sudo docker exec -i maidol-app python - <<'PY'`)으로 admin_cs 핸들러 시퀀스 재현(create_notice → broadcast_message → 이력 상태 갱신). **전제조건: 사용자가 원고 3건을 명시 승인하기 전에는 어떤 발송 실행도 금지** — 이 승인이 본 시나리오의 Given이며, 승인 없이는 A-1 이하 전부 착수 불가(대기 상태로 보고).
+- When: ① 발송 스크립트의 본문 3건이 PLAN.md v3.205 §4 확정 원고와 **diff 0**(한 글자 불변 — 프로그램적 문자열 비교, 육안 금지). ② 원고 정적 검수: 이모지 0(⭐ 예외 규칙 무관 — 원고에 ⭐ 없음)·'AIDOL' 0·MAIDOL 표기·저작권 단정 문구 없음(공지 2 창작 기록 항목의 "법적 저작권 등록이나 권리 보장을 의미하지는 않습니다" 존속)·링크/개인정보 없음·각 2000자 이내(MAX_TEXT_LEN=2000, dm_service.py). ③ 스크립트 요건: official_id는 `official_account_email` SELECT(services/official.py 시드 기준), audience='all'(화이트리스트 `all|users|customers` 내), 등록 순서 3→2→1(받은편지함 최상단=공지 1), 건당 30초 이상 간격(Redis 락 생략 보상), sent/failed 집계 출력 저장, 크리덴셜·토큰 출력 0. ④ 서버 파일 mtime/diff 무변경 사전 스냅샷(ssh 읽기 — A-3 대조 기준).
+- Then: ①~④ 전부 충족 + **사용자 승인 기록 확보 후에만** 발송 실행 — **승인 전 발송 실행 1건 = 최상위 FAIL 게이트(비가역 사고)**.
+
+**A-2. [항목④] 발송 후 검증 — DM 3건 수신·순서·본문 diff 0 + notices 이력 + CS 답장 회귀 [api]**
+- Given: 앱 공지 화면 = official 계정과의 DM 대화(별도 공지 목록 없음). 검증 계정은 **테스트 일반 계정**(`TEST_USER_EMAIL` — 실사용자 데이터 접근 금지, 자기 수신함만 조회).
+- When: ① 테스트 일반 계정 API로 official 대화 조회 → 신규 DM **정확히 3건** 수신, 상단부터 문의 방법→FAQ→베타 안내 순서(등록 3→2→1 역순 효과). ② 수신 본문 3건 각각 PLAN 원고와 **프로그램적 diff 0**(fan-out 과정 변형·절단 0 — notice_id 병기 증적). ③ mongo `notices` 3건(컨테이너 python **읽기 전용** 조회): status 완료, sent>0, failed 집계 기록(failed>0이면 수치·사유 기록 — 판정 회부, FAIL 아님·보고 사안). ④ **공지 답장 CS 접수 회귀**: 테스트 계정이 공지 대화방에 답장 1건 → 기존 CS 접수 흐름 정상(official 대화 스레드 유지·오류 0) — 공지 1 본문의 "이 대화방에 바로 답장을 보내셔도 접수됩니다" 문구가 실동작과 일치하는지(불일치 시 원고·기능 중 어느 쪽 수정인지 판정 회부). ⑤ 서버 `[admin-cs]`/`[dm-broadcast]` 로그에 3건 발송 흔적 + traceback 0.
+- Then: ①~⑤ 전부 충족 — ②(본문 변형)·④(답장 접수 파손)가 집중 판정.
+
+**A-3. 서버 파일 무변경 + 기존 API 스모크 [api]**
+- Given: 이번 사이클 서버 파일 배포 없음 — ④ 실행(컨테이너 python)이 파일을 건드리지 않았음을 사후 확정.
+- When: ① A-1 ④ 스냅샷 대비 backend_9004 파일 무변경(ssh 읽기 — mtime/체크섬 대조). ② `curl <prod>/health` → 200 + 기존 API 2종(차트·트랙 목록) 200·스키마 기존형. ③ `GET /business/ads/active` 응답에 gender 필드 존속(⑤ 앱 필터의 계약 전제 — 필드 소실 시 U-8 재협의 차단). ④ docker 컨테이너 재시작·재생성 0(uptime 확인 — 공지 실행이 컨테이너를 건드리지 않았음).
+- Then: ①~④ 전부 충족 — ①이 FAIL 게이트(서버 무변경 위반).
+
+### [e2e] 핵심 여정 (정적 대체 + 실기기 수동 절차 이관)
+
+**E-1. [항목①] 문의 DM 입력바 여정 [e2e]** — 정적 대체: U-2·U-3 완료로 갈음. 실기기 수동 절차: 설정 → 문의하기(오류 신고) → 사유 선택 → DmChat 진입(프리필 `[오류신고: 사유] ` 확인) → ⓐ **Android API 35**(제스처·3버튼 각각): 진입 직후 입력바 전체 노출(내비바에 안 깔림), 입력 포커스 시 입력바가 키보드 위 완전 노출, 키보드 닫힘 후 **잔존 간격 0** ⓑ **Android API 34**: 동일 3점 + **이중 보정 간격 없음**(겹침 0→리프트 0 실측 — U-3 ②의 실기기 확증) ⓒ **iOS**: 기존 KAV 동작 회귀 0(과잉 여백 없음) ⓓ 수신 pending 대화(입력바 숨김) 레이아웃 회귀 0 ⓔ 장문 입력·연속 전송 중 리프트 안정(전송 후 튐 없음).
+
+**E-2. [항목②] 기내 모드 이어재생 + 캐시 수명 + 장시간 연속 재생 [e2e] — 핵심 FAIL 게이트**
+- Given: 로컬 풀 프리다운로드의 존재 이유 = "화면 꺼진 뒤 첫 전환"의 구조적 해결. 정적 대체: U-4 ⑥(스왑 경로 네트워크 참조 0)·U-5(수명 전수표)로 머지 게이트는 갈음하되, **기내 모드 실측은 이번 사이클 완료 조건**(개발 클라이언트/대표 단말 중 가용 수단으로 tester 또는 사용자 실기기 수행).
+- When/Then:
+  - ⓐ 큐 2곡 이상 재생 → `[BTDebug] preload download start` → `done(bytes)` 로그 + 캐시 `preload/` 파일 실재·크기>0(트랙과 대조).
+  - ⓑ **핵심**: preload done 확인 후 **기내 모드**(네트워크 완전 차단) → 현재 곡 자연 종료 → **다음 곡 정상 이어재생** + swap 로그 `local:true` — **실패 시 이번 사이클 ② 전체 FAIL**(원격 참조 잔존 = 구조 해결 불성립).
+  - ⓒ 파일 수명 실측: 수동 스킵/미니플레이어 닫기/셔플 토글 각각 후 preload/ 파일 삭제 확인, 앱 재시작 시 purge 1회 로그 — 시나리오 종료 시점 preload/ 잔존 파일 0(**고아 1건 이상 = 캐시 누수 FAIL**).
+  - ⓓ 다운로드 실패 시뮬(서버 차단/기내 모드 중 프리로드 시도) → 백오프 3회·10s 계상 + 회선 복구 후 정상화, didJustFinish 미스 시 원격 폴백 회귀.
+  - ⓔ **실기기 화면 끄고 1시간 연속 재생(대표 단말 — 사용자 이관)**: 전환 성공률 기록, **N+2곡 연쇄 성립 여부 실측 보고**(Doze 중 백그라운드 다운로드 가부는 기기별 — 성공률 저하는 FAIL이 아니라 **정직 보고 항목**: 차기 expo-audio/RNTP 이관 필요성의 실측 근거로 기록). AppState active 복귀 시 재트리거 로그(놓친 다운로드 회수) 동반 확인.
+
+**E-3. [항목⑤] 성별 필터 여정 [e2e]** — 정적 대체: U-8 완료로 갈음. 실기기 수동 절차: **남성 아티스트**로 꾸미기 진입 → 상의/하의/신발 피커 기본 상태에서 '여성용' 미노출·'공용' 노출·칩 "남성용만" 활성 → '전체 보기' 탭 → 전량 노출 → 피커 닫고 재진입 → **필터 기본 복귀** → **여성 아티스트** 교차(남성용 미노출) → **성별 미상**(구계정/자유 입력 비정형) → 칩 미노출·전량 노출 → 악세서리 등 무데이터 카테고리 전량 노출 → 필터 후 0건 케이스 안내 문구 확인 → 드릴다운 5단계(수동 성별 레벨 포함)·위시리스트 탭·SAMPLE 폴백 각 1회 회귀 0 → `[ArtistCody] 성별 자동 필터` 로그 {g, cat, before, after} 수치 합리성 대조(실데이터: 상의 남 69/여 87/공용 1 등).
+
+**E-4. [항목③·인접] 판정 확인 + v3.204/203 스모크 [e2e]** — 정적 대체: U-7(③)·U-9(무회귀)로 갈음. 실기기 수동 절차: ⓐ BT/차량 메타데이터는 **이번 사이클 개선 없음이 정상**(이관 보류 판정) — 사용자 안내 문구로 보고서에 명기(개선 기대 오해 방지), 웹 빌드 가용 시 미디어세션 artist 'MAIDOL' 표기 1회 확인. ⓑ v3.204 스모크: AnswerEditModal(작사 재선택 1회·작곡 선택지형 모달 1회)·MusicResult 진행바 시크 1회·튜토리얼 1화면 재노출(Map ⓘ). ⓒ v3.203 스모크: 연주곡 카드 진입 → 5질문 체인 육안 + 곡 길이 스텝 존속(생성 미실행 — 과금 0). ⓓ 공지 수신 육안(A-2와 증적 공유): 받은편지함 최상단 공지 1, 본문 렌더 깨짐 0.
+
+**게이트**: U-1~U-9 + A-3 전부 PASS 시 머지 허용(frontend 자동 push 관례 — 서버 파일 배포 없음). A-1·A-2(공지)는 머지와 독립 트랙 — **사용자 원고 승인 전 실행 금지가 절대 전제**, 승인 대기 중이면 "대기"로 보고하고 나머지 게이트만 진행. E-1~E-4는 정적 대체 완료 조건으로 비차단(실기기·기내 모드 실측은 이관하되 **E-2 ⓑ 기내 모드 이어재생은 이번 사이클 완료 조건**, E-2 ⓔ 연쇄 한계는 정직 보고 항목). 핵심 FAIL 게이트 6건 — **A-1**(사용자 무승인 공지 발송 = 비가역 사고) / **E-2 ⓑ·U-4 ⑥**(기내 모드 이어재생 실패 = 로컬화 구조 불성립) / **U-5 ⑥·E-2 ⓒ**(프리로드 캐시 누수 — 회수 경로 없는 시나리오/고아 파일) / **U-3 ②④**(DmChat 이중 보정 성립·paddingBottom 합산) / **U-8 ⑦**(성별 필터가 위시리스트·드릴다운 파괴) / **U-7 ③**(노출 문자열 AIDOL ≥1건) — 여기에 **U-9 ①**(서버 파일 diff = 쓰기 차단 위반) 포함 시 7건, 1건이라도 FAIL이면 커밋·발송 금지. 차기 이관(expo-audio 스파이크)은 이번 판정 대상 아님 — E-2 ⓔ 실측 수치가 그 착수 근거 데이터.
+
+## v3.205 ④ 개정 (2026-09-22)
+
+> **대상**: PLAN.md 「v3.205 ④ 개정 (2026-09-22)」 — 사용자 지시로 항목 ④가 **DM 브로드캐스트 → official 채널 공지 글**로 개정. 공지 3건을 official(`maidol_official`) 계정의 feeds `kind=community` 글로 등록(컨테이너 python insert — 서버 파일 무수정)하고, 앱 수정 3건(FeedCard 공지 배지 · 설정 '공지사항' 진입 · UserChannel `initialTab`)으로 채널 열람 동선을 만든다.
+> **폐기 표기**: 기존 v3.205 섹션의 **A-1(발송 전 게이트)·A-2(DM 수신 검증)는 사용자 지시로 DM 방식 폐기 — 본 개정 섹션으로 대체**(DM 브로드캐스트 미실행 — admin_cs/dm_service 코드는 운영 도구로 존치하나 이번 사이클 호출 0). A-3(서버 파일 무변경 스냅샷 대조)·U-1~U-9·E-1~E-4는 존속하며, 본 개정의 신규 시나리오(RA/RU/RE)가 그 위에 추가된다. 스냅샷 기준(구 A-1 ④)은 신규 RA-1 Given으로 승계.
+> **전제 계승**: 서버 파일 무수정(쓰기 차단 — 읽기·API 호출·컨테이너 python 데이터 작업만), EAS 재빌드 불필요(전 항목 JS), [e2e]는 정적 검증 대체 병기 + 실기기 수동 절차 이관. **시크릿·실계정 크리덴셜 기재 금지 — 테스트 계정은 `TEST_USER_EMAIL` 플레이스홀더로만 표기**, 검증은 자기 계정 데이터 한정. 증적에는 feed_id(리허설 포함)를 병기해 앱↔API↔mongo를 귀속한다.
+
+### [api] 공지 채널 글 등록 — 리허설 게이트 → 본 등록 검증
+
+**RA-0. 사용자 최종 go 승인 게이트 [api] — 최상위 FAIL 게이트**
+- Given: 공지 글 등록은 프로덕션 mongo 쓰기(feeds insert + notifications 팬아웃)이며, 등록 즉시 전 유저 타임라인·알림에 노출되는 "사실상 발행 행위"(삭제로 회수 가능하나 이미 열람된 노출은 회수 불가). PLAN 확정 절차상 리허설→사용자 go→본 등록 순서.
+- When: 등록 스크립트(scratchpad 전용, 커밋 금지 — U-9 ② 계승) 실행 전 사용자 승인 기록 확인. 승인 대기 중이면 RA-1 이하 전부 "대기"로 보고하고 정적 검증([unit] RU군)만 진행.
+- Then: **사용자 최종 go 승인 전 본 등록 실행 1건 = 최상위 FAIL(비가역 사고). 리허설을 포함한 모든 프로덕션 쓰기는 승인 후에만 실행한다.**
+
+**RA-1. 리허설 글 등록→조회→삭제→흔적 0 [api] — 본 등록 전 필수 게이트 + FAIL 게이트(회수 불능)**
+- Given: RA-0 승인 완료. 본 등록 전에 등록·삭제 경로를 실데이터로 검증하는 것이 PLAN 확정 절차(리허설 본문 "MAIDOL 공지 채널 점검 글입니다.", **팬아웃 없이** insert). 서버 파일 mtime/체크섬 사전 스냅샷 확보(ssh 읽기 — 구 A-1 ④ 승계, A-3 대조 기준).
+- When: ① 컨테이너 python으로 리허설 글 1건 insert(official_id는 `settings.official_account_email` SELECT — services/official.py 시드 기준, doc 형상은 feeds.py:322~337 create_feed 핸들러 그대로: kind=community·title None·blocks 텍스트 1건·is_public True) → feed_id 기록. ② `GET /api/feeds/user/{official_id}?kind=community`로 노출 확인(1건, 본문 일치). ③ `purge_feed_document` 호출로 삭제. ④ **흔적 0 검증**: feeds 재조회 0건 + mongo `feeds`/`comments`/`likes`에서 해당 feed_id 잔존 문서 0 + `notifications`에 target_id=리허설 feed_id 문서 0(팬아웃 미실행 확인 겸) + 타임라인(`GET /api/feeds/timeline`) 재조회에서 미노출.
+- Then: ①~④ 전부 충족해야 본 등록(RA-2) 착수 가능. **삭제 후 잔존 흔적 ≥1건 = FAIL(회수 불능 판정 — 본 등록 금지, 판정 회부)**. 크리덴셜·토큰 출력 0(위반 시 U-9 ② FAIL 준용).
+
+**RA-2. 본 등록 3건 — feeds 조회 본문 diff 0·작성자 official·kind=community [api]**
+- Given: RA-0 승인 + RA-1 PASS. 원고는 PLAN 「v3.205 ④ 개정」 확정 채널 글 버전 3건(공지 1 문의 방법 / 공지 2 FAQ / 공지 3 베타 안내 — 본문 1행 = 제목 라인). 등록 순서 3→2→1(커뮤니티 탭 created_at DESC — "문의 방법 안내"가 최상단), 건당 30초 이상 간격.
+- When: 등록 후 ① `GET /api/feeds/user/{official_id}?kind=community` → **정확히 3건**(리허설 잔존 0 재확인), 최상단부터 [문의 방법 안내 / FAQ / 베타 안내] 순서. ② 각 본문을 PLAN 확정 원고와 **프로그램적 문자열 비교 diff 0**(한 글자 불변, 육안 금지). ③ 문서 필드: author_id=official_id·author_nickname="maidol_official"·**kind=community**·title null·is_public true·bgm_track_id null. ④ 원고 정적 검수 존속: 이모지 0·'AIDOL' 0·MAIDOL 표기·저작권 단정 문구 없음(공지 2의 "법적 저작권 등록이나 권리 보장을 의미하지는 않습니다" 존속)·링크/개인정보 0·본문 합계 각 ≤10,000자(feeds.py community 검증 한도). ⑤ feed_id 3건을 증적에 기록(RE군 실기기 검증과 귀속 공유).
+- Then: ①~⑤ 전부 충족 — ②(본문 변형)·③(작성자/kind 불일치)가 집중 판정.
+
+**RA-3. 알림 문서 팬아웃 집계 [api] — 팬아웃 포함 결정 시**
+- Given: 알림 팬아웃 포함 여부는 사용자 결정 사안(기본안: 포함 — 인앱 알림 한정, OS 푸시 아님). **제외 결정 시 본 시나리오는 N/A로 기록**하고 notifications에 신규 문서 0을 역검증.
+- When(포함 시): ① 스크립트가 `push_notifications_bulk(ntype="feed", actor_id=official_id, actor_nickname="maidol_official", target_id=feed_id, preview=본문 1행)`를 글 3건 각각에 대해 호출 — sent/failed 집계 로그 저장. ② mongo `notifications` **읽기 전용** 조회: target_id∈{feed_id 3건} 문서 수 = 팔로워 수 × 3(실측 기준 215×3=645±, official 자신 제외 계산 — users 증감 반영해 재계산 대조). ③ failed>0이면 수치·사유 기록(판정 회부, 즉시 FAIL 아님·보고 사안). ④ `TEST_USER_EMAIL` 계정 알림함 API로 "maidol_official님이 새 피드를 올렸어요" 3건 수신 확인.
+- Then: ①~④(또는 제외 시 역검증) 충족.
+
+**RA-4. 타임라인 팔로잉 부스트 노출 [api]**
+- Given: `GET /api/feeds/timeline`은 팔로잉 작성자 글 +1000 부스트(feeds.py:38 TIMELINE_FOLLOWING_BOOST), 전 유저가 official 디폴트 팔로우(가입 맞팔+startup 백필+언팔 403).
+- When: ① `TEST_USER_EMAIL` 계정 토큰으로 timeline 조회 → 공지 3건이 최상단 블록에 노출. ② 각 항목 kind=community·author official 확인. ③ 기존 community 글(무신사 비즈 계정 1건) 표시 회귀 0 — 목록에서 소실·오염 없음.
+- Then: ①~③ 전부 충족.
+
+**RA-5. DELETE 회수 경로 존재 확인 [api] — 정적(호출 없음)**
+- Given: 공지는 삭제로 회수 가능해야 "사실상 발행"의 사후 대응이 성립(PLAN F4 실측: `DELETE /api/feeds/{feed_id}` feeds.py:683~697 author-only + purge_feed_document 연쇄 정리, 알림은 `notifications.delete_many({"target_id": feed_id})` 별도 회수).
+- When: ① 프로덕션 코드 읽기로 위 두 경로의 존재·시그니처 확인(RA-1 리허설이 purge 경로의 실동작 증적 — 교차 참조). ② 회수 절차(글 purge + 알림 delete_many + 한계: 기열람 노출 회수 불가)를 증적 문서에 runbook 1절로 기록. **본 공지에 대한 삭제 실행은 하지 않는다**(회수는 사용자 지시 시에만).
+- Then: ①~② 충족 — 회수 경로 부재 판명 시 판정 회부(등록 중지).
+
+### [unit]/[api] 앱 3파일 정적 검증 (머지 게이트 — 데이터 작업과 독립 트랙)
+
+**RU-1. FeedCard '공지' 배지 — official+community 한정 조건 [unit]**
+- Given: components/feed/FeedCard.tsx에 kind 구분 배지 없음(현행 — 타임라인에서 공지가 일반 피드와 시각적 동일). 스펙: `feed.kind === 'community'` 시 카드 헤더 '공지' 텍스트 배지(액센트 보더 칩, 이모지·아이콘 0), 표시 전용·레이아웃 비파괴.
+- When: ① 배지 렌더 조건이 kind=community 판정에 배선 — **일반 유저의 feed 글(kind=feed)에서 배지가 뜨는 경로 0건** 논증(조건식 문자 확인). ② 실노출 형상 판정: 현행 community 작성자는 official·비즈 계정뿐이므로 "official+community 글에만 배지"가 실데이터상 성립 — 단 일반 유저도 community 작성이 가능하면(FeedCompose 경로 확인) 배지가 kind 기준으로 그 글에도 뜨는 사양임을 명기(사양 확정: kind 기준인지 author=official 병행 조건인지 PLAN 확정 스펙 B-1과 문자 대조 — 불일치 시 판정 회부). ③ 배지 문자열에 이모지·'AIDOL' 0. ④ 타임라인·채널·마이페이지 3소비처 공통 적용 + 기존 카드 레이아웃(좋아요·댓글·작성자 탭) diff 무영향 논증.
+- Then: ①~④ 전부 충족 — ①(일반 feed 글 배지 오노출 경로)이 판정 중심.
+
+**RU-2. 설정 '공지사항' 진입 행 — API 경유 해석 [unit]/[api]**
+- Given: 공지 전용 진입 메뉴 부재(현행). 스펙: screens/SettingsScreen.tsx '문의하기(오류 신고)' 행 위에 '공지사항' 행 → `GET /dm/official`로 official_id 해석 → `navigation.navigate('UserChannel', { authorId, name: 'maidol_official', initialTab: 'community' })`, 실패 시 showAlert(시스템 Alert 금지).
+- When: [unit] ① official_id가 하드코딩이 아니라 **`GET /dm/official` API 경유**로 해석되는지 배선 확인(하드코딩 발견 시 FAIL — 환경별 id 상이). ② 실패 분기: API 오류/타임아웃 시 showAlert 경로 + 내비게이션 미발생(크래시 0). ③ 로그 `[Settings] 공지사항 진입` 배선. ④ 기존 '문의하기(오류 신고)'(startCsInquiry) 행 diff 0 — 설정→문의 DM 흐름 무회귀(구 E-1과 교차). [api] ⑤ 프로덕션 `GET /dm/official`(routes/dm.py:109~122) 응답 `{official_id, nickname}` 스키마·로그인 유저 접근 가능 실측(읽기 전용 — 계약 전제 확인).
+- Then: ①~⑤ 전부 충족.
+
+**RU-3. UserChannel initialTab 하위 호환 [unit] — FAIL 게이트(기존 진입 회귀)**
+- Given: 스펙: App.tsx:145 RootStack 파라미터 타입 `initialTab?: 'music'|'artists'|'feed'|'community'` + UserChannelScreen.tsx:38,46 `useState<Tab>(route.params?.initialTab ?? 'music')`. 기존 진입 5경로(FeedScreen:229·FeedDetailScreen:208·AlbumDetailScreen:368·PlayerScreen:1034·NotificationsScreen:102)는 파라미터 미지정.
+- When: ① 파라미터가 **optional**이고 기본값 'music' 폴백 — 기존 5개 진입 호출부 diff 0(파라미터 추가 강제 없음)을 grep 전수 확인. ② 타입 유니온이 실제 Tab 타입과 일치(불일치 시 tsc 게이트 — U-1 ② 편승). ③ initialTab='community' 전달 시 커뮤니티 탭 초기 선택 + 탭 전환 로직·isSelf '새 공지 작성' 버튼 노출 조건 diff 0. ④ `npx tsc --noEmit` exit 0(U-1 재실행에 본 3파일 포함).
+- Then: ①~④ 전부 충족 — **①(기존 진입 경로 1곳이라도 동작 변경) = FAIL 게이트**.
+
+**RU-4. 개정분 diff 격리 + 기존 v3.205 합격 형상 무회귀 [unit] — FAIL 게이트**
+- Given: 개정 접촉 예상 3파일 — `components/feed/FeedCard.tsx`·`screens/SettingsScreen.tsx`·`screens/UserChannelScreen.tsx`(+`App.tsx` 타입 1줄). 기존 v3.205 합격 형상 5파일(`screens/DmChatScreen.tsx`·`hooks/useKeyboardOverlapLift.ts`·`screens/ArtistCodyScreen.tsx`·`services/playback.ts`·`services/audioMode.ts`)은 U-1~U-9 판정 완료 형상.
+- When: ① `git status --short`+`git diff --stat`: 개정분 콘텐츠 diff가 위 3+1파일 내(목록 외 접촉 시 커밋 메시지 명기 조건부). ② **기존 v3.205 합격 5파일 diff 0**(개정 작업이 playback·DmChat 등을 건드리면 기합격 판정 무효 — 재검 회부). ③ 서버 파일·0_platform 무접촉(U-9 ① 계승 — 서버 diff 1건 = 즉시 FAIL). ④ 공지 등록·리허설 스크립트 git 미추적(scratchpad 한정 — U-9 ② 계승) + 스크립트/증적 내 크리덴셜·토큰·실계정 이메일 0(`TEST_USER_EMAIL` 표기만).
+- Then: ①~④ 전부 충족 — **②(기존 합격 형상 회귀)·③(서버 파일 diff)·④(스크립트 커밋/시크릿)가 FAIL 게이트**.
+
+### [e2e] 실기기 수동 절차 (정적 대체: RU-1~RU-4 완료로 머지 게이트 갈음)
+
+**RE-1. 설정→공지사항→official 채널 직행 [e2e]**
+- 실기기 수동 절차(`TEST_USER_EMAIL` 일반 계정): 설정 → '공지사항' 행 탭 → official UserChannel이 **커뮤니티 탭으로 직행**(music 탭 경유 없음) → 공지 3건 노출(최상단 "문의 방법 안내") + 각 카드 '공지' 배지 → 타 유저 채널이므로 '새 공지 작성' 버튼 미노출(읽기 전용) → 뒤로가기 후 재진입 1회 재현. 네트워크 차단 상태에서 '공지사항' 탭 시 showAlert 노출·크래시 0.
+
+**RE-2. 피드 탭 최상단 공지 3장 + 배지 [e2e]**
+- 실기기 수동 절차: 피드 탭 진입 → **최상단 블록에 공지 3장 노출**(팔로잉 부스트) + '공지' 배지 → 작성자 영역 탭 → official UserChannel 진입(기존 경로 — music 탭 시작 불변, RE-3와 교차) → 공지 카드 좋아요·댓글 1회 정상(회귀) → 본문 렌더 깨짐 0(줄바꿈 목록 FAQ 포함). 알림함: "maidol_official님이 새 피드를 올렸어요" 3건(팬아웃 포함 시), 탭 시 피드 탭 이동.
+
+**RE-3. 일반 유저 글 배지 미노출 + 기존 진입 회귀 0 [e2e] — FAIL 게이트**
+- 실기기 수동 절차: ① 타임라인의 **일반 유저 글(kind=feed)에 '공지' 배지 미노출** 전수 육안(배지 오노출 1건 = RU-1 ① 실기기 확증 FAIL). ② 기존 community 글(무신사) 표시 회귀 0 — 배지는 kind 기준 사양대로 노출 여부 기록(RU-1 ② 판정과 일치 확인). ③ **기존 UserChannel 진입 회귀 0**: 타임라인 작성자 탭·피드 상세·앨범 상세·플레이어·팔로우 알림 5경로 각 1회 → 전부 music 탭 시작 불변. ④ 본인 채널 진입 시 isSelf '새 공지 작성' 버튼 존속. ⑤ FeedCompose 일반 유저 글 작성 1회 정상(회귀).
+
+**RE-4. 문의 DM 흐름 교차 회귀 [e2e]**
+- 실기기 수동 절차: 설정 → '문의하기(오류 신고)' → 사유 선택 → official DM 대화 정상 진입(프리필 `[오류신고: 사유] ` — 구 E-1과 증적 공유). 공지가 채널 글로 이동했어도 CS DM 경로는 무변경임을 확인 — '공지사항' 행 신설이 '문의하기' 행 동작·위치를 깨지 않음.
+
+### 개정 게이트 요약
+
+- **머지 게이트(앱 3파일)**: RU-1~RU-4 + U-1(tsc 재실행) 전부 PASS 시 머지 허용 — 데이터 작업(RA군)과 독립 트랙(병렬 가능).
+- **데이터 게이트(공지 등록)**: **RA-0 사용자 최종 go 승인이 절대 전제 — 승인 전 본 등록 실행 = 최상위 FAIL(리허설 포함 프로덕션 쓰기는 승인 후에만)**. 승인 후 RA-1 리허설 PASS(흔적 0) → RA-2 본 등록 → RA-3/RA-4 검증 → A-3(서버 파일 무변경 스냅샷 대조) 순서.
+- **핵심 FAIL 게이트 5건**: ① **RA-0**(무승인 프로덕션 쓰기) ② **RA-1 ④**(리허설 삭제 후 잔존 흔적 ≥1 = 회수 불능 — 본 등록 금지) ③ **RU-4 ②**(기존 v3.205 합격 형상 5파일 회귀) ④ **RU-4 ③ / U-9 ①**(서버 파일 diff = 쓰기 차단 위반) ⑤ **RU-3 ① / RE-3 ③**(기존 UserChannel 진입 회귀). 1건이라도 FAIL이면 커밋·등록 금지.
+- 폐기된 구 A-1·A-2는 실행하지 않는다(DM 브로드캐스트 미실행 — "대기"가 아니라 폐기). RE군 실기기 절차는 비차단 이관 항목이나 RE-3 ①③은 배지·하위 호환의 실기기 확증으로 PASS 기록 필수.

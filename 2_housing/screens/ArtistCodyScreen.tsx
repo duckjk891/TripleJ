@@ -23,6 +23,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
+import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -79,6 +80,19 @@ const genderMatches = (i: AdItem, g: string) => {
   return false;
 };
 const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
+
+// v3.205(⑤): 아티스트 성별 정규화 — '남성'/'남자'/'남' → '남', '여성'/'여자'/'여' → '여'.
+// 구계정·자유 입력 등 판별 실패는 null → 자동 필터 미적용·칩 미노출(전량 노출, 안전).
+const normalizeArtistGender = (raw?: string | null): '남' | '여' | null => {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  if (t.startsWith('남')) return '남';
+  if (t.startsWith('여')) return '여';
+  return null;
+};
+// v3.205(⑤): 성별 데이터가 실재하는 카테고리만 자동 필터(상의 남69/여87/공용1, 하의 남74/여71,
+// 신발 남65/여88 — 프로덕션 /business/ads/active 실측). 나머지는 무필터(전량 사라지는 사고 방지).
+const GENDER_FILTER_CATS: Cat[] = ['상의', '하의', '신발'];
 
 // 광고 0개일 때 노출할 더미 샘플 (UX 데모용) — 카테고리당 5개
 // advertiser_nickname은 가상 브랜드명 (실제 광고주가 등록되면 그 브랜드명으로 자동 교체)
@@ -208,6 +222,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // v3.90: 전체 | 위시리스트 탭 + 5단계 드릴다운 상태
   const [pickerTab, setPickerTab] = useState<'all' | 'wish'>('all');
   const [drill, setDrill] = useState<DrillState>(EMPTY_DRILL);
+  // v3.205(⑤): 아티스트 성별 자동 필터 — apiResult.gender → pendingGender → artistProfileStore 3단 폴백.
+  // (apiResult 타입에는 gender 미정의 — 서버가 내려주면 1순위로 반영, 없으면 자연 폴백)
+  const profileGender = useArtistProfileStore((s) => s.profiles[taskStore.characterKind]?.gender);
+  const artistGender =
+    normalizeArtistGender((apiResult as any)?.gender) ??
+    normalizeArtistGender(taskStore.pendingGender) ??
+    normalizeArtistGender(profileGender);
+  // 피커 열 때마다 기본 ON 복귀(openPicker에서 리셋)
+  const [genderFilterOn, setGenderFilterOn] = useState(true);
 
   const isLoggedIn = useAuthStore((s) => !!s.token);
   const wished = useWishlistStore((s) => s.wished);
@@ -221,6 +244,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     setPickerCat(cat);
     setPickerTab('all');
     setDrill(EMPTY_DRILL);
+    setGenderFilterOn(true); // v3.205(⑤): 피커 열 때마다 성별 필터 기본 ON 복귀
     setPickerLoading(true);
     try {
       const res = await api.get('/business/ads/active', { params: { category: cat } });
@@ -536,8 +560,27 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     };
   }, [navigation, route?.params?.returnToCover]);
 
+  // ── v3.205(⑤) 성별 자동 필터 — 드릴 소스 목록에 선적용(패싯 수치도 필터 후 기준) ──
+  // genderMatches 재사용: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
+  // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
+  const genderFilterActive =
+    !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat) && genderFilterOn;
+  const baseItems = genderFilterActive
+    ? pickerItems.filter((i) => genderMatches(i, artistGender!))
+    : pickerItems;
+  useEffect(() => {
+    if (__DEV__ && genderFilterActive && !pickerLoading) {
+      console.info('[ArtistCody] 성별 자동 필터', {
+        gender: artistGender,
+        category: pickerCat,
+        filtered: baseItems.length,
+        total: pickerItems.length,
+      });
+    }
+  }, [genderFilterActive, pickerLoading, artistGender, pickerCat, baseItems.length, pickerItems.length]);
+
   // ── v3.90 5단계 드릴다운 파생값 (MAIDOL ItemSelectModal 이식) ──
-  const byPlatform = drill.platform ? pickerItems.filter((i) => platformOf(i) === drill.platform) : pickerItems;
+  const byPlatform = drill.platform ? baseItems.filter((i) => platformOf(i) === drill.platform) : baseItems;
   const byBrand = drill.brand ? byPlatform.filter((i) => brandOf(i) === drill.brand) : byPlatform;
   const drillGender = drill.gender;
   const byGender = drillGender ? byBrand.filter((i) => genderMatches(i, drillGender)) : byBrand;
@@ -559,7 +602,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           : 'color';
 
   const facetOptions: string[] =
-    currentLevel === 'platform' ? [...new Set(pickerItems.map(platformOf))]
+    currentLevel === 'platform' ? [...new Set(baseItems.map(platformOf))]
     : currentLevel === 'brand' ? [...new Set(byPlatform.map(brandOf))]
     : currentLevel === 'gender' ? ['남', '여'].filter((g) => byBrand.some((i) => genderMatches(i, g)))
     : currentLevel === 'product' ? [...new Set(byGender.map(productOf))]
@@ -798,6 +841,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                   {' '}내 위시리스트{isLoggedIn && wishListLoaded && !wishListError ? ` (${wishItemsForCat.length})` : ''}
                 </AppText>
               </TouchableOpacity>
+              {/* v3.205(⑤): 성별 필터 토글 칩 — 성별 판별 성공 + 대상 카테고리에서만 노출 */}
+              {artistGender && pickerCat && GENDER_FILTER_CATS.includes(pickerCat) ? (
+                <TouchableOpacity
+                  style={[styles.genderChip, genderFilterOn && styles.genderChipActive]}
+                  onPress={() => setGenderFilterOn((v) => !v)}
+                  accessibilityLabel="성별 필터 전환"
+                >
+                  <AppText style={[styles.genderChipText, genderFilterOn && styles.genderChipTextActive]}>
+                    {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
+                  </AppText>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {pickerTab === 'all' && (pickerLoading ? (
@@ -808,6 +863,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               <View style={{ padding: 40 }}>
                 <AppText style={styles.emptyDesc}>
                   등록된 {pickerCat} 아이템이 없어요.
+                </AppText>
+              </View>
+            ) : genderFilterActive && baseItems.length === 0 ? (
+              // v3.205(⑤): 필터 결과 0건 — 전체 보기 전환 안내
+              <View style={{ padding: 40 }}>
+                <AppText style={styles.emptyDesc}>
+                  {genderLabel(artistGender!)}용 {pickerCat} 아이템이 없어요.{'\n'}상단 칩을 누르면 전체 보기로 전환됩니다.
                 </AppText>
               </View>
             ) : (
@@ -1162,6 +1224,17 @@ const styles = StyleSheet.create({
   pickerTabActive: { borderBottomColor: colors.accent.primary },
   pickerTabText: { color: colors.text.muted, fontSize: 13, fontWeight: '600' },
   pickerTabTextActive: { color: colors.text.primary, fontWeight: '700' },
+
+  // v3.205(⑤): 성별 필터 토글 칩 (탭 행 우측)
+  genderChip: {
+    alignSelf: 'center', marginRight: 10,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  genderChipActive: { borderColor: colors.accent.primary },
+  genderChipText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700' },
+  genderChipTextActive: { color: colors.accent.primary },
 
   // v3.90: 드릴다운 브레드크럼
   crumbRow: {

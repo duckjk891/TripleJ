@@ -35,7 +35,8 @@ type MusicSub = 'tracks' | 'albums';
 export default function UserChannelScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-  const { authorId, name } = route.params || {};
+  // v3.205(④): initialTab — 설정 '공지사항' 진입 시 커뮤니티 탭 직행(미지정 시 기존 music 시작 불변)
+  const { authorId, name, initialTab } = route.params || {};
   const { user } = useAuthStore();
   const playerStore = usePlayerStore();
 
@@ -43,7 +44,7 @@ export default function UserChannelScreen() {
   const [followerCount, setFollowerCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
-  const [tab, setTab] = useState<Tab>('music');
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'music');
   const [musicSub, setMusicSub] = useState<MusicSub>('tracks');
   const [tracks, setTracks] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);

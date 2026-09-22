@@ -43,7 +43,7 @@ export function updateMediaSession(meta: MediaSessionMeta, handlers?: MediaSessi
     if (!ms) return;
     ms.metadata = new (window as any).MediaMetadata({
       title: meta.title,
-      artist: meta.artist || 'AIDOL',
+      artist: meta.artist || 'MAIDOL',
       artwork: meta.artworkUrl ? [{ src: meta.artworkUrl, sizes: '512x512', type: 'image/png' }] : [],
     });
     if (handlers) {

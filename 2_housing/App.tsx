@@ -142,7 +142,8 @@ export type RootStackParamList = {
   MyReports: undefined;
   // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
   DmChat: { conversation: any; prefill?: string };
-  UserChannel: { authorId: string; name?: string };
+  // v3.205(④): initialTab — 설정 '공지사항' 진입 시 커뮤니티 탭(공지) 직행. 미지정 시 기존 music 탭 시작.
+  UserChannel: { authorId: string; name?: string; initialTab?: 'music' | 'artists' | 'feed' | 'community' };
   // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
   FeedCompose: { kind?: 'feed' | 'community' } | undefined;
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)

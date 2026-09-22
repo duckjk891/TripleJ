@@ -3,7 +3,7 @@
 // 댓글: 목록·작성·삭제 + 중첩 답글 스레드 (백엔드 v191 parent_id 정식 지원).
 //   신규 답글은 parent_id 필드로 저장. 구버전(마커 `[reply:{id}] `) 댓글은 레거시 폴백으로 계속 파싱해
 //   동일하게 중첩 렌더(하위호환). 부모가 삭제되면 최상위로 폴백.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, TextInput, ActivityIndicator, Share, StyleSheet } from 'react-native';
 import { showAlert } from '../../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
@@ -13,6 +13,7 @@ import { AppText, Avatar } from '../ui';
 import ReportModal from '../ReportModal';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
+import { fetchOfficial, getCachedOfficial } from '../../services/officialService';
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -68,6 +69,21 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
   const [reportOpen, setReportOpen] = useState(false);
   const [isFollowing, setIsFollowing] = useState<boolean | null>(null); // ⋯ 메뉴용(열 때 조회)
   const [followBusy, setFollowBusy] = useState(false);
+
+  // v3.205(④ 픽스): 커뮤니티 글은 일반 유저도 작성 가능 — '공지'는 작성자가 official일 때만.
+  // official id는 officialService 프로세스 캐시 공유(카드당 조회 아님), 비로그인 실패 시 null → 배지 미표시.
+  const [officialId, setOfficialId] = useState<string | null>(getCachedOfficial()?.official_id ?? null);
+  useEffect(() => {
+    if (officialId || feed.kind !== 'community') return;
+    let alive = true;
+    fetchOfficial().then((o) => {
+      if (alive && o) setOfficialId(o.official_id);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [officialId, feed.kind]);
+  const isOfficialNotice = feed.kind === 'community' && !!officialId && String(feed.author_id) === officialId;
 
   // 댓글
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -251,7 +267,15 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
         <TouchableOpacity style={styles.headerMain} onPress={onPressAuthor} activeOpacity={0.7}>
           <Avatar name={feed.author_nickname || '?'} uri={profileUri} size={36} />
           <View style={{ marginLeft: spacing.sm, flex: 1 }}>
-            <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedTheme.text }}>{feed.author_nickname || '알 수 없음'}</AppText>
+            <View style={styles.nameRow}>
+              <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedTheme.text, flexShrink: 1 }}>{feed.author_nickname || '알 수 없음'}</AppText>
+              {/* v3.205(④): official 작성 community 글만 공지 — 배지(표시 전용, 타임라인·채널·마이페이지 공통) */}
+              {isOfficialNotice ? (
+                <View style={styles.noticeBadge}>
+                  <AppText variant="caption" style={styles.noticeBadgeText}>공지</AppText>
+                </View>
+              ) : null}
+            </View>
             <AppText variant="caption" style={{ color: feedTheme.muted }}>{fmtTime(feed.created_at)}</AppText>
           </View>
         </TouchableOpacity>
@@ -411,6 +435,13 @@ const styles = StyleSheet.create({
   },
   header: { flexDirection: 'row', alignItems: 'center' },
   headerMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // v3.205(④): 공지 배지 — 액센트 보더 칩(아이콘·이모지 없음, 표시 전용)
+  noticeBadge: {
+    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: radius.sm,
+    paddingHorizontal: 6, paddingVertical: 1,
+  },
+  noticeBadgeText: { color: colors.accent.primary, fontWeight: '700' },
   moreBtn: { padding: 6 },
   menu: {
     alignSelf: 'flex-end', backgroundColor: colors.bg.surface2, borderRadius: radius.md,

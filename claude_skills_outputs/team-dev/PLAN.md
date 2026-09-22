@@ -3501,3 +3501,213 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - 서버: refine 버전 경합·멱등키·이중 차감 환불·장시간 POST 비동기화(위 ⑤ 백로그 — 사용자 승인 필요).
 - 설정 화면 '튜토리얼 다시 보기' 일괄 리셋.
 - generation 스트림 Range(206) 지원 — 긴 곡(6분) 후보에서 미버퍼 구간 시크 지연이 실측되면 그때.
+
+---
+
+## v3.205 (2026-09-22) — 문의 DM 입력바 가림 수정 + 백그라운드 다음곡(로컬 프리다운로드) + BT 메타데이터 판정 + 공지 3건 등록 + 꾸미기 성별 자동 필터
+
+> 작성: planner(팀 리드, maidol-studio). 사용자 요청 5항목: ① 신고/문의 official DM 화면 하단 입력바 잘림·키보드 가림 ② 백그라운드 다음곡 재생 실패 지속 ③ 블루투스 차량 UI에 곡 제목·가수 미표시 ④ 문의 방법·FAQ·베타 안내를 MAIDOL 공지사항으로 등록 ⑤ 꾸미기 상의/하의 성별 필터 확인·적용.
+> 소스오브트루스: 앱 `/Users/pearl/TripleJ/2_housing/`(frontend, 직전 9670ccb v3.203/204 합격 형상), 백엔드 프로덕션 `ssh maidol-ec2` `/home/ubuntu/maidol/backend_9004/`(git 아님, **서버 파일 쓰기 권한 차단 — 읽기·API 호출·컨테이너 내 python 실행만**).
+> 이번 사이클 서버 파일 배포 없음. 네이티브 모듈 추가 없음 → **EAS 재빌드 불필요**(전 항목 JS만).
+
+### Plan verification findings (파일:라인 + 실측)
+
+**① 문의 DM 입력바 잘림·키보드 가림 (DmChatScreen.tsx, 273줄)**
+- 진입 경로 실측: 설정 → 문의하기(오류 신고) → `startCsInquiry`(SettingsScreen.tsx:364~385) → `GET /dm/official` → `POST /dm/conversations` → `navigate('DmChat', { conversation, prefill: '[오류신고: 사유] ' })`. DmChat은 RootStack 직속(App.tsx:534) — 탭바 없음.
+- **잘림 원인**: app.json `android.edgeToEdgeEnabled: true`(:35) — 앱이 시스템 내비게이션 바 뒤까지 그려지는데, DmChatScreen 컨테이너는 `paddingTop: insets.top`만 적용(:158)하고 **`insets.bottom` 미적용**. 입력바(:266~271)는 `margin: spacing.lg`(약 16px) < 내비바 높이(3버튼 ~48px, 제스처 ~24px) → 하단 입력바가 내비바에 깔려 잘림.
+- **키보드 가림 원인**: `KeyboardAvoidingView behavior`가 iOS 'padding'/Android `undefined`(:158) — Android는 `softwareKeyboardLayoutMode: "resize"`(app.json:36)에 의존하는데, **Android 15(API 35)+에서는 edge-to-edge 강제로 adjustResize가 창을 자동 축소하지 않는 것이 확인된 플랫폼 변경**(Expo 커뮤니티·keyboard-handling 가이드 실측 — SDK 53+ 다수 보고). 기기별로 갈리므로(API 34 이하는 resize 동작) 고정 리프트를 더하면 구버전에서 이중 보정(간격)이 생긴다.
+- 기존 합격 패턴: `hooks/useAndroidKeyboardLift.ts`(v3.201~202)는 **Modal 전용 셈법**(kbHeight − insets.bottom) — 전체 화면에는 창 리사이즈 동작 여부가 기기별이라 그대로 쓰면 API 34 이하에서 이중 보정. → **겹침 실측 기반 리프트**로 확장(아래 스펙 3).
+- ReportModal(components/ReportModal.tsx)은 `/reports` 제출용 — DM 미연계. 사용자가 말한 "신고하기 → official DM"은 위 CS 문의 흐름으로 특정.
+
+**②③ 백그라운드 다음곡 + BT 메타데이터 (합동 진단 — 이번 사이클 최대 쟁점)**
+- **서버 원격 로그 재실측 결과: v3.202 이후 [BTDebug] 실측 불가 — 로그 소실.** frontend.log는 컨테이너 내부 `/app/logs/frontend.log`에 기록되는데 `docker inspect maidol-app` Mounts가 `[]`(호스트 마운트 없음). 오늘 04:31 v3.203 2차 배포(컨테이너 재생성)로 이전 로그 전부 소실 — 현재 파일은 4줄(dmSocket 재연결)뿐. 직전 사이클까지의 실측(2026-09 UnknownHostException = Android Doze 네트워크 차단)이 최신 근거. → 백로그: frontend.log 호스트 볼륨 마운트(`-v .../logs:/app/logs`) — docker run 옵션 변경이라 서버 배포 절차 필요(사용자 협조, 이번 사이클 제외).
+- **② 현 구조의 남은 구멍(코드 실측)**: v3.197/202 프리로드는 `Audio.Sound.createAsync({uri: 원격}, {shouldPlay:false})`(playback.ts:122~125) — 네이티브 플레이어는 **파일 전체가 아니라 버퍼 창만** 미리 받는다. 즉 "preload ready"여도 스왑 후 재생을 잇는 도중 Doze가 네트워크를 끊으면 미버퍼 구간에서 죽는다. 프리로드가 "완결된 자산"이 아니라는 것이 잔존 실패의 유력 원인(조기 프리로드·백오프로도 못 막는 구간).
+- **③ 원인 확정**: expo-av는 Android MediaSession(잠금화면·BT AVRCP 메타데이터)을 제공하지 않음 — services/audioMode.ts 주석(:5~6)에 이미 명기, `updateMediaSession`은 `Platform.OS !== 'web'` 즉시 return(:40). **expo-av 유지로는 ③ 해결 불가(코드 재확인 완료).**
+- **이관 평가(핵심 판정)**:
+  - **RNTP**: v5(2026)는 `@rntp/player`로 **상용 라이선스 전환(개인·교육만 무료)** — MAIDOL은 스토어 출시 예정 상용 앱이라 비용 발생(사용자 승인 사안). v4.1은 Apache-2.0 유지지만 신아키텍처(app.json `newArchEnabled: true`:10) + SDK 54(RN 0.81) 조합 호환성 이슈 보고 존재(patch-package 필요 사례) — 검증 스파이크 없이 본작업 투입 불가. 네이티브 모듈 추가 = EAS 재빌드 필수.
+  - **expo-audio(신규 대안, 조사로 확인)**: Expo 공식 — **expo-av는 SDK 55에서 제거 예정**(SDK 54 체인지로그 명시)이라 이관 자체가 불가피. SDK 54의 expo-audio는 `setActiveForLockScreen(active, metadata)`·`updateLockScreenMetadata({title, artist, albumTitle, artworkUrl})` API로 잠금화면/미디어 세션 메타데이터를 지원(=③ 해결 후보), `shouldPlayInBackground` 지원. 단 원격 컨트롤(다음/이전) 이벤트 리스너와 Android 포그라운드 서비스(=② Doze 근본 해결) 문서화가 불충분 — 실기기 스파이크 필요. 무료·Expo 순정이라 RNTP v5 비용/v4 호환 리스크 대비 우선 검토 대상.
+  - **판정: 이번 사이클 이관 보류.** 근거: (a) RNTP v5 비용은 사용자 결정 사안, v4는 신아키 호환 미검증 (b) expo-audio가 더 유력한데 스파이크(실기기 EAS 빌드 검증) 선행 필요 (c) 이관은 playback.ts 축적 로직(duration 보정 v3.192·프리로드 v3.197/202·reconciler·LISTEN 계측·[BTDebug]) + PlayerScreen/MiniPlayer 전면 재배선 = 단독으로도 40% 룰 초과 규모 — 다른 4개 항목과 같은 사이클 불가. → **차기 사이클 본작업 후보: "expo-audio 이관 스파이크(잠금화면 메타데이터+백그라운드 연쇄 재생 실기기 검증) → 합격 시 전면 이관"**, RNTP는 스파이크 실패 시의 차선(v4 우선, v5는 비용 승인 후).
+  - 40% 룰: 이번 사이클 확정 범위는 미초과. 이관을 포함했다면 초과 — 그래서 뺐다.
+- **② 이번 사이클 점진 보강(확정)**: 다음 곡을 **로컬 파일로 풀 프리다운로드**(expo-file-system legacy `downloadAsync` — ArtistLoadingScreen.tsx:15~16 관행: v19 신 API에 downloadAsync 없음 → `expo-file-system/legacy` import) 후 `file://` URI로 createAsync. 파일이 디스크에 있으면 스왑 후 재생에 네트워크가 전혀 불필요 → **"화면 꺼진 뒤 첫 전환"을 구조적으로 해결**. 한계 정직 기재: N+2곡부터는 백그라운드에서 다운로드가 다시 Doze에 막힐 수 있음(기기별 오디오 재생 중 Doze 완화 여부에 따라 연쇄 성립 — tester 실측 항목). 근본 해결은 포그라운드 서비스 = 차기 이관.
+- ③ 부수 실측: audioMode.ts:46 웹 폴백 아티스트 문자열이 `'AIDOL'` — 브랜딩 규칙 위반(노출 문자열 AIDOL 금지) → MAIDOL로 정정(1줄).
+
+**④ 공지사항 — 공지 시스템 실측**
+- 정식 공지 경로 = **NoticeSquad(v194)**: `POST /api/admin/cs/broadcast`(admin_cs.py:271~) 단일 발송 경로 — official 계정(services/official.py: `official_account_email`로 시드, role=admin) 발신, `dm_service.broadcast_message(conn, mongo, official_id, audience, text, notice_id)`(dm_service.py:821)로 전 유저 1:1 DM fan-out + `notice_service.create_notice`(notice_service.py:192) 이력(mongo notices) + 읽음 집계. audience 화이트리스트 `all|users|customers`(dm_service.py:755), text 1~2000자(MAX_TEXT_LEN=2000). **앱 공지 화면 = official 계정과의 DM 대화(DmInbox/DmChat)** — 별도 공지 목록 화면 없음(UserChannel의 '공지' 라벨은 kind=community 채널 피드로 별개).
+- 등록 수단: 관리자 JWT 필요(get_admin_user) — 관리자 계정 크리덴셜은 시크릿이라 사용 불가. **확정 절차: 컨테이너 내 python 실행**(`sudo docker exec -i maidol-app python - <<'PY' ...`, python 3.11 확인) — admin_cs 핸들러 시퀀스를 코드 그대로 재현(create_notice → broadcast_message → 이력 상태 갱신), Redis 락은 수동 순차 실행이라 생략(건당 30초 이상 간격 준수). admin_id는 official_id로 기록(수동 등록 표식 없음 — 이력상 무해). **프로덕션 데이터 쓰기(전 유저 DM 발송·비가역)** — 본문은 아래 확정 원고를 한 글자도 바꾸지 않고 사용, tester가 수신·이력 검증. 서버 파일 수정 없음.
+- 발송 건수 판단: 브로드캐스트 1건 = 전 유저 DM 1통. FAQ를 잘게 쪼개면 스팸 — **3건으로 확정**(문의 방법 / FAQ / 베타 안내), 각 2000자 이내.
+
+**⑤ 꾸미기 성별 필터 — 실측: 서버 필드 있음, 데이터 충실, 앱에 자동 필터 없음**
+- 서버: ad_items에 `gender` 필드 존재 — `ALLOWED_AD_GENDERS = {"남성용","여성용","공용"}`(business.py:34), 관리자 CSV 임포트에 성별 열(admin_items.py:94~147, 기본값 "여성"→파싱). **프로덕션 실데이터 확인(GET /business/ads/active, 무인증)**: 455건 중 상의 남 69/여 87/공용 1, 하의 남 74/여 71, 신발 남 65/여 88 — 성별 데이터 충실. `/ads/active`는 gender 쿼리 파라미터가 없어(카테고리만) **필터는 앱 측 적용**(응답에 gender 포함 — ArtistCodyScreen AdItem 타입 :58에 이미 수신 중).
+- 앱: ArtistCodyScreen.tsx의 5단계 드릴다운(:65~68 platform›brand›gender›product)에 **수동** 성별 레벨은 있으나(genderMatches :74~80, '공용'·미지정은 양쪽 포함) **아티스트 성별 기준 자동 필터는 없음** — openPicker(:220~238)가 받은 목록을 그대로 노출.
+- 아티스트 성별 소스: 서버 /character 저장 body에 gender 포함(ArtistLoadingScreen.tsx:282 `saveBody.gender = pendingGender`) + 로컬 `artistProfileStore.profiles[slot].gender`(v3.82, '남성'|'여성'|자유 입력) + 생성 흐름 중엔 `characterTaskStore.pendingGender`. 구계정/자유입력은 값이 없거나 비정형일 수 있음 → **성별 판별 실패 시 자동 필터 미적용**(전체 노출)으로 안전.
+
+### 확정 스펙 (자율 판단 근거 포함)
+
+1. **(①) DmChatScreen 하단 정비**
+   - 컨테이너(:158)에 `paddingBottom: insets.bottom` 추가 — edge-to-edge 내비바 잘림 근본 해결(제스처·3버튼 공통).
+   - 신규 `hooks/useKeyboardOverlapLift.ts`: Android 한정, `keyboardDidShow`의 `endCoordinates.screenY`(키보드 상단 절대좌표)와 대상 뷰의 `measureInWindow` 하단 좌표의 **실측 겹침만큼만** 리프트(hide 시 0 리셋, 리스너 등록/해제 쌍 — useAndroidKeyboardLift v3.201 관행 계승). 창이 이미 리사이즈된 기기(API 34↓)는 겹침 0 → 리프트 0(이중 보정 구조적 불가), Android 15+ edge-to-edge(리사이즈 미동작)는 겹침만큼 리프트. 반환값을 inputBar `marginBottom`에 적용(paddingBottom 합산 금지 — v3.201 §1 교훈 동일).
+   - iOS 기존 KAV padding 경로 불변. 기존 useAndroidKeyboardLift(모달 전용)는 손대지 않는다 — 회귀 0.
+2. **(②) 다음 곡 로컬 풀 프리다운로드 (services/playback.ts)**
+   - `maybePreloadNext` 내 프리로드 경로(:119~146) 교체: `FileSystem.downloadAsync(streamProxyUrl, cacheDirectory + 'preload/' + trackId + '.mp3')`(`expo-file-system/legacy`) 완료 후 `createAsync({uri: 로컬 file://}, {shouldPlay:false})`. NextPreload에 `fileUri` 보관.
+   - 정리 규칙: `discardPreloaded`(:74)에서 unload와 함께 파일 삭제(deleteAsync idempotent), 새 다운로드 시작 전 이전 preload 파일 삭제, 스왑 소비된 파일은 **해당 곡 재생 종료(didJustFinish/새 로드) 시** 삭제. 앱 기동 시 `preload/` 디렉터리 일괄 purge 1회(고아 파일 방지) — initPlaybackReconciler에 편승.
+   - 실패 처리: 다운로드 실패 = 기존 preloadFail 백오프(곡당 3회·10s) 그대로 계상, didJustFinish 미스 시 기존 네트워크 폴백 경로 불변. 다운로드 도중 loadGen 변경 시 파일 삭제 후 중단.
+   - **reconciler 보강 1줄**: AppState 'active' 복귀 시(initPlaybackReconciler :378~) 재생 중이고 프리로드가 없으면 `maybePreloadNext(track, 0, 0, {eager:true})` 재트리거 — Doze로 놓친 다운로드를 화면 켜짐 순간 회수.
+   - [BTDebug] 로그 이름 유지·추가: `preload download start/done(bytes)/fail`, swap 로그에 `local:true`. PlayerScreen은 무수정(스왑 사운드 생성 경로가 playback.ts 내부라 투명).
+   - 한계 명시(정직): 연쇄 N+2곡은 Doze 지속 시 여전히 실패 가능 — 근본은 차기 expo-audio/RNTP 이관(포그라운드 서비스).
+3. **(③) 이번 사이클 코드 변경 없음(불가 판정 보고)** + audioMode.ts:46 `'AIDOL'` → `'MAIDOL'` 1줄(웹 미디어세션 폴백 문자열 — 브랜딩 규칙). 차기 사이클 본작업 제안: **expo-audio 이관 스파이크**(setActiveForLockScreen 실기기 검증: BT AVRCP 제목·아티스트 표기 + 백그라운드 연쇄 재생 + 원격 다음/이전) → 합격 시 전면 이관, 불합격 시 RNTP v4(Apache) 스파이크, v5는 상용 라이선스 비용 사용자 승인 후. expo-av SDK 55 제거 예정이라 어느 쪽이든 이관은 필수 경로.
+4. **(④) 공지 3건 등록(컨테이너 python, 서버 파일 무수정)** — 확정 원고(이모지 없음, MAIDOL 표기, 저작권 단정 없음). 등록 순서 3→2→1(받은편지함 상단에 1번이 오게), 건당 30초 이상 간격, audience='all'.
+   - **공지 1 — 문의 방법 안내**: "안녕하세요, MAIDOL 팀입니다. 이용 중 불편이나 오류가 있다면 언제든 알려주세요. 문의 방법: 설정 화면에서 '문의하기(오류 신고)'를 누르고 사유를 선택하면 MAIDOL 공식 계정과의 1:1 대화가 열립니다. 문제 상황(어떤 화면에서, 어떤 동작을 했을 때, 어떤 메시지가 떴는지)을 남겨 주시면 확인 후 답변드립니다. 이 대화방에 바로 답장을 보내셔도 접수됩니다. 감사합니다."
+   - **공지 2 — 자주 묻는 질문(FAQ)**: "MAIDOL 자주 묻는 질문을 안내드립니다. / Q. 별은 무엇인가요? — 별은 MAIDOL의 활동 재화입니다. 곡 만들기, 커버 이미지 생성 등 일부 기능에 사용되며, 보유량은 마이페이지에서 확인할 수 있습니다. / Q. 곡 생성은 얼마나 걸리나요? — 보통 수 분 이내에 완성됩니다. 이용이 몰리는 시간에는 조금 더 걸릴 수 있으며, 생성 중에는 앱을 닫아도 서버에서 계속 진행됩니다. / Q. 내 목소리(보이스 클론)는 언제까지 쓸 수 있나요? — 생성된 보이스는 약 2~6시간 동안 유지된 뒤 만료됩니다. 만료된 보이스는 다시 생성해야 하며, 만료로 인한 별 환불은 없습니다. 생성 자체가 실패한 경우에만 사용한 별이 환불됩니다. / Q. 가사 없는 연주곡도 만들 수 있나요? — 네. 곡 만들기에서 연주곡을 선택하면 가사 없이 원하는 길이의 연주곡을 만들 수 있습니다. / Q. 내가 만든 곡의 창작 기록은 어떻게 남나요? — MAIDOL은 곡 생성 과정의 대화와 선택 내역을 창작 기록으로 보관해 확인할 수 있도록 제공합니다. 이는 창작 과정을 증빙하는 데 참고할 수 있는 자료이며, 법적 저작권 등록이나 권리 보장을 의미하지는 않습니다."
+   - **공지 3 — 베타 테스트 안내**: "MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은 베타 기간으로, 기능이 수시로 추가되고 개선됩니다. 이용 중 오류를 만나시면 설정의 '문의하기(오류 신고)'로 알려주세요. 보내주신 의견은 하나씩 확인해 반영하고 있습니다. 베타 기간에는 일부 기능의 동작과 정책(별 사용량 등)이 예고 후 변경될 수 있습니다. 더 나은 MAIDOL로 보답하겠습니다."
+   - 스크립트 요건: 컨테이너 모듈 그대로 사용(asyncpg 커넥션은 settings.database_url로 직접 생성, mongo는 앱 getter 재사용 또는 motor 직접), official_id는 `official_account_email`로 SELECT(services/official.py 시드 기준), 시퀀스 = `notice_service.create_notice` → `dm_service.broadcast_message(..., notice_id=...)` → 이력 상태 갱신(admin_cs._run_cs_broadcast의 성공/실패 마킹과 동일 함수 사용). sent/failed 집계 출력 저장. 크리덴셜·토큰 출력 금지(시크릿 금지).
+5. **(⑤) 꾸미기 성별 자동 필터 (screens/ArtistCodyScreen.tsx)**
+   - 아티스트 성별 해석 헬퍼: apiResult(서버 character).gender → characterTaskStore.pendingGender → artistProfileStore.profiles[slot].gender 순 폴백, 문자열 정규화(trim 후 '남'으로 시작→'남', '여'로 시작→'여', 그 외/부재→null).
+   - null 아니면 피커 목록에 `genderMatches(item, g)`(:74 기존 함수 그대로 — '공용'·미지정 양쪽 포함)를 **기본 적용**. 피커 헤더(전체|위시리스트 탭 행)에 토글 칩 노출: 기본 `"○성용만"`(활성) ↔ 탭 시 `"전체 보기"` — 세션 내 피커 열 때마다 기본 ON 복귀. null이면 칩 미노출·필터 미적용.
+   - 적용 카테고리: gender 데이터가 실재하는 **상의·하의·신발**(실측 근거). 나머지 카테고리는 무필터(데이터 없음 — 전량 사라지는 사고 방지). SAMPLE_ITEMS(무광고 폴백)는 gender 없음 → genderMatches가 '공용' 취급이라 자연 통과.
+   - 수동 드릴다운 성별 레벨(:66)·위시리스트 탭·5단계 체인은 불변. 자동 필터는 openPicker 결과와 드릴 소스 목록에 일괄 선적용(드릴 패싯 수치도 필터 후 기준 — 일관성).
+   - 로그: `[ArtistCody] 성별 자동 필터` { g, cat, before, after }.
+6. 항상 규칙: MAIDOL 표기·이모지 금지(⭐ 예외)·showAlert(시스템 Alert 금지)·저작권 단정 금지·시크릿 금지·v3.203/204 합격 형상 회귀 금지.
+
+### 변경 매트릭스
+| 파일 | 변경 | 항목 | 담당 | 로그 추적자 |
+|---|---|---|---|---|
+| screens/DmChatScreen.tsx | insets.bottom 패딩 + 입력바 겹침 리프트 | ① | app-dev 1조 | `[DmChat]` 기존 유지 |
+| hooks/useKeyboardOverlapLift.ts (신규) | 겹침 실측 기반 Android 키보드 리프트 훅 | ① | app-dev 1조 | — |
+| screens/ArtistCodyScreen.tsx | 아티스트 성별 자동 필터 + 전체 보기 토글 | ⑤ | app-dev 1조 | `[ArtistCody] 성별 자동 필터` |
+| services/playback.ts | 프리로드를 로컬 풀 다운로드로 교체 + 파일 수명 관리 + active 복귀 재트리거 | ② | app-dev 2조 | `[BTDebug] preload download *` |
+| services/audioMode.ts | 웹 폴백 문자열 AIDOL→MAIDOL 1줄 | ③ | app-dev 2조 | — |
+| (서버) — 파일 변경 없음 | 컨테이너 python으로 공지 3건 브로드캐스트(프로덕션 DB 쓰기) | ④ | notice-ops | 서버 `[admin-cs]`/`[dm-broadcast]` |
+
+### 작업 순서·충돌 관리
+- **전 조 병렬**(파일 겹침 없음). 커밋: 조별 1커밋 이상, frontend 브랜치 자동 push 관행. EAS 재빌드 불필요(JS만).
+- notice-ops는 원고 오탈자 검수 후 실행 — 발송은 비가역이므로 실행 전 원고를 PLAN 원문과 diff 0 확인. 등록 스크립트는 scratchpad에만 두고 커밋 금지(로컬 산출물 아님).
+- ②의 캐시 경로·정리 로직은 tester 검증 전까지 프리로드 외 용도 사용 금지(다른 캐시와 디렉터리 분리).
+
+### test-designer 테스트 항목
+1. **① DmChat 입력바**: 설정→문의하기→사유 선택→DmChat 진입(프리필 확인). (a) Android API 35 에뮬 — 진입 직후 입력바 전체 노출(내비바에 안 깔림, 제스처/3버튼 모두), 입력 포커스 시 입력바가 키보드 위에 완전 노출, 키보드 닫힘 후 잔존 간격 0. (b) Android API 34 — 동일 + 이중 보정 간격 없음(겹침 0 → 리프트 0 확인). (c) iOS — 기존 KAV 회귀 0. (d) 수신 pending 대화(입력바 숨김 상태) 레이아웃 회귀 0.
+2. **② 로컬 프리다운로드**: 큐 2곡 이상 재생 → `[BTDebug] preload download start/done` 로그, 캐시 preload/ 파일 실재(크기>0). **핵심 시나리오**: 프리로드 완료 확인 후 기내 모드(네트워크 차단) → 현재 곡 종료 → 다음 곡 정상 이어재생(swap 로그 local:true). 수동 스킵/미니 닫기/셔플 토글 시 파일 삭제 확인(고아 0), 앱 재시작 시 purge 1회 로그. 다운로드 실패(서버 차단 시뮬) 시 백오프 3회·10s 및 didJustFinish 네트워크 폴백 회귀. 실기기(대표 단말) 화면 끄고 1시간 연속 재생 — 전환 성공률 기록(연쇄 한계 실측: N+2곡 동작 여부 보고).
+3. **③ 판정 검증**: 코드 변경 없음 확인(회귀 0) + 웹 빌드에서 미디어세션 artist 폴백 'MAIDOL' 표기. 노출 문자열 'AIDOL' 전역 grep 0(⭐ 예외 규칙 무관).
+4. **④ 공지 3건**: 테스트 일반 계정에서 official DM 3건 수신(순서: 문의 방법이 최상단), 본문이 PLAN 원고와 일치(diff 0), 이모지·'AIDOL' 문자열 0, 링크/개인정보 없음. mongo notices 3건(status 완료, sent>0, failed 집계 확인 — 컨테이너 python 읽기 전용 조회). DmChat에서 공지 대화에 답장 시 CS 접수 정상(기존 흐름 회귀).
+5. **⑤ 성별 필터**: 남성 아티스트로 꾸미기 진입 → 상의/하의/신발 피커 기본 상태에서 '여성용' 아이템 미노출·'공용' 노출, 토글 탭 → 전체 노출, 피커 재진입 시 필터 기본 복귀. 여성 아티스트 교차 확인. 성별 미상(구계정·자유입력) → 칩 미노출·전량 노출. 드릴다운 5단계(성별 레벨 포함)·위시리스트 탭·SAMPLE 폴백 회귀 0. 악세서리 등 무데이터 카테고리 전량 노출.
+6. **인접 회귀**: v3.204 AnswerEditModal 3화면·MusicResult 시크·튜토리얼 오버레이, v3.203 연주곡 체인 — 스모크 1회.
+
+### 후속(별도 과제)
+- **[차기 본작업 후보] expo-audio 이관 스파이크**: 실기기 EAS 빌드로 (a) setActiveForLockScreen → BT/차량 제목·아티스트 표기 (b) 백그라운드 연쇄 재생(Doze) (c) 원격 다음/이전 이벤트 검증 → 합격 시 playback.ts 전면 이관 설계(어댑터 계층으로 duration 보정·프리로드·reconciler·LISTEN 이식). 불합격 시 RNTP v4 스파이크, v5는 라이선스 비용 사용자 승인 사안. expo-av는 SDK 55 제거 예정 — 이관 필수.
+- 서버: frontend.log 호스트 볼륨 마운트(컨테이너 재생성 시 로그 소실 재발 방지 — docker run 옵션, 사용자 승인 배포).
+- /business/ads/active에 gender 쿼리 파라미터(서버 필터) — 앱 필터로 충분하나 카탈로그 500건 초과 성장 시.
+- 공지 운영 정례화: admin_web 공지 관리 페이지에서 발송하는 운영 절차 문서화(관리자 로그인 보유자 = 사용자).
+
+---
+
+## v3.205 ④ 개정 (2026-09-22, 사용자 지시: DM 브로드캐스트 반려 → official 채널 공지 글)
+
+> 사용자 원문: "공지는 DM 으로 발송되는게 아니라 maidol_official 계정의 공지사항에 글로 작성해야해. 그리고 사용자들이 디폴트로 오피셜 계정에 팔로워가 되어있어서 공지..를 채널에서 확인하는 방향으로 가려고 하는데."
+> → 기존 ④ 스펙(POST /api/admin/cs/broadcast, 전 유저 official DM 1통 fan-out)은 **폐기(미실행)**. DM 브로드캐스트는 이번 사이클에서 실행하지 않는다. 공지 3건 원고 본문은 재사용(채널 글 형식으로 조정 — 아래 확정 원고).
+> 실측 대상: 프로덕션 `maidol-ec2:/home/ubuntu/maidol/backend_9004`(읽기 전용 접근), 앱 `2_housing/`. 이하 파일:라인은 프로덕션 서버 파일 기준.
+
+### Plan verification findings (파일:라인 실측)
+
+**F1. '공지' 채널의 실체 = feeds kind=community (별도 채널·카테고리 없음)**
+- routes/feeds.py:30 `FEED_KINDS = ("feed", "community")  # v133: community = 채널 공지 글 (텍스트만)`. 별도 공지 채널/보드 없음 — **채널 = 유저 채널**(UserChannel), 공지 글 = 그 유저의 kind=community 피드 문서(mongo `feeds`).
+- 작성 API: `POST /api/feeds/`(feeds.py:308) — `get_current_user` 인증, author=본인 고정(작성자 위임 파라미터 없음). community 검증(feeds.py:104~175): 텍스트 블록만(track/image 400), title 무시·null 저장, blocks 1~50, 본문 합계 ≤10,000자.
+- 조회 API: `GET /api/feeds/user/{user_id}?kind=community`(feeds.py:363~) — `get_current_user_optional`(익명 열람 가능), 공개 글은 전 유저 열람, created_at DESC.
+- 타임라인: `GET /api/feeds/timeline`(feeds.py:439~) — 공개 글 최신 200건 후보, **팔로잉 작성자 글 +1000 부스트**(feeds.py:38 TIMELINE_FOLLOWING_BOOST). 전 유저가 official을 팔로우하므로 official 공지는 전 유저 피드 탭 최상단 블록에 노출(신규 팔로잉 글이 쌓이면 recency로 자연 하강, 고정(pin) 기능은 없음).
+- 알림 팬아웃(v192): 공개 글 생성 시 팔로워 전원에게 인앱 알림 insert(feeds.py:344~356 → routes/notifications.py:60~79 push_notifications_bulk, mongo `notifications`, **OS 푸시 아님**).
+- official 계정: services/official.py — `settings.official_account_email`로 users 단일 시드(role=admin), 비밀번호는 빈값이면 랜덤 시크릿 해시(official.py:36~39) → **로그인 불가(의도된 설계)**. **프로덕션 실측**: official id `56fea014…`, nickname `maidol_official`, role admin. official 명의 피드/공지 글 **0건**(전체 community 글은 1건 — 무신사 비즈 계정, 2026-08-31). 공지용 채널은 "이미 존재"하나(= official 유저 채널의 커뮤니티 탭) 글이 없는 상태.
+
+**F2. "사용자 디폴트 팔로우" — 사용자 가정과 코드 일치(실재)**
+- 가입 시 자동 맞팔: routes/auth.py:291, routes/oauth.py:212 → `ensure_mutual_follow`(services/official.py:110~149, user↔official 양방향 멱등 INSERT).
+- 기존 유저 백필: main.py:643~680 — startup마다 전 유저↔official 양방향 맞팔 멱등 백필(별도 백필 스크립트 불필요).
+- 언팔 가드: routes/follows.py:114~118 — official 언팔로우 403 차단.
+- **프로덕션 실측**: users 216명, official 팔로워 215명(전원 — official 자신 제외). → 조정안 불필요, 그대로 활용 가능.
+
+**F3. 앱 측 노출 경로 (2_housing)**
+- UserChannelScreen.tsx: '커뮤니티' 탭(:231~232)이 `GET /feeds/user/{id}?kind=community`(:62,:84)를 렌더(:395~398, 빈 상태 "아직 커뮤니티 글이 없어요"). 작성 버튼은 `isSelf`만 노출(:376~390 '새 공지 작성') — 타 유저에겐 읽기 전용.
+- UserChannel 진입 경로: FeedScreen.tsx:229(타임라인 작성자 탭)·FeedDetailScreen.tsx:208·AlbumDetailScreen.tsx:368·PlayerScreen.tsx:1034·NotificationsScreen.tsx:102(follow 알림 한정). **공지 전용 진입 메뉴는 없음** — 설정 등에서 official 채널로 바로 가는 길이 없다.
+- 눈에 띄는 표시: components/feed/FeedCard.tsx에 kind 구분 배지 **없음** — 타임라인에서 공지 글이 일반 피드와 시각적으로 동일. 고정/상단핀 기능 없음.
+- 알림: ntype=feed 라벨 "…님이 새 피드를 올렸어요"(NotificationsScreen.tsx:30), 탭 시 피드 탭 이동(:108) — 공지 열람 유도 동작으로 자연 성립.
+- official_id 해석 API: `GET /dm/official`(routes/dm.py:109~122) → `{official_id, nickname}` 반환(로그인 유저 누구나) — 앱에서 official 채널 네비게이션에 그대로 사용 가능.
+- → **앱 수정 필요(소규모 2건)**: 공지 구분 배지 + 공지 진입 메뉴(아래 확정 스펙 B). 없이도 공지는 노출되지만(타임라인 부스트+알림) "공지사항을 채널에서 확인"하는 명시적 동선이 없다.
+
+**F4. 등록 수단 확정**
+- `POST /api/feeds/`는 official JWT 필요 — official 비밀번호는 랜덤 시크릿(로그인 불가), 관리자 크리덴셜 사용 불가 전제 → API 경로 불가.
+- **확정: 컨테이너 python 직접 실행**(`ssh maidol-ec2` → `sudo docker exec -i maidol-app python`, python 3.11) — create_feed 핸들러(feeds.py:308~360)의 doc 형상을 그대로 재현해 mongo `feeds` insert + v192 알림 팬아웃(`app.routes.notifications.push_notifications_bulk` 재사용). DB 접속은 컨테이너 내 `settings.computed_mongo_url`(config.py:254~257)·postgres_* 설정 재사용(크리덴셜 하드코딩·출력 금지).
+- doc 형상(feeds.py:322~337 그대로): `{author_id: <official_id str>, author_nickname: "maidol_official", kind: "community", title: None, blocks: [{"type":"text","text": <원고>}], bgm_track_id: None, like_count: 0, comment_count: 0, is_public: True, created_at/updated_at: utcnow}`.
+- **삭제 가능 실측**: `DELETE /api/feeds/{feed_id}`(feeds.py:683~697, author-only, purge_feed_document로 댓글·좋아요 연쇄 정리) 존재 — 컨테이너 python으로 동일 purge 호출 가능. → **글 게시는 삭제로 회수 가능(엄밀한 비가역 아님)**. 단 팬아웃된 알림 문서는 별도 회수 필요(`notifications.delete_many({"target_id": feed_id})`), 이미 열람된 알림·타임라인 노출은 되돌릴 수 없음.
+
+**F5. 영향 지점·회귀 위험**
+- DM/CS 흐름 무변경: admin_cs.py broadcast·dm_service·notice_service는 이번에 호출하지 않을 뿐 코드 폐기 아님(운영 도구로 존치). 설정→문의하기(startCsInquiry) 경로 무영향.
+- 타임라인: 공지 3건이 전 유저 피드 탭 최상단 3장을 당분간 점유(+1000 부스트, 현재 전체 피드 5건뿐이라 체감 큼) — 사용자 의도("채널에서 확인")에 부합하나 피드 첫인상 변화는 인지 필요.
+- 알림: 유저당 인앱 알림 3건 적재(215명×3=645 문서, OS 푸시 아님 — 스팸성 낮음).
+- 앱 수정 2건은 신규 UI 추가로 기존 화면 로직 비파괴(배지=표시 전용, 설정 행=신규 항목).
+
+### 확정 스펙
+
+**A. 데이터 작업 — 공지 3건을 official 채널 community 글로 등록 (notice-ops, 프로덕션 mongo 쓰기)**
+1. 컨테이너 python 스크립트(scratchpad 전용, 커밋 금지): official_id를 `settings.official_account_email`로 SELECT → 공지 3건을 **3→2→1 순서**(커뮤니티 탭 created_at DESC — "문의 방법 안내"가 최상단), 건당 30초 이상 간격으로 feeds insert + `push_notifications_bulk(ntype="feed", actor_id=official_id, actor_nickname="maidol_official", target_id=feed_id, preview=본문 1행)` 팬아웃.
+2. 본 등록 전 **리허설 1건**: 테스트 본문("MAIDOL 공지 채널 점검 글입니다.")을 insert(팬아웃 없이) → 앱/API로 노출 확인 → purge_feed_document로 삭제 — 등록·삭제 경로를 실데이터로 검증한 뒤 본 공지 진행.
+3. 원고는 아래 확정본을 diff 0으로 사용(이모지 금지·MAIDOL 표기·저작권 단정 금지). community는 title이 없으므로 본문 1행을 제목 라인으로 사용.
+4. sent/failed(팬아웃 insert 건수) 집계를 로그로 남기고 feed_id 3건을 TESTPLAN에 전달. 크리덴셜·토큰 출력 금지.
+
+**공지 원고 3건 — 채널 글 버전(본문 1행 = 제목 라인, 이하 본문. DM판 대비 조정: 호칭 도입부 유지, FAQ는 줄바꿈 목록화)**
+
+- **공지 1 — 등록 순서 3번째(최상단)**:
+"[MAIDOL 공지] 문의 방법 안내
+안녕하세요, MAIDOL 팀입니다. 이용 중 불편이나 오류가 있다면 언제든 알려주세요.
+문의 방법: 설정 화면에서 '문의하기(오류 신고)'를 누르고 사유를 선택하면 MAIDOL 공식 계정과의 1:1 대화가 열립니다. 문제 상황(어떤 화면에서, 어떤 동작을 했을 때, 어떤 메시지가 떴는지)을 남겨 주시면 확인 후 답변드립니다.
+감사합니다."
+
+- **공지 2 — 등록 순서 2번째**:
+"[MAIDOL 공지] 자주 묻는 질문(FAQ)
+MAIDOL 자주 묻는 질문을 안내드립니다.
+Q. 별은 무엇인가요?
+별은 MAIDOL의 활동 재화입니다. 곡 만들기, 커버 이미지 생성 등 일부 기능에 사용되며, 보유량은 마이페이지에서 확인할 수 있습니다.
+Q. 곡 생성은 얼마나 걸리나요?
+보통 수 분 이내에 완성됩니다. 이용이 몰리는 시간에는 조금 더 걸릴 수 있으며, 생성 중에는 앱을 닫아도 서버에서 계속 진행됩니다.
+Q. 내 목소리(보이스 클론)는 언제까지 쓸 수 있나요?
+생성된 보이스는 약 2~6시간 동안 유지된 뒤 만료됩니다. 만료된 보이스는 다시 생성해야 하며, 만료로 인한 별 환불은 없습니다. 생성 자체가 실패한 경우에만 사용한 별이 환불됩니다.
+Q. 가사 없는 연주곡도 만들 수 있나요?
+네. 곡 만들기에서 연주곡을 선택하면 가사 없이 원하는 길이의 연주곡을 만들 수 있습니다.
+Q. 내가 만든 곡의 창작 기록은 어떻게 남나요?
+MAIDOL은 곡 생성 과정의 대화와 선택 내역을 창작 기록으로 보관해 확인할 수 있도록 제공합니다. 이는 창작 과정을 증빙하는 데 참고할 수 있는 자료이며, 법적 저작권 등록이나 권리 보장을 의미하지는 않습니다."
+
+- **공지 3 — 등록 순서 1번째(최하단)**:
+"[MAIDOL 공지] 베타 테스트 안내
+MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은 베타 기간으로, 기능이 수시로 추가되고 개선됩니다.
+이용 중 오류를 만나시면 설정의 '문의하기(오류 신고)'로 알려주세요. 보내주신 의견은 하나씩 확인해 반영하고 있습니다.
+베타 기간에는 일부 기능의 동작과 정책(별 사용량 등)이 예고 후 변경될 수 있습니다. 더 나은 MAIDOL로 보답하겠습니다."
+
+(DM판과의 차이: 공지 1에서 "이 대화방에 바로 답장을 보내셔도 접수됩니다." 문장 제거 — 채널 글에는 해당 없음. 그 외 본문 동일.)
+
+**B. 앱 작업 (app-dev, JS만 — EAS 재빌드 불필요)**
+1. **FeedCard 공지 배지**: components/feed/FeedCard.tsx — `feed.kind === 'community'`일 때 카드 헤더에 '공지' 텍스트 배지(액센트 보더 칩, 이모지·아이콘 추가 없음). 타임라인·채널·마이페이지 공통 적용(표시 전용, 기존 레이아웃 비파괴).
+2. **설정 '공지사항' 진입**: screens/SettingsScreen.tsx — '문의하기(오류 신고)' 행(:630) 위에 '공지사항' 행 추가 → `GET /dm/official`로 official_id 해석 → `navigation.navigate('UserChannel', { authorId: official_id, name: 'maidol_official', initialTab: 'community' })`. 실패 시 showAlert(시스템 Alert 금지).
+3. **UserChannel initialTab 파라미터**: App.tsx:145 RootStack 파라미터 타입에 `initialTab?: 'music'|'artists'|'feed'|'community'` 추가, UserChannelScreen.tsx:38,46에서 `useState<Tab>(route.params?.initialTab ?? 'music')` — 기존 진입(파라미터 없음)은 동작 불변.
+
+**서버 작업: 없음(파일 무수정·무배포·무재기동).**
+
+### 변경 매트릭스
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| components/feed/FeedCard.tsx | kind=community '공지' 배지 | app-dev | — (표시 전용) |
+| screens/SettingsScreen.tsx | '공지사항' 행 → official UserChannel 커뮤니티 탭 | app-dev | `[Settings] 공지사항 진입` |
+| screens/UserChannelScreen.tsx · App.tsx | UserChannel `initialTab` 파라미터 | app-dev | `[UserChannel]` 기존 유지 |
+| (서버 파일 변경 없음) | 컨테이너 python으로 공지 3건 community 글 insert + 인앱 알림 팬아웃 | notice-ops | 서버 `[feed]`/`[notify]` |
+
+### 실행 순서·비가역/프로덕션 쓰기 지점
+1. app-dev: B-1~3 구현·커밋(frontend 브랜치 관행) — 데이터 작업과 독립(병렬 가능).
+2. notice-ops: 원고 diff 0 검수 → **리허설 글 1건 등록·삭제**(프로덕션 쓰기이나 즉시 회수) → **사용자 최종 go 확인 후** 본 공지 3건 등록+팬아웃.
+3. **프로덕션 쓰기 지점(계획 단계에서는 미실행)**: (a) feeds insert 3건 (b) notifications insert 645건(215명×3). **회수 절차 실측 완료**: 글은 purge_feed_document로 삭제 가능, 알림은 target_id delete_many — 단 유저가 이미 본 노출은 회수 불가이므로 "사실상 발행 행위"로 취급, 본 등록 전 사용자 go 필수.
+4. tester: 아래 항목 검증 → PASS 시 커밋·기록.
+
+### test-designer 테스트 항목 (기존 TESTPLAN A-1/A-2의 DM 수신 검증은 **폐기** — DM 브로드캐스트 미실행)
+1. **등록 검증(API)**: `GET /api/feeds/user/{official_id}?kind=community` → 정확히 3건, 순서 최상단부터 [문의 방법 안내 / FAQ / 베타 안내], 본문 PLAN 원고 diff 0, kind=community·title null·is_public true, 이모지·'AIDOL' 문자열 0. 리허설 글 잔존 0.
+2. **채널 노출(앱)**: 일반 테스트 계정 → 설정 '공지사항' 탭 → official UserChannel 커뮤니티 탭 직행, 3건 노출 + '공지' 배지. 타 유저 채널·본인 채널(isSelf 작성 버튼) 회귀 0. initialTab 미지정 진입(타임라인 작성자 탭)은 기존 music 탭 시작 불변.
+3. **타임라인**: 일반 계정 피드 탭 최상단 블록에 공지 3건 노출(+팔로잉 부스트), FeedCard '공지' 배지, 작성자 탭 → official 채널 진입.
+4. **알림**: 일반 계정 알림함에 "maidol_official님이 새 피드를 올렸어요" 3건, 탭 시 피드 탭 이동. 팬아웃 건수 로그(645±: official 제외 계산) 일치.
+5. **회귀**: 설정→문의하기(오류 신고)→official DM 흐름 무변경(①번 항목 테스트와 교차), 기존 community 글(무신사) 표시 회귀 0, FeedCompose 일반 유저 공지 작성 회귀 0, 피드 좋아요/댓글 정상.
+
+### 사용자 결정 필요 사안
+- **본 공지 3건 등록 실행 go**(프로덕션 쓰기 — 리허설 후 최종 확인).
+- 알림 팬아웃 포함 여부(기본안: 포함 — 표준 create_feed 동작 재현, 인앱 알림뿐이라 부담 낮음. 제외 시 유저가 공지 등록을 인지할 채널이 타임라인뿐).
+- (후속 후보) 공지 고정(pin)·공지 전용 화면·커뮤니티 탭 라벨 '공지' 변경은 이번 범위 외 — 필요 시 차기 사이클.

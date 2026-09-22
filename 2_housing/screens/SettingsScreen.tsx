@@ -19,6 +19,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import api from '../services/api';
+import { fetchOfficial } from '../services/officialService';
 import {
   getMe,
   getMyConsents,
@@ -394,6 +395,25 @@ export default function SettingsScreen({ navigation }: any) {
     ]);
   };
 
+  // v3.205(④): 공지사항 — 공지 = official 계정의 kind=community 채널 글.
+  // officialService(프로세스 캐시, FeedCard 공지 배지와 공유)로 official_id 해석 →
+  // official UserChannel 커뮤니티 탭 직행(initialTab).
+  const openNotices = async () => {
+    if (__DEV__) console.info('[Settings] 공지사항 진입');
+    const official = await fetchOfficial();
+    if (!official) {
+      console.error('[Settings] 공지사항 진입 실패', { reason: 'official 조회 실패' });
+      showAlert('알림', '공지사항을 여는 데 실패했습니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    if (__DEV__) console.info('[Settings] 공지사항 official 확인 완료');
+    navigation.navigate('UserChannel', {
+      authorId: official.official_id,
+      name: official.nickname || 'maidol_official',
+      initialTab: 'community',
+    });
+  };
+
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -621,6 +641,14 @@ export default function SettingsScreen({ navigation }: any) {
           onPress={() => showAlert('알림', '캐시가 삭제되었습니다')}
         >
           <AppText style={styles.settingLabel}>캐시 삭제</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
+        </TouchableOpacity>
+        {/* v3.205(④): 공지사항 — official 채널 커뮤니티 탭(공지 글)으로 진입 */}
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={openNotices}
+        >
+          <AppText style={styles.settingLabel}>공지사항</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
