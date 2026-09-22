@@ -901,6 +901,15 @@ export default function SettingsScreen({ navigation }: any) {
         <View style={{ paddingHorizontal: 20 }}>
           <CompanyFooter onOpenPolicy={setPolicy} />
         </View>
+        {/* v3.211: expo-audio 백그라운드 재생 스파이크 진입 — 스파이크 기간 한정, 이관 완료 후 제거 예정.
+            테스터·사용자 실기기 검증용이라 __DEV__ 무관 노출(눈에 안 띄는 최하단 소형 텍스트) */}
+        <TouchableOpacity
+          style={styles.spikeEntry}
+          onPress={() => navigation.navigate('AudioSpike')}
+          hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
+        >
+          <AppText style={styles.spikeEntryText}>재생 엔진 테스트</AppText>
+        </TouchableOpacity>
         <PolicySheet
           visible={!!policy}
           title={policy === 'ai' ? AI_GENERATION_NOTICE.label : policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
@@ -923,6 +932,14 @@ export default function SettingsScreen({ navigation }: any) {
           }
         />
         <CompanyFooter onOpenPolicy={setPolicy} />
+        {/* v3.211: 스파이크 진입 — 비로그인에도 노출(로그인 상태 무관 검증 경로, 기간 한정) */}
+        <TouchableOpacity
+          style={styles.spikeEntry}
+          onPress={() => navigation.navigate('AudioSpike')}
+          hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
+        >
+          <AppText style={styles.spikeEntryText}>재생 엔진 테스트</AppText>
+        </TouchableOpacity>
         {/* v3.200: 'ai' 항목은 로그인 뷰 전용이지만, 시트 열린 채 로그아웃되는 엣지 방어 */}
         <PolicySheet
           visible={!!policy}
@@ -1358,5 +1375,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#cc6868',
     marginBottom: 8,
+  },
+  // v3.211: 스파이크 진입 행(회원탈퇴 소형 텍스트 관행 — 눈에 안 띄는 최하단, 기간 한정)
+  spikeEntry: {
+    alignSelf: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 6,
+  },
+  spikeEntryText: {
+    fontSize: 11,
+    color: colors.text.muted,
   },
 });

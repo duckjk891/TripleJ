@@ -96,6 +96,9 @@ import AlbumDetailScreen from './screens/AlbumDetailScreen';
 import TrackUploadScreen from './screens/TrackUploadScreen';
 // v3.104(B-5): 커버 보관함 — 열람/삭제 + 선택 모드({ select: true })로 커버 재사용
 import CoverLibraryScreen from './screens/CoverLibraryScreen';
+// v3.211: expo-audio 백그라운드 재생 스파이크 검증 화면 — 설정 최하단 '재생 엔진 테스트'로 진입.
+// 스파이크 기간 한정(이관 완료 후 화면·진입 행·이 등록 제거 예정).
+import AudioSpikeScreen from './screens/AudioSpikeScreen';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -166,6 +169,8 @@ export type RootStackParamList = {
   CoverLibrary: { select?: boolean } | undefined;
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
+  // v3.211: expo-audio 백그라운드 재생 스파이크(기간 한정 — 이관 후 제거 예정)
+  AudioSpike: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -313,12 +318,15 @@ function MainTabs() {
           backgroundColor: colors.bg.deepest,
           borderTopColor: colors.border.subtle,
           borderTopWidth: 1,
+          // 웹은 기본 49px에서 한글 받침이 잘림. 네이티브는 safe area 계산이 있어 고정 높이 금지
+          ...(Platform.OS === 'web' ? { height: 54 } : {}),
         },
         tabBarActiveTintColor: colors.accent.primary,
         tabBarInactiveTintColor: colors.text.muted,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
+          lineHeight: 14,
         },
       }}
     >
@@ -491,7 +499,9 @@ function useOAuthCallback() {
 
 // v3.57: 이 라우트들 위에서는 미니플레이어 UI를 숨긴다(모달과 겹쳐 어색). 사운드는
 // playerStore 전역 소유라 UI를 숨겨도 재생은 계속된다.
-const HIDE_MINIPLAYER_ROUTES = ['Settings'];
+// v3.211: AudioSpike — 진입 시 기존 재생을 정지하므로 미니는 어차피 소멸하지만,
+// 화면 체류 중 다른 경로로 재생이 시작돼 겹치는 엣지 방어(스파이크 기간 한정)
+const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike'];
 
 // v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
 // FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.
@@ -584,6 +594,8 @@ export default function App() {
             <RootStack.Screen name="CoverLibrary" component={CoverLibraryScreen} options={({ navigation }) => stackHeader(navigation, '커버 보관함')} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
+            {/* v3.211: expo-audio 스파이크 검증 화면(기간 한정 — 이관 후 제거 예정) */}
+            <RootStack.Screen name="AudioSpike" component={AudioSpikeScreen} options={({ navigation }) => stackHeader(navigation, '재생 엔진 테스트')} />
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치. 설정 등 모달 라우트에선 숨김(재생은 유지) */}
           {!HIDE_MINIPLAYER_ROUTES.includes(currentRoute ?? '') ? <MiniPlayerWrapper /> : null}
