@@ -7,7 +7,7 @@
 //   플래그 OFF → 기존 blocked(준비 중) 안내 유지 — 법적 방어(가입 차단).
 // 현행 백엔드는 gender·consents가 필수라 이 패널이 없으면 가입이 항상 400으로 실패한다(v3.43에서 해소).
 import { useMemo, useState } from 'react';
-import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
 import {
@@ -36,6 +36,15 @@ const normalizeCompany = (v: string) => {
 };
 
 const REFERRAL_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+
+// v3.212: 웹 한정 — 초대 랜딩의 `?ref={code}` 쿼리를 가입 폼 추천코드로 프리필. 네이티브 동작 무변경.
+const initialReferralCode = (() => {
+  try {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
+    const ref = (new URLSearchParams(window.location.search).get('ref') || '').toUpperCase();
+    return REFERRAL_RE.test(ref) ? ref : '';
+  } catch { return ''; }
+})();
 
 interface AuthPanelProps {
   onSuccess?: () => void;
@@ -76,7 +85,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const [companyName, setCompanyName] = useState('');
   const [displayTitle, setDisplayTitle] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [referralCode, setReferralCode] = useState('');
+  const [referralCode, setReferralCode] = useState(initialReferralCode);
   const [consents, setConsents] = useState<ConsentState>({});
 
   // v3.101 보호자 동의 플로우(만 14세 미만 + 서버 플래그 ON)

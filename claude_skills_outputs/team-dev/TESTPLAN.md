@@ -2801,3 +2801,92 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1(탭·비공개 왕복)·E-2(Inst. 재생)·D-1(앨범 삭제 실증)이 사용자 요청 3건 직결 완료 조건.
 - **핵심 FAIL 게이트**: ① **D-0/A-0/A-4·E-2**(무승인 앨범 삭제·무승인 배포·무승인 실생성 = 최상위) ② **S-5 ①/A-4 ③**(신규 트랙 audio의 Suno URL 잔존 — 14일 만료 사고) ③ **S-3/A-4 ⑤**(⭐ 이중 차감·환불 누락) ④ **A-5/E-1 ③**(비공개 글 타인 노출) ⑤ **U-6/E-3 ①②**(직전 사이클 회귀 — 공지 배지·타임라인·블라인드·v3.209 영상 디렉터) — 추가: **U-1**(diff 격리·App.tsx 추가 hunk)·**U-4 ②/E-1 ④**(blocks 원형 훼손)·**S-1 ②**(torch/demucs 재유입). 1건이라도 FAIL이면 해당 트랙 커밋·배포·출고 금지.
 - 이월(판정 대상 아님): 업로드곡 Inst. 확장·Inst. 비용 대안(⭐10)·full 레이아웃 등 PLAN 이월 목록, 보컬 제거 품질 자체(외부 모델 성능)는 기록만.
+
+## v3.212 (2026-09-23) — 추천하기 공유 개편: 옵션 2개 축소·멘트 랜딩 톤 정렬·초대 페이지 CTA 2원화(UA 분기)·OG 이미지 v2·웹 ?ref 프리필
+
+대상: `2_housing/components/AppShareModal.tsx`(공유 옵션 2개·멘트 확정본) · `2_housing/components/auth/AuthPanel.tsx`(웹 한정 ?ref 프리필) · `server_staging_v3212/referral.py`(CTA 2원화+UA 분기·OG 메타·토큰 정렬) · `server_staging_v3212/static/og/invite_og_v2.png`(신규 1200×630). 서버 배포·EC2 `.env` 추가는 오케스트레이터 담당 — 배포 전이면 [api]/[e2e]는 "대기" 보고. 민감 값은 플레이스홀더(`<TEST_CODE>`=유효 추천코드 4자, `<TEST_ACCOUNT>`=테스트 계정)로 표기하며 실값은 산출물에 기록 금지.
+
+### [unit] 앱 트랙 (AppShareModal · AuthPanel — 코드 정적 검증, 빌드 불요)
+
+**U-1. AppShareModal 공유 옵션 정확히 2개 — 인스타·페북 잔재 0 [unit] — FAIL 게이트**
+- Given: PLAN ① — 버튼 [카카오톡으로 공유 | 링크 복사] 2개만. 카카오톡 버튼은 현행 네이티브 공유 시트(`Share.share`) 유지, 카카오 SDK 미도입(이월).
+- When: ① `SHARE_BUTTONS` 배열 원소 수 실측 — 소셜 버튼은 카카오톡 1종만, 링크 복사 버튼 별도 존치로 노출 버튼 총 2개. ② 파일 전체에서 "인스타"/"instagram"/"페이스북"/"facebook" 문자열(대소문자 무관) 0건 — 주석·미사용 분기·아이콘 참조 잔재 포함. ③ 카카오톡 버튼 핸들러가 여전히 RN `Share.share({message})` 경로(카카오 SDK import 0, package.json kakao 계열 의존성 0 재확인). ④ 링크 복사 핸들러가 `shareTextFull`(멘트 전문+URL)을 클립보드에 복사 — URL 누락 없음. ⑤ 버튼 레이아웃 2열 1행(폭 48% 셀) 유지, 모달 안내문(보상 설명)은 현행 유지 확인.
+- Then: ①~⑤ 전부 충족 — **①·②(옵션 2개 초과 또는 인스타/페북 잔재 1건) = FAIL 게이트**.
+
+**U-2. 공유 멘트 확정본 문자 일치·이모지 0(⭐ 예외)·AIDOL 0 [unit] — FAIL 게이트**
+- Given: PLAN ① 확정 멘트(shareTextBase):
+  ```
+  나의 AI 아이돌, MAIDOL
+  작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.
+  추천코드 {code} 입력하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요.
+  ```
+  `shareTextFull` = shareTextBase + "\n" + inviteUrl. 링크 복사도 동일 전문.
+- When: ① 소스의 shareTextBase 템플릿 리터럴을 확정본과 **문자 단위 대조**(줄바꿈 위치·중점 `·`·쉼표·"완성해요"/"충분해요" 어미 포함, {code} 보간 위치 일치). ② 멘트·모달 전체 노출 문자열에 이모지 0 — 유일 예외 ⭐(U+2B50)만 허용, 별 외 이모지(🎵🎁 등) 발견 즉시 FAIL. ③ 노출 문자열에 "AIDOL" 단독 표기 0(브랜딩 규칙 — "MAIDOL" 내부 부분 문자열은 매칭 제외: `\bAIDOL\b` 기준). ④ 공유 시트 호출 메시지와 링크 복사 클립보드 값이 동일한 shareTextFull 인지(두 경로 문안 분기 0).
+- Then: ①~④ 전부 충족 — **①(확정본 불일치)·③(AIDOL 노출) = FAIL 게이트**.
+
+**U-3. AuthPanel ?ref 프리필 — 웹 한정·네이티브 분기 무접촉 [unit]**
+- Given: PLAN ④ — `referralCode` 초기값을 `Platform.OS === 'web'` && `location.search`의 `ref`가 REFERRAL_RE(4자) 통과 시 대문자 프리필(약 5줄, try/catch). 가입 API payload 계약 무변경.
+- When: ① 프리필 로직이 `Platform.OS === 'web'` 가드 내부에만 존재 — 네이티브 경로에서 `location`/`URLSearchParams` 참조 도달 불가(웹 전용 API의 네이티브 크래시 0). ② try/catch 래핑 존재(SSR·location 부재 환경 안전). ③ REFERRAL_RE 검증 통과 시에만 대입 + `.toUpperCase()` 적용, 미통과(`ref=zz!` 등) 시 초기값 공란. ④ 기존 수동 입력 필드·검증·가입 payload 필드명 diff 무변경(프리필은 초기값만). ⑤ AuthPanel diff가 프리필 블록 외 hunk 0.
+- Then: ①~⑤ 전부 충족 — ①(네이티브 분기 접촉)이 판정 중심.
+
+**U-4. tsc exit 0 + diff 격리 [unit] — FAIL 게이트(직전 사이클 회귀)**
+- Given: frontend 브랜치는 커밋 후 자동 push 관례 — 머지 게이트 역할.
+- When: ① `2_housing/`에서 `npx tsc --noEmit` exit 0(신규 에러 0 — 기존 에러 있으면 기준선 대조로 증분 0 판정). ② `git diff --stat` 실측: 이번 사이클 앱 변경 = `AppShareModal.tsx`·`AuthPanel.tsx` **2파일만**. 병행/직전 사이클 파일(`App.tsx`, 피드 탭 v3.210 파일군, expo-audio v3.211 파일군, `HomeHeaderActions.tsx`) 및 `1_MV_wedding/`·`0_platform_music/` 기존 dirty 파일에 **이번 사이클發 hunk 0** — 기존 워킹트리 변경은 판정 제외하되 신규 hunk 유입만 검사. ③ `HomeHeaderActions.tsx` 진입점(openInvite) 무변경 — 모달 열림 경로 회귀 0.
+- Then: ①~③ 전부 충족 — **②(diff 격리 위반) = FAIL 게이트(직전 사이클 회귀 방지)**.
+
+### [unit] 서버 스테이징 트랙 (server_staging_v3212/ — 정적 검증, 배포 전 수행 가능)
+
+**S-1. referral.py 정적 — PLAY_STORE_URL 하드코딩 0·UA 분기·og:image v2·불변 계약 diff 0 [unit] — FAIL 게이트**
+- Given: PLAN ② — CTA 2원화(양 버튼 항상 노출, UA 서버측 분기), `_WEBAPP_URL="https://app.maidol.ai.kr"` 상수, Play 링크는 `settings.play_store_url` 경유(.env 교체는 배포 단계), og:image → `/static/og/invite_og_v2.png`. 보상 로직·JSON API·404 변형·XSS escape·`aidol://` 무변경.
+- When: ① `grep`으로 `play.google.com` 하드코딩 0건 — Play CTA href는 `settings.play_store_url` 참조만(내부테스트 URL 문자열이 py에 직접 등장하면 FAIL). ② UA 분기: invite_landing이 Request의 User-Agent를 읽어 "Android" 포함 → Play 버튼 primary(그라데이션)·웹 버튼 secondary, 그 외(iOS/기타) → 웹 버튼 primary + 보조문구 "iOS는 웹 버전을 권장해요 — 설치 없이 바로 시작" — 분기 로직 문자 추적, **두 버튼 모두 양 분기에서 항상 렌더**(한쪽 숨김 코드 0). ③ 웹 CTA href = `_WEBAPP_URL` + 유효 코드 시 `?ref={code}`(무효 코드 시 쿼리 없음), 코드 값 escape 경유. ④ og:image 경로 = `/static/og/invite_og_v2.png`(구 invite_og.png 참조 잔존 0), og:title/description = PLAN 확정본(유효 "「{nickname}」님이 MAIDOL에 초대했어요" / 무효 "MAIDOL — 나의 AI 아이돌" / desc "작사·작곡부터 앨범 커버까지 AI가 무료로 완성. 추천코드 {code} 입력하면 두 사람 모두 스타 50!", 무효 시 코드 문장 생략) 문자 대조. ⑤ `referral.py_orig` 대비 diff에서 **`aidol://` 딥링크 블록·`/api/referral/*` JSON 라우트·보상(⭐50 적립) 로직·404 변형 구조에 변경 hunk 0** — 표시 계층(HTML/CSS/OG 메타)만 변경. ⑥ 토큰 정렬: bg `#0a0a1a`·바이올렛 `#8b5cf6`/`#a78bfa`/`#6d28d9`·Pretendard CDN link·tagline "MY AI IDOL · AI 음악 창작 놀이터"·lede "작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요." 존재. ⑦ 노출 문자열 `\bAIDOL\b` 0·이모지 0(⭐ 예외 — desc는 "스타 50" 표기임에 유의).
+- Then: ①~⑦ 전부 충족 — **⑤(보상·JSON API·딥링크 diff 발생) = FAIL 게이트**.
+
+**S-2. OG PNG 실물 검사 — 1200×630·AIDOL 부재(육안) [unit] — FAIL 게이트(최중요)**
+- Given: PLAN ③ — `server_staging_v3212/static/og/invite_og_v2.png`. 구 이미지의 FAIL 요인 3종 = "AIDOL" 워드마크·브라우저 창 프레임·입체 별 클립아트.
+- When: ① Pillow(또는 `file`+`sips`)로 규격 실측: **정확히 1200×630, PNG**. ② **Read 도구로 이미지 실물을 읽어 육안 판정**: "AIDOL" 문자 미포함(워드마크는 "MAIDOL"), 브라우저 창 프레임 부재, 클립아트 입체 별 부재. ③ 육안 구성 확인: #0a0a1a 계열 다크 배경 + 상단 바이올렛 글로우, 중앙 MAIDOL 그라데이션 워드마크, 서브카피 "MY AI IDOL · AI 음악 창작 놀이터", 하단 배지 "OPEN BETA" + "추천코드 가입 시 두 사람 모두 ⭐50" — 한글 렌더 깨짐(□ 두부글자) 0. ④ 파일 용량 상식선(<500KB) — 과대 시 카카오 스크랩 지연 리스크 기록.
+- Then: ①~④ 전부 충족 — **②(AIDOL 잔존) = FAIL 게이트(최중요 — 사용자 지적 "촌스러운 이미지"의 핵심 원인)**. 이미지 미제작 상태면 "대기" 보고.
+
+**S-3. py_compile + 템플릿 무결성 [unit]**
+- When/Then: ① `python3 -m py_compile server_staging_v3212/referral.py` exit 0. ② f-string 템플릿 중괄호 이스케이프 검증 — CSS 블록 `{{ }}` 처리 누락으로 인한 렌더 시 KeyError/ValueError 경로 0(가능하면 `_render_invite_html` 상당 함수를 로컬 import 호출로 유효/무효 코드 2케이스 렌더 스모크 — HTML 문자열에 미치환 `{var}` 잔존 0). ③ 렌더 산출 HTML에 CTA `<a>` 2개·`aidol://` 링크 1개 존재.
+
+### [api] 배포 후 실측 (오케스트레이터 배포 완료 확인 후 — 전이면 "대기" 보고. 무인증 GET·웹 브라우저 검증만, 서버 쓰기 0)
+
+**A-1. invite 페이지 UA 분기 실측 [api]**
+- Given: `https://api.maidol.ai.kr/invite/<TEST_CODE>` 배포 완료(restart_9004.sh + .env `PLAY_STORE_URL` 반영).
+- When: ① `curl -A "Mozilla/5.0 (Linux; Android 14; ...) Chrome/..."` → Play 버튼 primary 클래스·웹 버튼 secondary. ② `curl -A "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 ...) Safari/..."` → 웹 버튼 primary + iOS 권장 보조문구 존재. ③ 양 UA 응답 모두에 **두 CTA href 공존**: Play = `https://play.google.com/apps/internaltest/4700477405401874414`(.env 반영 실증 — 구 플레이스홀더 `details?id=com.maidol.app` 잔존 시 FAIL), 웹 = `https://app.maidol.ai.kr?ref=<TEST_CODE>`. ④ `aidol://` 앱 열기 링크 존치.
+- Then: ①~④ 전부 충족 — ③의 구 플레이스홀더 잔존이 판정 중심.
+
+**A-2. OG 메타·이미지 서빙 실측 [api]**
+- When/Then: ① `curl /invite/<TEST_CODE>` HTML의 og:title/og:description = S-1 ④ 확정본, og:image = `https://api.maidol.ai.kr/static/og/invite_og_v2.png`. ② og:image URL GET → **200 + Content-Type image/png**, 바이트 다운로드 후 1200×630 재실측(스테이징 파일과 동일 바이트 — 체크섬 대조). ③ **구 `invite_og.png` GET 여전히 200**(기존 스크랩 카드 404 방지 — 존치 정책). ④ 무효 코드 `/invite/ZZZZ` → 404 + HTML 변형(안내문 + CTA 2개 유지) + og:title 무효 문안. ⑤ HEAD 프리플라이트: 유효 200 / 무효 404.
+
+**A-3. JSON API·보상 계약 회귀 [api] — FAIL 게이트**
+- Given: 표시 계층만 변경 — `/api/referral/*` 계약 불변이 전제.
+- When: ① `GET /api/referral/my-code`(<TEST_ACCOUNT> 토큰 — 값은 플레이스홀더 관리) 응답 스키마 필드 전항 v3.211 이전과 동일. ② 무인증 GET `/invite/<TEST_CODE>` 반복 호출이 서버 5xx 0·응답 시간 상식선. ③ 보상(⭐50) 적립 로직은 코드 diff 0(S-1 ⑤)로 갈음하고, 실가입 스모크는 E2E 게이트에서 신규 코드 가입 1건 발생 시 양측 적립 확인으로 교차(추가 가입 강제 없음).
+- Then: ①~③ 전부 충족 — **①(JSON 계약 회귀) = FAIL 게이트**.
+
+**A-4. 웹앱 ?ref 프리필 브라우저 실측 [api] (Playwright 허용)**
+- Given: 웹앱 배포본 `https://app.maidol.ai.kr`(앱 머지·웹 빌드 배포 완료 후 — 전이면 "대기").
+- When: ① Playwright(또는 헤드리스 브라우저)로 `app.maidol.ai.kr?ref=<TEST_CODE>` 접속 → 가입 폼 진입 시 추천코드 필드에 `<TEST_CODE>` 대문자 자동 입력. ② `?ref=zz!`(형식 무효) → 필드 공란 + 콘솔 에러 0. ③ 쿼리 없음 → 공란·기존 수동 입력 동작 회귀 무. ④ 가입 제출은 하지 않음(계정 생성 부작용 0 — 프리필 표시까지만 검증).
+- Then: ①~④ 전부 충족.
+
+### [e2e] 실기기 (앱 새 빌드 + 서버 배포 완료 후)
+
+**E-1. 추천하기 → 옵션 2개 → 카카오 공유 → 수신 멘트·OG 카드 [e2e] — 완료 조건 직결**
+- Given: 실기기(Android) 새 빌드 + **카카오 공유 디버거(developers.kakao.com/tool/debugger/sharing)에서 `api.maidol.ai.kr/invite/<TEST_CODE>` 캐시 초기화 선행**(초기화 없이는 구 카드가 떠도 판정 불가 — 초기화 수행 기록 필수).
+- When: ① 홈 헤더 친구초대 아이콘 → 공유 모달: 버튼 정확히 [카카오톡으로 공유 | 링크 복사] 2개, 인스타/페북 부재 육안 확인. ② 카카오톡 공유 → 시트에서 카카오톡 선택 → 수신 측 말풍선 텍스트 = 확정 멘트 3줄 + invite URL **문자 일치**(스크린샷 채증). ③ 수신 카톡의 OG 카드 = **신규 v2 이미지**(MAIDOL 워드마크·다크 바이올렛 — 구 AIDOL/브라우저 프레임 카드면 FAIL, 단 캐시 초기화 누락 여부 먼저 재확인) + og:title 신규 문안. ④ 링크 복사 → 메모 앱 붙여넣기로 클립보드 값 = 동일 전문 + URL.
+- Then: ①~④ 전부 충족 — **①(옵션 3개 이상 잔존)·③(AIDOL 구 카드) = FAIL 게이트**.
+
+**E-2. 초대 링크 Android/iPhone 실기기 분기 [e2e] — 완료 조건 직결**
+- When: ① Android 실기기 브라우저에서 invite 링크 열기 → primary(그라데이션) = [Google Play에서 다운로드], 탭 시 내부테스트 페이지 도달(테스터 미등록 계정이면 접근 제한 화면도 정상 — 링크 자체 도달 판정). ② iPhone(또는 iOS UA 시뮬레이션 브라우저)에서 열기 → primary = [웹에서 바로 시작하기] + iOS 권장 문구, 탭 시 `app.maidol.ai.kr?ref=<TEST_CODE>` 도달 → 가입 폼 코드 프리필(A-4 실기기 교차). ③ 양 기기 모두 secondary 버튼 존재·동작. ④ 앱 설치 기기에서 `aidol://` 앱 열기 링크 동작 스모크.
+- Then: ①~④ 전부 충족.
+
+**E-3. 회귀 스모크 — 직전 사이클 [e2e] — FAIL 게이트**
+- When/Then: ① v3.210 피드 탭 3종([전체|내 피드|내 공지]) 전환·공개/비공개 칩 표시 정상 1회 스모크. ② v3.211 백그라운드 재생 검증 화면(설정 진입) 진입~재생 스모크(크래시 0). ③ 추천 가입 보상: E-1 공유 링크로 신규 가입 1건 발생 시 양측 ⭐50 적립 확인(신규 가입 강제 없음 — 미발생 시 A-3 ③ 코드 diff 0으로 갈음 기록). ④ 앱 전반 노출 문자열 AIDOL 0 스팟 체크(모달·초대 흐름 한정).
+- Then: **①·②(직전 사이클 회귀) = FAIL 게이트**.
+
+### 게이트 요약
+
+- **트랙 구조**: 앱 머지 게이트 = U-1~U-4 전부 PASS(frontend 자동 push 관례). 서버 트랙 = S-1~S-3 PASS → 오케스트레이터 배포(EC2 `.bak_pre_v3212` 백업 → scp py+png → .env `PLAY_STORE_URL` 1줄 → restart_9004.sh, EC2 직접 편집 금지) → A-1~A-3. 웹앱 프리필 = 웹 빌드 배포 후 A-4. E2E = 전 트랙 완료 + 카카오 캐시 초기화 후 E-1~E-3. 각 선행 미완 시 "대기" 보고.
+- **완료 조건**: E-1(옵션 2개·신규 멘트·신규 OG 카드)·E-2(Android/iOS 권장 버튼 분기)가 사용자 요청 직결 완료 조건.
+- **핵심 FAIL 게이트**: ① **S-2 ②/E-1 ③**(OG 이미지 AIDOL 잔존) ② **S-1 ⑤/A-3 ①**(보상·JSON API 회귀) ③ **U-1/E-1 ①**(공유 옵션 2개 초과 잔존) ④ **U-4 ②/E-3 ①②**(직전 사이클 회귀 — diff 격리·피드 탭·백그라운드 재생) — 추가: U-2(멘트 확정본 불일치·AIDOL 노출)·A-1 ③(구 Play 플레이스홀더 잔존). 1건이라도 FAIL이면 해당 트랙 커밋·배포·출고 금지.
+- 사용자 안내 이관 항목(판정 대상 아님): 카카오 OG 캐시 수동 초기화(기 공유 URL), Play 내부테스트 링크는 테스터 등록 계정 한정, 카카오 SDK 카드 템플릿·beta-event-og.png 정리는 이월.

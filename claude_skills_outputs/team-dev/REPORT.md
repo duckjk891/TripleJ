@@ -2730,3 +2730,20 @@ U-1~U-7 + S-1~S-5: FAIL 2건(위 bgm_track_id·409 — 앱 1줄급) 즉시 픽�
 ### 대기
 
 ② 앨범 삭제(후보 2건 — 타 계정 "앨범테스트" 포함 여부 사용자 확인 대기), ③ 서버 배포 + A-1~A-5(실생성 1건 = ⭐10·Suno 10크레딧 — 승인 후), E(새 빌드).
+
+## v3.212 (2026-09-23) — 초대(추천하기) 공유 전면 개편: 옵션 축소·멘트·CTA 2원화·OG 이미지 교체 (코드분)
+
+**요청**: 공유 옵션 카카오톡·링크 복사만 / 카카오 멘트를 랜딩 톤으로 / 초대 페이지 Google Play(내부 테스트)+웹 실행 2버튼(iOS는 웹 권장) / 촌스러운 공유 이미지 교체(구 "AIDOL" 이미지 — 브랜딩 위반 확인).
+
+### 수행 결과
+
+- **앱(2파일)**: AppShareModal 옵션 [카카오톡으로 공유|링크 복사] 2개 축소(SDK 미도입 — 네이티브 시트 위임 유지), 멘트 확정본("나의 AI 아이돌, MAIDOL / 작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요 / 추천코드 {code} 입력하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요") — 사용자 검수 전달. AuthPanel 웹 한정 ?ref 프리필(4자 검증 통과 시만).
+- **서버 스테이징(server_staging_v3212)**: referral.py 표시 계층만 개편 — CTA 2원화(Play=settings.play_store_url 경유·하드코딩 0, 웹=app.maidol.ai.kr?ref={code}), 서버 UA 분기(Android=Play primary / iOS·기타=웹 primary + "iOS는 웹 버전을 권장해요"), 랜딩 디자인 토큰 정렬. 보상 로직·JSON API·aidol:// 딥링크·404 변형 diff 0. **신규 OG 이미지 invite_og_v2.png**(1200×630, headless Chrome 렌더 — MAIDOL 워드마크 AI 보라 분리·OPEN BETA·⭐50 배지, AIDOL·프레임·클립아트 0, 재생성용 .src.html 보관, 구 파일 존치). .env PLAY_STORE_URL=내부 테스트 링크(DEPLOY.md 기재).
+
+### 검증 (tester)
+
+U-1~U-4 + S-1~S-3: 주석 문구 1건(문언 게이트) 즉시 정리 외 전 항목 PASS — 멘트 문자 단위 일치, OG PNG 실물 육안(AIDOL 0·규격·용량<500KB), 렌더 스모크 3케이스, 보상·API 회귀 0, tsc·py_compile 0, diff 격리. A(배포 후: UA 분기 curl·og:image 200·JSON 회귀·?ref Playwright)·E(실기기+카카오 캐시 초기화 선행) 대기.
+
+### 잔여
+
+서버 배포(사용자 커맨드 — referral.py+PNG scp, .env 1줄, docker 재빌드) → **카카오 공유 디버거에서 invite URL 캐시 초기화(수동, 링크는 DEPLOY.md)** → A 검증. 앱 변경(옵션·멘트·프리필)은 1.1.2 빌드부터.

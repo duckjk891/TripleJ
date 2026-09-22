@@ -1,5 +1,6 @@
 // [AppShareModal] 앱 추천(초대) — MAIDOL AppShareModal 이식.
-// 추천코드 표시 + 복사(📋) + 공유 4종(카카오톡/인스타그램/페이스북/링크복사).
+// v3.212: 공유 옵션 2개로 축소(카카오톡으로 공유·링크 복사만 유지),
+//         공유 멘트를 랜딩(maidol.ai.kr) 카피 톤으로 교체. 카카오는 네이티브 공유 시트 위임 유지(SDK 미도입 확정).
 // 백엔드 계약: GET /referral/my-code → {referral_code, invite_url:"/invite/{code}"}
 import { useState, useEffect } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, Share, StyleSheet } from 'react-native';
@@ -11,12 +12,9 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
 
-// 공유 타깃 라벨 — MAIDOL과 동일 구성. RN에서는 세 소셜 모두 네이티브 공유 시트로 위임.
-// v3.71: 이모지 전부 제거(사용자 요청)
+// 공유 타깃 라벨 — v3.212: 카카오톡 1종만(네이티브 공유 시트 위임). 링크 복사는 별도 버튼.
 const SHARE_BUTTONS: { key: string; label: string }[] = [
-  { key: 'kakao', label: '카카오톡' },
-  { key: 'instagram', label: '인스타그램' },
-  { key: 'facebook', label: '페이스북' },
+  { key: 'kakao', label: '카카오톡으로 공유' },
 ];
 
 export default function AppShareModal() {
@@ -48,9 +46,8 @@ export default function AppShareModal() {
   }, [open]);
 
   const inviteUrl = code ? `${BACKEND_BASE_URL}/invite/${code}` : '';
-  // v160 — URL 중복 방지: 네이티브 시트엔 base 메시지, 복사엔 URL 포함 full.
-  // v3.58 — 베타 이벤트 문구 삽입(공유 메시지에 이벤트가 함께 전달되도록)
-  const shareTextBase = `MAIDOL — AI가 만든 음악의 새로운 세계\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
+  // v3.212 — 확정 멘트(랜딩 카피 톤 정렬). 공유·링크 복사 모두 동일 전문(shareTextFull) 사용.
+  const shareTextBase = `나의 AI 아이돌, MAIDOL\n작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.\n추천코드 ${code} 입력하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요.`;
   const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const showMsg = (m: string) => { setMessage(m); setTimeout(() => setMessage(''), 4000); };
