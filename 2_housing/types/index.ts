@@ -61,6 +61,8 @@ export interface MusicParams {
   lyricsSource?: LyricsSourceSnapshot | null;
   /** v3.202(J): 연주곡(Instrumental) — true면 generateWithSuno가 vocal='instrumental'로 전송 */
   instrumental?: boolean;
+  /** v3.203: 연주곡 곡 길이(초, Suno V6 duration 10~360) — instrumental일 때만 body.duration에 반영 */
+  durationSec?: number;
 }
 
 /**

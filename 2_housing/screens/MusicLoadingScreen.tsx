@@ -212,6 +212,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           vocal: store.instrumental ? '' : (store.vocal || undefined),
           vocalStyle: store.instrumental ? undefined : (store.vocalStyle || undefined),
           instrumental: store.instrumental || undefined,
+          // v3.203: 연주곡 곡 길이(초, step 310 선택) — generateWithSuno가 body.duration으로 전송
+          durationSec: (store.instrumental && store.durationSec) || undefined,
           referenceFile: store.referenceFile || undefined,
           isDuet: lyricsStore.isDuet || undefined,
           subVocal: store.subVocal || undefined,
@@ -234,7 +236,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         };
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,
-          vocal: params.vocal, instrumental: params.instrumental, style: params.style, referenceStyle: params.referenceStyle,
+          vocal: params.vocal, instrumental: params.instrumental, durationSec: params.durationSec,
+          style: params.style, referenceStyle: params.referenceStyle,
           bpm: params.bpm, musicalKey: params.musicalKey, negativeTags: params.negativeTags,
           personaModel: params.personaModel, personaId: params.personaId,
           audioWeight: params.audioWeight, referenceUploaded: !!referenceData,

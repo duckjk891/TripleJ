@@ -3303,3 +3303,103 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 8. **I-lite** CoverGenerationScreen: ERR_NETWORK/타임아웃 catch에서 즉시 실패 확정하지 않고 cover-sessions 폴링(15s 간격×최대 12회) → 완성본 발견 시 성공 처리(재차감 없음) + 대기 UI 문구. 미발견 시 기존 오류.
 9. **J** 연주곡: ComposeLyricsPickScreen에 '가사 없이 만들기(연주곡)' 카드(목록 위+빈 상태) → setLyrics('')+setInstrumental(true)+replace('ComposerSelect'). ComposerSelectScreen 가사 게이트에 instrumental 예외. MusicGenerationScreen: instrumental 시 가사확인·보컬 스텝 스킵 + VOCAL_OPTIONS에 'Instrumental (연주곡)' 추가(가사 있어도 무보컬 선택 가능). MusicLoadingScreen:210 vocal 배선 수정 + musicService: params.instrumental 명시 처리+연주곡 프롬프트 문장(작곡.md:67). musicStore에 instrumental 필드(리셋 경로 포함). **ComposerInputScreen 삭제**(App.tsx 등록 3곳 제거 — v3.199 이식분 포함 폐기, REPORT에 정정 기록).
 ### 후속(별도 과제): 포그라운드 서비스/track-player 이관(A 근본), 이미지 비동기 잡+고아 자동 복구 배치(I 근본), 댓글 패널 Android 회피, '저작권 등록 모드' 라벨 재검토(사용자 결정)
+
+## v3.203 (2026-09-22) — 연주곡 파이프라인 완성: 백엔드 미시작 버그(원인 A·B) 수정 + 작곡 디렉터 연주곡 질문 5개 한정 + 곡 길이 선택 신설
+
+> 작성: planner(팀 리드). 사용자 요청: "연주곡인 경우에는 장르, 분위기, 곡 길이(최대 몇분까지 가능한지 설정필요), 참고할만한 곡, bpm만 선택하게 하고 나머지는 작곡 디렉터가 물어보면 안될것 같아. 위의 내용(백엔드 연주곡 미시작 버그) 수정하면서 같이 진행해줘." — 백엔드 수정+prod 배포 사용자 승인 완료.
+> 소스오브트루스: 프로덕션 서버 `ssh maidol-ec2`, `/home/ubuntu/maidol/backend_9004/` (git 아님). 로컬 워크트리 `/Users/pearl/TripleJ-backend`는 v3.190에서 정지 — **읽기 참고 포함 사용 금지**.
+
+### Plan verification findings (파일:라인 + 현재 동작 — 전 항목 서버/앱 실측)
+
+**백엔드 (maidol-ec2 `/home/ubuntu/maidol/backend_9004/`)**
+- **원인 A** `app/routes/generate.py:636` — `will_start_music = bool(body.start_music_gen and body.lyrics)`. 연주곡은 앱이 `lyrics:''` 전송 → False → Suno 백그라운드 미시작·무과금 draft로만 저장(gen `6ab1a85a7bb9bac64cfd15c6` "Fall in my heart" pending/0% 방치 실사고, point_cost null·별 무차감 → **무해 draft로 존치, 회수/삭제 안 함**).
+- **원인 B** `app/services/suno_generator.py:134` — `use_custom = bool(lyrics and lyrics.strip())`. A만 풀면 연주곡이 `customMode:false`로 나가고, Suno API는 customMode=false에서 style·title을 무시(prompt만 사용) → 장르/무드/BPM style 문자열이 통째로 버려짐. `is_instrumental`은 :131에 이미 존재(`vocal=='instrumental'`).
+- **body 구성부** `suno_generator.py:164~180` — `title`은 `if title and use_custom`(:176)만, **duration 파라미터 전송 없음**. `style_str`은 :128에서 폴백 "pop" 보장(빈 값 불가). `vocal_info`는 SUNO_VOCAL_MAP 조회라 'instrumental'이면 None → vocalGender 미전송(정상).
+- **duration 사슬 단절**: `generate.py:756` `_run_music_generation(duration=body.duration or 30 ...)`까지는 오지만, `generate.py:311` 래퍼가 `generate_music_suno` 호출 시 **duration을 버림**. `suno_generator.py:62` 시그니처에 duration 파라미터 자체가 없음. mongo doc에는 저장됨(`generate.py` doc `"duration": body.duration or 30`).
+- **Suno V6 곡 길이 상한 (WebFetch 조사 확정, docs.sunoapi.org/suno-api/generate-music, 2026-09-22 조회)**: `duration` 파라미터 존재 — "Audio duration in seconds. Optional. Only available when customMode is true. Range: 10–360 seconds. Default: 20." / "Only valid when the model is V5_5 (Discontinued), V6, V6_MINI, or V6_WILD." → **V6 최대 360초=6분. 곡 길이 옵션 1~6분 확정.** customMode+instrumental 요건은 "At least one of style, lyrics, or negativeTags must be provided"(style 폴백으로 항상 충족), title은 "optional, maximum 80 characters"(오케스트레이터 진단의 'title 필수'는 문서 원문과 상이 — 옵션이지만 폴백 title을 항상 실어 무해하게 방어).
+- **회귀 지뢰(핵심)**: 앱은 **모든 곡**에 `duration:120` 고정 전송(`musicService.ts:290`). 백엔드가 duration을 무조건 Suno에 실으면 **일반 보컬곡이 전부 2분으로 잘린다** → Suno 전달은 `is_instrumental`일 때만.
+- 배포 대상 컨테이너: `maidol-app`(--network host, health `127.0.0.1:9006/api/health` 200 확인). `POST /generate/{gen_id}/start/`(:779)의 재시작 경로는 doc의 lyrics/vocal을 그대로 쓰므로 게이트 무관(추가 수정 불요).
+
+**앱 (frontend 브랜치 `/Users/pearl/TripleJ/2_housing/`)**
+- **연주곡(카드 진입, `instrumentalEntryRef`) 현재 스텝 체인** — `MusicGenerationScreen.tsx`:
+  `0 제목확인(:380 handleTitleConfirm→:387 commitExchange 300, repickRef=true)` → `300 장르(:501 handleGenrePick→repick이라 301)` → `301 분위기(:523 handleMoodPick→proceedToArtistStep 200)` → **`200 아티스트(:550 handleArtistPick — instrumental 분기 :556/:567 → 5)`** → `5 참고음원(:1376 확인/건너뛰기→6, :873 handlePickReference→6)` → **`6 제외 스타일(:793→7)`** → **`7 자유도(:797→8)`** → **`8 대중/실험(:801→9)`** → **`9 참고음 세기(:814→10)`** → `10 BPM(:818 handleBpmConfirm→11)` → **`11 키(:837 handleKeyConfirm→instrumental이면 13)`** → 완료 13(내 목소리 12는 v3.202에서 이미 스킵). 굵은 스텝 = 사용자가 금지한 잉여 질문 6개(아티스트·제외·자유도·실험·참고음세기·키).
+- **가사 기반 연주곡(보컬 스텝 Instrumental 선택)**: `:707 handleVocalSelect(INSTRUMENTAL_OPTION)` → step 5 직행 → 이후 6~11 잉여 질문 동일 노출.
+- 대화 커밋 구조: 전 핸들러가 `commitExchange`(:294 — 되감기 시 비파괴 치환, `echoOfStep` 메타 매치) / `advanceStep`(:322) 경유. 재선택은 `handleUserBubbleTap`(:369)→`performRewind`(:358). 새 스텝은 `questionForStep`(:335) + `renderInputArea` switch(:1019)에 case 추가만 하면 기존 되감기 UX 자동 편승.
+- 죽은 코드: `handleStartRecording/handleStopRecording/handleSkipReference`(:881/:906/:930)는 렌더 미참조(참고 스텝 출구는 :873·:1376 두 곳뿐) — 이번 분기 수정 대상 아님.
+- 잔존 제목 버그: `ComposeLyricsPickScreen.tsx:228 handleInstrumental`이 musicStore만 비우고 `lyricsStore.generatedTitle/generatedLyrics`는 안 비움 → 연주곡 진입 시 직전 작사 세션 제목이 `editedTitle` 초기값(:99)으로 잔존.
+- duration 배선: `musicStore.ts`에 durationSec 필드 없음. `MusicLoadingScreen.tsx:210~214`가 instrumental 플래그를 musicService로 전달, `musicService.ts:263~301` body에 `duration:120` 고정.
+
+### 확정 스펙 (자율 판단 근거 포함)
+1. **연주곡 질문 = 정확히 5개**: ① 장르(300) ② 분위기(301) ③ **곡 길이(신규 step 310)** ④ 참고할만한 곡(5 — 기존 업로드 플로우 재사용) ⑤ BPM(10) → 완료(13). 아티스트(200)·보컬(3/220/4)·내 목소리(210/12)·제외(6)·자유도(7)·대중/실험(8)·참고음 세기(9)·키(11) 전부 연주곡 분기에서 제거.
+2. **제목 확인(step 0)은 유지**: 사용자 열거는 "창작 질문 5개 한정" 취지로 해석. 제목은 곡 식별 데이터이고 MusicResult/발매 화면에 제목 편집 UI가 없어(실측) 여기서 못 정하면 무명 트랙이 됨. 단, 카드 진입 시 잔존 제목 클리어(위 버그 수정)로 빈 입력에서 시작.
+3. **곡 길이 옵션**: `1분/2분/3분/4분/5분/6분` + `자동`(길이 지정 안 함). 최대 6분 근거 = Suno V6 duration 10~360초(위 문서 실측). 선택값은 `durationSec = 분×60`으로 store→body `duration` 필드에 실리고, 백엔드가 V6 계열+연주곡일 때만 Suno body `duration`으로 전달(스타일 힌트 불필요 — 직접 제어 가능 확인됨). '자동' 선택 시 durationSec null → body는 기존 120 유지(문서 Default 20은 파라미터 미포함 시 미적용 — 현행 일반곡이 2~3분으로 나오는 실태와 일치, 미포함=자동 판단).
+4. **가사 기반 연주곡**(보컬 스텝 Instrumental 선택)도 선택 직후 `310 곡 길이 → 5 참고 → 10 BPM → 13` 체인 적용(장르/분위기/아티스트는 이미 답변된 뒤라 재질문 없음 — 5개 한도 내).
+5. **일반(가사) 흐름 회귀 0**: 비연주곡 체인·질문·순서·body 불변. duration은 일반곡에서 계속 120 고정 전송되지만 백엔드가 Suno에 안 실으므로 동작 변화 없음.
+6. 실사고 gen `6ab1a85a7bb9bac64cfd15c6`: 무과금 draft 존치(삭제·재시작 안 함).
+
+### 변경 매트릭스
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| (서버) app/routes/generate.py | :636 게이트 instrumental 예외 + 시작 로그 + :311 래퍼 duration 전달 | backend-dev | `[generate] gen_id=... instrumental start` |
+| (서버) app/services/suno_generator.py | :62 시그니처 duration 추가, :134 use_custom instrumental 예외, :135 prompt_text 빈가사 폴백, title 폴백, V6+연주곡 한정 body duration(10~360 클램프) + 로그 | backend-dev | `[suno] generation_id=... customMode=... instrumental=... duration=...` |
+| stores/musicStore.ts | durationSec: number\|null + setter + initialState/reset | app-dev | — |
+| screens/MusicGenerationScreen.tsx | step 310 신설(질문/렌더/questionForStep), 연주곡 분기 재배선(301→310, 3→310, 310→5, 5→10, 10→13), 잉여 스텝 차단 | app-dev | `[MusicGeneration] 연주곡 ...` console.info |
+| screens/ComposeLyricsPickScreen.tsx | handleInstrumental에 lyricsStore 제목/가사 클리어 | app-dev | `[ComposeLyricsPick] 연주곡(가사 없이) 선택` |
+| screens/MusicLoadingScreen.tsx | params.durationSec 배선 | app-dev | 기존 `[MusicLoading]` 파라미터 로그에 duration 추가 |
+| services/musicService.ts (+types MusicParams) | body duration = instrumental&&durationSec ? durationSec : 120 | app-dev | `[Suno] API 호출:` 로그에 duration 추가 |
+
+### app-dev 작업 할당
+`/Users/pearl/TripleJ/2_housing/` (frontend 브랜치, 커밋 후 자동 push). 문자열 MAIDOL 규칙·이모지 금지·showAlert 규칙 준수.
+1. **musicStore.ts**: `durationSec: number | null`(initialState null) + `setDurationSec` 추가. reset은 initialState 스프레드라 자동 포함.
+2. **MusicGenerationScreen.tsx — step 310(곡 길이) 신설**:
+   - `const DURATION_OPTIONS = [1,2,3,4,5,6]`(분) — Suno V6 상한 360초 근거 주석. 질문 문구: `'곡 길이는 어느 정도로 할까요? 최대 6분까지 만들 수 있어요. (자동 = 길이를 맡겨요)'` — `questionForStep` case 310 + 렌더 case 310(분 버튼 6개 + '자동' 버튼, 기존 skipBtn/applyBtn 스타일 재사용).
+   - `handleDurationPick(min: number | null)`: `musicStore.setDurationSec(min ? min*60 : null)` 후 `commitExchange({user: min ? \`곡 길이: ${min}분\` : '자동', step: 310}, [{director: DIRECTOR_MESSAGES[5]}], 5)`. commitExchange 경유라 되감기 비파괴 치환 자동 지원.
+3. **연주곡 체인 재배선** (전부 `musicStore.instrumental` 기준, 일반 흐름 무변경):
+   - `handleMoodPick`(:523): instrumental이면 `proceedToArtistStep` 대신 `commitExchange({user: \`분위기: ${mood}\`, step: 301}, [310 질문], 310)` — 아티스트 질문 제거. (되감기 중이면 rewindRef 규약대로 commitExchange가 치환 처리.)
+   - `handleGenrePick`(:501) mood 보유 && !repick 경로: instrumental이면 동일하게 310으로(방어 — 카드 진입은 항상 repick이지만 되감기 조합 대비).
+   - `handleVocalSelect` INSTRUMENTAL_OPTION 분기(:708): nextStep 5 → **310** ('좋아요! 보컬 없이 연주곡으로 만들게요.' + 310 질문 2버블).
+   - 참고 스텝 출구 2곳(:873 `handlePickReference`, :1376 확인/건너뛰기): `advanceStep(..., musicStore.instrumental ? 10 : 6)` — 제외/자유도/실험/참고음세기 4스텝 제거.
+   - `handleBpmConfirm`(:818): `advanceStep(..., musicStore.instrumental ? 13 : 11)` — 키(11)·내 목소리(12) 제거. (:840 handleKeyConfirm의 기존 instrumental 분기는 일반 흐름 전용으로 잔존 — 무해.)
+   - `handleArtistPick`의 v3.202 instrumental 분기(:551~581)는 새 체인에서 도달 불가 — 삭제하지 말고 "방어 잔존(도달 경로 없음)" 주석만 갱신.
+   - 각 분기 `console.info('[MusicGeneration] 연주곡 ...')` 로그 유지/추가.
+4. **ComposeLyricsPickScreen.tsx** `handleInstrumental`(:228): `lyricsStore.setGeneratedTitle(''); lyricsStore.setGeneratedLyrics('');` 추가 — 직전 작사 세션 제목 잔존 차단(제목 입력은 빈 값에서 시작).
+5. **배선**: `MusicLoadingScreen.tsx` params에 `durationSec: store.durationSec || undefined` 추가(:210 인근). `types` MusicParams에 `durationSec?: number`. `musicService.ts:290`: `duration: params.instrumental && params.durationSec ? params.durationSec : 120` + :302 로그에 duration 포함.
+6. `proceedGenerate`(:941): 일반곡이면 `musicStore.setDurationSec(null)` 명시(연주곡→일반 되감기 전환 시 끈적 방지). `handleVocalSelect` 성별 재선택 분기(:727)의 instrumental 해제에도 `setDurationSec(null)` 동반.
+
+### backend-dev 작업 할당
+서버 `ssh maidol-ec2`, 소스 `/home/ubuntu/maidol/backend_9004/` (직접 수정 — git 아님). 로컬 워크트리 금지. **사용자 배포 승인 완료.**
+1. **generate.py**
+   - :636 → `will_start_music = bool(body.start_music_gen and (body.lyrics or (body.vocal or "").strip().lower() == "instrumental"))`
+   - will_start_music 확정 직후(과금 로그 인근): 연주곡이면 `logger.info("[generate] instrumental start user=%s (lyrics empty, vocal=instrumental)", current_user["id"][:8])`, doc 생성 후 gen_id 로그가 기존에 없으면 background_tasks 등록 직전 `logger.info("[generate] gen_id=%s instrumental start", gen_id)`.
+   - :311 `_run_music_generation` 래퍼: `generate_music_suno(..., duration=duration, ...)` 전달(현재 duration을 받고 버림).
+2. **suno_generator.py**
+   - :62 시그니처에 `duration: int = None` 추가.
+   - :134 → `use_custom = bool(lyrics and lyrics.strip()) or is_instrumental`
+   - :135 → `prompt_text = _ensure_lyrics_structure(lyrics.strip()) if (lyrics and lyrics.strip()) else (title or "A beautiful song")` (빈 가사로 _ensure_lyrics_structure 진입 금지).
+   - :176 title 블록: `if use_custom and (title or is_instrumental): body["title"] = (title or "Instrumental")[:80]` — customMode에서 title 항상 확보(문서상 옵션이지만 무해 방어).
+   - body 구성 후(resolved_model 확정 뒤): `if is_instrumental and duration and resolved_model.upper().startswith("V6"): body["duration"] = max(10, min(360, int(duration)))` — **연주곡 한정**(일반곡에 실으면 앱 고정 duration:120 때문에 전곡 2분 클램프 — 절대 금지). customMode는 위 수정으로 연주곡=항상 true.
+   - 기존 resolved_model 로그(:157 인근) 뒤 `logger.info("[suno] generation_id=%s customMode=%s instrumental=%s duration=%s", generation_id, use_custom, is_instrumental, body.get("duration"))`.
+3. **검증(배포 전)**: `python3 -c "import ast; ast.parse(open('app/routes/generate.py').read()); ast.parse(open('app/services/suno_generator.py').read())"`.
+4. **배포 절차(승인 완료)**: 서버에서
+   - `cp app/routes/generate.py app/routes/generate.py.bak_pre_v3203 && cp app/services/suno_generator.py app/services/suno_generator.py.bak_pre_v3203`
+   - 수정 반영 → `sudo docker build -t maidol-app:latest .`
+   - `sudo docker stop maidol-app && sudo docker rm maidol-app`
+   - `sudo docker run -d --name maidol-app --network host --restart unless-stopped --env-file .env -e S3_REGION=ap-northeast-2 maidol-app:latest`
+   - `curl 127.0.0.1:9006/api/health` 200 확인 + `sudo docker logs maidol-app --tail 50` 기동 로그 확인.
+5. 실사고 gen `6ab1a85a7bb9bac64cfd15c6`: 무과금 draft — 조치 없음(기록만).
+
+### test-designer 테스트 항목
+1. **연주곡 카드 진입 체인(E2E)**: 가사 없이 만들기 → 제목 확인 → 장르 → 분위기 → **곡 길이** → 참고곡 → BPM → 완료. 아티스트/보컬/내 목소리/제외 스타일/자유도/대중·실험/참고음 세기/키 질문이 **한 번도 노출되지 않음**. 진행 중 [MusicGeneration] 연주곡 로그 확인.
+2. **곡 길이 반영**: 3분 선택 → store.durationSec=180 → `[Suno] API 호출` 로그 duration=180 → 서버 `[suno] ... duration=180` → 결과물 재생 길이 약 3분(±허용 오차). '자동' 선택 → body duration=120, Suno body에 duration 필드 없음(서버 로그 duration=None).
+3. **가사 기반 연주곡(step 3 Instrumental)**: 일반 흐름에서 Instrumental (연주곡) 선택 → 곡 길이→참고→BPM→완료 체인, 가사는 유지된 채 vocal='instrumental' 전송.
+4. **되감기 회귀**: 곡 길이 버블 탭 재선택(비파괴 치환·이후 대화 보존), 분위기 버블 재선택 후 체인 복귀, Instrumental→성별 재선택 시 연주곡 해제+durationSec null+일반 체인 복원.
+5. **일반(가사) 흐름 회귀 0**: 전 스텝(0→1→302/300→200→3→220→4→5→6→7→8→9→10→11→12→13) 순서·질문 불변, body duration=120, **Suno body에 duration 미포함**, customMode=기존과 동일(가사 있으면 true).
+6. **백엔드 unit(게이트)**: `will_start_music` — (lyrics='' , vocal='instrumental', start=true)→True·과금 / (lyrics='', vocal='', start=true)→False·무과금 draft / (lyrics有)→기존 동일. `use_custom` — instrumental→True(가사 없어도) / 가사무·비연주곡→False. prompt_text 빈 가사 시 _ensure_lyrics_structure 미호출. duration 클램프(9→10, 400→360), 비V6 모델 미전달, is_instrumental=False면 미전달.
+7. **Suno 실호출 스모크 1회**(테스트 계정, compose 비용 15⭐ 과금 허용): 연주곡·Jazz·로맨틱·3분·BPM 90 → generations doc status pending→processing→completed, 결과 오디오 보컬 없음·style 반영 확인, 서버 로그 `[generate] instrumental start`·`[suno] customMode=True instrumental=True duration=180` 확인. 실패 시 환불 로그(`[star-econ] compose refund`) 확인.
+8. **인접 회귀**: v3.202 커버 실패 자동회수(cover-sessions 폴링), 창작 기록(GEN_REQUEST/GEN_RESPONSE — 연주곡도 세션 기록됨), 참고 음악 업로드(일반곡), 피로 429 게이트, 발매 시 아티스트명 폴백(연주곡은 artistCharacterId null → 기획사명).
+9. **배포 스모크**: health 200, 기존 API(로그인/목록/스트림) 정상, docker logs에 기동 오류 없음.
+
+### 후속(별도 과제)
+- 연주곡 결과 화면·발매 흐름의 "가사" 표기 정리(빈 가사 섹션 숨김) — 이번 범위 밖.
+- MusicResult/발매 제목 편집 UI(제목 확인 스텝 축소의 전제) — 사용자 결정 사항.
+- MusicGenerationScreen의 죽은 녹음 핸들러 3종(:881/:906/:930 — 렌더 미참조) 정리 — 별도 청소 사이클.

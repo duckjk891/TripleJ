@@ -1937,3 +1937,101 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 **커밋 스테이징 목록 (2_housing/, mode-only 파일 제외 관행 유지)**: App.tsx / types/index.ts / stores/musicStore.ts / services/playback.ts / services/musicService.ts / hooks 무 / screens/ComposeLyricsPickScreen.tsx / screens/ComposerSelectScreen.tsx / screens/CoverGenerationScreen.tsx / screens/DialogueScreen.tsx / screens/LyricsInputScreen.tsx / screens/MapScreen.tsx / screens/MusicGenerationScreen.tsx / screens/MusicLoadingScreen.tsx / **screens/ComposerInputScreen.tsx (삭제 D)** / components/ReportModal.tsx / components/AppealModal.tsx / components/AlbumCreateModal.tsx / constants/consentTexts.ts + 산출물(PLAN/REPORT/TESTPLAN). 그 외 M(assets·문서 등 mode-only)·untracked(scratchpad·이식 로드맵 md) 제외.
 
 **실기기 이관 잔여**: E-1 ①③④(Doze 프리로드 히트·백오프 ≤3회/≥10s 실측·셔플 핀) / E-2 ①~④(연주곡 실생성 1회 — Suno 과금 사용자 판단·payload vocal='instrumental'·끈적 리셋·소비처 미노출) / E-3 ①~⑤(폴링 회수·잔액 재차감 없음 대조·12회 소진·재개·append·0명 1.75 도달 + **앨범 모드 성공 후 다음 트랙 커버에 아티스트 유령 포함 여부**) / E-4 ①~⑥(비파괴 재선택·result 탭·소형기기 키보드 3모달+재선택 모달·0명 CTA 왕복 보존·recChip 시트).
+
+## v3.203 — 수정일 2026-09-22
+
+> 대상: PLAN.md v3.203 — **연주곡(instrumental) 파이프라인 완성: 곡 길이 지정 + 백엔드 게이트 개통**. 백엔드(**prod 직접 배포**): `generate.py:636` will_start_music 게이트가 연주곡(vocal='instrumental', lyrics='')을 시작하도록 수정, `suno_generator.py` use_custom instrumental 예외 + **Suno V6 duration 파라미터(10~360초) 전달 신설 — 연주곡+V6 교집합 한정**. 앱: 연주곡이면 작곡 디렉터 질문 **5개 한정**(장르→분위기→**곡 길이(신규 step 310, 1~6분+자동)**→참고곡→BPM→완료), 아티스트/보컬/내목소리/제외/자유도/실험/참고음세기/키 **8종 질문 제거**. ComposeLyricsPickScreen 잔존 제목 클리어. `musicStore.durationSec` 신설, musicService body `duration = instrumental && durationSec ? durationSec : 120`. 되감기(비파괴 치환·echoOfStep — v3.202 U-11 합격 구조)에 step 310 편승.
+> **회귀 지뢰(이번 사이클 최우선 게이트)**: 앱은 종전부터 **전 곡 duration:120 고정 전송** — 백엔드가 이 값을 일반곡에도 Suno로 흘리면 **서비스 전 곡 2분 클램프**(전면 회귀). duration의 Suno 전달은 **연주곡+V6에서, 사용자가 길이를 지정한 경우에만** 성립해야 한다(판별식이 A-3 ⑤의 본체).
+> 실행 환경 관행(v3.191~202 계승): 에뮬레이터/adb/maestro 부재 전제 → [e2e]는 **코드 정적 검증 대체 병기 + 실기기 수동 절차 이관**. 앱 코드 `/Users/pearl/TripleJ/2_housing`, 백엔드 워크트리 `/Users/pearl/TripleJ-backend`(prod 반영은 rsync — **A-3 PASS 전 배포 금지, 배포 직후 A-5 스모크 필수**). 백엔드 unit은 **서버 컨테이너 내 python으로 함수 직접 호출 또는 curl 기반 [api]**로 수행. **시크릿·실계정 크리덴셜 기재 금지**(계정은 `TEST_USER_EMAIL` 플레이스홀더로만 표기), **실사용자 데이터 접근 금지 — Suno 실호출 스모크(E-3)는 테스트 계정을 신규 생성**해 수행하고 compose 15⭐ 과금은 1회만 허용. 모든 실측 증적에 추적자 **gen_id**(생성 요청 ID)를 병기해 앱 로그↔서버 로그↔결과물을 단일 사슬로 귀속한다.
+
+### [unit] 앱 정적 검증 (머지 게이트)
+
+**U-1. 선행 게이트 — v3.202 커밋 기준선 + 타입 무결성 [unit]**
+- Given: v3.202 수정 지시 3건(DialogueScreen:68 타입 키 삭제·playback 60s 창 확장·REPORT 정정) 반영 커밋이 선행돼야 이번 diff 귀속 판정(U-8)이 성립.
+- When: ① `git log --oneline -1` + `git status --short`(2_housing 스코프)로 클린 기준선 확인(미커밋 시 착수 금지·반려). ② 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`.
+- Then: ① 클린 기준선 ② exit 0.
+
+**U-2. [항목1] 연주곡 질문 체인 — step 310 신설 + 잉여 8종 도달 불가 [unit]**
+- Given: 연주곡이면 디렉터 질문 5개 한정. 스킵은 v3.202 U-15 ③ 합격 형상(조건 분기 스킵·배열 재구성 금지·인덱스 시프트 0)을 계승해야 한다 — 재구성 발견 시 재선택 제외 집합·performRewind idx 매핑 전부 재판정(v3.129 시프트 사고 전례).
+- When: `screens/MusicGenerationScreen.tsx` — ① instrumental 경로 스텝 체인이 **제목확인→장르→분위기→step 310(곡 길이)→참고곡→BPM→완료** 순서로 코드상 성립(각 스텝의 next 판정 분기 추적). ② 잉여 8종(아티스트·보컬·내목소리·제외·자유도·실험·참고음세기·키) 스텝이 instrumental 경로에서 **도달 불가 논증**(각 스텝 진입 게이트 grep 전수 — 1종이라도 도달 경로 잔존 시 FAIL). ③ step 310 선택지 = **1~6분 + '자동'**(7개), 각 핸들러가 durationSec 60/120/180/240/300/360 · '자동'→null 세팅(값 매핑 표 문자 확인). ④ 스킵된 스텝의 store 필드가 undefined로 남을 때 프롬프트/요약 조립부 안전(undefined 가드 — 크래시·"undefined" 문자열 노출 0). ⑤ 배열 기반이면 시프트 여부 판정(재구성 시 U-5 재판정).
+- Then: ①~④ 전부 충족(⑤ 조건부).
+
+**U-3. [항목2] durationSec 배선 — 저장·body 조립·자동 분기 [unit]**
+- Given: `musicStore.durationSec` 신설, musicService body `duration = instrumental && durationSec ? durationSec : 120`. 일반곡 body는 **기존 계약(120 고정) 불변**이어야 앱 쪽 회귀 0.
+- When: ① `stores/musicStore.ts` — `durationSec: number | null` 필드 + **리셋 경로 전수**(reset()/initialState·새로 시작·진입 정규화 — v3.202 U-15 ⑧ 관례로 기존 리셋 함수 grep, 1곳 누락 시 이전 선택 길이가 다음 곡에 이월되는 끈적 상태 FAIL). ② `services/musicService.ts` body 조립식이 `instrumental && durationSec ? durationSec : 120` 동치 — **비연주곡 분기 결과가 모든 입력에서 120**(기존 전송값과 비트 동일) 논증. ③ 3분 선택 → durationSec=180 → body duration=180 경로 추적(스텝 핸들러→store→body 3점 연결). ④ '자동' → durationSec=null → body duration=120(연주곡인데도 120 — 서버 판별식과의 정합은 A-3 ⑤에서 교차 판정). ⑤ [BTDebug] 로그에 duration·gen_id 병기 기록 존재(부재 시 기록 — E-3 실측 추적용).
+- Then: ①~④ 전부 충족(⑤ 기록 허용) — ①②가 FAIL 게이트.
+
+**U-4. [항목3] 가사 기반 연주곡 — 보컬 스텝 Instrumental 선택 체인 [unit]**
+- Given: 가사가 있어도 보컬 스텝에서 Instrumental 선택 시 무보컬 생성. v3.202 U-15 합격 배선(INSTRUMENTAL_OPTION 로컬 확장·musicService 단일 번역 'instrumental') 위에 step 310이 끼어든다.
+- When: ① 보컬 스텝 Instrumental 선택 시 instrumental=true + **lyrics 클리어 0건**(가사 유지 — setLyrics('') 호출 발견 시 FAIL). ② 선택 후 체인 = **곡 길이(310)→참고곡→BPM→완료**(내목소리·키 등 보컬계 후속 질문 미노출 논증). ③ 서버 값 번역이 **musicService 단일 지점**의 'instrumental' 유지(v3.202 U-15 ⑥ — 앱 문자열을 vocal에 직접 넣는 이중 번역 발견 시 FAIL). ④ VOCAL_OPTIONS 원배열 무변경·소비처 2화면(ArtistResult·VoiceManage) diff 0 존속(v3.202 U-15 ⑤ 무회귀).
+- Then: ①~④ 전부 충족.
+
+**U-5. [항목4] 되감기 회귀 — step 310 편승 + Instrumental 해제 시 durationSec null [unit]**
+- Given: v3.202 U-11 합격 구조(map 치환·echoOfStep 메타 매치·절단 0건)에 step 310이 편승. 보컬 재선택으로 연주곡이 해제되면 곡 길이 값은 **의미를 잃으므로 반드시 null**이어야 한다(잔존 시 다음 일반곡 body에 오염 가능).
+- When: ① step 310 버블 재선택 = 비파괴 치환: performRewind에 slice/splice/length 절단 **0건 존속**(grep — v3.202 U-11 ① 문자 대조), user 버블+echoOfStep===310 에코 치환 쌍, durationSec 새 값 반영, 이후 대화·스텝 보존. ② **보컬 스텝 Instrumental→성별 재선택 시**: instrumental=false 해제 + **durationSec=null** + 곡 길이(310) 버블·에코의 처리 정책이 코드에 명시(잔존 에코 값이 최종 프롬프트/body에 반영되는 경로가 남으면 FAIL — 표시 잔존 자체는 정책 주석화로 허용). ③ 역방향(성별→Instrumental 재선택) 시: instrumental=true 재진입 + 보컬계 후속 store 값(내목소리·키 등)이 body에 실리지 않는 논증. ④ 재선택 제외 집합·기존 스텝의 되감기 배선 diff 0(v3.202 형상).
+- Then: ①~③ 충족(④ 교차) — **② durationSec null 누락 = FAIL 게이트**.
+
+**U-6. [항목5] 일반(가사) 흐름 회귀 0 [unit]**
+- Given: 이번 diff는 연주곡 분기 신설이 전부여야 하고, 비연주곡 경로는 스텝 순서·질문 문구·body까지 diff 0이어야 한다.
+- When: ① STEPS 정의·스텝→store 매핑에서 비연주곡 경로의 순서·문구 **무변경**(v3.110/129 앵커 — 신설 310이 일반 경로 next 판정에 개입하지 않는 분기 논증). ② body duration=120 불변(U-3 ② 포섭). ③ 일반 경로 되감기·재선택·step12 자동스킵 diff 0. ④ Suno에 duration 미전달은 서버 게이트 소관 — [api] A-3 ②로 교차(앱 단독으로는 판정 불가 명시).
+- Then: ①~③ 전부 충족 — ①이 FAIL 게이트.
+
+**U-7. ComposeLyricsPickScreen 잔존 제목 클리어 [unit]**
+- Given: 연주곡 카드 진입 시 직전 가사 선택의 제목이 store에 잔존해 연주곡 산출물에 오염되는 결함.
+- When: ① 연주곡 카드 onPress 3동작(setLyrics('')+setInstrumental(true)+replace — v3.202 U-15 ① 형상)에 **제목 클리어 추가**(setTitle('') 류) 확인. ② 일반 가사 선택 경로(handlePick)의 제목 세팅·setInstrumental(false) 리셋 무회귀. ③ 클리어가 연주곡 경로에만 국한(일반 경로 제목까지 지우면 역결함 FAIL).
+- Then: ①~③ 전부 충족.
+
+**U-8. diff 격리 + v3.202 무회귀 [unit]**
+- Given: 접촉 예상 — 앱: `screens/MusicGenerationScreen.tsx`·`screens/ComposeLyricsPickScreen.tsx`·`stores/musicStore.ts`·`services/musicService.ts`(+`types/index.ts` durationSec 타입 필요분) / 백엔드: `generate.py`·`suno_generator.py` 2파일.
+- When: ① `git status --short`+`git diff --stat`: 콘텐츠 diff가 위 목록 내(목록 외 접촉 시 커밋 메시지 명기 조건부 — v3.202 U-17 관례). ② musicStore hunk 전수 귀속: durationSec분과 기존 instrumental/cover* 필드 무접촉(공유 리셋 함수 수정 시 v3.202 신설 필드 누락 여부 정밀 확인). ③ v3.202 합격 형상 무회귀: playback 60s 창·LyricsInput flex-end·모달 3곳 리프트·CoverGeneration fix1~5·MapScreen 산식 — 전부 **diff 0**. ④ `0_platform` 무접촉. ⑤ 백엔드 diff가 generate.py 게이트+suno_generator.py 2파일에 국한(타 라우터·모델 접촉 시 FAIL).
+- Then: ①~⑤ 전부 충족.
+
+### [api] 백엔드 unit·계약 (서버 컨테이너 python 직호출 / curl — 머지·배포 게이트)
+
+**A-1. will_start_music 3케이스 — 연주곡 True·draft False·기존 동일 [api]**
+- Given: `generate.py:636` 게이트 수정. 최대 리스크는 "빈 가사" 판정 완화가 **초안(draft) 저장까지 생성 시작**시켜 의도치 않은 과금을 일으키는 것.
+- When: 서버 컨테이너 내 python으로 게이트 함수/판정식 직접 호출(불가 시 스테이징 성격의 curl 대체 — 단 실생성 트리거는 E-3 1회로 제한하므로 판정식 단위 검증 우선):
+  - ⓐ vocal='instrumental', lyrics='' → **True**(연주곡 시작 — 과금 발생 경로임을 케이스에 명기).
+  - ⓑ 빈 가사 + 빈 보컬(연주곡 의도 아님, draft 저장류) → **False**(초안 유지 — True로 뒤집히면 **과금 사고 FAIL 게이트**). instrumental 판별이 vocal 값 명시 매치인지, "빈 가사면 전부" 완화인지 판정식 문자 확인.
+  - ⓒ 가사 있음(일반곡) → 기존과 **동일 판정**(수정 전후 진리표 대조 — 기존 True/False 케이스 각 1점 이상).
+- Then: 3케이스 전부 + 기대 로그: ⓐ에서 `[generate] instrumental start gen_id=<id>` 출력 배선 존재 — **ⓑ가 FAIL 게이트**.
+
+**A-2. use_custom instrumental 예외 + prompt_text 빈가사 폴백 [api]**
+- Given: `suno_generator.py` — 종전 use_custom은 가사 존재를 전제. 연주곡은 lyrics=''이므로 예외 없이는 non-custom 경로로 굴러떨어져 스타일·BPM 지정이 소실된다.
+- When: ① use_custom 판정에 instrumental 예외 존재(연주곡이면 가사 없어도 custom 성립) + **비연주곡 판정 diff 0**(예외가 일반곡 판정을 건드리면 FAIL). ② prompt_text 조립: lyrics='' 시 빈 문자열/None으로 Suno에 전달되지 않는 폴백(스타일 서술 폴백 문구 확인 — Suno 400/거절 방지). ③ personaModel 등 보이스 필드가 연주곡에서 미전송(무보컬인데 voice_persona 실리면 모순 — 발견 시 기록·판정 회부).
+- Then: ①② 충족(③ 기록 허용).
+
+**A-3. duration 게이트 — 클램프(10~360)·비V6 미전달·비연주곡 미전달 [api] — 회귀 지뢰 게이트**
+- Given: 앱은 전 곡 duration:120 고정 전송(기존 계약). Suno 전달은 연주곡+V6+사용자 지정에서만.
+- When: 함수 직호출로 페이로드 조립 결과 검사:
+  - ① **클램프 경계 5점**: 입력 9→10, 10→10, 180→180, 360→360, 361→360 (min/max 연산자 경계 확인 — `<` vs `<=` 오차 판정).
+  - ② **비연주곡 미전달**: 일반곡 + body duration=120 → Suno 페이로드에 duration 키 **부재**(dict 조립 코드 grep + 조립 결과 실검사 — **키 존재 시 즉시 FAIL: 서비스 전 곡 2분 클램프 회귀**).
+  - ③ **비V6 미전달**: 연주곡 + 비V6 모델 → duration 미전달(V6 판별 문자열이 suno-model-version-policy의 V6 표기와 일치하는지).
+  - ④ 연주곡+V6+180 → duration=180 전달 + 로그 `[suno] customMode=True instrumental=True duration=180 gen_id=<id>` 배선.
+  - ⑤ **'자동' 판별식**: 연주곡+V6+body 120(자동) → Suno duration **미포함**이 계획 확정치 — 서버가 무엇으로 "지정 안 함"을 판별하는지 코드 명시 확인(120을 기본값 간주라면 "사용자가 일부러 2분 선택" 케이스와의 충돌을 판정·주석화, 별도 필드/None 전달이면 앱 U-3 ④와 계약 정합 대조). **판별 기준 부재로 자동 선택이 120초 강제 클램프되면 FAIL**.
+- Then: ①~⑤ 전부 충족 — **②⑤가 FAIL 게이트**.
+
+**A-4. 인접 회귀 — 창작기록·참고음악·429·발매 폴백 [api]**
+- Given: [항목8] — 연주곡 신설 경로가 기존 계측·게이트를 우회하거나 null을 흘리면 안 된다.
+- When: ① 창작기록 GEN_REQUEST/GEN_RESPONSE(v3.200)가 **연주곡 생성에도 기록**(gen_id 귀속 — 게이트 수정으로 계측 호출부를 지나치는 경로 신설 여부 diff 추적) + 일반곡 기록 diff 0. ② 참고음악 업로드 엔드포인트 기존 스펙 정상(연주곡 참고곡 스텝이 동일 소비 — 신규 파라미터 0). ③ **429 피로 게이트 존속**: 연주곡 요청도 동일 게이트 통과(instrumental 분기가 게이트 앞단에서 갈라져 우회하면 FAIL). ④ 연주곡 발매 시 아티스트명 폴백: 아티스트 스텝 스킵으로 artist 미지정 → 발매 track의 표기 명칭이 폴백 적용(null/undefined 노출 0 — 폴백 문자열 확인).
+- Then: ①~④ 전부 충족 — ③이 FAIL 게이트.
+
+**A-5. 배포 스모크 — health·기존 API·기동 로그 [api]**
+- Given: [항목9] prod 직접 배포(rsync) — A-1~A-3 PASS 후에만 배포, 배포 직후 즉시 실행.
+- When: ① `curl <prod>/health` → 200. ② 기존 API 3종: 로그인(테스트 계정 TEST_USER_EMAIL)·차트·트랙 목록 → 200 + 응답 스키마 기존형(필드 누락 0). ③ 서버 기동 로그 traceback/import 오류 0(연주곡 미관련 경로 기동 실패 즉시 검출). ④ 배포 직후 실트래픽 로그에서 일반곡 Suno 호출 grep → duration 키 부재 재확인(A-3 ② prod 실측 — **가장 값싼 회귀 지뢰 조기 경보**).
+- Then: ①~④ 전부 충족 — FAIL 시 즉시 롤백(rsync 이전본) 후 원인 회부.
+
+### [e2e] 핵심 여정 (정적 대체 + 실기기 수동 절차 이관)
+
+**E-1. [항목1] 연주곡 카드 진입 여정 [e2e]** — 정적 대체: U-2·U-3·U-7 완료로 갈음. 실기기 수동 절차: 테스트 계정 로그인 → 작업실 → ComposeLyricsPick **연주곡 카드**(목록 위·빈 상태 양 위치) → 제목확인→장르→분위기→곡 길이(3분)→참고곡→BPM→완료 순서 육안 확인 + **잉여 8종 질문 미노출** 전수 체크리스트. 이전 가사 제목 잔존 오염 무(U-7 실측). 생성 실행은 과금이므로 여기서 중단 — 실생성·payload는 E-3에 통합.
+
+**E-2. [항목3] 가사 기반 연주곡 여정 [e2e]** — 정적 대체: U-4 완료로 갈음. 실기기 수동 절차: 가사 선택 → 일반 체인 진행 → 보컬 스텝에서 **Instrumental** 선택 → 곡 길이→참고곡→BPM→완료, 가사가 요약/미리보기에 유지되는지 + 보컬계 후속 질문 미노출. [BTDebug] 조립 로그로 vocal='instrumental'·가사 유지 확인(생성 미실행 — 실호출 payload는 E-3 관례 준용).
+
+**E-3. [항목7] Suno 실호출 스모크 — 1회 한정 [e2e]**
+- Given: **테스트 계정 신규 생성**(TEST_USER_EMAIL 플레이스홀더 — 실사용자 계정·데이터 접근 금지, 증적에 토큰·개인 식별 정보 기재 금지), compose 15⭐ 과금 허용 1회.
+- When: 연주곡 경로로 **Jazz·로맨틱·3분(180s)·BPM90** → 생성 1회 실행 → 완료 대기.
+- Then: ① 상태 **completed**. ② 서버 로그 사슬: `[generate] instrumental start gen_id=<id>` → `[suno] customMode=True instrumental=True duration=180 gen_id=<id>` — **동일 gen_id로 앱 [BTDebug] duration=180 로그와 3점 대조**. ③ 결과물 청취: 무보컬 + 재생 길이 ≈180s(±허용 오차 실측 기록 — Suno duration의 실효 정밀도가 이번 최초 데이터). ④ 별 잔액 정확히 −15(생성 전후 잔액 대조 — 재차감 0). ⑤ 창작기록 GEN_REQUEST/RESPONSE row 생성(A-4 ① 실측 교차). ⑥ **실패 시**: 환불 로그 + 잔액 원복 확인(실패도 판정 데이터 — 환불 미발동 시 FAIL 회부). '자동' 케이스 실측(추가 15⭐)은 사용자 판단 하 선택 — 미실행 시 U-3 ④·A-3 ⑤ 정적 판정으로 갈음.
+
+**E-4. [항목5] 일반 흐름 회귀 여정 [e2e]** — 정적 대체: U-6·A-3 ② 완료로 갈음. 실기기 수동 절차: 일반 가사 곡 흐름 전 스텝 순서·질문 육안 불변(v3.202 대비 스크린 대조) + 되감기 1회 정상. 실생성 추가 과금 없이 **배포 후 실트래픽 서버 로그 grep으로 일반곡 Suno duration 키 부재 확인**(A-5 ④와 동일 증적 공유) — 기존 사용자 곡이 2분 클램프되지 않는지 배포 직후 최우선 감시.
+
+**게이트**: U-1~U-8 + A-1~A-4 전부 PASS 시 머지 허용, **A-1~A-3 PASS 전 prod 배포 금지**, 배포 직후 A-5 필수(FAIL 시 즉시 롤백). E-1~E-4는 정적 대체 완료 조건으로 비차단(실기기·실과금분은 사용자 판단 하 이관, 단 E-3 스모크 1회는 이번 사이클 완료 조건). 핵심 FAIL 게이트 8건 — **A-1 ⓑ**(draft 오발사=과금 사고) / **A-3 ②**(일반곡 duration 전달=전 곡 2분 클램프) / **A-3 ⑤**(자동 판별식 부재) / **A-4 ③**(429 게이트 우회) / **U-3 ①②**(durationSec 리셋 누락·일반곡 body 120 불변) / **U-5 ②**(Instrumental 해제 시 durationSec null 누락) / **U-6 ①**(일반 스텝 순서·문구 침범) — 1건이라도 FAIL이면 커밋·배포 금지.

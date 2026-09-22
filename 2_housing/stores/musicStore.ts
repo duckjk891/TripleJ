@@ -51,6 +51,10 @@ interface MusicState {
    *  'Instrumental (연주곡)' 선택(가사 유지·무보컬). 일반 가사 선택/작곡 진입 시 false로 리셋
    *  (ComposeLyricsPick.handlePick + ComposerSelect 정규화) — 끈적 상태 방지. */
   instrumental: boolean;
+  /** v3.203: 연주곡 곡 길이(초) — Suno V6 duration 파라미터(10~360초, 최대 6분) 직접 지원.
+   *  작곡 대화 step 310(곡 길이 질문, 연주곡 전용)에서 세팅. null=자동(백엔드 기본 120초).
+   *  일반곡 생성(proceedGenerate)·연주곡 해제(성별 재선택) 시 null로 초기화 — 끈적 방지. */
+  durationSec: number | null;
   coverTrackId: string | null;
   coverTrackTitle: string | null;
   coverStyle: string | null;
@@ -102,6 +106,7 @@ interface MusicState {
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
   setInstrumental: (v: boolean) => void;
+  setDurationSec: (v: number | null) => void;
   setCoverTrackId: (v: string | null) => void;
   setCoverTrackTitle: (v: string | null) => void;
   setCoverStyle: (v: string | null) => void;
@@ -145,6 +150,7 @@ const initialState = {
   subVocal: '',
   subVocalStyle: '',
   instrumental: false,
+  durationSec: null,
   coverTrackId: null,
   coverTrackTitle: null,
   coverStyle: null,
@@ -188,6 +194,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
   setInstrumental: (instrumental) => set({ instrumental }),
+  setDurationSec: (durationSec) => set({ durationSec }),
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),
   setCoverTrackTitle: (coverTrackTitle) => set({ coverTrackTitle }),
   setCoverStyle: (coverStyle) => set({ coverStyle }),

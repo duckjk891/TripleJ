@@ -287,7 +287,11 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     // v3.156: 작곡 대화에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 스냅샷의 근거 (generate.py v236)
     character_id: (params as any).characterId || undefined,
     model: 'suno',
-    duration: 120,
+    // v3.203: 연주곡은 사용자가 고른 곡 길이(초, Suno V6 duration 10~360)를 전송.
+    // 계약(오케스트레이터 확정): 연주곡 자동=duration 생략(undefined → JSON 키 탈락, 서버는
+    // 부재 시 Suno에 duration 미전달), 일반곡=120 고정(서버가 Suno에 안 실음) — "자동"과
+    // "일부러 2분(120초) 선택"을 서버가 필드 부재로 구분한다.
+    duration: params.instrumental ? (params.durationSec || undefined) : 120,
     start_music_gen: true,
     // v3.91: 참고 음악(업로드 선행) — 백엔드 GenerateRequest 실필드
     //   reference_audio_url / reference_audio_name / reference_audio_duration / audio_weight (generate.py:74~78)
@@ -301,6 +305,7 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
   };
   console.log('[Suno] API 호출:', JSON.stringify({
     title: body.title, genre: body.genre, mood: body.mood, vocal: body.vocal, style: body.style,
+    duration: body.duration,
     audio_weight: body.audio_weight, reference_audio_name: body.reference_audio_name,
   }));
   const response = await api.post('/generate/', body);

@@ -2459,3 +2459,45 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 
 ### 후속 과제
 포그라운드 서비스/track-player 이관(A 근본), 이미지 비동기 잡 전환+고아 자동 복구 배치(I 근본), 댓글 패널 Android 키보드 회피, '저작권 등록 모드' 라벨 재검토(사용자 결정 대기).
+
+## v3.203 (2026-09-22) — 연주곡 파이프라인 완성: 백엔드 미시작 버그 수정(prod 1차 배포) + 작곡 디렉터 연주곡 질문 5개 한정 + 곡 길이(1~6분) 선택 신설
+
+### 요청 (원문 요지)
+연주곡은 장르·분위기·곡 길이(최대치 조사해 설정)·참고할만한 곡·BPM **만** 선택하게 하고 나머지 질문 제거 + 오케스트레이터가 진단한 백엔드 연주곡 미시작 버그(원인 A·B)를 함께 수정. 백엔드 수정·prod 배포 사용자 승인 완료.
+
+### 원인 (PLAN v3.203 실측 확정)
+- **A** `generate.py:636` — `will_start_music = bool(start_music_gen and lyrics)` → 연주곡(lyrics='')은 Suno 미시작·무과금 draft 방치(실사고 gen `6ab1a85a7bb9bac64cfd15c6` "Fall in my heart").
+- **B** `suno_generator.py:134` — `use_custom = bool(lyrics...)` → 게이트만 풀면 customMode=false로 나가 style/title이 Suno에서 무시됨(장르/무드/BPM 유실).
+- **duration 사슬 단절**: 앱 duration:120 고정 → mongo 저장까지만 오고 래퍼(:311)가 버림, Suno body에 미전송. Suno V6는 duration 10~360초 직접 지원(docs.sunoapi.org 실측) → **최대 6분 확정**. 일반곡에 duration을 실으면 전곡 2분 클램프 — 연주곡 한정 전달이 필수 계약.
+
+### 수행 결과
+**백엔드 (maidol-ec2 backend_9004, 1차 배포 완료·health 200 확인)**
+1. generate.py 게이트: 연주곡(vocal='instrumental')은 가사 없어도 시작+과금(compose 15⭐) + `[generate] ... instrumental start` 로그. 래퍼가 duration을 generate_music_suno로 전달.
+2. suno_generator: `use_custom = lyrics or is_instrumental`, 빈 가사 prompt/title 폴백, **V6 계열+연주곡 한정** `body["duration"] = max(10, min(360, int(duration)))`, `[suno] ... customMode/instrumental/duration` 로그. 원본 백업 `.bak_pre_v3203` 2개 존치.
+3. **2차 수정 대기(사용자 실행)**: 스키마 duration 기본값 None + `or 30` 폴백 3곳 제거(4줄) — `/private/tmp/v3203_generate.py`에 검증 완료 상태로 대기. scp 업로드가 권한 분류기에 차단되어 **사용자 scp → 재배포 필요**. 현행 prod는 '자동' 연주곡이 duration=30으로 나감(파괴적 아님, 2차로 해소).
+4. 실사고 gen `6ab1a85a7bb9bac64cfd15c6`: 무과금 draft 존치(조치 없음, 기록만).
+
+**앱 (frontend, 6파일, tsc 0건)**
+1. musicStore: `durationSec: number|null` + setter + 리셋 경로.
+2. MusicGenerationScreen: **step 310(곡 길이)** 신설 — 1~6분 버튼+자동, questionForStep/렌더/commitExchange 경유(되감기 비파괴 치환 자동 편승). 연주곡 체인 재배선: **카드 진입 0→300(장르)→301(분위기)→310(길이)→5(참고곡)→10(BPM)→13(완료)** / **보컬 스텝 INSTRUMENTAL 선택→310→5→10→13**. 아티스트(200)·보컬(3/220/4)·내 목소리(210/12)·제외(6)·자유도(7)·대중/실험(8)·참고음 세기(9)·키(11) 질문 연주곡 분기에서 전부 제거 — 질문 정확히 5개.
+3. ComposeLyricsPick handleInstrumental: 잔존 제목 클리어(`setGeneratedTitle('')`).
+4. MusicLoading/types/musicService 배선 — **duration 계약: 연주곡 = durationSec 실림·'자동'이면 필드 생략 / 일반곡 = 120 고정(백엔드가 Suno에 미전달이라 무영향)**.
+
+### 정정 기록 (중요)
+- **tester 판정 회부 수용**: handleInstrumental의 `setGeneratedLyrics('')`는 **제거**(제목만 클리어). 사유: 미자산화 가사 드래프트가 카드 탭 한 번에 유실될 수 있음(2026-09-07 가사 유실 사고 취지). 연주곡 body에는 musicStore.lyrics('')만 실려 오염 경로 없음 — 수정 후 tsc 0건 재확인.
+- **저장소 mode-only 오염 정리**: 100644→100755 변경 834건 발견, 전량 chmod 원복(잔여 0). 콘텐츠 diff 무관 — 커밋 오염 방지.
+- **TESTPLAN U-3 정오(저널)**: U-3 판정식의 "자동→body duration 120" 표기는 확정 계약(자동→duration 키 생략)과 불일치 — **계약이 우선**, TESTPLAN 본문은 소급 수정하지 않고 여기 정오로 남김.
+- musicalKey 잔존 파라미터는 연주곡에도 유효한 Suno 파라미터라 모순 아님(질문만 제거, 기록).
+
+### 검증 (tester 1차 게이트: 통과 + planner 최종 스팟체크)
+- tester: U-1~U-8·A-1~A-3(코드 판정분) 전부 PASS, FAIL 게이트 8건 중 커밋 차단 0건, 재현 스크립트 21케이스 ALL PASS. A-3 ⑤는 prod 현행 FAIL — 2차 배포로 해소되는 **예정된 이월**로 명시.
+- planner 스팟체크(2026-09-22): prod `generate.py:638` 게이트·`suno_generator.py:136/203`(use_custom 예외·클램프)·백업 2개·health 200 실측 확인. 앱 durationSec/step 310/제목만 클리어/duration 계약(`musicService.ts:294`) 실측 확인 — PLAN 대비 결손 없음.
+
+### 남은 절차 (사이클 완료 조건)
+1. **사용자 scp**: `/private/tmp/v3203_generate.py` → 서버 반영 → 2차 배포(빌드→재기동→health 200) — '자동' 연주곡 duration=30 해소.
+2. 2차 배포 후 **A-4/A-5 서버 실측** + **E-3 Suno 실호출 스모크 1회**(테스트 계정, compose 15⭐ 과금 허용): 연주곡 3분 → completed·보컬 없음·`[suno] duration=180` 로그·결과 길이 확인.
+3. 실기기 수동 확인: 연주곡 5질문 체인(카드/보컬 스텝 2경로), 곡 길이 되감기 재선택, 일반(가사) 흐름 회귀 0, '자동' 선택 결과 길이.
+
+### 백로그
+- 사장 코드 4건(handleRefStyleConfirm·녹음 핸들러 3종 등 호출처 0) 정리 — 별도 청소 사이클.
+- 연주곡 결과/발매 화면 빈 가사 표기 정리, 제목 편집 UI(제목 스텝 축소의 전제 — 사용자 결정).

@@ -48,6 +48,10 @@ const INSTRUMENTAL_OPTION = 'Instrumental (연주곡)';
 
 const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A major', 'B major', 'C minor', 'D minor', 'E minor', 'F minor', 'G minor', 'A minor', 'B minor'];
 
+// v3.203: 연주곡 곡 길이 선택지(분) — Suno V6가 duration 파라미터를 직접 지원(10~360초),
+// 상한 360초 = 6분이 근거. 선택값은 초로 환산해 musicStore.durationSec에 저장(자동=null).
+const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6];
+
 const DIRECTOR_MESSAGES = [
   '곡 제목을 확인해볼게요! 수정이 필요하면 직접 편집해주세요.',
   '가사를 확인해볼게요! 수정이 필요하면 직접 편집할 수 있어요.',
@@ -343,6 +347,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 220: return '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!';
       case 300: return '이 곡은 어떤 장르로 만들까요?';
       case 301: return '분위기는 어떻게 할까요?';
+      case 310: return '곡 길이는 어느 정도로 할까요? 최대 6분까지 만들 수 있어요. (자동 = 길이를 맡겨요)';
       case 302: {
         const g = lyricsStore.genre || selectedGenre;
         const m = lyricsStore.mood || selectedMood;
@@ -516,6 +521,16 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       );
       return;
     }
+    // v3.203: 연주곡(되감기 조합 방어 — mood 보유 && !repick 경로) — 아티스트(200) 대신 곡 길이(310)로
+    if (musicStore.instrumental) {
+      console.info('[MusicGeneration] 연주곡 — 장르 확정(분위기 보유), 곡 길이 질문(310)으로');
+      commitExchange(
+        { type: 'user', text: `장르: ${genre}`, step: 300 },
+        [{ type: 'director', text: questionForStep(310) }],
+        310
+      );
+      return;
+    }
     proceedToArtistStep(`장르: ${genre}`, 300);
   };
 
@@ -524,7 +539,31 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     repickRef.current = false;
     setSelectedMood(mood);
     lyricsStore.setMood(mood);
+    // v3.203: 연주곡은 아티스트(200)·보컬 계열 질문을 모두 생략 — 분위기 다음은 곡 길이(310)
+    if (musicStore.instrumental) {
+      console.info('[MusicGeneration] 연주곡 — 분위기 확정, 곡 길이 질문(310)으로');
+      commitExchange(
+        { type: 'user', text: `분위기: ${mood}`, step: 301 },
+        [{ type: 'director', text: questionForStep(310) }],
+        310
+      );
+      return;
+    }
     proceedToArtistStep(`분위기: ${mood}`, 301);
+  };
+
+  // v3.203: step 310 — 연주곡 곡 길이 선택(분 단위, null=자동). 분→초 환산해 store에 저장하면
+  // MusicLoading→musicService가 body.duration(Suno V6 10~360초)으로 전송한다.
+  // commitExchange 경유 — 되감기 재선택 시 유저 버블·직후 에코가 echoOfStep(310) 메타 매치로
+  // 비파괴 치환된다(일반 커밋 시 user.step=310이 에코에 자동 태깅됨).
+  const handleDurationPick = (min: number | null) => {
+    musicStore.setDurationSec(min ? min * 60 : null);
+    console.info('[MusicGeneration] 연주곡 곡 길이 선택', { min, durationSec: min ? min * 60 : null });
+    commitExchange(
+      { type: 'user', text: min ? `곡 길이: ${min}분` : '자동', step: 310 },
+      [{ type: 'director', text: DIRECTOR_MESSAGES[5] }],
+      5
+    );
   };
 
   // v3.146: 장르/분위기 직접 입력 제출 — 선택 버튼과 동일 경로 재사용 (30자 제한)
@@ -548,7 +587,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.135: 아티스트 선택 (null = 건너뛰기)
   const handleArtistPick = (artist: ServerArtist | null) => {
-    // v3.202(J): 연주곡이면 보컬 스텝(3/220/4)으로 가지 않고 참고 음원(step 5)으로 직행
+    // v3.202(J)→v3.203: 연주곡 체인이 장르→분위기→곡 길이(310)→참고(5)로 재배선되어 아티스트
+    // 단계(200)를 지나지 않는다. 아래 instrumental 분기는 정상 흐름에선 도달 불가지만, 되감기
+    // 조합 등 예외 유입 대비 방어로 잔존(삭제 금지).
     const instrumental = musicStore.instrumental;
     const vocalQuestion = lyricsStore.isDuet
       ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
@@ -567,6 +608,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (instrumental) {
       // v3.202(J): 연주곡 — 보컬을 쓰지 않으므로 목소리 연결 여부 무관(게이트 미적용),
       // 아티스트 명의(발매 아티스트명·착장 근거)만 승계하고 보컬 설정 없이 다음으로.
+      // (v3.203: 연주곡 체인 재배선으로 도달 불가 — 방어 잔존)
       setSelectedArtistId(artist.character_id);
       musicStore.setArtistCharacterId(artist.character_id || null);
       console.info('[MusicGeneration] 아티스트 선택(연주곡 — 목소리 미사용)', { cid: artist.character_id });
@@ -706,9 +748,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // Step 3: Vocal select (메인 보컬) — v3.143: 성별 다음은 목소리 방식 질문(step 220)
   const handleVocalSelect = (vocal: string) => {
     if (vocal === INSTRUMENTAL_OPTION) {
-      // v3.202(J): 가사가 있어도 무보컬(연주곡) 선택 가능 — vocalOff 처리 후 보컬 관련
-      // 스텝(220/4/12)을 건너뛰고 참고 음원(step 5)으로 직행. 가사는 유지(가사 기반 연주곡).
-      console.info('[MusicGeneration] 보컬: Instrumental(연주곡) 선택 — vocalOff');
+      // v3.202(J)→v3.203: 가사가 있어도 무보컬(연주곡) 선택 가능 — vocalOff 처리 후 보컬 관련
+      // 스텝(220/4/12)을 건너뛰고 곡 길이(step 310)로 직행. 가사는 유지(가사 기반 연주곡).
+      console.info('[MusicGeneration] 보컬: Instrumental(연주곡) 선택 — vocalOff, 곡 길이 질문(310)으로');
       musicStore.setInstrumental(true);
       setUseVocal(false);
       setSelectedVocalGender('');
@@ -717,14 +759,19 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         { type: 'user', text: INSTRUMENTAL_OPTION, step: 3 },
         [
           { type: 'director', text: '좋아요! 보컬 없이 연주곡으로 만들게요.' },
-          { type: 'director', text: DIRECTOR_MESSAGES[5] },
+          { type: 'director', text: questionForStep(310) },
         ],
-        5
+        310
       );
       return;
     }
     // v3.202(J): 되감기로 Instrumental → 성별 재선택 시 연주곡 해제(새 값 세팅)
-    if (musicStore.instrumental) musicStore.setInstrumental(false);
+    if (musicStore.instrumental) {
+      musicStore.setInstrumental(false);
+      // v3.203: 연주곡 전용 곡 길이도 함께 해제 — 일반곡에 duration이 실리는 끈적 방지
+      musicStore.setDurationSec(null);
+      console.info('[MusicGeneration] 연주곡 해제(성별 재선택) — durationSec 초기화');
+    }
     setUseVocal(true);
     setSelectedVocalGender(vocal);
     commitExchange(
@@ -817,7 +864,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
   const handleBpmConfirm = (apply: boolean) => {
     setBpmOn(apply);
-    advanceStep(apply ? `BPM ${Math.round(bpmValue)}` : '자동 템포', 11);
+    // v3.203: 연주곡은 키(11)·내 목소리(12) 스킵 — BPM이 5문항 체인의 마지막 질문(완료 13 직행)
+    if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — BPM 확정 후 완료(13)로');
+    advanceStep(apply ? `BPM ${Math.round(bpmValue)}` : '자동 템포', musicStore.instrumental ? 13 : 11);
   };
   // v3.78: 내 목소리 확정 — v3.102: 후보는 클론(ready)만, 적용 방식은 'voice' 고정
   const handlePersonaConfirm = (apply: boolean) => {
@@ -870,7 +919,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           return;
         }
         musicStore.setReferenceFile(file.uri, file.name);
-        advanceStep(`파일 업로드: ${file.name}`, 6);
+        // v3.203: 연주곡은 세부 스타일 질문(6~9: 제외/자유도/대중·실험/참고음 세기) 스킵 — BPM(10) 직행
+        if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — 참고 업로드 후 BPM(10) 직행');
+        advanceStep(`파일 업로드: ${file.name}`, musicStore.instrumental ? 10 : 6);
       }
     } catch {
       showAlert('오류', '파일 선택에 실패했습니다.');
@@ -961,6 +1012,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setPersonaId(!instrumental && personaModelOn && selectedPersonaId ? selectedPersonaId : null);
     musicStore.setSubVocal(instrumental ? '' : subVocalGender);
     musicStore.setSubVocalStyle(instrumental ? '' : subVocalStyle);
+    // v3.203: 곡 길이(duration)는 연주곡 전용(step 310) — 일반곡은 명시적으로 비워
+    // 직전 연주곡 흐름의 값이 body.duration으로 새는 끈적 상태를 차단.
+    if (!instrumental) musicStore.setDurationSec(null);
     setChatHistory((prev) => [
       ...prev,
       { type: 'director', text: '작곡을 시작할게요! 곧 결과를 보여드릴게요.' },
@@ -1318,6 +1372,32 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           </View>
         );
 
+      case 310:
+        // v3.203: 연주곡 곡 길이(분) 선택 — Suno V6 duration(10~360초, 최대 6분) 직접 지원.
+        // 분 버튼 6개 + '자동'(길이를 맡김 = durationSec null). 기존 choiceButton 스타일 재사용.
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {DURATION_OPTIONS.map((min, idx) => (
+                <TouchableOpacity
+                  key={min}
+                  style={[styles.choiceButton, musicStore.durationSec === min * 60 && styles.choiceButtonSelected]}
+                  onPress={() => handleDurationPick(min)}
+                >
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={[styles.choiceText, musicStore.durationSec === min * 60 && styles.choiceTextSelected]}>
+                    {min}분
+                  </AppText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.choiceButton} onPress={() => handleDurationPick(null)}>
+                <AppText style={styles.choiceNumber}>{DURATION_OPTIONS.length + 1}</AppText>
+                <AppText style={styles.choiceText}>자동 (길이를 맡겨요)</AppText>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        );
+
       case 100:
         // 듀엣: 서브 보컬 성별 선택
         return (
@@ -1373,7 +1453,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 </TouchableOpacity>
               </View>
             )}
-            <TouchableOpacity style={styles.skipButton} onPress={() => advanceStep(musicStore.referenceFileName || '건너뛰기', 6)}>
+            <TouchableOpacity
+              style={styles.skipButton}
+              onPress={() => {
+                // v3.203: 연주곡은 세부 스타일 질문(6~9) 스킵 — 참고 다음이 BPM(10)
+                if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — 참고 확인/건너뛰기 후 BPM(10) 직행');
+                advanceStep(musicStore.referenceFileName || '건너뛰기', musicStore.instrumental ? 10 : 6);
+              }}
+            >
               <AppText style={styles.skipButtonText}>{musicStore.referenceFileName ? '확인' : '건너뛰기'}</AppText>
             </TouchableOpacity>
           </View>

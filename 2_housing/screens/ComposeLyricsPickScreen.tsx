@@ -228,7 +228,7 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
   const handleInstrumental = () => {
     if (composingRef.current) return;
     composingRef.current = true;
-    console.info('[ComposeLyricsPick] 연주곡(가사 없이) 선택');
+    console.info('[ComposeLyricsPick] 연주곡(가사 없이) 선택 — 잔존 제목 클리어');
     setPickedTitle('연주곡');
     const music = useMusicStore.getState();
     music.setLyrics('');
@@ -236,6 +236,13 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     music.setGenre('');
     music.setMood('');
     music.setInstrumental(true);
+    // v3.203: 직전 작사 세션의 잔존 "제목"만 클리어 — MusicGeneration의 editedTitle 초기값이
+    // lyricsStore.generatedTitle을 읽으므로, 비우지 않으면 연주곡 대화에 이전 곡 제목이 실린다.
+    // generatedLyrics는 지우지 않는다: 미자산화(비로그인·저장 실패) 상태의 가사 드래프트가
+    // 카드 탭 한 번에 유실될 수 있음 (tester 판정 회부 — 2026-09-07 가사 유실 사고 취지).
+    // 연주곡 body에는 musicStore.lyrics('')만 실리므로 잔존 가사가 결과물에 오염될 경로 없음.
+    const ls = useLyricsStore.getState();
+    ls.setGeneratedTitle('');
     setTimeout(() => navigation.replace('ComposerSelect'), 900);
   };
 
