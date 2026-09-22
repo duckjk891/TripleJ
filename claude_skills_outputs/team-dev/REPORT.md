@@ -2572,3 +2572,25 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 3. 서버 백로그(별도 승인): 미세조정 이중 차감 환불 1건(⭐5)·refine 비동기화, frontend.log 호스트 마운트, expo-audio 이관 스파이크.
 
 **특이사항**: 사이클 중 세션 중단(사용량 한도)→신규 세션에서 복원 이어받음. JS 변경만이라 빌드 설정 변경은 없으나 expo-updates(OTA) 미도입 — 사용자 반영에는 새 APK(EAS) 빌드 필요(정정: 최초 보고의 '재빌드 불필요'는 오기). 커밋은 2_housing 10파일 + 산출물 3종 한정(워킹 트리의 1_MV_wedding 등 별개 프로젝트 변경분 제외).
+
+## v3.205 ④ 데이터 등록 완결 (2026-09-22, 사용자 승인·직접 실행)
+
+**승인**: 사용자 최종 go + 알림 팬아웃 포함. 커밋 b475f08 푸시(사용자 지시 "푸시까지") 후 진행.
+**실행**: 자동 권한 분류기가 원격 쓰기를 차단해 사용자가 notice_runner.py(프로젝트 루트, 비커밋)를 터미널에서 직접 실행 — 리허설·본 등록 모두 사용자 손으로 수행됨.
+
+### 절차·결과 (TESTPLAN RA 게이트)
+
+- **RA-1 리허설 PASS**: 점검 글 1건 insert(팬아웃 없음) → 공개 타임라인 최상단 노출 확인 → purge_feed_document 삭제 → check feed_exists=False·comments/notifications/likes 전부 0 + 타임라인 소멸 교차 확인 — 등록·회수 경로 실데이터 검증 완료.
+- **RA-2 본 등록 PASS**: 3건 등록(3→2→1 순서, 31초 간격), `GET /api/feeds/user/{official_id}?kind=community` 정확히 3건, 최상단부터 [문의 방법 안내 / FAQ / 베타 안내], **본문 PLAN 원고와 프로그램 diff 0**, kind=community·title null·author maidol_official 전건 일치.
+  - feed_id: 문의 6ab221f66602ec9e9cdd6692 / FAQ 6ab221d76602ec9e9cdd65ba / 베타 6ab221b86602ec9e9cdd64e2
+- **RA-3 팬아웃 PASS**: 건당 sent=215(팔로워 215명 전원 — official 비팔로워라 제외 대상 0), 총 645건 인앱 알림(OS 푸시 아님).
+- **RA-4 타임라인 PASS**: 공개 타임라인 최상단 3장 = 공지 3건(팔로잉 부스트), 기존 글(무신사 등) 후순위 존치.
+
+### 회수 런북 (필요 시)
+
+`cat notice_runner.py | ssh maidol-ec2 "sudo docker exec -i maidol-app python - purge <feed_id>"` — 글+댓글+좋아요+해당 알림 연쇄 파기(리허설로 검증됨). 이미 열람된 노출은 회수 불가.
+
+### 잔여
+
+- RE-1~3 실기기(새 APK 반영 후): 설정→공지사항 직행·'공지' 배지·기존 진입 회귀 — 공지 배지/메뉴는 v3.205 코드분이라 **새 APK 빌드 전 구버전 앱에서는 배지 없이 일반 글로 표시**(내용·노출은 정상).
+- notice_runner.py는 운영 도구로 프로젝트 루트에 비추적 존치(원고 상수 포함 — 차기 공지 시 재사용).
