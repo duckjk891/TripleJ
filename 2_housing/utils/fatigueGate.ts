@@ -1,7 +1,18 @@
 import { showAlert } from './appAlert';
-import { skipFatigue, formatCooldown, FATIGUE_DIRECTOR_LABELS } from '../services/fatigueService';
+import {
+  skipFatigue,
+  getFatigueStatus,
+  formatCooldown,
+  FATIGUE_DIRECTOR_LABELS,
+} from '../services/fatigueService';
 import { usePointsStore } from '../stores/pointsStore';
 import { FatigueDirector, FatigueStatus } from '../types';
+import {
+  isRewardedAdSupported,
+  isRewardedSkipAdReady,
+  preloadRewardedSkipAd,
+  showRewardedSkipAd,
+} from '../hooks/useRewardedSkipAd';
 
 /**
  * v3.94: 디렉터 휴식(쿨다운) 공용 다이얼로그 — MusicGeneration(게이트)·MusicLoading(429 레이스) 공유.
@@ -9,7 +20,12 @@ import { FatigueDirector, FatigueStatus } from '../types';
  *   문구 「{작곡|작사|커버|아티스트} 디렉터」가 쉬는 중이에요 (대표 방침).
  * MAIDOL StudioTab2 피로 패널의 스킵 흐름을 앱 내 다이얼로그(showAlert)로 이식:
  * - ⭐{skip_point_cost}로 {skip_minutes}분 단축 (반복 가능 — v220 디렉터별 차등 비용은 status 실값 표기)
- * - 광고권 보유(skip_wait_count>0) 시에만 광고권 단축 노출 — 신규 광고 시청 배선은 미포함(SSV 미연동)
+ * - 광고권 보유(skip_wait_count>0) 시에만 광고권 단축 노출
+ * - v3.208: 「광고 보고 {skip_minutes}분 단축」 — 보상형 광고 시청(SSV 배선). 흐름:
+ *   시청 완료(EARNED_REWARD) → 구글 SSV 콜백이 서버에 skip_wait_count +1 적립(수 초~수십 초 지연)
+ *   → status 폴링(2s x 15 = 최대 30s)으로 적립 확인 → 자동 skip(method:'ad') 1회 = 30분 단축.
+ *   서버 계약 무변경. 미지원 플랫폼(Expo Go/web)은 버튼 미노출, 로드 실패·중도 이탈·폴링
+ *   타임아웃은 안내 후 기존 ⭐/광고권 경로로 폴백(이중 차감 없음).
  * - 스킵 후에도 남으면 갱신된 남은 시간으로 재안내, 0 도달 시 onCleared 호출
  */
 export function showFatigueCooldownDialog(opts: {
@@ -79,6 +95,61 @@ export function showFatigueCooldownDialog(opts: {
     }
   };
 
+  // v3.208: 다이얼로그 재표시 헬퍼 — 폴백 안내 후 기존 옵션(⭐/광고권)으로 복귀
+  const reshow = () => showFatigueCooldownDialog(opts);
+
+  // v3.208: 광고 시청 → SSV 적립 폴링 → 자동 skip('ad') — 실패 시 기존 경로 폴백
+  const watchAdThenSkip = async () => {
+    if (!isRewardedSkipAdReady()) {
+      preloadRewardedSkipAd(); // 백그라운드 재로드 킥
+      showAlert('광고 준비 중', '광고를 준비하고 있어요. 잠시 후 다시 시도해주세요.', [
+        { text: '확인', onPress: reshow },
+      ]);
+      return;
+    }
+    const baseline = adSkips; // 시청 전 보유 광고권 — 적립(+1) 확인 기준
+    try {
+      const result = await showRewardedSkipAd();
+      if (result !== 'earned') {
+        // 중도 이탈 — 보상 없음(서버 적립도 없음), 기존 다이얼로그로 복귀
+        showAlert('광고 시청 미완료', '광고를 끝까지 시청해야 휴식 시간을 단축할 수 있어요.', [
+          { text: '확인', onPress: reshow },
+        ]);
+        return;
+      }
+    } catch (err) {
+      console.error(`[AdReward] 광고 표시 실패 (${director}):`, err);
+      showAlert(
+        '광고 표시 실패',
+        '광고를 불러오지 못했어요. 잠시 후 다시 시도하거나 다른 단축 방법을 이용해주세요.',
+        [{ text: '확인', onPress: reshow }]
+      );
+      return;
+    }
+    // 시청 완료 — 구글 SSV 콜백(수 초~수십 초 지연)에 의한 skip_wait_count 적립을 폴링 확인
+    if (__DEV__) console.info(`[AdReward] 시청 완료 — SSV 적립 폴링 시작 (baseline=${baseline})`);
+    for (let i = 0; i < 15; i++) {
+      await new Promise<void>((r) => setTimeout(r, 2000));
+      try {
+        const s = await getFatigueStatus(director);
+        const count = Math.max(0, Number(s?.skip_wait_count) || 0);
+        if (count > baseline) {
+          if (__DEV__) console.info(`[AdReward] SSV 적립 확인(보유 ${count}장) — skip('ad') 자동 호출`);
+          doSkip('ad'); // 서버 계약 무변경 — 광고권 1장 소비 = 30분 단축
+          return;
+        }
+      } catch (err) {
+        console.error('[AdReward] SSV 적립 확인 폴링 실패:', err);
+      }
+    }
+    console.error('[AdReward] SSV 적립 확인 타임아웃(30s)');
+    showAlert(
+      '적립 확인 지연',
+      '광고 보상 적립 확인이 지연되고 있어요. 잠시 후 다시 열어주세요 — 적립되면 광고권으로 표시됩니다.',
+      [{ text: '확인', onPress: reshow }]
+    );
+  };
+
   const buttons = [
     { text: cancelText ?? '취소', style: 'cancel' as const, onPress: onCancel },
     { text: `⭐${cost}로 ${minutes}분 단축`, onPress: () => { doSkip('points'); } },
@@ -87,6 +158,16 @@ export function showFatigueCooldownDialog(opts: {
     buttons.push({
       text: `광고권으로 ${minutes}분 단축 (보유 ${adSkips}장)`,
       onPress: () => { doSkip('ad'); },
+    });
+  }
+  // v3.208: 광고권 0장이어도 노출(미지원 플랫폼 제외). 준비 전엔 「광고 준비 중…」으로 표기하고
+  // 누르면 재로드 킥 + 안내 후 재표시(다이얼로그 버튼에 disabled 개념이 없어 라벨로 상태 전달).
+  if (isRewardedAdSupported()) {
+    const adReady = isRewardedSkipAdReady();
+    if (!adReady) preloadRewardedSkipAd(); // 다이얼로그 표시 시점 pre-load — 클릭 시 즉시 show
+    buttons.push({
+      text: adReady ? `광고 보고 ${minutes}분 단축` : '광고 준비 중…',
+      onPress: () => { watchAdThenSkip(); },
     });
   }
 

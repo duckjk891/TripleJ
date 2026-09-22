@@ -3950,3 +3950,77 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 3. **⑦ 메일 발송 수단·자격**: SMTP 자격(호스트/계정) 또는 AWS SES 세팅 제공 여부 — 미제공 시 이번 빌드는 dev 모드(실메일 미발송, 서버 로그로 코드 확인)로 출고.
 4. **⑧ "가사 유지 무보컬" 서브 유스케이스 소멸 허용 여부**(연주곡 진입은 '가사 없이 만들기' 카드로 일원화 — 카드 경로는 가사를 비움).
 5. **⑪ 해석 확인**: 기본안 = "기존 유저 완전 차단 + 신규 설치자는 화면별 최초 1회"(설치 후 2번째 접속에서 처음 방문한 화면은 노출됨). 엄격한 "첫 실행 세션에서만"을 원하면 launch count 방식으로 교체.
+
+## v3.208 (2026-09-22) — 디렉터 휴식(쿨다운) 보상형 광고 배선: 내부 테스트 단계 AdMob 연동 (광고 보고 단축)
+
+> 작성: planner(팀 리드). 사용자 요청: "디렉터들 휴식시간에 광고 연동이 되어있잖아. 이 부분을 내부 테스트 단계에서는 admob에 등록 못해?"
+> 소스오브트루스: 앱 `/Users/pearl/TripleJ/2_housing/`(frontend), 서버 프로덕션 `maidol-ec2:/home/ubuntu/maidol/backend_9004`(**읽기 전용 분석 — 배포는 오케스트레이터**). 스테이징: `server_staging_v3208/`.
+
+### Plan verification findings (파일:라인·프로덕션 실측)
+
+**F1. 사용자 질문 직답 — AdMob "등록"은 이미 되어 있고, 내부 테스트 단계 연동 가능(판정: 가결)**
+- app.json:41-45 에 AdMob **앱 ID 실값이 이미 설정**되어 있음(`androidAppId`/`iosAppId` = `ca-app-pub-xxxx~xxxx` 형식 실값 — 본 문서에는 미기재). 즉 AdMob 계정·앱 등록 자체는 완료 상태이며 최신 1.1.0 APK/AAB에 SDK(react-native-google-mobile-ads ^16.3.2, package.json:39)+앱 ID가 네이티브로 포함돼 있다.
+- 남은 콘솔 작업(코드 밖·사용자 수행): ① **보상형(Rewarded) 광고 단위 생성**(Android, 보상 item=skip_ticket·amount=1) ② 그 광고 단위에 **SSV 콜백 URL 등록**: `https://api.maidol.ai.kr/api/rewards/admob-callback` ③ **테스트 기기 등록**(내부 테스트 중 실광고 노출=무효 트래픽 계정 정지 위험 → 자체 광고 단위 + 테스트 기기 조합이 유일한 안전 E2E 경로). 미게시 앱도 광고 단위 생성 가능; 스토어 연결·app-ads.txt·실광고 게재는 프로덕션 공개 후로 이월.
+- **구글 샘플 TestIds.REWARDED 로는 SSV E2E 불가**: SSV 콜백 URL은 광고 단위별 콘솔 설정이라 샘플 유닛 시청은 우리 서버로 콜백이 오지 않음 → 적립 0. TestIds 는 UI 배선 확인용 폴백으로만 유지.
+
+**F2. 서버 광고권 체계 전모 — 적립(SSV)·소비(fatigue) 서버측은 이미 완비, 부여 경로는 SSV 유일**
+- 적립: routes/rewards.py(로컬 미러 `0_platform_music/backend_9004`와 md5 동일 `95cd671b…` — 프로덕션 실측) `GET /api/rewards/admob-callback`(:153, 무인증·서명검증) — ECDSA-SHA256 검증(:98-128) → transaction_id dedup(reward_transactions unique index :143) → `reward_balances.$inc skip_wait_count += reward_amount`(:231-239). `custom_data` 를 user_id 로 사용(:190) → **앱이 serverSideVerificationOptions.customData=user_id 를 반드시 실어야 적립됨**. 부가: GET /api/rewards/balance(:281)·/history(:253). main.py:758 라우터 등록 확인.
+- 소비: routes/fatigue.py POST /api/fatigue/skip method='ad'(:187-205) — `{skip_wait_count:{$gte:1}}` 조건부 `$inc:-1` 원자 차감, 쿨다운 소멸 레이스 시 +1 원복. 30분 단축(fatigue_service.SKIP_MINUTES=30:47). 티켓은 디렉터 공용.
+- 부여 경로 실측: 서버 전체 grep 결과 skip_wait_count 증가는 **SSV 콜백 단 1곳**(출석 attendance.py·포인트·어드민 지급 경로 없음; admin_ads.py 는 광고주 AdOps로 무관). 앱에 광고 시청 배선이 없으므로 현재 적립 0 → 광고권 버튼은 사실상 사장(死藏) 상태 — 오케스트레이터 실측과 일치.
+- **치명 버그 발견(이번 사이클 서버 수정 1건의 근거)**: rewards.py:40 `GOOGLE_KEYS_URL = "https://gstatic.com/admob/reward/verifier-keys.json"` — 실측 **HTTP 301 → www.gstatic.com** 리다이렉트인데 httpx.AsyncClient 는 기본 `follow_redirects=False`(:55) → 키 fetch 가 JSON 파싱 실패 → `_verify_ssv_signature` 예외 → **모든 SSV 콜백이 403 으로 거절되어 보상 미적립**. 배선을 붙여도 이 1줄을 고치지 않으면 E2E 불성립.
+
+**F3. 앱 소비 흐름 — 수정 단일 지점은 utils/fatigueGate.ts (호출부는 4곳이 아니라 11화면 12곳)**
+- 공용 다이얼로그 showFatigueCooldownDialog(utils/fatigueGate.ts:15-103): ⭐단축 버튼 상시 + 광고권 버튼은 `skip_wait_count>0` 일 때만(:86-91). 헤더 주석 :12 "신규 광고 시청 배선은 미포함(SSV 미연동)" — 의도된 미배선.
+- 호출부 실측 12곳: MapScreen:424 · MusicGeneration:1188,1913 · MusicLoading:307 · ArtistLoading:493 · ArtistResult:647 · ArtistCody:422 · LyricsResult:131 · LyricsLoading:133 · CoverGeneration:486,1146 · LyricsPromptReview:85 (오케스트레이터 사전 실측 4곳은 부분집합). **다이얼로그 내부에 광고 버튼을 추가하면 12곳 전부 무수정 수혜** — 호출부 변경 0 이 기본 설계.
+- services/fatigueService.ts: status(all)에 skip_wait_count 포함(types/index.ts:148,154) → 적립 확인 폴링은 기존 getFatigueStatus 재사용 가능(신규 rewards API 클라이언트 불요·선택).
+
+**F4. WaitTimerScreen 보존 코드 평가 — 구조 관행만 재사용, 로직은 신규 훅으로 재작성**
+- 재사용 가치(관행): Platform.OS!=='web' + try-require 게이트(:30-42, metro.config.js:23 web 빈 모듈 치환과 한 쌍), 화면 진입 시 pre-load(:91-113), Expo Go mock 폴백(:227-230).
+- 재작성 사유(16.3.2 기준 결함 3): ① `serverSideVerificationOptions` 미설정 — SDK 는 `RewardedAd.createForAdRequest(adUnitId, {serverSideVerificationOptions:{customData}})` 지원(lib/typescript/types/RequestOptions.d.ts:6-17,:96 실측) ② 'closed' 문자열 리터럴 구독(:178, AdEventType.CLOSED 상수 미사용) ③ :214-220 setTimeout 이 스테일 클로저 `isWatchingAd` 를 참조하는 타임아웃 버그. → 신규 `hooks/useRewardedSkipAd.ts`(가칭)로 추출·재작성, WaitTimerScreen 은 @deprecated 그대로 존치(무수정).
+
+**F5. 설정·빌드 실측 — 이번 사이클 앱 변경은 JS-only(네이티브 변경 0)**
+- 앱 ID 는 app.json 플러그인에 이미 실값 → **prebuild 산출 네이티브 변경 없음**. 광고 "단위" ID 는 순수 JS 상수라 네이티브 무관.
+- 광고 단위 ID 주입: `constants/ads.ts`(신규) — `process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID`(플레이스홀더, 빌드 시 인라인) 우선, 미설정 시 `TestIds.REWARDED` 폴백. **코드에 `ca-app-pub-xxxx/xxxx` 실값 하드코딩 금지**. __DEV__/프로필 분기 불요 — "키 미제공=샘플 테스트 광고, 제공=자체 단위(테스트 기기에선 테스트 광고 게재)" 단일 규칙이 더 단순·안전. eas.json preview/production env 블록에 키 추가(값은 사용자 제공 시).
+- 테스트 기기: `MobileAds().setRequestConfiguration({testDeviceIdentifiers:[…]})` 를 앱 시작 시 1회(값은 .env/상수 플레이스홀더) — 콘솔 등록과 병행 가능.
+
+**F6. 어뷰징·회귀·플랫폼 판정**
+- 어뷰징: 서버 검증 없는 클라 신뢰 보상은 **채택 안 함** — 기존 SSV(서명·dedup)가 이미 서버측 검증이므로 규모 대비 추가 설계 불요. 클라이언트 적립 API 신설 금지(현행 유지 — 적립은 구글→서버 콜백만). 일일 상한은 서버 캡 미구현 상태 → AdMob 콘솔 게재빈도 설정으로 갈음(기본안).
+- SSV 지연: 콜백은 통상 수 초~수십 초 지연 → EARNED_REWARD 후 status 폴링(2s 간격 최대 30s), 타임아웃 시 "적립 확인 지연 — 잠시 후 다시 열어주세요" 안내 후 다이얼로그 재표시(다음 진입 시 반영). 광고 로드 실패/미충전 시 기존 ⭐/광고권 버튼 경로 그대로(폴백 무손상).
+- Expo Go/web: try-require 실패 시 광고 버튼 자체 미노출(mock 보상 금지 — 서버 적립이 없어 UX 거짓말이 됨). 회귀면: 쿨다운 게이트 12곳 다이얼로그 버튼 배열만 증가, doSkip·409/402 처리 무변경.
+- iOS: 이번 사이클 **Android 내부 테스트 한정**(검증 대상 APK). 코드 자체는 공용이나 iOS 실광고는 ATT 고지(NSUserTrackingUsageDescription)+SKAdNetwork 항목 필요 → 이월(차기, 프로덕션 공개 시점).
+
+### 확정 스펙 (앱/서버 분리)
+
+**흐름**: 휴식 다이얼로그에 3번째 버튼 「광고 보고 30분 단축」(광고권 0장이어도 노출, 광고 준비 안 됐으면 "광고 준비 중…" 비활성) → 시청 완료(EARNED_REWARD) → 구글이 SSV 콜백으로 skip_wait_count +1 적립 → 앱이 status 폴링으로 적립 확인 → **자동으로 skip(method:'ad') 1회 호출** = 30분 단축(잔여 시 갱신 다이얼로그 재표시 — 기존 반복 스킵 UX 동일) — 서버 계약 무변경.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| hooks/useRewardedSkipAd.ts (신규) | try-require·pre-load·show·SSV customData(user_id)·이벤트 정리(F4 결함 3종 교정) | app-dev | `[AdReward]` |
+| constants/ads.ts (신규) | EXPO_PUBLIC_ADMOB_REWARDED_ANDROID 플레이스홀더 + TestIds 폴백, 테스트 기기 ID 목록 | app-dev | — |
+| utils/fatigueGate.ts | 「광고 보고 30분 단축」 버튼 + 시청완료→적립 폴링(2s×15)→doSkip('ad') 자동 연결, 미지원 플랫폼 미노출 | app-dev | `[AdReward]` `[fatigue:*]` |
+| App.tsx | MobileAds 초기화 + setRequestConfiguration(테스트 기기) 1회 | app-dev | `[AdReward]` |
+| eas.json | preview/production env 에 EXPO_PUBLIC_ADMOB_REWARDED_ANDROID 키(값은 사용자 제공 후) | app-dev | — |
+| server_staging_v3208/rewards.py | **1줄: GOOGLE_KEYS_URL → `https://www.gstatic.com/admob/reward/verifier-keys.json`**(또는 follow_redirects=True) — F2 치명 버그 | backend-dev(스테이징만) | 서버 `[rewards]` |
+
+- 서버 수정은 위 1줄이 전부(엔드포인트 신설 0·계약 무변경). 배포: `server_staging_v3208/` 에 rewards.py 스테이징 → 오케스트레이터가 v3.207 절차(백업 `.bak_pre_v3208` → scp → docker build+재생성) 재사용. 앱 12곳 호출부·WaitTimerScreen·fatigueService 무수정.
+
+### 40% 룰 판정
+
+앱 신규 2파일+수정 3파일(국소)+서버 1줄 — **초과 아님(가결)**. 이월: iOS ATT/SKAdNetwork, 실광고 전환(스토어 공개+app-ads.txt), 서버측 일일 적립 캡, WaitTimerScreen 완전 삭제 여부.
+
+### test-designer 테스트 항목
+
+1. **SSV 서버 단독(배포 후 즉시)**: `www.gstatic.com` 키 fetch 성공 로그 확인, 위조 서명 콜백 → 403, transaction_id 재전송 → already_processed(적립 1회 유지).
+2. **E2E(자체 광고 단위+테스트 기기, 실기기 APK)**: 쿨다운 중 다이얼로그 → 광고 시청 → 30s 내 자동 30분 단축 + skip_wait_count 증감 로그(적립 +1→소비 -1), reward_transactions 1건 적재.
+3. **폴백**: 광고 로드 실패(비행기모드)·SSV 폴링 타임아웃 → 안내 후 기존 ⭐/광고권 버튼 정상, 이중 차감 0.
+4. **회귀(12곳)**: Map·MusicGeneration·MusicLoading·ArtistLoading·ArtistResult·ArtistCody·LyricsResult·LyricsLoading·CoverGeneration·LyricsPromptReview — ⭐단축·광고권 소비·409/402·반복 스킵 무변화.
+5. **플랫폼**: Expo Go(광고 버튼 미노출·크래시 0)·web 빌드(빈 모듈 치환 유지)·키 미제공 빌드(TestIds 광고 표시, 적립은 미발생 안내).
+
+### 사용자 결정 필요 사안
+
+1. **AdMob 콘솔 작업+발급값 제공**: 보상형 광고 단위 생성(Android) 후 단위 ID(`ca-app-pub-xxxx/xxxx`) 전달, 해당 단위 SSV 콜백 URL `https://api.maidol.ai.kr/api/rewards/admob-callback` 등록, 테스트 기기 ID 등록/전달. 미제공 시에도 TestIds 폴백으로 UI 배선까지는 출고 가능(적립 E2E 만 보류).
+2. **보상 정책 확정 — 기본안 (b)**: (a) 광고 1회=광고권 +1 적립만(수동 소비) (b) 적립 즉시 자동 소비=**광고 보고 30분 단축**(서버 무수정, 잔여 쿨다운엔 반복 시청 가능) (c) 광고 1회=쿨다운 전체 해제 — 서버 수정 필요+사다리(2~12h) 경제 붕괴 위험으로 **기각 권고**.
+3. **시청 상한**: 서버 캡 없음 — AdMob 콘솔 게재빈도 캡(예: 1일 5회)으로 갈음할지, 차기 서버 캡 도입할지.
+- SSV 도입 여부는 결정 사안 아님 — **서버에 이미 구현 완료라 사용 확정**(F2).

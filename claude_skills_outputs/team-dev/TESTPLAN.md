@@ -2466,3 +2466,101 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건: E-0(신규 APK·AAB 산출) + E-1(⑤ 키보드) 실기기 PASS가 이번 사이클 최상위 완료 조건** — ⑤만은 정적 대체 불가(v3.201·v3.205 두 번의 정적 PASS가 실기기에서 뒤집힌 전력). 나머지 E-2~E-8은 정적 대체 병기·실기기 이관 항목이나 E-3 ⓐ(기존 유저 0회)·E-2 화살표 정확성은 PASS 기록 필수.
 - **핵심 FAIL 게이트 5+3건**: ① **E-1**(키보드 가림 재현 — 3회째 실패 = **replan 회부**, 미세수정 금지) ② **U-3 ①②/E-3 ⓐ**(기존 유저에게 튜토리얼 노출) ③ **A-4 ②·A-5 ②**(보존 대상 오삭제 — official 공지 3건·펄킴 글·peer DM 21건) ④ **A-2 ①**(응답 차이로 계정 존재 노출) ⑤ **U-9 ①③**(직전 사이클 회귀·diff 격리 위반) — 추가 게이트: **U-2 ①③**(구훅 잔존·Modal 전환 누락), **A-3 ④**(dm-image prefix 우회), **U-7 ③/A-2 ⑥**(비밀번호 평문 로그), **A-0**(무승인 배포·삭제 = 최상위). 1건이라도 FAIL이면 커밋·배포·출고 금지(A군 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
 - 이월·결정 대기: SMTP 실자격(⑦ dev 모드 출고 여부)·③ #4·④ go/no-go·⑧ 가사 유지 무보컬 소멸·⑪ 해석 — 사용자 결정 사안 1~5 회신 전 해당 [api]·실행 항목은 "대기". 차기 이월(판정 대상 아님): ① 잔여 스텝 앵커 확대·피드 ⋯ 튜토리얼·⑦ SES 전환.
+
+## v3.208 (2026-09-22) — 디렉터 휴식(쿨다운) 보상형 광고 배선: useRewardedSkipAd 훅·fatigueGate 단일 지점·서버 SSV 키 URL 1줄
+
+> 대상: PLAN.md v3.208(:3954~) — 앱 신규 2파일(hooks/useRewardedSkipAd.ts·constants/ads.ts) + 수정 3파일(utils/fatigueGate.ts·App.tsx·eas.json) + 서버 1줄(server_staging_v3208/rewards.py `GOOGLE_KEYS_URL` → `https://www.gstatic.com/admob/reward/verifier-keys.json` — F2 치명 버그). 흐름: 쿨다운 다이얼로그 「광고 보고 30분 단축」 → EARNED_REWARD → 구글 SSV 콜백 skip_wait_count +1 → status 폴링(2s×15) 적립 확인 → 자동 doSkip('ad') = 30분 단축. 서버 계약 무변경(엔드포인트 신설 0).
+> 실행 전제: 앱 `/Users/pearl/TripleJ/2_housing`(frontend, v3.207 합격 형상 기준선). 서버 1줄은 **스테이징(`server_staging_v3208/`)만 접촉 — 프로덕션 배포는 오케스트레이터가 사용자 최종 확인 후 v3.207 절차(`.bak_pre_v3208` 백업 → scp → docker build+재생성) 재사용**. [api]는 배포 완료 후 착수(전이면 "대기" 보고), test-designer/tester의 프로덕션 접근은 **무인증 GET만**(쓰기·ssh 0). [e2e]는 사용자 결정 사안 1(자체 보상형 광고 단위 생성 + SSV 콜백 URL `https://api.maidol.ai.kr/api/rewards/admob-callback` 등록 + **테스트 기기 등록**) 완료 후 착수 — 미제공 시 TestIds 폴백 UI 검증까지만(적립 E2E "대기").
+> 시크릿 기재 금지: AdMob 앱 ID·광고 단위 ID 실값은 어떤 증적·보고서에도 기재 금지 — **`ca-app-pub-xxxx~xxxx`(앱)/`ca-app-pub-xxxx/xxxx`(단위) 형식 플레이스홀더만 표기**. 테스트 기기 ID·user_id 실값도 마스킹.
+> **⚠ 무효 트래픽 경고(전 항목 공통)**: 내부 테스트에서 **실광고 노출·클릭 = AdMob 무효 트래픽 → 계정 정지 위험**. 모든 [e2e]는 **테스트 광고(자체 단위+등록된 테스트 기기 조합, 또는 TestIds)에서만** 수행 — 광고 소재 클릭·유도는 테스트 광고라도 금지(시청 완료만). 테스트 기기 미등록 상태에서 자체 단위 광고가 "Test Ad" 라벨 없이 게재되면 **즉시 중단·보고**(1건 = 절차 FAIL).
+
+### [unit] 앱 정적 검증 (머지 게이트 — 서버 배포·콘솔 작업과 독립 트랙)
+
+**U-1. 선행 게이트 — 클린 기준선 + 접촉 허용 목록 + tsc exit 0 [unit]**
+- Given: v3.207 합격 형상 클린 기준선 위에서만 diff 귀속 판정(U-7)이 성립. 접촉 허용 목록 = PLAN 변경 매트릭스 앱 5파일: `hooks/useRewardedSkipAd.ts`(신규)·`constants/ads.ts`(신규)·`utils/fatigueGate.ts`·`App.tsx`·`eas.json`(+ 부수 env 예시 파일 있으면 기록). 서버는 `server_staging_v3208/rewards.py` 1파일만(로컬 미러 `0_platform_music/backend_9004` 원본 무접촉).
+- When: ① `git log --oneline -1`+`git status --short`(2_housing 스코프) 클린 기준선 확인(미커밋 잔존 시 착수 금지·반려). ② 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`. ③ package.json diff **0**(react-native-google-mobile-ads ^16.3.2 기존 설치·app.json 앱 ID 기존 실값 — 이번 사이클 의존성·네이티브 변경 0 = JS-only 논증, prebuild 산출 변경 없음).
+- Then: ② **exit 0** — 신규 훅 시그니처·fatigueGate 옵션 확장이 전 소비처와 정합함을 컴파일로 확정. ③ 위반(의존성 추가/버전 변동) 1건 = 네이티브 변경 유입 반려.
+
+**U-2. 훅 상태 전이 전수 — 로드→표시→완료/실패/닫힘 + F4 결함 3종 교정 [unit]**
+- Given: WaitTimerScreen 보존 코드의 16.3.2 기준 결함 3종(PLAN F4 — ① serverSideVerificationOptions 미설정 ② 'closed' 문자열 리터럴 구독 ③ setTimeout 스테일 클로저)을 교정한 신규 `hooks/useRewardedSkipAd.ts`가 대상. WaitTimerScreen 자체는 @deprecated 무수정 존치.
+- When: ① **상태 전이 표 문자 추적**: idle→loading(pre-load)→loaded→showing→earned(EARNED_REWARD) / showing→closed(미완료 닫힘 — earned 미발화) / loading→error(로드 실패) / show 요청 시 미로드 → "광고 준비 중…" 경로 — 각 전이에서 후속 액션(폴링 시작은 **earned에서만**) 문자 확인. ② 이벤트 구독이 **SDK 상수**(`RewardedAdEventType.LOADED`/`EARNED_REWARD`·`AdEventType.CLOSED`/`ERROR`) 기반 — 문자열 리터럴('closed' 등) 구독 0(F4 결함② 재발 차단). ③ 타이머·구독 정리: unmount/재시도 시 리스너 unsubscribe 전수 + 타임아웃 콜백이 스테일 상태를 참조하지 않음(ref 또는 최신 상태 기반 — F4 결함③ 재발 차단) 문자 추적. ④ CLOSED(earned 미발화) 시 **보상 로직 미트리거**(폴링·doSkip 미호출) + 재로드 준비. ⑤ 로드 실패 시 재시도 정책(무한 루프 0) 확인. ⑥ 로그 추적자 `[AdReward]` 배선 — 단위 ID·user_id 실값 로그 출력 0.
+- Then: ①~⑥ 전부 충족 — ①(earned에서만 보상 후속)·②(상수 구독)이 판정 중심.
+
+**U-3. SSV customData=user_id 전달 코드 확증 [unit] — FAIL 게이트(보상자 식별 불가)**
+- Given: 서버 rewards.py는 `custom_data`를 user_id로 사용(:190) — 앱이 `serverSideVerificationOptions.customData`에 user_id를 실어야만 적립됨(미전달 시 콜백이 와도 보상자 식별 불가 = 적립 0, F2·F4 결함① 인과).
+- When: ① `RewardedAd.createForAdRequest(adUnitId, {serverSideVerificationOptions: {customData: <user_id>}})` 형태로 **광고 인스턴스 생성 시점에 customData 설정** 문자 확인(16.3.2 RequestOptions.d.ts:6-17 계약 — show 시점 주입 불가 API임을 근거로 생성 시점 판정). ② user_id 출처가 로그인 세션(authStore/토큰 클레임 등 실사용자 식별자)과 일치 — 하드코딩·빈 문자열·undefined 폴백 경로 0. ③ 비로그인/user_id 미확보 상태에서 광고 버튼 노출·show 진입 차단(customData 없는 시청 = 적립 불능 시청 방지) 경로 확인. ④ customData 값 로그 출력 0(마스킹).
+- Then: ①~④ 전부 충족 — **①·②(customData 미설정 또는 user_id 아닌 값) 1건 = FAIL 게이트(시청해도 적립 0 — 배선 전체 무의미화)**.
+
+**U-4. constants/ads.ts — EXPO_PUBLIC 키 폴백·하드코딩 0 [unit] — FAIL 게이트(단위 ID 하드코딩)**
+- Given: 스펙 = `process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID`(빌드 시 인라인) 우선, 미설정 시 `TestIds.REWARDED` 폴백 — 단일 규칙(`__DEV__`/프로필 분기 불요). 코드에 실값 하드코딩 금지.
+- When: ① 폴백 식 문자 확인: 키 미설정(undefined·빈 문자열) → `TestIds.REWARDED` — 그 외 분기 없음(과설계 시 기록). ② **하드코딩 스캔**: 2_housing 신규 diff 전역 `grep -rn "ca-app-pub-"` → **0건**(app.json 기존 앱 ID 제외 — 이번 diff 밖. TestIds는 SDK 상수라 무관). eas.json은 **키 이름만** 추가·값은 빈 문자열/미기재(사용자 제공 후 주입) 확인 — 값 실값 발견 시 FAIL. ③ 테스트 기기 ID 목록: `MobileAds().setRequestConfiguration({testDeviceIdentifiers})` App.tsx 앱 시작 1회 배선 + ID 값은 플레이스홀더/env 경유(실값 커밋 0). ④ Android 한정 키만 사용(iOS 단위 ID 참조 0 — 이번 사이클 Android 한정, PLAN F6 iOS 이월 정합).
+- Then: ①~④ 전부 충족 — **②(광고 단위 실값 하드코딩·eas.json 실값 커밋) 1건 = FAIL 게이트**.
+
+**U-5. fatigueGate 단일 지점 — 12개 호출부 무수정 전파 + 기존 ⭐/광고권 경로 diff 0 [unit] — FAIL 게이트(호출부 수정·기존 경로 파괴)**
+- Given: 설계 원칙 = 다이얼로그 내부(showFatigueCooldownDialog, utils/fatigueGate.ts:15-103)에만 광고 버튼을 추가하여 **호출부 12곳 전부 무수정 수혜**(PLAN F3).
+- When: ① **호출부 12곳 diff 0 전수표**: MapScreen:424 · MusicGeneration:1188,1913 · MusicLoading:307 · ArtistLoading:493 · ArtistResult:647 · ArtistCody:422 · LyricsResult:131 · LyricsLoading:133 · CoverGeneration:486,1146 · LyricsPromptReview:85 — `git diff` 기준 12곳 소속 화면 파일 **전부 무접촉**(1곳이라도 fatigueGate 호출 시그니처 변경·광고 관련 수정 유입 = 단일 지점 원칙 위반 FAIL). ② 신규 버튼 「광고 보고 30분 단축」: 광고권 0장이어도 노출 + 광고 미로드 시 "광고 준비 중…" 비활성 — 노출 조건식 문자 확인(미지원 플랫폼 미노출은 U-6). ③ **기존 버튼 2종 경로 diff 0**: ⭐단축 버튼(상시)·광고권 버튼(`skip_wait_count>0` 조건 :86-91) — 라벨·순서·핸들러·doSkip 호출·409/402 처리 로직 hunk 0(버튼 배열에 항목 추가만 허용). ④ **시청완료→적립 폴링→자동 소비 체인**: earned → getFatigueStatus 폴링(2s 간격 최대 15회=30s, 기존 fatigueService 재사용 — 신규 rewards API 클라이언트 불요) → skip_wait_count 증가 감지 → doSkip('ad') 자동 1회 → 잔여 쿨다운 시 갱신 다이얼로그 재표시(기존 반복 스킵 UX) — 타임아웃 시 "적립 확인 지연" 안내 후 기존 다이얼로그 복귀·**doSkip 미호출**. ⑤ **클라 단독 보상 경로 0**: 앱 diff 전역에서 skip_wait_count를 서버 적립 없이 증가시키거나, earned만으로(폴링 확인 없이) doSkip('ad')를 호출하거나, 신규 적립 API를 호출하는 코드 **0건** — 적립은 구글→서버 SSV 콜백 유일(PLAN F6). ⑥ 폴링 재진입 가드: 다이얼로그 중복 표시·doSkip 이중 호출(이중 차감) 방지 문자 확인. ⑦ 로그 `[AdReward]`+기존 `[fatigue:*]` 병기.
+- Then: ①~⑦ 전부 충족 — **①(호출부 수정)·③(기존 스킵 경로 파괴)·⑤(시청 완료 확인 없는 보상 지급 경로) = FAIL 게이트**.
+
+**U-6. Expo Go/web 안전 강등 [unit]**
+- Given: 관행 계승(PLAN F4) — `Platform.OS!=='web'` + try-require 게이트, metro.config.js:23 web 빈 모듈 치환과 한 쌍. 원칙: 미지원 환경은 광고 버튼 **자체 미노출**(mock 보상 금지 — 서버 적립 없는 가짜 성공 UX 금지).
+- When: ① try-require 실패(Expo Go — 네이티브 모듈 부재) 시: 훅이 unavailable 상태 반환 + 다이얼로그 광고 버튼 미노출 + **크래시 0**(require를 조건부·try 내로 한정, top-level import 0) 문자 추적. ② web: metro 빈 모듈 치환 유지(metro.config.js diff 0) + Platform 게이트로 버튼 미노출. ③ **mock 보상 경로 0**: unavailable 상태에서 시청 성공 흉내·폴링·doSkip 트리거 코드 0건. ④ App.tsx MobileAds 초기화도 동일 게이트 내(웹/Expo Go에서 초기화 호출 크래시 0). ⑤ 기존 다이얼로그(⭐/광고권)는 전 플랫폼 현행 유지.
+- Then: ①~⑤ 전부 충족 — ①(Expo Go 크래시)·③(mock 보상)이 판정 중심.
+
+**U-7. diff 격리 + v3.207 형상 회귀 0 [unit] — FAIL 게이트**
+- Given: 접촉 허용 = U-1 목록. 직전 v3.207 합격 형상(keyboard-controller 전환·코치마크·first-run 게이트·차트 신곡·DM 이미지·비밀번호 재설정·성별 칩·연주곡 제거)과 이번 매트릭스는 **겹치는 파일이 App.tsx 1종뿐**(v3.207 KeyboardProvider 래핑 vs 이번 MobileAds 초기화).
+- When: ① `git status --short`+`git diff --stat`(2_housing 스코프): U-1 목록 외 접촉 0 — 특히 WaitTimerScreen.tsx·fatigueService.ts·screens 12곳·metro.config.js·package.json·app.json **전부 diff 0**, 로컬 서버 소스(`0_platform_music/backend_9004`) diff 0(스테이징 `server_staging_v3208/`만 허용). ② App.tsx hunk 귀속: MobileAds 초기화+setRequestConfiguration 외 hunk 0 — KeyboardProvider 래핑·기존 초기화 순서 불변. ③ **v3.207 합격 기능 diff 0 전수**: 구훅 2종 삭제 상태 유지(재유입 0)·Modal 5종 keyboard-controller·tutorialGate/코치마크·ChartScreen 신곡 탭·DmChatScreen 이미지 첨부·AuthPanel forgot 모드·ArtistCody 성별 칩·MusicGeneration step 3 — 로직 hunk 0. ④ 증적·스크립트 git 미추적(scratchpad 한정) + 광고 단위 ID·테스트 기기 ID·user_id 실값 출력 0(플레이스홀더만). ⑤ `npx tsc --noEmit` 최종 형상 재실행 exit 0(U-1 ② 재확인).
+- Then: ①~⑤ 전부 충족 — **①(목록 외/서버 원본 diff)·③(v3.207 회귀) = FAIL 게이트**.
+
+### [api] 서버 검증 (rewards.py 1줄 배포 후 — 전이면 "대기" 보고)
+
+**A-0. 실행 게이트 [api] — 최상위 FAIL 게이트(무승인 배포)**
+- Given: 서버 수정은 `server_staging_v3208/rewards.py` 1줄(GOOGLE_KEYS_URL www 교정)이 전부 — **프로덕션 배포는 오케스트레이터가 사용자 최종 확인 후 실행**(백업 `.bak_pre_v3208` → scp → docker build+재생성). test-designer/tester 사전 접근은 무인증 GET만.
+- When: ① 배포 전: 스테이징 파일이 프로덕션 원본(md5 `95cd671b…` 기준) 대비 **정확히 GOOGLE_KEYS_URL 1줄 diff**인지 확인(그 외 hunk 발견 = 스코프 초과 반려) + 사전 스냅샷 `/health` 200. ② 배포 실행 전 사용자 승인 기록 확인.
+- Then: **승인 전 배포·프로덕션 쓰기 1건 = 최상위 FAIL**. 대기 중이면 A-1~A-4 "대기" 보고, [unit] 트랙만 진행.
+
+**A-1. www.gstatic.com 키 조회 200 + 캐시 [api]**
+- Given: 배포 완료. 교정 전 실측 — `https://gstatic.com/...` 301 리다이렉트 + httpx follow_redirects=False(:55) → 키 fetch JSON 파싱 실패 → 전 SSV 콜백 403(F2 치명 버그).
+- When: ① (서버 무관 사전 확증) `curl -sI https://www.gstatic.com/admob/reward/verifier-keys.json` → **200 직접 응답**(리다이렉트 0) + body JSON에 `keys[].keyId/pem` 구조 확인. ② 배포 후 임의 SSV 형식 콜백 1회 호출(아래 A-2 ①)로 키 fetch 경로를 발화시켜 서버 로그(docker logs — 오케스트레이터 경유 읽기)에 키 fetch 성공/파싱 오류 부재 확인 — 교정 전 증상(JSON 파싱 실패 traceback) 소멸. ③ 연속 콜백 2회째에 키 재fetch 없이 캐시 사용(rewards.py 키 캐시 로직 기준 — 캐시 TTL·조건은 코드 실측값 기록). ④ 키 fetch 실패 시(네트워크 차단 가정) 콜백이 5xx 크래시가 아닌 정돈된 4xx/403 거절인지 코드 판독 병기.
+- Then: ①~③ 충족 — ②(파싱 실패 traceback 잔존 = 1줄 수정 무효)가 판정 중심.
+
+**A-2. SSV 콜백 서명검증 — 정상/위조 경로 [api]**
+- Given: `GET /api/rewards/admob-callback`(:153, 무인증) — ECDSA-SHA256 검증(:98-128), `custom_data`=user_id(:190), 적립 `reward_balances.$inc skip_wait_count += reward_amount`(:231-239).
+- When: ① **위조 서명**: 형식상 유효한 쿼리(user_id·reward_amount·transaction_id·signature·key_id)에 임의 서명 → **403 거절 + 적립 0**(balance GET으로 확증). ② key_id 미존재·서명 파라미터 누락 각각 → 정돈된 4xx(5xx 크래시 0). ③ **정상 서명 경로**: 구글 개인키 없이는 유효 서명 생성 불가 — **정상 적립 경로 검증은 [e2e] E-1(실기기 테스트 광고 → 구글 발신 실SSV 콜백) 실측으로 이관함을 명기**(스테이징에서 서명검증 우회·스킵 플래그 추가는 프로덕션 코드 오염이므로 금지). ④ custom_data 부재 콜백(서명 유효 가정 불가로 코드 판독 병기): user_id 식별 불가 시 적립 스킵/거절 경로 확인 — U-3 앱측 게이트와 교차.
+- Then: ①~③ 충족 — ①(위조 서명 통과 = 무검증 적립) 1건 = FAIL.
+
+**A-3. dedup — 동일 transaction_id 재호출 무적립 [api]**
+- Given: transaction_id dedup — reward_transactions unique index(:143).
+- When: ① 동일 transaction_id 콜백 2회(E-1 실측 시 구글 재시도 관찰 또는 동일 쿼리 재전송) → 2회째 `already_processed` 응답 + skip_wait_count **증가 1회 유지**(balance 전후 대조) + reward_transactions 1건만 적재. ② 서명검증이 dedup **앞단**인지 순서 판독(위조+기존 transaction_id 재전송이 dedup 응답으로 정보 노출되지 않는지 기록 사안). ※ 유효 서명 필요 부분은 E-1 실측과 병합 수행.
+- Then: ① 충족 — 재호출 이중 적립 1건 = FAIL.
+
+**A-4. 기존 fatigue skip('ad') 원자 차감 회귀 + 스모크 [api]**
+- Given: 소비 경로 무수정 — POST /api/fatigue/skip method='ad'(:187-205) `{skip_wait_count:{$gte:1}}` 조건부 `$inc:-1` 원자 차감·레이스 시 +1 원복·SKIP_MINUTES=30(:47).
+- When(자기 테스트 계정 한정): ① 잔량 0 상태에서 method='ad' skip → 402(잔량 부족) 기존 응답 불변. ② (E-1 적립 후) 잔량 1 → skip 성공 + 30분 단축 + 잔량 0 — 차감 정확 1. ③ 쿨다운 없는 상태 skip → 기존 409/무의미 응답 불변. ④ 배포 후 회귀 스모크: `/health` 200 + `GET /api/rewards/balance`·`/history` 기존 스키마 불변 + 서버 로그 traceback 0 + 컨테이너 재시작 이력 배포 1회분만.
+- Then: ①~④ 전부 충족.
+
+### [e2e] 실기기 (Android · 사용자 콘솔 작업 완료 후 — 자체 광고 단위+SSV URL 등록+**테스트 기기 등록** 전제)
+
+**E-0. 전제 게이트 + 무효 트래픽 방지 [e2e] — 절차 FAIL 게이트**
+- Given: 구글 샘플 TestIds로는 SSV 콜백이 우리 서버로 오지 않음(콘솔 단위별 설정 — PLAN F1) → 적립 E2E는 **자체 보상형 단위 + SSV URL 등록 + 테스트 기기 등록** 조합이 유일 경로. 기기: 1.1.0 계열 신규 APK(네이티브 변경 0이므로 기존 APK에 JS 업데이트 반영 형상도 가 — 반영 방식 기록).
+- When/Then: ① 사용자 제공값(단위 ID `ca-app-pub-xxxx/xxxx`·테스트 기기 ID) 주입 빌드 확인 — 미제공 시 E-1~E-2의 적립 체인은 "대기", TestIds 폴백으로 E-2 ①·E-3·E-4만 수행. ② 광고 게재 시 **"Test Ad" 라벨 확인 필수** — 라벨 없는 실광고 게재 발견 = 즉시 시청 중단·보고(테스트 기기 등록 누락 신호). ③ **⚠ 실광고 클릭 절대 금지 — 내부 테스트 중 광고 소재 클릭·전환 유도는 테스트 광고라도 수행하지 않음(시청 완료·닫기만). 무효 트래픽 = AdMob 계정 정지 위험. 위반 1건 = 절차 FAIL·즉시 보고.**
+
+**E-1. 정상 체인 — 광고 옵션 노출 → 테스트 광고 시청 완료 → 적립 폴링 → 자동 30분 단축 [e2e] — 이번 사이클 최상위 완료 조건**
+- Given: 쿨다운 진행 중 디렉터(임의 화면 — 대표: MusicGeneration) + 광고권 0장 + 테스트 기기.
+- When/Then: ① 쿨다운 다이얼로그에 버튼 3종 노출: ⭐단축 · (광고권 0장이라 광고권 버튼 미노출 — 기존 조건 유지) · **「광고 보고 30분 단축」**(pre-load 완료 시 활성). ② 탭 → 테스트 광고 전체화면 재생 → **끝까지 시청**(EARNED_REWARD) → 닫기. ③ "적립 확인 중" 폴링 표시 → **30s 내** 자동 skip 발화 → 쿨다운 **30분 단축 확인**(타이머 갱신) — 잔여 쿨다운 시 갱신 다이얼로그 재표시(반복 시청 가능 확인 1회). ④ 서버 교차 증적: reward_transactions 1건 적재 + skip_wait_count 로그 증감(+1 적립→-1 소비, A-3·A-4 ② 병합) + 서버 로그 `[rewards]` SSV 검증 성공. ⑤ SSV 지연이 30s 초과한 경우: "적립 확인 지연" 안내 → 다이얼로그 복귀 → 잠시 후 재진입 시 광고권 버튼 노출(적립 반영)·소비 정상 — 지연 실측치 기록. ⑥ user_id 귀속: 적립이 **시청 계정 본인** balance에 반영(타 계정 오적립 0 — U-3 교차).
+- Then: ①~⑥ 충족 — **③(자동 단축 체인) + ④(서버 적립 증적)가 최상위 완료 조건**. 시청 완료 없이 단축 발생 1건 = FAIL(클라 단독 보상 — U-5 ⑤ 실기기 확증).
+
+**E-2. 폴백 — 광고 미충전·로드 실패 시 기존 경로 무손상 [e2e]**
+- When/Then: ① 광고 미로드 상태(진입 직후·연속 시청 직후) 다이얼로그 → 광고 버튼 "광고 준비 중…" 비활성 + ⭐단축 정상 동작(크래시 0). ② **비행기 모드**(로드 실패 강제) → 다이얼로그에서 광고 버튼 비활성/실패 안내 → 기존 ⭐/광고권 버튼 경로 정상 + 네트워크 복구 후 재로드 정상. ③ 폴링 타임아웃 경로(콜백 지연 유도 곤란 시 E-1 ⑤ 실측으로 갈음 명기) → 안내 후 기존 다이얼로그 복귀 + **이중 차감 0**(잔량·쿨다운 대조).
+
+**E-3. 중도 이탈 — 광고 닫기 시 무보상 + 기존 다이얼로그 복귀 [e2e]**
+- When/Then: ① 광고 재생 중 조기 닫기(스킵/뒤로) → EARNED_REWARD 미발화 → **적립 0**(balance 불변·reward_transactions 미적재) + 폴링·doSkip 미발화 + 쿨다운 불변. ② 닫힘 후 기존 쿨다운 다이얼로그 정상 복귀(또는 재진입 시 정상 — 동작 기록) + 광고 재로드 후 재시청 가능. ③ 시청 중 앱 백그라운드 전환→복귀 크래시 0.
+
+**E-4. ⭐스킵·광고권 회귀 + 플랫폼 스모크 [e2e]**
+- When/Then: ① **⭐단축 회귀**: 쿨다운 다이얼로그 ⭐ 버튼 → 잔액 차감·30분 단축·402(잔액 부족 시) 안내 — v3.207 대비 무변화. ② 광고권 보유 상태(E-1 적립 직후 자동 소비 전 타이밍 또는 적립만 된 상태) → 광고권 버튼 노출·수동 소비 정상(기존 조건 `skip_wait_count>0` 유지). ③ 호출부 회귀 스모크: 12곳 중 대표 4화면(Map·MusicGeneration·ArtistCody·CoverGeneration) 다이얼로그 호출 → 동일 버튼 구성·정상 동작(나머지 8곳은 U-5 ① 정적 diff 0으로 갈음 명기). ④ **Expo Go**: 광고 버튼 미노출 + 다이얼로그·⭐ 정상 + 크래시 0. ⑤ web 빌드: 빈 모듈 치환 유지·크래시 0. ⑥ 키 미제공 빌드(TestIds): 광고 표시·시청은 되나 **적립 미발생이 정상**임을 확인 + 폴링 타임아웃 안내 경로 발화(적립 0 = 버그 아님 명기).
+
+### 게이트 요약
+
+- **머지 게이트(앱)**: U-1~U-7 전부 PASS 시 머지 허용(frontend 자동 push 관례). 서버 트랙: A-0 승인 → 배포 → A-1~A-4 / E2E 트랙: E-0 전제(사용자 콘솔 작업) 충족 → E-1~E-4 — 각 트랙 대기 시 "대기" 보고, 앱 머지와 독립.
+- **완료 조건**: E-1 ③④(테스트 광고 시청→SSV 적립→자동 30분 단축 체인 + 서버 증적)가 이번 사이클 최상위 완료 조건 — 단, 사용자 결정 사안 1(콘솔 발급값) 미회신 시 U+A까지로 "부분 완료(적립 E2E 대기)" 판정 허용(PLAN 명기 — TestIds 폴백 UI 배선까지 출고 가능).
+- **핵심 FAIL 게이트 5건**: ① **U-4 ②**(광고 단위 ID 하드코딩·실값 커밋) ② **U-3**(SSV customData=user_id 누락 — 보상자 식별 불가·적립 0) ③ **U-5 ⑤/E-1**(시청 완료·서버 적립 확인 없이 보상 지급 — 클라 단독 보상 경로) ④ **U-5 ①③/E-4 ①**(12곳 호출부 수정·기존 ⭐/광고권 스킵 경로 파괴) ⑤ **U-7 ①③**(v3.207 형상 회귀·diff 격리 위반) — 추가: **A-0**(무승인 배포 = 최상위)·**A-2 ①**(위조 서명 통과)·**A-3**(dedup 이중 적립)·**E-0 ③**(실광고 클릭 — 절차 FAIL). 1건이라도 FAIL이면 커밋·배포·출고 금지(서버/E2E 트랙 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
+- 이월(판정 대상 아님): iOS ATT/SKAdNetwork·실광고 전환(스토어 공개+app-ads.txt)·서버측 일일 적립 캡(콘솔 게재빈도 캡으로 갈음 — 사용자 결정 사안 3)·WaitTimerScreen 완전 삭제.

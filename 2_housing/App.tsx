@@ -39,6 +39,7 @@ import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore, restoreSession } from './stores/authStore';
 // v3.207 ⑪: 튜토리얼 first-run 게이트 — 부팅 1회 판별(신규 설치 vs 기존 유저)
 import { initTutorialGate } from './utils/tutorialGate';
+import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
@@ -513,6 +514,8 @@ export default function App() {
   // v3.207 ⑪: 튜토리얼 first-run 게이트를 restoreSession보다 먼저 — 완전 신규 설치(스토리지 empty)
   // 판별이 다른 부팅 쓰기(persist 등)에 오염되기 전에 마커를 확정한다(멱등 — 오버레이도 재호출).
   useEffect(() => { initTutorialGate(); restoreSession(); }, []);
+  // v3.208: AdMob MobileAds 초기화 + 테스트 기기 등록 1회 — Expo Go/web 은 내부에서 안전 no-op
+  useEffect(() => { initRewardedAds(); }, []);
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
   useEffect(() => {
     initPlaybackReconciler();

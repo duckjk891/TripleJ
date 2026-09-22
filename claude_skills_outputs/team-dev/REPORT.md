@@ -2657,3 +2657,23 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 - 관찰(비조치): 전체 대화방 19개 중 빈 대화방 2개는 이번 정리 대상 밖의 기존 잔재 — 필요 시 차기 정리.
 - **빌드(1.1.0, versionName 인상)**: APK https://expo.dev/artifacts/eas/twdZlkP5cZRvXEE-9WuvEZnmCdpWiy5yBx3gmRI-aZI.apk / AAB https://expo.dev/artifacts/eas/pXwWTFS939xqa8BonxSWGtRV7LTrzZ6Fn22ZO5ZBQWU.aab — 출시명·출시노트 release-notes/v1.1.0.md.
 - **잔여**: E-1~E-8 실기기(최우선: 신고·담기 키보드 — 재현 시 replan), SES 콘솔 3종 후 MAIL_ENABLED=true, Play Console AAB 업로드(사용자).
+
+## v3.208 (2026-09-22) — 디렉터 휴식 보상형 광고 배선 복구 (AdMob SSV) + 서버 서명키 URL 버그 픽스
+
+**요청**: "디렉터들 휴식시간에 광고 연동이 되어있잖아. 이 부분을 내부 테스트 단계에서는 admob에 등록 못해?" — 직답: 등록 가능이며, 실측 결과 **앱 ID는 이미 app.json에 등록·빌드 포함**, 서버에는 SSV 콜백(서명검증·dedup·skip_wait_count 적립)까지 기구현. 끊긴 곳 2개를 복구.
+
+### 수행 결과
+
+- **원인 실측**: ① 광고 시청 배선이 v3.107에서 폐기(WaitTimerScreen deprecated) — 광고권 적립 경로가 앱에 없음 ② 서버 rewards.py:40 서명키 URL(gstatic.com)이 301 리다이렉트인데 httpx 미추적 → **모든 SSV 검증 실패(403)·적립 0**. curl 실증: 구 URL 301 / www.gstatic.com 200 직접 응답.
+- **서버 1줄**(server_staging_v3208/rewards.py, .orig 백업·프로덕션 md5 일치 확인): GOOGLE_KEYS_URL → www.gstatic.com. 배포는 사용자 위임(권한 차단 관행).
+- **앱 배선(5파일)**: 신규 hooks/useRewardedSkipAd.ts(16.3.2 API 재작성 — SDK 상수 구독·스테일 클로저 제거·SSV `serverSideVerificationOptions{userId, customData:user_id}` 필수 설정, **user_id 미확보 시 로드 차단**(tester U-3③ 즉시 반영 — 적립 불능 시청 봉쇄)) + constants/ads.ts(광고 단위 ID = EXPO_PUBLIC 키, 미설정 시 TestIds 폴백 — 하드코딩 0) + utils/fatigueGate.ts **단일 지점**에 「광고 보고 30분 단축」 버튼(호출부 12곳 무수정 수혜, 시청 완료→기존 fatigueService 폴링 2s×15로 적립 확인→자동 skip('ad') — 서버 계약 무변경, 전 실패 경로 showAlert 후 기존 ⭐/광고권 다이얼로그 복귀) + App.tsx 초기화 1회 + eas.json 플레이스홀더. Expo Go/web try-require 안전 강등·mock 보상 0.
+
+### 검증 (tester)
+
+U-1~U-7 전부 PASS — FAIL 게이트 5건 통과: 하드코딩 0 / SSV customData=user_id 확증 / **클라 단독 보상 경로 0**(폴링 확인 없인 doSkip 불가) / 12개 호출부·기존 ⭐·광고권 경로 diff 0 / v3.207 회귀 0. tsc exit 0(픽스 반영 후 재확인). A-0 스테이징 diff 1줄 정합·A-1 www URL 200 사전 확증. A(배포 후)·E(실기기·콘솔 발급 후) 트랙 대기 — "부분 완료(적립 E2E 대기)" 판정.
+
+### 잔여 (사용자)
+
+1. 서버 1줄 배포(커맨드 전달) → A-1~A-4 실측.
+2. AdMob 콘솔: 보상형 광고 단위 생성(ID 제공 → eas.json 기입), 광고 단위에 SSV 콜백 URL 등록, 테스트 기기 등록(무효 트래픽 방지 필수).
+3. 다음 APK 빌드에 포함(JS-only — OTA 없음). 실기기 E-0~E-4: 테스트 광고 시청→30초 내 자동 30분 단축 체인. **내부 테스트에서 실광고 클릭 절대 금지**(계정 정지 위험).
