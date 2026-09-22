@@ -2537,3 +2537,10 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 ### 백로그
 - **서버(사용자 승인 후 별도 사이클)**: refine 동시 요청 버전 경합(세션 락/멱등키), 이중 차감 환불 1건(user c19acda4 ⭐5, 9/22 03:05), 장시간 동기 POST 비동기 잡+폴링 전환.
 - tester 경미 노트 3건(위 기재), 설정 화면 '튜토리얼 다시 보기' 일괄 리셋, generation 스트림 Range(206) 지원(6분 곡 미버퍼 구간 시크 지연 실측 시).
+
+## v3.203 이월분 완결 (2026-09-22, 서버 2차 배포 + E-3 스모크)
+
+- **서버 2차 배포 완료**: 사용자가 scp로 `/private/tmp/v3203_generate.py` 업로드(체크섬 `bdc2b7b4…` 일치) → docker 재빌드·재기동, health 200·기동 무오류. 최종형 반영 실측: GenerateRequest.duration 기본값 None(생략=자동), doc raw 저장, add_task/재시작 경로 `or 0` — 연주곡 '자동'=Suno duration 미전달 계약 성립.
+- **A-5 배포 스모크 PASS**: health(로컬·외부) 200, tracks/artists/charts 기존 스키마, traceback 0. 실트래픽 보컬곡 duration 관측 기회 없음(비차단, 게이트 정적 재확인 완료).
+- **E-3 연주곡 실생성 스모크 PASS(1회)**: 테스트 계정(가입보너스 50⭐) → Jazz·Romantic·BPM90·180초 연주곡 gen `6ab20557dcf8538e36ab54a5` — 65초 만에 completed. 로그 사슬(`instrumental start` → `customMode=True instrumental=True duration=180`, model V6) 정상, 잔액 50→35(정확히 −15, 재차감·환불 0), doc(vocal/duration/point_cost/result) 정합, creation_log SESSION_START→GEN_REQUEST→GEN_RESPONSE 기록, **결과 오디오 실측 179.56s/179.96s — 요청 180s 대비 오차 0.5초 미만(Suno V6 duration 파라미터 정밀 제어 확인)**.
+- 남은 실기기 확인: 연주곡 5질문 체인 육안(E-1·E-2 상당) + '자동' 케이스 1회는 사용자 실사용에서 확인 권장(추가 과금 회피로 미실행).
