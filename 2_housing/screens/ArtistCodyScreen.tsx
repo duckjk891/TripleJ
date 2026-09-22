@@ -29,8 +29,14 @@ import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 
-type Cat = '상의' | '하의' | '신발' | '헤어스타일' | '헤어컬러' | '악세서리' | '안경' | '문신';
-const CATEGORIES: Cat[] = ['상의', '하의', '신발', '헤어스타일', '헤어컬러', '악세서리', '안경', '문신'];
+// v3.206: 카테고리 개편 — 활성 선택 슬롯은 상의/하의/신발/모자/가방.
+// 그리드에는 모자·가방을 '악세서리' 통합 카드 1장으로 노출(내부 슬롯은 분리 → 동시 선택 가능).
+// 나머지(헤어스타일/헤어컬러/안경/문신)는 잠금 카드(Feather lock)로만 노출 — 선택 불가, Cat에서 제외.
+type Cat = '상의' | '하의' | '신발' | '모자' | '가방';
+const CATEGORIES: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
+const GRID_BASIC_CATS: Cat[] = ['상의', '하의', '신발'];
+const ACCESSORY_SUBCATS: Cat[] = ['모자', '가방'];
+const LOCKED_CATS: string[] = ['헤어스타일', '헤어컬러', '안경', '문신'];
 
 // 카테고리별 핏/기장 옵션 (선택사항, 빠른 토글) — A방안
 type OptionGroup = { label: string; values: string[] };
@@ -46,6 +52,23 @@ const CAT_OPTIONS: Partial<Record<Cat, OptionGroup[]>> = {
   신발: [
     { label: '양말', values: ['없음', '발목', '롱'] },
   ],
+  // v3.206: 모자/가방 착용 방식 — 기존 fmt() 직렬화 경로로 프롬프트(desc)에 자동 반영(서버 무수정)
+  모자: [
+    { label: '착용 방식', values: ['바로 쓰기', '거꾸로 쓰기', '비스듬히 쓰기'] },
+  ],
+  가방: [
+    { label: '착용 방식', values: ['손에 들기', '크로스로 메기', '어깨에 메기'] },
+  ],
+};
+
+// v3.206: 착용 방식 → 생성 프롬프트 해석 사전 — 선택된 값만 【착용 방식 해석】 1줄로 합성.
+const WEAR_STYLE_HINTS: Record<string, string> = {
+  '바로 쓰기': "'바로 쓰기'=챙이 앞으로 가게 정방향으로 쓴 채",
+  '거꾸로 쓰기': "'거꾸로 쓰기'=챙이 뒤로 가게(backwards) 쓴 채",
+  '비스듬히 쓰기': "'비스듬히 쓰기'=챙을 옆으로 비스듬히 돌려 쓴 채",
+  '손에 들기': "'손에 들기'=가방을 손에 쥔 채로",
+  '크로스로 메기': "'크로스로 메기'=끈을 대각선으로 가로질러 멘 채",
+  '어깨에 메기': "'어깨에 메기'=한쪽 어깨에 걸쳐 멘 채",
 };
 
 interface AdItem {
@@ -118,40 +141,21 @@ const SAMPLE_ITEMS: Record<Cat, AdItem[]> = {
     { id: 'sample_shoes_4', name: '로퍼', advertiser_nickname: 'LACE+' },
     { id: 'sample_shoes_5', name: '플랫폼 슈즈', advertiser_nickname: 'MOON CLUB' },
   ],
-  헤어스타일: [
-    { id: 'sample_hair_1', name: '단발 컷', advertiser_nickname: 'SALON N' },
-    { id: 'sample_hair_2', name: '보브 헤어', advertiser_nickname: 'CURL+' },
-    { id: 'sample_hair_3', name: '슬릭백', advertiser_nickname: 'SALON N' },
-    { id: 'sample_hair_4', name: '포니테일', advertiser_nickname: 'CURL+' },
-    { id: 'sample_hair_5', name: '양갈래 트윈테일', advertiser_nickname: 'CURL+' },
+  // v3.206: 기존 장신구(귀걸이·목걸이·팔찌) 샘플 제거 — 악세서리 피커는 모자/가방 서브탭이므로
+  // 서브카테고리별 5종 샘플(실데이터 0건 폴백)로 교체. 가상 브랜드 관행 유지.
+  모자: [
+    { id: 'sample_hat_1', name: '클래식 볼캡', advertiser_nickname: 'STRIDE' },
+    { id: 'sample_hat_2', name: '코듀로이 버킷햇', advertiser_nickname: 'AURA' },
+    { id: 'sample_hat_3', name: '와치 비니', advertiser_nickname: 'NOIR' },
+    { id: 'sample_hat_4', name: '울 베레모', advertiser_nickname: 'MOON CLUB' },
+    { id: 'sample_hat_5', name: '로고 스냅백', advertiser_nickname: 'STARLIGHT' },
   ],
-  헤어컬러: [
-    { id: 'sample_color_1', name: '블랙', advertiser_nickname: 'CHROMA' },
-    { id: 'sample_color_2', name: '브라운', advertiser_nickname: 'TINT LAB' },
-    { id: 'sample_color_3', name: '블론드', advertiser_nickname: 'CHROMA' },
-    { id: 'sample_color_4', name: '핑크 염색', advertiser_nickname: 'TINT LAB' },
-    { id: 'sample_color_5', name: '핑크-퍼플 그라데이션', advertiser_nickname: 'TINT LAB' },
-  ],
-  악세서리: [
-    { id: 'sample_accessory_1', name: '후프 귀걸이', advertiser_nickname: 'GLEAM' },
-    { id: 'sample_accessory_2', name: '진주 목걸이', advertiser_nickname: 'PEARL & CO.' },
-    { id: 'sample_accessory_3', name: '체인 목걸이', advertiser_nickname: 'GLEAM' },
-    { id: 'sample_accessory_4', name: '가죽 팔찌', advertiser_nickname: 'CHARM' },
-    { id: 'sample_accessory_5', name: '골드 팔찌', advertiser_nickname: 'PEARL & CO.' },
-  ],
-  안경: [
-    { id: 'sample_glasses_1', name: '라운드 프레임', advertiser_nickname: 'VISION' },
-    { id: 'sample_glasses_2', name: '스퀘어 프레임', advertiser_nickname: 'FRAME WORK' },
-    { id: 'sample_glasses_3', name: '캣아이', advertiser_nickname: 'VISION' },
-    { id: 'sample_glasses_4', name: '블랙 선글라스', advertiser_nickname: 'NOIR' },
-    { id: 'sample_glasses_5', name: '보스턴 클래식', advertiser_nickname: 'FRAME WORK' },
-  ],
-  문신: [
-    { id: 'sample_tattoo_1', name: '손목 작은 별', advertiser_nickname: 'INK STORY' },
-    { id: 'sample_tattoo_2', name: '어깨 부족 무늬', advertiser_nickname: 'TRACE' },
-    { id: 'sample_tattoo_3', name: '팔뚝 영문 문구', advertiser_nickname: 'INK STORY' },
-    { id: 'sample_tattoo_4', name: '발목 별자리', advertiser_nickname: 'TRACE' },
-    { id: 'sample_tattoo_5', name: '등 라인 드로잉', advertiser_nickname: 'INK STORY' },
+  가방: [
+    { id: 'sample_bag_1', name: '미니 크로스백', advertiser_nickname: 'CHARM' },
+    { id: 'sample_bag_2', name: '캔버스 토트백', advertiser_nickname: 'AURA' },
+    { id: 'sample_bag_3', name: '데일리 백팩', advertiser_nickname: 'STRIDE' },
+    { id: 'sample_bag_4', name: '퀼팅 숄더백', advertiser_nickname: 'GLEAM' },
+    { id: 'sample_bag_5', name: '가죽 클러치', advertiser_nickname: 'NOIR' },
   ],
 };
 
@@ -207,10 +211,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const toggleOption = (cat: Cat, label: string, value: string) => {
     setItemOptions((prev) => {
       const catOpts = { ...(prev[cat] || {}) };
-      if (catOpts[label] === value) {
+      const cleared = catOpts[label] === value;
+      if (cleared) {
         delete catOpts[label]; // 같은 값 다시 누르면 해제
       } else {
         catOpts[label] = value;
+      }
+      // v3.206: 착용 방식 선택 추적 (모자/가방)
+      if (__DEV__ && label === '착용 방식') {
+        console.info('[ArtistCody] 착용 방식 선택', { cat, value, cleared });
       }
       return { ...prev, [cat]: catOpts };
     });
@@ -219,6 +228,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const [pickerCat, setPickerCat] = useState<Cat | null>(null);
   const [pickerItems, setPickerItems] = useState<AdItem[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  // v3.206: 악세서리 통합 피커 — pickerCat이 현재 서브탭('모자'|'가방') 슬롯을 가리킨다.
+  // pickerItems에는 모자+가방 실아이템 전체를 보관하고 서브탭이 앞단 필터로 동작.
+  const [accessoryMode, setAccessoryMode] = useState(false);
   // v3.90: 전체 | 위시리스트 탭 + 5단계 드릴다운 상태
   const [pickerTab, setPickerTab] = useState<'all' | 'wish'>('all');
   const [drill, setDrill] = useState<DrillState>(EMPTY_DRILL);
@@ -241,6 +253,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const wishListError = useWishlistStore((s) => s.listError);
 
   const openPicker = async (cat: Cat) => {
+    setAccessoryMode(false);
     setPickerCat(cat);
     setPickerTab('all');
     setDrill(EMPTY_DRILL);
@@ -254,11 +267,53 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       if (isLoggedIn && items.length > 0) {
         useWishlistStore.getState().sync(items.map((i) => i.id));
       }
-    } catch {
+    } catch (err: any) {
+      console.error('[ArtistCody] 카테고리 조회 실패', { category: cat, status: err?.response?.status });
       setPickerItems(SAMPLE_ITEMS[cat]);
     } finally {
       setPickerLoading(false);
     }
+  };
+
+  // v3.206: 악세서리 피커 — 서버가 ?category=모자|가방을 400으로 거부하므로(ALLOWED_AD_CATEGORIES)
+  // category 파라미터 없이 전체 조회 후 클라이언트에서 모자/가방만 보관(wishlistStore 관행).
+  // 서브카테고리 실데이터 0건은 렌더 시 SAMPLE 폴백(sourceItems 파생).
+  const openAccessoryPicker = async () => {
+    setAccessoryMode(true);
+    setPickerCat('모자'); // 기본 서브탭: 모자
+    setPickerTab('all');
+    setDrill(EMPTY_DRILL);
+    setGenderFilterOn(true);
+    setPickerLoading(true);
+    try {
+      const res = await api.get('/business/ads/active');
+      const items: AdItem[] = (res.data?.items || []).filter(
+        (i: AdItem) => i.category === '모자' || i.category === '가방',
+      );
+      if (__DEV__) console.info('[ArtistCody] 악세서리 전체 조회', { hatBag: items.length });
+      setPickerItems(items);
+      if (isLoggedIn && items.length > 0) {
+        useWishlistStore.getState().sync(items.map((i) => i.id));
+      }
+    } catch (err: any) {
+      console.error('[ArtistCody] 카테고리 조회 실패', { category: '악세서리(전체 조회)', status: err?.response?.status });
+      setPickerItems([]); // 0건 → 서브탭별 SAMPLE 폴백
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  // v3.206: 악세서리 피커 서브탭 전환 — 드릴다운만 리셋(탭/아이템은 유지)
+  const switchAccessorySub = (sub: Cat) => {
+    if (pickerCat === sub) return;
+    if (__DEV__) console.info('[ArtistCody] accessory subcat', { sub });
+    setPickerCat(sub);
+    setDrill(EMPTY_DRILL);
+  };
+
+  const closePicker = () => {
+    setPickerCat(null);
+    setAccessoryMode(false);
   };
 
   // 위시리스트 탭 최초 진입 시 lazy 로드 (미로그인은 스킵 — 렌더에서 안내)
@@ -294,7 +349,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (!pickerCat) return;
     setSelected((prev) => ({ ...prev, [pickerCat]: item }));
     api.post(`/business/ads/${item.id}/impression`).catch(() => {});
-    setPickerCat(null);
+    closePicker();
   };
 
   const clearItem = (cat: Cat) => {
@@ -346,7 +401,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       return;
     }
     // 카테고리별로 분류 — 의상류는 "기존 제거 후 새로 입힘", 헤어/문신은 "명시된 것만 변경"
-    const CLOTHING_CATS: Cat[] = ['상의', '하의', '신발', '안경', '악세서리'];
+    // v3.206: '안경'·'악세서리'는 Cat에서 제외(잠금/통합), '모자'·'가방' 추가 —
+    // fmt() 직렬화로 2단계 블록에 `모자="BRAND 볼캡 (착용 방식:거꾸로 쓰기)"` 형태로 포함된다.
+    const CLOTHING_CATS: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
     // 브랜드명 + 옵션(핏/기장)까지 포함: "상의=AURA 베이직 흰 티 (핏:슬림, 길이:크롭)"
     const fmt = (cat: string, item: AdItem) => {
       const opts = itemOptions[cat as Cat];
@@ -412,6 +469,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       } else {
         parts.push('각 아이템의 브랜드명·이름·옵션(핏·기장)에서 연상되는 색상·실루엣·소재·디테일을 충실하게 시각화하세요.');
       }
+    }
+
+    // v3.206: 모자/가방 착용 방식 해석 1줄 — 선택된 값만 합성(옵션 미선택 시 프롬프트 불변, v3.116 관행)
+    const wearStyleHints = ACCESSORY_SUBCATS
+      .filter((c) => explicitCats.has(c))
+      .map((c) => itemOptions[c]?.['착용 방식'])
+      .filter((v): v is string => !!v && !!WEAR_STYLE_HINTS[v])
+      .map((v) => WEAR_STYLE_HINTS[v]);
+    if (wearStyleHints.length > 0) {
+      parts.push(`【착용 방식 해석】 ${wearStyleHints.join(', ')}.`);
     }
 
     // 하의 강력 constraint
@@ -565,9 +632,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
   const genderFilterActive =
     !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat) && genderFilterOn;
+  // v3.206: 악세서리 피커 — 서브탭(모자|가방)이 baseItems 앞단 필터.
+  // 해당 서브카테고리 실데이터 0건이면 SAMPLE 폴백(장신구 아닌 모자/가방 샘플).
+  const accessorySubItems =
+    accessoryMode && pickerCat ? pickerItems.filter((i) => i.category === pickerCat) : null;
+  const sourceItems =
+    accessorySubItems !== null
+      ? (accessorySubItems.length > 0 ? accessorySubItems : SAMPLE_ITEMS[pickerCat!])
+      : pickerItems;
   const baseItems = genderFilterActive
-    ? pickerItems.filter((i) => genderMatches(i, artistGender!))
-    : pickerItems;
+    ? sourceItems.filter((i) => genderMatches(i, artistGender!))
+    : sourceItems;
   useEffect(() => {
     if (__DEV__ && genderFilterActive && !pickerLoading) {
       console.info('[ArtistCody] 성별 자동 필터', {
@@ -660,13 +735,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       </AppText>
       <AppText style={styles.subtitle}>
         {isSheetMode
-          ? '옷·헤어를 골라주세요. 사진과 함께 한 번에 아티스트로 만들어요. (미선택 카테고리는 기본형 적용)'
+          ? '옷·모자·가방을 골라주세요. 사진과 함께 한 번에 아티스트로 만들어요. (미선택 카테고리는 기본형 적용)'
           : '원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.'}
       </AppText>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         <View style={styles.grid}>
-          {CATEGORIES.map((cat) => {
+          {GRID_BASIC_CATS.map((cat) => {
             const sel = selected[cat];
             return (
               <TouchableOpacity
@@ -687,6 +762,57 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               </TouchableOpacity>
             );
           })}
+          {/* v3.206: 악세서리 통합 카드 — 모자·가방 두 슬롯의 요약을 함께 표시, 탭 → 서브탭 피커 */}
+          {(() => {
+            const accSelected = ACCESSORY_SUBCATS.map((c) => selected[c]).filter(
+              (it): it is AdItem => !!it,
+            );
+            const accSub =
+              accSelected.length > 0
+                ? accSelected.map((it) => it.name).join(' · ')
+                : '모자·가방 고르기';
+            const accBrands = [
+              ...new Set(accSelected.map((it) => it.advertiser_nickname).filter(Boolean)),
+            ].join(' · ');
+            return (
+              <TouchableOpacity
+                key="악세서리"
+                style={[styles.catCard, accSelected.length > 0 && styles.catCardSelected]}
+                onPress={openAccessoryPicker}
+                onLongPress={() => {
+                  if (accSelected.length > 0) ACCESSORY_SUBCATS.forEach((c) => clearItem(c));
+                }}
+              >
+                <AppText style={styles.catName}>악세서리</AppText>
+                <AppText style={styles.catSub} numberOfLines={1}>
+                  {accSub}
+                </AppText>
+                {accBrands ? (
+                  <AppText style={styles.catBrand} numberOfLines={1}>
+                    {accBrands}
+                  </AppText>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })()}
+          {/* v3.206: 잠금 카테고리 — Feather lock 벡터 아이콘(AttendanceModal 관행, 이모지 금지).
+              탭 → 준비 중 안내(showAlert), 꾹 눌러도 무동작. */}
+          {LOCKED_CATS.map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.catCard, styles.catCardLocked]}
+              onPress={() => {
+                if (__DEV__) console.info('[ArtistCody] 잠금 카드 탭', { cat });
+                showAlert('준비 중', '곧 열릴 카테고리예요.');
+              }}
+            >
+              <Feather name="lock" size={18} color={colors.text.muted} style={{ marginBottom: 4 }} />
+              <AppText style={[styles.catName, styles.catNameLocked]}>{cat}</AppText>
+              <AppText style={[styles.catSub, styles.catSubLocked]} numberOfLines={1}>
+                준비 중
+              </AppText>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* 선택된 카테고리의 옵션 칩 (핏/기장 등) */}
@@ -751,7 +877,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             <AppText style={styles.summaryLabel}>선택한 아이템 ({selectedEntries.length})</AppText>
             <View style={styles.summaryChips}>
               {selectedEntries.map(([cat, item]) => (
-                <View key={cat} style={styles.summaryChip}>
+                // v3.206: 칩 꾹 누름 = 해당 카테고리 개별 해제 — 악세서리 카드(모자+가방 묶음)에서도
+                // 모자/가방을 따로 뺄 수 있게 함
+                <TouchableOpacity
+                  key={cat}
+                  style={styles.summaryChip}
+                  onLongPress={() => clearItem(cat)}
+                >
                   <AppText style={styles.summaryChipText}>
                     {item!.name}
                   </AppText>
@@ -760,10 +892,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                       {item!.advertiser_nickname}
                     </AppText>
                   ) : null}
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
-            <AppText style={styles.hint}>꾹 누르면 카테고리 선택 해제</AppText>
+            <AppText style={styles.hint}>카드나 칩을 꾹 누르면 선택 해제</AppText>
           </View>
         )}
       </ScrollView>
@@ -805,16 +937,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         visible={pickerCat !== null}
         transparent
         animationType="slide"
-        onRequestClose={() => setPickerCat(null)}
+        onRequestClose={closePicker}
       >
         <View style={styles.modalOverlay}>
           {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
           <View style={[styles.modalBox, { paddingBottom: insets.bottom }]}>
             <View style={styles.modalHeader}>
               <AppText style={styles.modalTitle}>
-                {pickerCat ? `${pickerCat} 고르기` : ''}
+                {accessoryMode ? '악세서리 고르기' : pickerCat ? `${pickerCat} 고르기` : ''}
               </AppText>
-              <TouchableOpacity onPress={() => setPickerCat(null)}>
+              <TouchableOpacity onPress={closePicker}>
                 <AppText style={styles.modalClose}>✕</AppText>
               </TouchableOpacity>
             </View>
@@ -855,11 +987,33 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               ) : null}
             </View>
 
+            {/* v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방] — baseItems 앞단 필터, 각 1개씩 동시 선택 */}
+            {accessoryMode && (
+              <View style={styles.subcatRow}>
+                {ACCESSORY_SUBCATS.map((sub) => {
+                  const active = pickerCat === sub;
+                  const picked = selected[sub];
+                  return (
+                    <TouchableOpacity
+                      key={sub}
+                      style={[styles.subcatSeg, active && styles.subcatSegActive]}
+                      onPress={() => switchAccessorySub(sub)}
+                    >
+                      <AppText style={[styles.subcatSegText, active && styles.subcatSegTextActive]}>
+                        {sub}
+                        {picked ? ` · ${picked.name}` : ''}
+                      </AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
             {pickerTab === 'all' && (pickerLoading ? (
               <View style={{ padding: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={colors.accent.primary} />
               </View>
-            ) : pickerItems.length === 0 ? (
+            ) : sourceItems.length === 0 ? (
               <View style={{ padding: 40 }}>
                 <AppText style={styles.emptyDesc}>
                   등록된 {pickerCat} 아이템이 없어요.
@@ -1112,6 +1266,14 @@ const styles = StyleSheet.create({
   catIcon: { fontSize: 30, marginBottom: 6 },
   catName: { color: colors.text.primary, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   catSub: { color: colors.text.secondary, fontSize: 11, paddingHorizontal: 8 },
+  // v3.206: 잠금 카드 — 흐린 스타일(muted 보더 + opacity)
+  catCardLocked: {
+    opacity: 0.55,
+    borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.surface1,
+  },
+  catNameLocked: { color: colors.text.muted },
+  catSubLocked: { color: colors.text.muted },
 
   summaryBox: {
     marginTop: 16, padding: 12,
@@ -1224,6 +1386,25 @@ const styles = StyleSheet.create({
   pickerTabActive: { borderBottomColor: colors.accent.primary },
   pickerTabText: { color: colors.text.muted, fontSize: 13, fontWeight: '600' },
   pickerTabTextActive: { color: colors.text.primary, fontWeight: '700' },
+
+  // v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방]
+  subcatRow: {
+    flexDirection: 'row', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
+  },
+  subcatSeg: {
+    flex: 1, alignItems: 'center',
+    paddingVertical: 8, borderRadius: 10,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  subcatSegActive: {
+    backgroundColor: colors.bg.surface2,
+    borderColor: colors.accent.primary,
+  },
+  subcatSegText: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  subcatSegTextActive: { color: colors.text.primary, fontWeight: '800' },
 
   // v3.205(⑤): 성별 필터 토글 칩 (탭 행 우측)
   genderChip: {
