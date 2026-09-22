@@ -2648,3 +2648,12 @@ E-1 Doze 배경 재생(프리로드 히트·백오프 ≤3회/≥10s), E-2 연�
 - 원격 배포·데이터 삭제가 권한 분류기(Production Deploy/Remote Shell Writes)에 차단 — DEPLOY.md 절차와 러너 실행을 사용자 위임(v3.205 공지 등록과 동일 방식).
 - SES 실발송 전 사용자 콘솔 작업 3종: 도메인 DKIM 검증·샌드박스 해제·EC2 롤 ses:SendEmail → .env MAIL_ENABLED=true 전환.
 - 이월: ① 잔여 스텝 앵커 확대, ⑦ 실발송 전환 확인, [KeyboardCtl] 런타임 로그(디버깅 필요 시).
+
+## v3.207 완결 (2026-09-22) — 서버 배포·데이터 정리·1.1.0 빌드 (사용자 실행 + 검증 PASS)
+
+- **서버 배포**: 사용자 실행(권한 차단 위임) — 백업 5파일 → scp 6파일(체크섬 6/6 일치 확인) → docker 재빌드·재생성, UP 6초·기동 에러 0. 검증: health 200 / reset request 균일 200(로그엔 마스킹 이메일만 — 계정 존재 비노출 정상) / dm-image 401(라우트 존재) / 기존 API(tracks·ads 455·타임라인) 회귀 0. 비밀번호 재설정은 dev 모드 가동(서버 로그로 코드 확인 가능).
+- **③ 테스트 글 4건 삭제**: purge 연쇄(댓글 7·알림 9 동반) — verify 잔존 0·알림 0. 공개 타임라인에서 소멸 확인.
+- **④ official DM 정리**: 1,111건 전량 삭제, 빈 대화방 134 제거, 잔존 7 대화방 last_*·unread 재계산. verify: official 발신 잔존 0, official 공지 3건 보존, peer 메시지 보존(전체 51건 — official 대화 내 21건 포함). 사전 백업 cleanup_backup_v3207.json(384KB, 로컬).
+- 관찰(비조치): 전체 대화방 19개 중 빈 대화방 2개는 이번 정리 대상 밖의 기존 잔재 — 필요 시 차기 정리.
+- **빌드(1.1.0, versionName 인상)**: APK https://expo.dev/artifacts/eas/twdZlkP5cZRvXEE-9WuvEZnmCdpWiy5yBx3gmRI-aZI.apk / AAB https://expo.dev/artifacts/eas/pXwWTFS939xqa8BonxSWGtRV7LTrzZ6Fn22ZO5ZBQWU.aab — 출시명·출시노트 release-notes/v1.1.0.md.
+- **잔여**: E-1~E-8 실기기(최우선: 신고·담기 키보드 — 재현 시 replan), SES 콘솔 3종 후 MAIL_ENABLED=true, Play Console AAB 업로드(사용자).
