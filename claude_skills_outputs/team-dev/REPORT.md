@@ -2709,3 +2709,7 @@ U-1~U-6 + S-1~S-4 전부 PASS — FAIL 게이트(캐시 키 변경 / full 레이
 ### 잔여
 
 서버 배포(사용자 커맨드) → A-1~A-4 실측(기존 캐시 히트 확인 포함). 앱 변경은 차기 빌드(1.1.2)부터 — E-1~E-5 실기기(단색 배경 원본 흔적 0, 테두리 유무·색, 기존 3모드 회귀, 버블 편집 재생성).
+
+### v3.209 서버 배포 완결 (2026-09-22, 사용자 실행)
+
+share_video.py·tracks.py 배포(백업 .bak_pre_v3209, docker 재빌드·재생성 UP 6초). 검증: health/tracks/timeline 200, traceback 0. 신규 파라미터(bgalpha=100·fontoutline·outlinecolor) API는 인증 필요라 실기기 E2E(1.1.2 빌드 후)에서 실측 — 캐시 키 보존은 정적 이중 확증 완료라 기존 영상 URL 무영향.
