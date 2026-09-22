@@ -14,13 +14,13 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": ""
+        "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-1425041551318467/6051029293"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": ""
+        "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-1425041551318467/6051029293"
       }
     }
   },
