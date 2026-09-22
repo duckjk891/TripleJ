@@ -2677,3 +2677,8 @@ U-1~U-7 전부 PASS — FAIL 게이트 5건 통과: 하드코딩 0 / SSV customD
 1. 서버 1줄 배포(커맨드 전달) → A-1~A-4 실측.
 2. AdMob 콘솔: 보상형 광고 단위 생성(ID 제공 → eas.json 기입), 광고 단위에 SSV 콜백 URL 등록, 테스트 기기 등록(무효 트래픽 방지 필수).
 3. 다음 APK 빌드에 포함(JS-only — OTA 없음). 실기기 E-0~E-4: 테스트 광고 시청→30초 내 자동 30분 단축 체인. **내부 테스트에서 실광고 클릭 절대 금지**(계정 정지 위험).
+
+### v3.208 서버 배포 완결 (2026-09-22, 사용자 실행)
+
+- rewards.py 1줄 배포(scp + docker 재빌드·재생성, UP 6초). 검증: health 200 / **www.gstatic.com 키 조회 200 OK 로그 실증**(수정 전엔 전 건 실패 지점) / 위조 서명 콜백 → 403 "Invalid signature" 정상 거부·traceback 0 — A-1②③·A-2 위조 경로 PASS. 정상 서명 적립(A-2 정경로)·dedup(A-3)은 실광고(테스트 광고) SSV 실측으로 이관.
+- 잔여: AdMob 콘솔 3종(보상형 단위 생성→eas.json 기입 / SSV URL `https://api.maidol.ai.kr/api/rewards/admob-callback` 등록 / 테스트 기기) → 차기 APK 빌드 포함 → E-0~E-4 실기기.
