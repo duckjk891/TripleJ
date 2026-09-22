@@ -33,6 +33,8 @@ import AlbumCreateModal from '../components/AlbumCreateModal';
 import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
 // v3.117: 내 아티스트 요약 행 — 다중 아티스트 정본(GET /character/list) + 레거시 /me 폴백
 import { listArtists, artistSheetUrl, ServerArtist } from '../services/characterService';
+// v3.210 ③: AI 곡 Inst. 버전 생성 — trackService 계약(backend 조 병렬, PLAN v3.210)
+import { requestInstrumental, getInstrumentalStatus, INSTRUMENTAL_STAR_COST } from '../services/trackService';
 // v3.114: 내 채널(피드·커뮤니티) — MAIDOL 내 채널 구성 반영. FeedCard·이미지 블록(v3.111) 재사용
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
@@ -95,6 +97,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const syncLikes = useLikesStore((s) => s.sync);
   const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
   const [sdMode, setSdMode] = useState<SheetMode>('share');
+  // v3.210 ③: Inst. 생성 진행 중인 트랙 id 집합 — 진행 중엔 ⋮ 메뉴에서 항목 제외(중복 요청 방지)
+  const [instBusy, setInstBusy] = useState<Record<string, boolean>>({});
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
   // v3.117: 다중 아티스트 목록(대표 요약 행용) — 빈 배열이면 myCharacter(/me)로 레거시 폴백
   const [artists, setArtists] = useState<ServerArtist[]>([]);
@@ -297,6 +301,84 @@ export default function MyMusicScreen({ navigation }: any) {
               fetchTracks(true);
             } catch {
               showAlert('오류', '업로드에 실패했습니다.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // v3.210 ③: Inst. 항목 노출 조건 — AI 곡(ai_model suno 한정, 발매 시 'Suno' 저장 — MusicResult:464),
+  // 이미 (Inst.)인 곡·생성 진행 중인 곡 제외 (PLAN v3.210 확정 스펙)
+  const canMakeInstrumental = (t: Track): boolean =>
+    (t.ai_model || '').toLowerCase() === 'suno'
+    && !(t.title || '').includes('(Inst.)')
+    && !instBusy[String(t.id)];
+
+  // v3.210 ③: Inst. 상태 폴링 — 기존 생성 폴링 관행(pending/processing → completed/failed) 재사용.
+  // 5초 간격 최대 10분(서버 vocal-removal 폴링과 동일 축), 일시 오류는 무시하고 계속.
+  const pollInstrumental = async (trackId: string, title: string) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 10 * 60 * 1000) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const data = await getInstrumentalStatus(trackId);
+        const st = String(data?.status || '').toLowerCase();
+        if (__DEV__) console.info('[Inst] 상태', { trackId, status: st });
+        if (st === 'completed' || st === 'success' || st === 'done') {
+          setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+          showAlert('완료', `"${title} (Inst.)" 트랙이 내 곡에 추가되었어요.`);
+          fetchTracks(true);
+          return;
+        }
+        if (st === 'failed' || st === 'error') {
+          setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+          showAlert('실패', data?.error || 'Inst. 생성에 실패했어요. 차감된 스타는 환불됩니다.');
+          return;
+        }
+      } catch (err: any) {
+        // 일시 네트워크/서버 오류는 폴링 지속 (생성 자체는 서버 백그라운드에서 진행)
+        console.error('[Inst] 상태 조회 실패(계속 폴링)', { trackId, status: err?.response?.status });
+      }
+    }
+    setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+    showAlert('안내', 'Inst. 생성이 오래 걸리고 있어요. 잠시 후 내 곡 목록을 새로고침해 확인해주세요.');
+  };
+
+  // v3.210 ③: ⋮ 메뉴 [Inst. 버전 만들기] — 확인 다이얼로그(⭐ 비용 안내) → 생성 요청 → 폴링
+  const handleCreateInstrumental = (track: Track) => {
+    const trackId = String(track.id);
+    showAlert(
+      'Inst. 버전 만들기',
+      `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들까요?\n\n스타 ${INSTRUMENTAL_STAR_COST}개가 차감되며, 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '만들기',
+          onPress: async () => {
+            if (instBusy[trackId]) return;
+            setInstBusy((prev) => ({ ...prev, [trackId]: true }));
+            if (__DEV__) console.info('[Inst] 생성 시작', { trackId });
+            try {
+              await requestInstrumental(trackId);
+              showAlert('생성 시작', 'Inst. 버전을 만들고 있어요. 완료되면 알려드릴게요.');
+              pollInstrumental(trackId, track.title);
+            } catch (err: any) {
+              const status = err?.response?.status;
+              console.error('[Inst] 생성 요청 실패', { trackId, status });
+              setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+              if (status === 402) {
+                showAlert('알림', '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
+              } else if (status === 409) {
+                // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)
+                if (err?.response?.data?.existing_track_id) {
+                  showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
+                } else {
+                  showAlert('알림', '이미 이 곡의 Inst. 생성이 진행 중이에요.');
+                }
+              } else {
+                showAlert('오류', err?.response?.data?.error || 'Inst. 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
+              }
             }
           },
         },
@@ -791,6 +873,10 @@ export default function MyMusicScreen({ navigation }: any) {
         extraItems={actionTrack ? [
           { icon: 'share-2', label: '공유', onPress: () => { setSdMode('share'); setSdTrack(actionTrack); } },
           { icon: 'download', label: '다운로드', onPress: () => { setSdMode('download'); setSdTrack(actionTrack); } },
+          // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외
+          ...(canMakeInstrumental(actionTrack)
+            ? [{ icon: 'disc' as const, label: 'Inst. 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
+            : []),
           ...(actionTrack.is_public
             ? []
             : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),

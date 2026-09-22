@@ -5,7 +5,7 @@
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
-  ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform,
+  ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
@@ -46,6 +46,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const [body, setBody] = useState('');
   const [attached, setAttached] = useState<RowTrack | null>(null);
   const [posting, setPosting] = useState(false);
+  // v3.210 ①-B: 공개/비공개 — 기본 ON(공개). 피드·공지(kind 불문) 공통, TrackUploadScreen 스위치 관행
+  const [isPublic, setIsPublic] = useState(true);
   // v3.111: 첨부 사진 — 선택 즉시 업로드(진행 표시), 실패분은 재시도/제거 가능
   const [images, setImages] = useState<AttachedImage[]>([]);
 
@@ -235,13 +237,14 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     }
     // v3.70: 아이템은 서버 블록 화이트리스트 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
-    if (__DEV__) console.info('[FeedCompose] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length });
+    if (__DEV__) console.info('[Feed] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length, isPublic });
     try {
       await api.post('/feeds/', {
         // v3.115: community는 서버가 title 무시(null 저장) — 입력 UI도 숨겼으니 null 고정
         title: isCommunity ? null : (title.trim() || null),
         blocks,
-        is_public: true,
+        // v3.210 ①-B: 하드코딩 true 제거 — 공개 스위치 실값 전달(서버 계약 feeds.py:63 기본 True)
+        is_public: isPublic,
         kind,
       });
       navigation.goBack();
@@ -383,6 +386,25 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             </TouchableOpacity>
           </View>
         ))}
+
+        {/* v3.210 ①-B: 공개 여부 — TrackUploadScreen '차트에 공개' 스위치 관행 재사용(피드·공지 공통) */}
+        <View style={styles.switchRow}>
+          <View style={{ flex: 1 }}>
+            <AppText variant="callout">공개</AppText>
+            <AppText variant="footnote" tone="muted">
+              {isCommunity
+                ? '끄면 나만 볼 수 있어요. 내 공지 탭에서 언제든 공개로 바꿀 수 있어요.'
+                : '끄면 나만 볼 수 있어요. 내 피드 탭에서 언제든 공개로 바꿀 수 있어요.'}
+            </AppText>
+          </View>
+          <Switch
+            value={isPublic}
+            onValueChange={setIsPublic}
+            disabled={posting}
+            trackColor={{ false: colors.bg.surface2, true: colors.accent.primary }}
+            thumbColor="#fff"
+          />
+        </View>
       </ScrollView>
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
@@ -495,6 +517,13 @@ const styles = StyleSheet.create({
   attachedHead: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
+  },
+  // v3.210 ①-B: 공개 스위치 행 — TrackUploadScreen switchRow 관행
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.lg,
   },
   pickerContainer: { flex: 1, backgroundColor: colors.bg.deepest },
   // v3.70: 착장 아이템 행(선택 목록·첨부 미리보기 공용)

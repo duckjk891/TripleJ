@@ -40,6 +40,7 @@ interface Props {
   feed: any;                       // timeline 응답 항목 (is_liked/like_count/comment_count 포함)
   onPressAuthor?: () => void;
   onDeleted?: () => void;          // 내 피드 삭제 후 목록 갱신
+  onUpdated?: () => void;          // v3.210 ①-C: 공개 전환 성공 후 목록 갱신(옵션)
   renderBlocks: () => any;         // 본문 블록(텍스트/트랙) 렌더는 화면쪽 기존 로직 재사용
   requireLogin: () => boolean;     // 비로그인 시 CTA 처리(true=로그인됨)
 }
@@ -58,10 +59,13 @@ const fmtTime = (iso?: string): string => {
   return d.toLocaleDateString('ko-KR');
 };
 
-export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks, requireLogin }: Props) {
+export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin }: Props) {
   const user = useAuthStore((s) => s.user);
   const isMine = !!user && String(feed.author_id) === String(user.id);
 
+  // v3.210 ①-C: 공개 상태 — 응답 is_public(내 글 탭은 비공개 포함). 미포함 구응답은 공개 취급.
+  const [isPublic, setIsPublic] = useState(feed.is_public !== false);
+  const [visBusy, setVisBusy] = useState(false);
   const [liked, setLiked] = useState(!!feed.is_liked);
   const [likeCount, setLikeCount] = useState(feed.like_count ?? 0);
   const [commentCount, setCommentCount] = useState(feed.comment_count ?? 0);
@@ -173,6 +177,46 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     setReplyTarget(c);
   };
 
+  // v3.210 ①-C: 공개↔비공개 전환 — 서버 계약(PUT /feeds/{id}: 전체 body 필요)에 맞춰
+  // 저장된 title·blocks(track_id/object_name 원형 — serialize 응답 포함)·bgm을 재전송하며 is_public만 반전.
+  // 신고 블라인드 글(report_blinded)은 서버가 400으로 수정 자체를 거부 → 안내 그대로 노출.
+  const toggleVisibility = async () => {
+    if (visBusy) return;
+    const next = !isPublic;
+    setVisBusy(true);
+    if (__DEV__) console.info('[Feed] 공개 전환', { feedId: feed.id, next });
+    try {
+      // 서버 블록 화이트리스트(text|track|image)의 원형 필드만 재구성해 재전송
+      const blocks = (feed.blocks || [])
+        .map((b: any) => {
+          if (b.type === 'track' && (b.track_id || b.track?.id)) return { type: 'track', track_id: String(b.track_id ?? b.track.id) };
+          if (b.type === 'image' && b.object_name) return { type: 'image', object_name: b.object_name };
+          if (b.type === 'text' && typeof b.text === 'string') return { type: 'text', text: b.text };
+          return null;
+        })
+        .filter(Boolean);
+      await api.put(`/feeds/${feed.id}`, {
+        title: feed.title ?? null,
+        blocks,
+        is_public: next,
+        // v3.210 tester U-4②: 서버 FeedBody 필드는 bgm_track_id(직렬화 응답도 동일 키) —
+        // 잘못된 키(bgm)로 보내면 PUT마다 BGM이 None으로 저장돼 소실된다.
+        bgm_track_id: feed.bgm_track_id ?? null,
+      });
+      setIsPublic(next);
+      onUpdated?.();
+    } catch (err: any) {
+      console.error('[Feed] 공개 전환 실패', { feedId: feed.id, status: err?.response?.status });
+      if (err?.response?.status === 400) {
+        showAlert('알림', err?.response?.data?.error || '신고 처리로 제한된 콘텐츠는 공개 상태를 바꿀 수 없어요.');
+      } else {
+        showAlert('오류', '공개 상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
+    } finally {
+      setVisBusy(false);
+    }
+  };
+
   const deleteFeed = () => {
     showAlert('피드 삭제', '이 피드를 삭제할까요?', [
       { text: '취소', style: 'cancel' },
@@ -275,6 +319,13 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                   <AppText variant="caption" style={styles.noticeBadgeText}>공지</AppText>
                 </View>
               ) : null}
+              {/* v3.210 ①-C: 내 글 한정 비공개 칩(자물쇠 아이콘) — 공지 배지와 별개 */}
+              {isMine && !isPublic ? (
+                <View style={styles.privateBadge}>
+                  <Feather name="lock" size={10} color={feedTheme.muted} />
+                  <AppText variant="caption" style={styles.privateBadgeText}>비공개</AppText>
+                </View>
+              ) : null}
             </View>
             <AppText variant="caption" style={{ color: feedTheme.muted }}>{fmtTime(feed.created_at)}</AppText>
           </View>
@@ -284,14 +335,23 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
         </TouchableOpacity>
       </View>
 
-      {/* ⋯ 메뉴 — 내 피드: 삭제 / 남의 피드: 신고 */}
+      {/* ⋯ 메뉴 — 내 피드: 공개 전환·삭제 / 남의 피드: 팔로우·신고 */}
       {menuOpen ? (
         <View style={styles.menu}>
           {isMine ? (
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); deleteFeed(); }}>
-              <Feather name="trash-2" size={16} color={colors.status.error} />
-              <AppText variant="footnote" style={{ color: colors.status.error }}>삭제</AppText>
-            </TouchableOpacity>
+            <>
+              {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환 */}
+              <TouchableOpacity style={styles.menuItem} disabled={visBusy} onPress={() => { setMenuOpen(false); toggleVisibility(); }}>
+                <Feather name={isPublic ? 'lock' : 'globe'} size={16} color={feedTheme.sub} />
+                <AppText variant="footnote" style={{ color: feedTheme.sub }}>
+                  {visBusy ? '변경 중...' : isPublic ? '비공개로 전환' : '공개로 전환'}
+                </AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); deleteFeed(); }}>
+                <Feather name="trash-2" size={16} color={colors.status.error} />
+                <AppText variant="footnote" style={{ color: colors.status.error }}>삭제</AppText>
+              </TouchableOpacity>
+            </>
           ) : (
             <>
               {user && feed.author_id ? (
@@ -442,6 +502,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 1,
   },
   noticeBadgeText: { color: colors.accent.primary, fontWeight: '700' },
+  // v3.210 ①-C: 비공개 칩 — 내 글 한정(자물쇠 + 텍스트), 공지 배지와 같은 보더 칩 관행에 muted 톤
+  privateBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.sm,
+    paddingHorizontal: 6, paddingVertical: 1,
+  },
+  privateBadgeText: { color: feedTheme.muted, fontWeight: '700' },
   moreBtn: { padding: 6 },
   menu: {
     alignSelf: 'flex-end', backgroundColor: colors.bg.surface2, borderRadius: radius.md,

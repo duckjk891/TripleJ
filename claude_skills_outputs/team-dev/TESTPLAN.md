@@ -2671,3 +2671,133 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1 ②(단색 배경 완전 차폐)·E-2·E-3(테두리 on/off·색 반영)이 이번 사이클 사용자 요청 직결 완료 조건.
 - **핵심 FAIL 게이트 4건**: ① **S-4 ①/A-1**(캐시 키 변경 — 기존 영상 URL 파손·기본값 조합 suffix 불일치) ② **E-1 ②**(단색인데 원본 비침) ③ **U-1 ③/S-4 ⑤/E-4 ③**(구 호출부 파손 — TrackShareDownloadSheet format-only·GET file 위치 인자) ④ **U-6 ①③**(직전 사이클 v3.205~208 회귀·diff 격리 위반) — 추가: **A-0**(무승인 배포 = 최상위)·**S-1 ①**(로컬 미러 출발 배포). 1건이라도 FAIL이면 커밋·배포·출고 금지(서버/E2E 트랙 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
 - 이월(판정 대상 아님): full 레이아웃 단색·커버 없는 곡 가사-only 영상·테두리 두께 선택·share-video 창작기록 적재(PLAN 40% 룰 이월 목록).
+
+## v3.210 (2026-09-22) — 피드 탭·공개/비공개 앱 배선 + 프로덕션 앨범 2건 삭제(데이터) + AI 곡 "(Inst.)" 생성·배포
+
+> 대상: PLAN.md v3.210(:4105~) — ① 앱 3파일(`2_housing/screens/FeedScreen.tsx` 탭 3분할·내 글 조회·Fab kind 분기 / `screens/FeedComposeScreen.tsx` 공개 스위치+is_public 실값 / `components/feed/FeedCard.tsx` 공개 전환 메뉴·비공개 칩) — **서버 무변경**(feeds.py의 is_public 스키마·필터·PUT 계약은 이미 완비, PLAN F①). ② 코드 0 — 프로덕션 `aimu.albums` 2건 데이터 삭제(mongosh)+마미 베스트 AI 커버 1점 MinIO 제거. ③ 앱 1파일(`screens/MyMusicScreen.tsx` ⋮ Inst. 액션) + 서버 스테이징(`server_staging_v3210/`: `app/routes/tracks.py` + `app/services/inst_service.py` 신규) — sunoapi.org `POST /api/v1/vocal-removal/generate`(audioUrl=자체 MinIO presigned, type=separate_vocal, 10 credits)→`GET /api/v1/vocal-removal/record-info` 폴링→instrumentalUrl **즉시 MinIO 이관**(Suno측 14일 보관)→"(원제) (Inst.)" 신규 트랙 자동 발매. 비용 **⭐5**(기본안, 외부 원가 10 credits).
+> 실행 전제: 앱 `/Users/pearl/TripleJ/2_housing`(frontend, v3.209 합격 형상 기준선 — 단 `2_housing/App.tsx`는 **사이클 착수 전부터 웹 세션 기존 미커밋 M 상태**로 예외, U-1 참조). 서버는 스테이징 `server_staging_v3210/`(프로덕션 EC2 원본 scp+`.orig` 보존)만 접촉 — 로컬 미러 `0_platform_music/backend_9004`는 수정·비교 기준 사용 금지(v3.209 S-1 관행 계승). 프로덕션 배포·앨범 삭제·실생성(⭐/Suno 크레딧 소모)은 **오케스트레이터가 사용자 최종 확인 후 실행** — test-designer/tester의 프로덕션 접근은 **무인증 GET만**(쓰기·ssh·mongosh 0, 쓰기성 항목은 오케스트레이터/자체 테스트 계정 경유 실행 결과를 판독). git 조작 금지(status/diff/log 판독만). [api]는 배포·데이터 작업 완료 후 착수(전이면 "대기" 보고), [e2e]는 실기기(Android) 새 빌드.
+> 시크릿 기재 금지: 계정 토큰·이메일 실값·user_id·track_id·album_id 실값·EC2 호스트·sunoapi.org API 키는 증적에 플레이스홀더(`user_xxxx`·`track_xxxx`·`album_test_1`(앨범테스트)·`album_user_2`(마미 베스트)·`maidol-ec2`·`SUNO_KEY`)만 표기.
+
+### [unit] 앱 정적 검증 — ① 피드 탭·공개/비공개 + ③ Inst. 진입 (머지 게이트)
+
+**U-1. 선행 게이트 — 클린 기준선 + tsc exit 0 + diff 격리(App.tsx 웹 세션 M 제외 명시) [unit] — FAIL 게이트**
+- Given: 접촉 허용 목록 = 앱 4파일(FeedScreen.tsx·FeedComposeScreen.tsx·components/feed/FeedCard.tsx·MyMusicScreen.tsx) + 서버 스테이징 `server_staging_v3210/`(S 트랙에서 판정). **예외 명시: `2_housing/App.tsx`는 착수 전 git status에서 이미 M(웹 세션 기존 미커밋 변경)** — 이번 사이클 diff 귀속 판정에서 **제외**하되, 착수 시점 diff 스냅샷을 확보해 이번 사이클이 App.tsx에 **추가 hunk를 1건이라도 만들면 FAIL**.
+- When: ① 착수 시 `git status --short`+`git diff`(2_housing 스코프) 스냅샷 기록(App.tsx 기존 hunk 목록 포함). ② 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`. ③ 최종 `git diff --stat` 대조: 허용 4파일 외 접촉 0 — 특히 VideoDirectorScreen.tsx(v3.209)·fatigueGate.ts·useRewardedSkipAd.ts(v3.208)·package.json·app.json·eas.json 전부 diff 0, App.tsx는 착수 스냅샷과 hunk 완전 동일. ④ 증적·스크립트 git 미추적(scratchpad 한정).
+- Then: ② **exit 0** + ③ 격리 성립 — 위반 1건 = 반려.
+
+**U-2. 피드 탭 3종 — 조회 조건 분리 [unit]**
+- Given: 확정 스펙 ①-A — 상단 세그먼트 [전체]/[내 피드]/[내 공지](MyMusicScreen tabBar 스타일 재사용), 비로그인은 [전체]만 노출·탭바 숨김.
+- When: ① 조회 조건 문자 추적: [전체]=`/feeds/timeline`(기존 호출 hunk 0 — 파라미터·페이징 불변), [내 피드]=`/feeds/user/{me}?kind=feed`, [내 공지]=`/feeds/user/{me}?kind=community` — 내 글 조회는 본인 조회라 서버가 비공개 포함 반환(feeds.py 계약, 앱측 별도 공개 필터 코드 0 확인). ② 비로그인 분기: 탭바 미렌더+타임라인만 — me 부재 시 `/feeds/user/undefined` 호출 경로 0. ③ Fab kind 분기: [내 공지] 탭에서 FeedCompose 진입 시 kind='community', 그 외 'feed' — 기존 마이페이지 커뮤니티 진입(kind='community', FeedCompose:41) 경로 hunk 0. ④ 탭 전환 시 목록 상태 분리(전환 왕복에 스테일 목록 잔존 0) + 렌더는 기존 FeedCard·블록 로직 재사용(신규 카드 컴포넌트 0).
+- Then: ①~④ 전부 충족 — ①(kind 혼선·비공개 필터 중복)·③(공지 작성 동선 파손)이 판정 중심.
+
+**U-3. 작성 공개 스위치 — 기본 ON=공개 [unit]**
+- Given: 확정 스펙 ①-B — FeedComposeScreen `is_public: true` 하드코딩(:244) 제거, TrackUploadScreen 스위치(:383) 관행 재사용.
+- When: ① 스위치 초기값 **true(공개)** 문자 확인 — 피드·공지(kind 불문) 공통 노출. ② POST 페이로드에 스위치 실값 `is_public` 전달(:244 하드코딩 잔존 grep 0건). ③ 스위치 라벨·설명이 공개/비공개 의미를 명확 표기(공지 배지·블라인드와 혼동 문구 0). ④ 작성 성공 후 목록 갱신 경로가 탭별 조회(U-2)와 정합(비공개 등록 직후 [내 피드]에 즉시 보임).
+- Then: ①~④ 전부 충족 — ①(기본 비공개로 뒤집힘 = 기존 사용자 체감 회귀)이 판정 중심.
+
+**U-4. 카드 ⋯메뉴 공개 전환 — 내 글 한정 + PUT full-body 원형 보존 [unit]**
+- Given: 확정 스펙 ①-C — FeedCard ⋯메뉴(내 글: 현행 삭제만 :287-306)에 [비공개로 전환]/[공개로 전환] 추가. 서버 PUT /feeds/{id} 계약 = 전체 body 필요(title·blocks 원형·bgm 재전송 + is_public 반전), 앱 최초의 PUT 사용처.
+- When: ① 메뉴 노출 조건 = **내 글(작성자==me) 한정** — 남의 글 메뉴(팔로우/신고) hunk 0. ② PUT 페이로드: serialize 응답의 blocks **원형**(track_id/object_name/[item] 마커 무손실)·title·bgm 재전송 + is_public만 반전 — blocks 재가공·재직렬화로 원형 훼손하는 코드 0(문자 추적). ③ kind는 payload에서 변경 불가 계약(feeds.py:601) 준수 — kind 전송 시 원값 그대로. ④ `report_blinded` 글: 서버 400 응답을 "신고 처리로 제한된 콘텐츠" 안내로 노출(무한 스피너·크래시 0). ⑤ 전환 성공 후 카드 상태·칩(U-5) 즉시 갱신.
+- Then: ①~⑤ 전부 충족 — ①(남의 글 전환 노출)·②(blocks 원형 훼손 = 전환 왕복 시 첨부 소실) = FAIL 게이트급.
+
+**U-5. 비공개 칩 — Feather 아이콘·이모지 0 [unit]**
+- Given: 카드에 내 글 한정 "비공개" 칩(MyMusicScreen 트랙 비공개 표기 관행), 공지 배지(v3.205)와 별개 공존.
+- When: ① 칩 아이콘 = **Feather(예: eye-off/lock) 벡터 아이콘** — 신규 코드 hunk 내 이모지 문자(🔒·👁 등 유니코드 이모지) **0건** grep 실측. ② 노출 조건 = 내 글 && is_public===false 한정(타인에겐 비공개 글 자체가 미수신이므로 칩 로직에 타인 분기 불요 — 방어 조건 확인). ③ 공지 배지와 동시 표시 시 레이아웃 겹침 0(스타일 판독). ④ [전체] 타임라인(공개글만)에서는 칩 미출현 경로 자연 성립 확인.
+- Then: ①~④ 전부 충족 — ①(이모지 유입)이 판정 중심(프로젝트 아이콘 관행 위반).
+
+**U-6. 회귀 0 — 공지 배지·타임라인·블라인드 [unit] — FAIL 게이트**
+- Given: 직전 사이클 합격 형상 v3.205~209와 이번 매트릭스 겹침 = FeedCard(공지 배지 v3.205)뿐.
+- When: ① 공지 배지 로직(official 작성 community 글만 :86) hunk 0 — 일반 유저 공지에 배지 미표시 조건 불변(U-3·E-1과 교차). ② [전체] 타임라인: 호출·랭킹·렌더·페이징 diff 0(:129 계열) — 탭 도입이 기존 타임라인 코드 경로를 조건 분기로 감쌀 뿐 로직 무수정. ③ 블라인드(report_blinded) 표시·차단 로직 hunk 0(공개 토글과 별개 플래그 — 충돌 없음 PLAN F① 재확인). ④ FeedCard 삭제·팔로우·신고 메뉴 항목의 라벨·핸들러 hunk 0(메뉴 배열 항목 추가만 허용). ⑤ v3.209 영상 디렉터·v3.208 광고 배선 파일 무접촉(U-1 ③과 교차).
+- Then: ①~⑤ 전부 충족 — **①~③(공지 배지·타임라인·블라인드 회귀)·⑤(직전 사이클 회귀) = FAIL 게이트**.
+
+**U-7. Inst. 진입(앱) — ⋮ 시트 액션·⭐5 확인 다이얼로그·폴링 관행 [unit]**
+- Given: 확정 스펙 ③ 앱 — MyMusicScreen 곡 탭 ⋮ TrackActionSheet `extraItems`(:792-798) [Inst. 버전 만들기].
+- When: ① 노출 조건 문자 확인: 내 곡 && ai_model suno(AI 곡 한정) && 제목 "(Inst.)" 아님 && 진행 중 아님 — 업로드곡·타인 곡 경로 미노출. ② 실행 전 **확인 다이얼로그에 ⭐5 비용 안내** 문구(실값 5 하드코딩 여부·서버 응답 연동 여부 실측 기록 — 표기 누락 = 무고지 과금 반려). ③ 402(잔액 부족) 응답 → 별 부족 안내(기존 별 충전 유도 관행), 생성 실패(폴링 FAILED/타임아웃) → 실패 안내+환불 문구 — 각각 무한 스피너·크래시 0. ④ 상태 폴링은 **기존 generate 폴링 관행 재사용**(suno_generator/앱측 기존 생성 폴링 패턴과 동형 — 신규 폴링 프레임워크·전역 타이머 신설 0), 중복 요청 시 버튼 비활성/락 재진입 가드. ⑤ 완료 시 알림 후 내 곡 목록 갱신 경로 확인. ⑥ 기존 시트 항목(공유/다운로드/차트 업로드/삭제)의 라벨·순서·핸들러 hunk 0.
+- Then: ①~⑥ 전부 충족 — ②(비용 미고지)·⑥(기존 액션 파손)이 판정 중심.
+
+### [unit] 서버 스테이징 정적 검증 — ③ (`server_staging_v3210/`만, 프로덕션 무접촉)
+
+**S-1. 스테이징 출처·diff 스코프 + py_compile [unit]**
+- Given: v3.209 S-1 관행 — 스테이징은 프로덕션 EC2 원본 scp에서 출발, `.orig` 보존.
+- When: ① `server_staging_v3210/tracks.py.orig`(등) 존재 + `.orig` md5가 프로덕션 원본과 일치 확인(오케스트레이터 scp 기록 대조). ② `diff .orig 수정본` hunk가 변경 매트릭스(instrumental 라우트 2종·inst_service 신규 파일·설정 참조)에 전부 귀속 — 그 외 hunk 0, demucs/torch **재유입 0**(Dockerfile 가드 위반 grep: `torch|demucs` 0건). ③ `python3 -m py_compile` 수정 전 파일 대조 — 스테이징 전 .py **exit 0**. ④ EC2 직접 쓰기 흔적 0.
+- Then: ①~④ 충족 — ②(torch 재유입 = 빌드 가드 파괴) 포함 위반 1건 = 반려.
+
+**S-2. 소유자 검증·연주곡 거부·중복/기존재 처리 [unit]**
+- Given: `POST /api/tracks/{track_id}/instrumental` 계약 — 소유자 본인·AI(suno) 곡 한정.
+- When: ① 소유자 검증: track.user_id != 요청자 → 403 — **차감 이전** 위치(순서 문자 추적). ② 연주곡 거부: 이미 "(Inst.)" 트랙(source_track_id 보유 또는 제목 마커)·lyrics 없는 연주곡·ai_model 비suno → 400 — 역시 차감 이전. ③ 이미 존재 처리: 동일 원곡의 (Inst.) 트랙 기존재 시 명시 응답(409 또는 400+기존 트랙 안내 — 구현 실측 기록, 무언가 중복 생성·이중 과금 경로 0). ④ 진행 중 락: melody 중복 방지 락 관행으로 동시 요청 2번째 거부(폴링 중 재호출 포함). ⑤ 20MB 초과 원곡(sunoapi.org audioUrl 상한) → 사전 검증 4xx(외부 호출 전 차단).
+- Then: ①~⑤ 전부 충족 — 모든 거부 경로가 **차감 전**임이 판정 중심(S-3과 교차).
+
+**S-3. ⭐5 차감·환불 대칭 — 실패 전(全) 경로 [unit] — FAIL 게이트**
+- Given: 비용 ⭐5(share_video·커버와 동일 축), 실패 시 환불 관행(refund 멱등).
+- When: ① 차감 시점 = 검증 통과 후·외부 호출 전 1회(5 고정) — POINT_COSTS 계열 상수 등록 확인. ② **실패 전 경로 환불 대칭 표** 작성: (a) sunoapi.org generate 호출 실패/타임아웃 (b) 폴링 FAILED/타임아웃 (c) instrumentalUrl 다운로드 실패 (d) MinIO 이관 실패 (e) 트랙 발매(DB 적재) 실패 — 각 경로에 환불 호출 존재 + **성공 경로에 환불 0** + 환불 멱등(동일 ref 이중 환불 차단) 문자 추적. ③ 402: 잔액<5 시 외부 호출·차감 0. ④ 백그라운드 폴링 태스크 예외가 환불 없이 삼켜지는 경로(bare except) 0.
+- Then: ①~④ 전부 충족 — **이중 차감·환불 누락 경로 1건 = FAIL 게이트**.
+
+**S-4. presigned URL 단일 경로 + vocal-removal 계약·폴링 [unit]**
+- Given: PLAN 판정 — 구곡의 Suno측 taskId/audioId는 14일 보관으로 신뢰 불가 → **`audioUrl`(자체 MinIO presigned URL) 단일 경로**.
+- When: ① 요청 페이로드 = `audioUrl`+`type: separate_vocal` — taskId/audioId 경로 코드 0(단일 경로 확인). ② presigned URL 생성: 원곡 object_name 기준·만료 여유(폴링 시간 초과 상회) 확인, 외부 접근성 curl 실검증 기록(PLAN 40% 룰 유일 불확실성 — 실패 시 우회 설계 발동 여부). ③ 폴링: `GET /api/v1/vocal-removal/record-info?taskId=` successFlag 분기(PENDING 재시도/SUCCESS/실패군) — 기존 suno_generator 폴링(:315) 관행과 동형(간격·상한·타임아웃 명시). ④ API 키는 기존 config(suno_api_url·키) 재사용 — 신규 시크릿 하드코딩 0.
+- Then: ①~④ 전부 충족 — ①(이중 경로 = 구곡 실패 분기 잔존)이 판정 중심.
+
+**S-5. MinIO 이관·(Inst.) 트랙 필드 — Suno URL 잔존 = FAIL [unit] — FAIL 게이트(최중요)**
+- Given: sunoapi.org 산출 URL은 **14일 후 만료** — 신규 트랙의 audio 참조가 외부 URL이면 14일 뒤 전곡 재생 불능 사고.
+- When: ① 흐름 문자 추적: SUCCESS→`instrumentalUrl` 다운로드→**MinIO put→자체 object_name으로 트랙 적재** — 트랙 doc의 audio 참조 필드(object_name/audio_url 등 기존 트랙 스키마 동일 필드)에 **`sunoapi.org`·suno CDN 도메인이 저장되는 코드 경로 0**(대입문 전수 grep). ② vocalUrl은 미저장(요구 산출물은 instrumental만 — 저장 시 근거 기록). ③ 신규 트랙 필드: 제목 `"<원제> (Inst.)"`(중복 접미 방지 — 원제에 이미 (Inst.) 시 S-2 ②에서 차단), 원곡의 커버·장르·무드·artist_name·character/persona 스냅샷 복제, **lyrics 없음**, `source_track_id` 기록, `is_public`=원곡과 동일, duration은 산출 오디오 실측(원곡 값 맹복제 시 근거 기록). ④ 창작 기록(creation_log) 관행 연동 확인. ⑤ 발매 형태 = 기존 트랙 발매 관행(차트/내 곡 노출 계약)과 동일 컬렉션·필드 — 신규 조회 경로 신설 0.
+- Then: ①~⑤ 전부 충족 — **①(Suno URL 잔존) = FAIL 게이트(최중요, 14일 만료 사고)**.
+
+### [api] ② 프로덕션 앨범 2건 삭제 (데이터 작업 — 사용자 승인 게이트, 무승인 삭제 = 최상위 FAIL)
+
+**D-0. 승인·백업 게이트 [api] — 최상위 FAIL 게이트**
+- Given: 후보 2건 = `album_test_1`(앨범테스트, **타 계정** 오리쟁이 소유·borrowed 커버)·`album_user_2`(마미 베스트, 사용자 본인·AI 커버). PLAN 사용자 결정 사안 1: 타 계정 건 포함 여부 확인 필요.
+- When: ① 삭제 실행 전 **사용자 승인 기록**(2건 모두인지/본인 1건만인지 명시 응답) 확인 — 특히 `album_test_1` 타 계정 소유 고지 포함. ② 삭제 전 백업: 2건 앨범 doc JSON export + 마미 베스트 커버 오브젝트 사본 확보 기록. ③ 삭제 직전 후보 재확인: albums count=2·id 2건 일치(제3의 앨범 오삭제 방지). ④ 실행 주체 = 오케스트레이터(mongosh) — test-designer/tester의 mongosh·쓰기 0.
+- Then: ①~④ 전부 충족 — **승인 전 삭제 1건 = 최상위 FAIL. 승인 대기 중이면 D-1 "대기" 보고.**
+
+**D-1. 삭제 후 잔존 0 + 수록곡 트랙 보존 [api]**
+- Given: PLAN 스펙 ② — 앨범 doc 삭제 + 마미 베스트 `album_` prefix 커버만 MinIO 제거, **트랙은 건드리지 않음**(albums.py:410-427 관행), 앨범테스트 borrowed 커버는 트랙 소유물로 보존.
+- When: ① 삭제 후 count 실측: albums 잔존 **0**(승인이 1건만이면 1 — 승인 범위와 일치). ② 무인증 GET: `/albums/latest`(상당) 빈 목록 정상 200(5xx 0), 삭제된 album_id 단건 조회 404. ③ **수록곡 트랙 4곡 무손상**: 각 트랙 단건 GET 200 + audio 참조 유효(무인증 재생 URL 200) — 트랙 doc의 album 참조 필드가 있다면 dangling 처리 확인(목록/재생 5xx 0). ④ 커버 오브젝트: 마미 베스트 `covers/generated/user_xxxx/album_*.png` 제거 확인, 앨범테스트 borrowed 커버(트랙 커버) **잔존** 확인. ⑤ 마이뮤직 앨범 탭 빈 목록 정상은 E-3에서 실기기 교차.
+- Then: ①~④ 전부 충족 — ③(트랙 손상)·④(borrowed 커버 오삭제)가 판정 중심.
+
+### [api] ③ Inst. + ① 서버 필터 실측 (배포 완료 후 — 전이면 "대기" 보고, 무승인 배포 = 최상위 FAIL)
+
+**A-0. 실행 게이트 [api]**
+- Given: 배포는 오케스트레이터가 사용자 최종 확인 후 실행(`.bak_pre_v3210` 백업 → scp → docker build+재생성, v3.207~209 절차 재사용).
+- When/Then: 배포 전 `/health` 200 스냅샷 + 사용자 승인 기록 확인 — **승인 전 프로덕션 쓰기 1건 = 최상위 FAIL**. 대기 중이면 A-1~A-5 "대기" 보고, [unit] 트랙만 진행.
+
+**A-1. 타인 곡 403 — 차감 0 [api]**
+- When/Then(자기 테스트 계정): 타 계정 소유 track_xxxx로 POST instrumental → **403** + 잔액 전후 대조 **차감 0** + 서버 traceback 0.
+
+**A-2. 연주곡·비대상 곡 400 — 차감 0 [api]**
+- When/Then: ① 이미 (Inst.)인 트랙(또는 lyrics 없는 연주곡) → **400** + 차감 0. ② 업로드곡(ai_model 비suno) → 400 + 차감 0. ③ 오류 메시지가 사용자 안내 가능 문구(U-7 ③ 연동).
+
+**A-3. 잔액 부족 402 — 차감 0·외부 호출 0 [api]**
+- When/Then: 잔액<⭐5 상태 테스트 계정으로 POST → **402** + 차감 0(잔액 전후 동일) + 서버 로그에 sunoapi.org 발신 0(오케스트레이터 경유 판독) — 외부 크레딧 유출 없는 사전 차단 확증.
+
+**A-4. 실생성 1건 — 사용자 승인 후 실측 [api] — 완료 조건 직결**
+- Given: **실비용 발생 명시 — 테스트 계정 ⭐10 보유 상태에서 ⭐5 차감 + sunoapi.org 크레딧 10 소모.** 오케스트레이터가 사용자 승인 취득 후 1건만 실행(test-designer/tester 직접 실행 금지 — 결과 판독). **무승인 실생성 = 최상위 FAIL.**
+- When: ① 자기 곡(AI·보컬 있는 곡) POST → 202/200 수리 → 폴링 상태 전이(PENDING→SUCCESS) 기록. ② 완료 후 **"(원제) (Inst.)" 신규 트랙 적재** 확인: 단건 GET 200, 커버·장르·무드·artist_name 승계, lyrics 없음, source_track_id=원곡, is_public=원곡과 동일. ③ **audio 참조 실측: 자체 MinIO 도메인 — 응답 JSON·재생 URL 어디에도 `sunoapi.org`/Suno CDN 문자열 0**(S-5의 실배포 확증, 잔존 1건 = FAIL). ④ 오디오 무인증 GET 200 + 실재생 가능(Content-Type·바이트 수 기록, 청감 판정은 E-2). ⑤ 잔액 실측 **10→5(정확히 -5)** — 이중 차감 0, 성공 후 환불 발화 0. ⑥ 창작 기록(creation_log) 1건 적재 확인. ⑦ 동일 원곡 재요청 → S-2 ③ 기존재 응답(이중 과금 0).
+- Then: ①~⑦ 전부 충족 — **③(Suno URL 잔존)·⑤(차감 부정확) = FAIL 게이트**.
+
+**A-5. 비공개 글 서버 필터 실측 — 타인 미노출 [api] — FAIL 게이트**
+- Given: 서버 필터는 기존 완비(feeds.py :391·:439-464·:571) — 앱이 is_public 실값을 보내기 시작하는 첫 사이클이므로 실측 확증 필요.
+- When(자기 테스트 계정 2개 A/B, 오케스트레이터 경유 작성): ① A 계정으로 비공개 피드 1건 작성(is_public=false 실전송 — 서버 저장값 확인). ② **B 계정 토큰 조회**: `/feeds/timeline` 미노출 + `/feeds/user/{A}` 미노출 + 단건 GET **404**. ③ 무인증 GET(공개 경로 존재 시) 동일 미노출. ④ A 본인 조회: `/feeds/user/{A}?kind=feed` **노출**(비공개 포함). ⑤ A가 공개 전환(PUT) 후 B 재조회 → 타임라인·채널·단건 노출 전환 + blocks 원형 보존(첨부 무손실 — U-4 ② 실배포 확증).
+- Then: ①~⑤ 전부 충족 — **②·③(비공개 글 타인 노출 1건) = FAIL 게이트**.
+
+### [e2e] 실기기 (Android 새 빌드 — 앱 머지 + 서버 배포·데이터 작업 완료 후)
+
+**E-1. 피드 탭·비공개 작성→타계정 미노출→공개 전환→노출 [e2e] — 핵심 FAIL 게이트**
+- Given: 실기기 계정 A + 보조 계정 B(또는 비로그인 뷰).
+- When: ① 피드 페이지 탭 3종 전환 — [전체] 기존 타임라인 그대로, [내 피드]/[내 공지] 내 글만·kind 분리 표시. ② [내 피드]에서 Fab→작성, 스위치 **기본 공개 확인** 후 OFF(비공개)로 등록 → [내 피드]에 즉시 표시+**Feather 비공개 칩**(이모지 아님 육안 확인), [전체] 타임라인 미출현. ③ B 계정(별도 기기/재로그인): 타임라인·A 채널에서 해당 글 **미노출**. ④ A가 카드 ⋯메뉴 [공개로 전환] → B 재조회 시 **노출** + 첨부(트랙/이미지) 원형 재생 정상(전환 왕복 1회 추가 — 소실 0). ⑤ [내 공지] 탭 Fab→공지 작성(일반 유저) → 공지 배지 **미표시**(official 아님, v3.205 회귀) 확인. ⑥ 남의 글 ⋯메뉴에 전환 항목 부재 확인.
+- Then: ①~⑥ 전부 충족 — **③(타계정 노출)·④(전환 후 첨부 소실) = FAIL 게이트**.
+
+**E-2. Inst. 생성 E2E — 메뉴→⭐5 다이얼로그→생성→내 곡 (Inst.) 재생 [e2e] — 완료 조건 직결**
+- Given: A-4 실생성과 별개로 실기기 동선 검증 — 단, **추가 실생성은 비용 재발생**이므로 A-4 산출 트랙 재활용 가능 구간(재생·표시)은 재활용하고, 신규 생성 1건이 필요한 경우 사용자 승인 재취득(무승인 = 최상위 FAIL).
+- When: ① 마이뮤직 곡 ⋮ 시트에 [Inst. 버전 만들기] 노출(AI 곡)·업로드곡/이미 (Inst.) 곡에는 미노출. ② 실행 → **확인 다이얼로그 ⭐5 안내** 육안 확인 → 진행 시 폴링 표시(앱 조작 가능 — UI 블로킹 0) → 완료 알림. ③ 내 곡 목록에 "(원제) (Inst.)" 표시·커버 승계 → **재생: 보컬 제거·반주 유지 청감 확인**(품질 이슈는 기록만, 판정은 재생 성공). ④ 잔액 표시 -5 반영. ⑤ 실패/402 시나리오는 A-2·A-3 판독으로 갈음(실기기 재현 강제 없음).
+- Then: ①~④ 전부 충족.
+
+**E-3. 회귀 스모크 — 공지 배지·v3.209 영상 디렉터·앨범 빈 목록 [e2e] — FAIL 게이트**
+- When/Then: ① official 계정 공지가 [전체]·[내 공지](official 본인)에서 **공지 배지 정상 표시**(v3.205) + 일반 유저 글 배지 0. ② v3.209 영상 디렉터: 단색 배경 1건+테두리 색 1건 생성 경로 진입~완료 스모크(캐시 히트 허용) — 크래시·질문 흐름 회귀 0. ③ 마이뮤직 앨범 탭·앨범 목록 화면: 삭제 후 빈 목록 정상 렌더(크래시·무한 로딩 0, D-1 ⑤ 교차), 수록곡이던 트랙 4곡 재생 정상. ④ 피드 삭제·신고·팔로우 기존 메뉴 동작 1건씩 스모크.
+- Then: **①·②(직전 사이클 회귀) = FAIL 게이트**.
+
+### 게이트 요약
+
+- **트랙 구조**: 앱 머지 게이트 = U-1~U-7 전부 PASS(frontend 자동 push 관례). 서버 트랙 = S-1~S-5 PASS → A-0 승인 → 배포 → A-1~A-5. 데이터 트랙 = D-0 승인 → 삭제 → D-1. E2E = 전 트랙 완료 후 E-1~E-3. 각 트랙 대기 시 "대기" 보고 — 커밋 순서 ①→②→③(PLAN 40% 룰: ③ 실패 시 ①·②만으로 사이클 완결 가능).
+- **완료 조건**: E-1(탭·비공개 왕복)·E-2(Inst. 재생)·D-1(앨범 삭제 실증)이 사용자 요청 3건 직결 완료 조건.
+- **핵심 FAIL 게이트**: ① **D-0/A-0/A-4·E-2**(무승인 앨범 삭제·무승인 배포·무승인 실생성 = 최상위) ② **S-5 ①/A-4 ③**(신규 트랙 audio의 Suno URL 잔존 — 14일 만료 사고) ③ **S-3/A-4 ⑤**(⭐ 이중 차감·환불 누락) ④ **A-5/E-1 ③**(비공개 글 타인 노출) ⑤ **U-6/E-3 ①②**(직전 사이클 회귀 — 공지 배지·타임라인·블라인드·v3.209 영상 디렉터) — 추가: **U-1**(diff 격리·App.tsx 추가 hunk)·**U-4 ②/E-1 ④**(blocks 원형 훼손)·**S-1 ②**(torch/demucs 재유입). 1건이라도 FAIL이면 해당 트랙 커밋·배포·출고 금지.
+- 이월(판정 대상 아님): 업로드곡 Inst. 확장·Inst. 비용 대안(⭐10)·full 레이아웃 등 PLAN 이월 목록, 보컬 제거 품질 자체(외부 모델 성능)는 기록만.

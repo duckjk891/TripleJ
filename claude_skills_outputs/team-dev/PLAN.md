@@ -4099,3 +4099,236 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 1. **full(화면 꽉 채우기) 레이아웃에도 단색 배경 제공 여부** — 기본안: **이번 사이클 제외(center 전용)**. full 은 커버가 화면 전체(=콘텐츠 그 자체)라 단색이면 이미지 0%의 가사-only 영상이 됨 — 커버 없는 곡 지원과 묶어 별도 기획 권고. (배경 질문 자체가 현재 center 에서만 나오므로 사용자 지적 문맥과도 일치)
 2. **테두리 색 팔레트** — 기본안: 글자색과 동일 프리셋 12색 재사용(기본=검정 강조 표시). 자유 색상환(컬러 휠)은 디렉터 대화 관행(프리셋+hex 표시, v3.182) 대비 과잉으로 판정 — 미채택.
 3. (참고) 테두리 두께는 현행 3 고정 유지 — 요청 범위 밖, 필요 시 차기.
+
+---
+
+## v3.210 (2026-09-22) — 피드 페이지 내 글 탭·공개/비공개 관리 + 프로덕션 앨범 2건 삭제(데이터) + AI 곡 "(Inst.)" 버전 생성·배포
+
+### 사용자 요청 원문
+"피드페이지에 내가 올린 피드나 공지는 탭으로 구분해서 볼 수 있어야하고, 피드나 공지를 작성시에도 관리할때도 공개, 비공개 처리할 수 있는 장치도 필요할 것 같아. 지금 앨범 만들어놓은거 2개 삭제해주고. 혹시 지금 현재 AI 가 만든 음원에서 보이스를 빼고 inst. 형태로 만들 수 있는 기능도 추가할 수 있어? 이 기능은 어디에 들어가면 좋을지는 모르겠는데 현재 곡에 (Inst.) 라고 붙여서 배포되면 될것 같은데."
+
+### 0단계 findings (코드 실측 + 프로덕션 실측)
+
+**① 피드 탭·공개/비공개 — 서버는 이미 완비, 앱만 비어 있음**
+- FeedScreen(`2_housing/screens/FeedScreen.tsx`): **탭 없음** — `/feeds/timeline` 단일 목록(:129), Fab→FeedCompose(kind 미지정=feed, :332). 타임라인은 공개글 최신 200건 랭킹(서버 feeds.py:439-464, **전 kind 혼합**·`is_public: True`만).
+- 서버 `feeds.py`(EC2 backend_9004): `is_public` 스키마 **이미 존재·전면 배선 완료** — body 기본 True(:63), 작성 저장(:225), 수정 반영(:615), 타인 조회 필터 `{"$ne": False}`(:391), 비공개 단건 소유자 외 404(:571). kind="feed"|"community"(:64, 수정 시 변경 불가 :601). **신고 블라인드는 별도 플래그 `report_blinded`**(:596)로 구분되어 수정 자체가 400 — 사용자 공개 토글과 충돌 없음(블라인드 글은 토글 불가로 자연 차단).
+- FeedComposeScreen(:244): `is_public: true` **하드코딩** — 토글 UI 없음. kind='community'(공지)는 마이페이지 커뮤니티 탭에서만 진입(:41).
+- FeedCard ⋯메뉴(:287-306): 내 글=**삭제만**, 남의 글=팔로우/신고. **수정·공개 전환 없음**. PUT /feeds/{id}는 앱 어디서도 미사용(전 화면 grep 0건). 공지 배지 = official 작성 community 글만(:86, v3.205).
+- **v3.114/115 기존 유사 동선**: MyMusicScreen 상위 탭 [곡·앨범|피드|커뮤니티](:59-60, :575-645) — `/feeds/user/{id}?kind=` 로 **내 글(비공개 포함) 조회 + 새 피드/공지 작성 버튼이 이미 있음**. UserChannelScreen도 동일 계약(:62-63). → 판정: 데이터·컴포넌트는 전부 재사용 가능. 사용자가 "피드 페이지에서" 를 명시했으므로 **FeedScreen에 탭 신설**(기존 동선 안내로 갈음하지 않음), MyMusic 탭은 그대로 유지.
+
+**② 앨범 삭제 — 프로덕션 전수 실측(mongo `aimu.albums`, 읽기 전용): 정확히 2건뿐**
+| # | id | 제목 | 소유자 | 수록곡 | 생성일 | 커버 |
+|---|-----|------|--------|--------|--------|------|
+| 1 | 6a1263c9c298a4ddb1cdc6da | 앨범테스트 | 오리쟁이 (duck***@hanmail.net) | 2곡 | 2026-05-24 | borrowed(트랙 커버 차용 — **오브젝트 삭제 금지**) |
+| 2 | 6a964784a632963bbf50efe5 | 마미 베스트 | lovvepearl (**사용자 본인** kimp***@gmail.com) | 2곡 | 2026-09-01 | ai 생성 `covers/generated/<uid>/album_*.png` — 함께 삭제 |
+- "만들어놓은 거 2개" = 전체가 딱 2건이라 **사실상 특정됨**(단, 1번은 타 계정 소유 — 아래 사용자 확인). DELETE /albums/{id}(albums.py:390)는 소유자 본인만 → 타 계정 건은 API 불가, **mongosh 직접 삭제(데이터 작업)**. 연쇄: 앨범 doc 삭제 + `album_` prefix 커버만 MinIO 제거(:410-427 관행 준수), 트랙은 건드리지 않음. purge 경로 별도 없음.
+
+**③ (Inst.) 생성 — 실행 경로 확정 (스파이크 불필요, 외부 API 문서 실검증 완료)**
+- 서버 demucs/보컬분리 잔재 **없음**: Dockerfile v199에서 demucs/torch 제거 + torch 재유입 시 빌드 실패 가드(Dockerfile:38-39, :162-164). vocal_repair/voice_convert 라우트는 main.py include_router 목록(:740-780)에 없음 — 자체 분리 부활은 금지 경로.
+- Suno 게이트웨이 = **sunoapi.org**(config.py:124 `suno_api_url="https://api.sunoapi.org"`, suno_generator.py:93). **공식 문서 실검증(2026-09-22 웹)**: `POST /api/v1/vocal-removal/generate` — `taskId+audioId` 또는 **`audioUrl`(외부 오디오, ≤20MB)**, type=`separate_vocal`(10 credits), 폴링 `GET /api/v1/vocal-removal/record-info?taskId=`(successFlag PENDING/SUCCESS/…, `instrumentalUrl`·`vocalUrl`) — 기존 generate 폴링 관행(suno_generator.py:315)과 동일 패턴. 산출 URL **14일 보관** → 즉시 MinIO 이관 필수.
+- 데이터 연결: AI 발매 트랙은 `generation_id`+`variant_index` 보유(tracks.py:2182-2184) → generations에 `suno_task_id`/variants[].`suno_audio_id`(suno_generator.py:507-529). 단, Suno측 원본도 14일 보관이라 **구곡은 taskId/audioId 경로 신뢰 불가** → **`audioUrl`(자체 MinIO presigned URL) 단일 경로 권고**(코드 1경로·구곡 포함 전곡 지원, 업로드곡까지 자연 확장 가능).
+- UI 위치 제안(근거): 마이뮤직 곡 탭 ⋮ TrackActionSheet `extraItems`(MyMusicScreen.tsx:792-798) — 이미 "공유/다운로드/차트에 업로드/삭제" 등 **내 곡 관리 액션의 관행 위치**이고, 발매(배포) 개념과 결이 같음. 플레이어/곡 상세는 타인 곡도 보이는 화면이라 부적합.
+
+### 확정 스펙
+
+**①-A FeedScreen 탭 신설 (frontend only)**
+- 상단 세그먼트 탭 3개: **[전체] [내 피드] [내 공지]** (MyMusicScreen tabBar 스타일 재사용, 비로그인은 [전체]만 노출·탭바 숨김).
+- [전체]=기존 timeline 불변. [내 피드]=`/feeds/user/{me}?kind=feed`, [내 공지]=`?kind=community`(비공개 포함 — 서버가 본인 조회 시 자동 포함). 렌더는 기존 FeedCard·블록 로직 그대로.
+- Fab: [내 공지] 탭에서는 kind='community'로 FeedCompose 진입(그 외 'feed').
+
+**①-B 작성 시 공개/비공개 (frontend only)**
+- FeedComposeScreen에 공개 스위치(기본 ON=공개) — TrackUploadScreen 스위치(:383) 관행 재사용. POST 페이로드 `is_public` 실값 전달(:244 하드코딩 제거). 피드·공지(kind 불문) 공통 — 일반 유저 관점(official 전용 아님).
+
+**①-C 관리 시 공개 전환 (frontend only)**
+- FeedCard ⋯메뉴(내 글): [비공개로 전환]/[공개로 전환] 추가 — `PUT /feeds/{id}`에 저장된 title·blocks(track_id/object_name 원형)·bgm 재전송 + is_public 반전(서버 계약: 전체 body 필요, blocks 원형은 serialize 응답에 포함). `report_blinded` 400 응답은 "신고 처리로 제한된 콘텐츠" 안내 그대로 노출.
+- 카드에 내 글 한정 "비공개" 칩 표시(공지 배지와 별개, MyMusicScreen 트랙 비공개 표기 관행).
+
+**② 앨범 2건 삭제 (데이터 작업 — 오케스트레이터→사용자 승인 후 실행)**
+- mongosh로 `albums` 2건 delete + 마미 베스트의 `covers/generated/<uid>/album_a61d….png` MinIO 제거(앨범테스트 borrowed 커버는 트랙 소유물 — 보존). 실행 전·후 count 실측 기록. 코드 변경 없음.
+
+**③ Inst. 생성·배포 (backend + frontend)**
+- 서버: `POST /api/tracks/{track_id}/instrumental` (소유자·⭐차감·melody 중복 방지 락) → 원곡 MinIO presigned URL(≤20MB 검증)로 sunoapi.org vocal-removal(separate_vocal) 생성 → 백그라운드 폴링 → `instrumentalUrl` 다운로드→MinIO 이관 → **신규 트랙 자동 발매**: 제목 `"<원제> (Inst.)"`, 원곡의 커버·장르·무드·artist_name·character/persona 스냅샷 복제, lyrics 없음, `source_track_id` 기록, `is_public`=원곡과 동일, 창작 기록(creation_log) 관행 연동. 실패 시 환불(refund 관행). 상태 조회 `GET /api/tracks/{track_id}/instrumental/status`(또는 generations 관행 재사용 — dev 재량).
+- 앱: 마이뮤직 곡 ⋮ 시트에 **[Inst. 버전 만들기]**(AI 곡=ai_model suno 한정, 이미 (Inst.)인 곡·진행 중 곡 제외) → 비용 확인 다이얼로그(⭐표기) → 완료 알림 후 목록 갱신. 서버 Dockerfile 가드 준수 — **자체 분리(torch) 절대 재유입 금지**.
+
+### 변경 매트릭스
+| 영역 | 파일 | 내용 |
+|------|------|------|
+| 앱 | screens/FeedScreen.tsx | 탭 3분할·내 글 조회·Fab kind 분기 |
+| 앱 | screens/FeedComposeScreen.tsx | 공개 스위치 + is_public 실값 |
+| 앱 | components/feed/FeedCard.tsx | 공개 전환 메뉴·비공개 칩 |
+| 앱 | screens/MyMusicScreen.tsx | ⋮ Inst. 액션·상태 |
+| 서버(스테이징 server_staging_v3210) | app/routes/tracks.py(+services/inst_service 신규) | instrumental 생성·폴링·발매 |
+| 데이터 | (코드 없음) | 앨범 2건 + AI 커버 1점 삭제 |
+
+### 40% 룰 판정
+①은 서버 무변경 프론트 4파일, ③은 검증 완료 외부 API + 기존 폴링·발매 관행 조립 — 신규 불확실성은 "presigned URL의 sunoapi.org 외부 접근성" 1건뿐(구현 초기에 curl 실검증, 실패 시 임시 공개 프록시 경로로 우회 설계). 스파이크 선행 불필요, **본 사이클 3건 모두 포함 가능** 판정. 단 ③ 실패 시 ①·②만으로 사이클 완결 가능하도록 커밋 순서 ①→②→③.
+
+### test-designer 항목
+1. 피드 탭: [전체]=기존 타임라인 회귀 무손상, [내 피드]/[내 공지] kind 분리·비공개 글 본인 노출, 타 계정에서는 비공개 글 미노출(타임라인·채널·단건 404).
+2. 작성: 공개 OFF 등록 → 타임라인 미출현·내 탭 출현. 공지 배지(v3.205)는 official 글만 유지(일반 유저 공지에 미표시) 회귀.
+3. 관리: 공개↔비공개 전환 왕복(blocks 원형 보존 — 트랙/이미지/[item] 마커 무손실), report_blinded 글 전환 시 400 안내.
+4. Inst.: 정상 생성 E2E(⭐차감→SUCCESS→"(Inst.)" 트랙 발매·커버 승계·재생), 실패 시 환불 멱등, 20MB 초과/비AI 곡 거부, 중복 요청 락.
+5. 데이터: 삭제 후 albums count=0, 마이뮤직 앨범 탭·/albums/latest 빈 목록 정상, 수록 트랙 4곡 무손상.
+
+### 사용자 결정 필요 사안
+1. **앨범 1번(앨범테스트)** 소유자가 타 계정(오리쟁이)입니다 — 본인 부계정이면 함께 삭제, 아니면 본인 소유 1건만 삭제할지 확인 필요(기본안: 요청 원문 "2개" 존중, 2건 모두 삭제).
+2. **Inst. ⭐비용** — 외부 원가 10 credits(작곡 대비 저렴). 기본안: **⭐5**(share_video·커버와 동일 축), 대안 ⭐10. 무료(0)는 외부 과금 유출로 비권고.
+3. Inst. 발매 공개 상태 — 기본안: 원곡과 동일(원곡 비공개면 Inst.도 비공개).
+
+## v3.211 (2026-09-22) — [최우선 장애] APK/AAB 백그라운드 재생 불능 진단 — 웹앱은 정상, 배포판만 실패
+
+### 사용자 요청 원문
+"웹앱에서는 백그라운드 재생이 되는데 APK/AAB 배포판에서는 백그라운드 재생이 안 되고 있어. 이거부터 수정해"
+
+### 0단계 findings (코드·git·서버 로그 실측 + 웹 조사)
+
+**① 오디오 모드 설정 — 플래그 자체는 정상, 호출 시점도 문제 없음**
+- `2_housing/services/audioMode.ts:12-19`: `staysActiveInBackground: true`·`playsInSilentModeIOS: true`·InterruptionMode DoNotMix(iOS/Android)·`shouldDuckAndroid: false` 전부 설정됨. 앱 기동 시가 아니라 **재생 직전 호출** 방식 — playback.ts:467(loadAndPlayTrack), :425(프리로드 스왑 playPreloadedSound), PlayerScreen.tsx:582, MusicResultScreen.tsx:211. expo-av에서 setAudioModeAsync는 재생 전에만 적용되면 충분 — 시점 결함 아님. **설정 누락 가설(a) 기각.**
+- 웹 분기: audioMode.ts:39-62 Media Session API(웹 전용) — 웹은 브라우저가 OS 미디어 세션·백그라운드 유지를 대행하므로 정상인 것이 당연. APK와의 차이는 여기가 아니라 네이티브 계층.
+
+**② app.json·타깃 SDK — Android 포그라운드 서비스 전무 + targetSdk 35(Android 15) 확정**
+- app.json:24-27 iOS `UIBackgroundModes: ["audio"]` 있음(참고). **android(:29-37)에는 FOREGROUND_SERVICE 권한·미디어 알림·서비스 관련 항목 0건** — expo-av 자체가 Android FGS 미지원(기지: PLAN v3.197 사이클 2845행, audioMode.ts:5 주석 자인).
+- expo-build-properties(:50-59)는 usesCleartextTraffic만 — **targetSdkVersion 미지정 → Expo SDK 54 기본값 = API 35(Android 15)** (웹 조사: Expo SDK 54 changelog·build-properties 문서 — API 36은 명시적 오버라이드 필요, SDK 55에서 기본화).
+- **핵심 신규 발견(웹 조사, developer.android.com "Behavior changes: Apps targeting Android 15")**: **targetSdk 35 앱은 포그라운드(top app)가 아니고 FGS도 없으면 audio focus 요청이 `AUDIOFOCUS_REQUEST_FAILED`로 거부됨**(Android 15+ 기기에서 발효). expo-av는 재생 시작마다 focus를 요청하므로, 화면 꺼진 상태의 didJustFinish→스왑 재생(playback.ts:425-427 applyPlaybackAudioMode+playAsync)·재로드 폴백 전부가 **구조적으로 거부될 수 있는 경로**. v3.205의 로컬 프리다운로드(네트워크 무관화)로도 못 막는 신규 차단층 — 이번 보고가 "전환 실패"를 넘어 "재생 자체 불능"으로 악화된 것을 설명할 유력 후보. 웹앱이 되는 이유(브라우저 프로세스는 자체 미디어 FGS 보유)와도 정합.
+
+**③ 1.1.0 vs 1.1.1 — 네이티브 diff 없음, "1.1.1 신규 모듈 회귀" 가설은 매니페스트 레벨 기각**
+- git 실측: 1.1.0(37b6f7e, v3.207) 시점 package.json에 **이미** keyboard-controller 1.18.5·reanimated ~4.1.1·worklets 0.5.1·react-native-google-mobile-ads ^16.3.2 전부 존재. `git diff c6c3ed2..dcc0db9` = app.json 버전 문자열 + JS만(constants/ads.ts·hooks/useRewardedSkipAd.ts·utils/fatigueGate.ts·eas.json) — **두 빌드의 네이티브 모듈 구성 동일**. "1.1.0에는 keyboard-controller가 없다"는 전제는 git과 불일치 — keyboard-controller 없는 빌드는 9/18-20 세대(1.0.0, 7f1c245 이전)뿐. 어느 APK를 설치했는지는 사용자 확인 항목(아래 질문 1).
+- AdMob 배선(1.1.1 JS 추가분)은 다이얼로그 진입 시에만 lazy-load(useRewardedSkipAd.ts:23-29, 모듈 싱글턴) — 전역 오디오 포커스 영향 경로 없음. 하위 가설로만 유지.
+
+**④ 서버 frontend.log 실측 (ssh maidol-ec2, 읽기 전용)**
+- 로그 위치 정정: 컨테이너 내부 `/srv/app/logs/frontend.log`(구 /app/logs 아님). **v3.209 배포(23:27 KST)의 컨테이너 재생성으로 이전 로그 또 소실**(기지 백로그: 호스트 볼륨 마운트 미적용, PLAN 3523행) — 잔존은 23:42~23:45 KST 세션 6줄뿐.
+- 잔존 세션 판독(user_id=c19acda4…, page=Player): 23:42:28 preload start(eager)→download done(3.65MB/7.1s)→**preload ready(local:true)** 정상. 23:45:20 `[API Error] /charts/record-play status=undefined Network Error`. record-play는 **70% 재생 위치 도달 시** 발화(PlayerScreen.tsx:378-390 PLAY_RECORD_RATIO=0.7) → **재생 위치는 계속 전진 중(=오디오 살아 있음)인데 네트워크만 사망**(status=undefined = 무응답, Doze 정황 — v3.205 실측 UnknownHostException과 동일 패턴). 이후 didJustFinish/swap 로그 미도달 — 네트워크 사망으로 원격 로그 배치 유실이거나 프로세스 동결/킬. **이 세션만으로는 "즉시 멈춤"이 아니라 최소 곡 중반까지 재생 지속이 실측됨** — 사용자 증상(즉시/수분 후/전환만)의 구분이 필수(아래 질문 3).
+
+**⑤ expo-audio 재확인 (웹 조사)**
+- SDK 54 expo-audio 공식 문서: `setAudioModeAsync({ shouldPlayInBackground: true })` + **`setActiveForLockScreen(active, metadata, options)`**(잠금화면 컨트롤·메타데이터, AudioLockScreenOptions)·`updateLockScreenMetadata` 지원 — v3.205 조사와 일치. 잠금화면 컨트롤 활성 = Android 미디어 알림 = FGS 계층 확보(=②의 focus 제한과 Doze 근본 해제 후보). 커뮤니티 자료에는 최신 expo-audio의 `["expo-audio", {enableBackgroundPlayback}]` config plugin(FGS·권한 자동 생성) 언급 — SDK 54 동봉 버전에서의 정확한 지원 범위는 **실기기 스파이크로 확정**(공식 v54 문서에는 plugin 항목 없음 — 버전 확인 필요). expo-av는 SDK 55 제거 예정 — 이관은 어차피 필수 경로(v3.205 판정 유지).
+
+### 원인 판정 — 단일 확정 불가(기기·재현 양상 미상), 가설 우선순위 + 검증 절차
+| 순위 | 가설 | 근거 | 검증 |
+|------|------|------|------|
+| H1 | **구조 문제: FGS 부재** — Android 15+ 기기에서 targetSdk 35 audio focus 제한으로 백그라운드 곡 전환·재개 거부, 및/또는 프로세스 동결 | ②의 공식 behavior change + 앱에 FGS 0건 + 웹앱 정상과 정합 | 사용자 기기 Android 버전 확인(질문 2) + adb logcat에서 `AUDIOFOCUS_REQUEST_FAILED`/`requestAudioFocus` 거부 로그 + 화면 켠 뒤 서버 [BTDebug] reconcile 로그(playback.ts:522 dead sound=사운드 사망 / :529 paused=포커스 정지 — 두 로그가 원인 갈래를 직접 구분해줌) |
+| H2 | 기지 Doze 네트워크 차단(Android 15 미만 기기) — 전환 실패의 누적 체감을 "백그라운드 재생 안 됨"으로 보고 | ④ 실측(재생 지속+네트워크 사망) = v3.205 실측과 동일 패턴 | 질문 3·4로 증상 구분, 프리로드 hit 시 전환 성공 여부 [BTDebug] didJustFinish preloadHit 확인 |
+| H3 | OEM 공격적 절전(배터리 최적화 대상 앱 프로세스 킬) | 기지 한계(v3.197 판정) — FGS 없으면 완전 방어 불가 | 질문 5 + 배터리 최적화 제외 후 재현 여부 |
+| H4 | 1.1.1 회귀(신규 네이티브) | ③에서 네이티브 diff 없음으로 **사실상 기각** | 질문 1(설치 빌드 식별)로 종결 |
+
+### 확정 스펙 — 픽스 경로
+**(1) [본작업 승격] expo-audio 이관 스파이크** — v3.205 백로그(PLAN 3595행)를 이번 사이클로 승격. H1·H2·H3 모두 근본 해법이 "FGS + 미디어 세션" 단일 지점으로 수렴하고, expo-av로는 어떤 조합으로도 도달 불가(FGS 미지원)이므로 진단 결과와 무관하게 필수 경로.
+- 스파이크 범위: 별도 검증 화면/스크립트 + EAS 실기기 빌드로 (a) `shouldPlayInBackground`+`setActiveForLockScreen` → 화면 꺼짐 30분 연속 재생 (b) 백그라운드 곡 전환(연쇄 3곡+) — Android 15 기기 포함 (c) 잠금화면/BT 메타데이터·원격 다음/이전 이벤트 (d) SDK 54 동봉 expo-audio 버전의 config plugin(enableBackgroundPlayback) 지원 여부·생성 매니페스트 확인. 합격 판정 시 **전면 이관(playback.ts 어댑터 계층: duration 보정 v3.192·프리로드 v3.197/202/205·reconciler·LISTEN 계측 이식)은 별도 사이클** — 불합격 시 RNTP v4 스파이크(차선, v3.205 판정 유지).
+- 스파이크 중 임시 완화(사용자 안내): 설정 앱 배터리 최적화 제외 안내(기지 임시책, v3.197 판정) — 코드 변경 없음, 사용자 커뮤니케이션.
+**(2) [소규모 병행] 계측 1건**: playback.ts 스왑/로드 실패 로그에 이미 message가 담기므로(425-449, :489) 추가 코드 변경 없음 — 단 **frontend.log 호스트 볼륨 마운트**(기지 백로그, docker run 옵션)를 이번에 함께 처리해야 실기기 검증이 로그 소실에 다시 막히지 않음(서버 배포 절차 — 사용자 승인 필요).
+**(3) 하지 않는 것**: expo-av 위에서의 땜질(백그라운드 focus 재시도 루프 등) — Android 15 정책상 원천 거부라 무의미, 금지.
+
+### 변경 매트릭스
+| 영역 | 파일 | 내용 |
+|------|------|------|
+| 앱(스파이크) | scratchpad 또는 screens/dev 전용 진입로 + app.json(expo-audio plugin 시험) | expo-audio 검증 하네스 — 본 재생 파이프라인 무변경 |
+| 앱 | package.json | expo-audio 추가(expo-av 병존 — 이관 전 제거 금지) |
+| 서버(옵션) | docker run 옵션(코드 아님) | frontend.log 호스트 볼륨 마운트 — 사용자 승인 배포 |
+
+### 40% 룰 판정
+스파이크 자체(검증 하네스+EAS 빌드 1회)는 미초과. **전면 이관까지 이번 사이클에 포함하면 명백 초과**(v3.205에서 "단독으로도 40% 초과" 기판정 — playback.ts 549줄+PlayerScreen/MiniPlayer 전면 재배선). → 기본안: 이번 사이클 = 진단 확정 + 스파이크까지, 이관 본작업은 스파이크 합격 후 차기 사이클. **이관까지 한 번에 원하시면 사용자 확인 필요.**
+
+### test-designer 항목
+1. 스파이크 합격 기준: Android 15+ 실기기에서 화면 꺼짐 30분 연속 재생 무중단, 백그라운드 연쇄 전환 3곡+, 잠금화면 컨트롤 표기·조작.
+2. 회귀: 스파이크 하네스가 기존 expo-av 재생 경로(웹 포함)에 무영향 — 미니플레이어/PlayerScreen 스모크.
+3. 진단 검증: 사용자 재현 세션의 서버 [BTDebug] reconcile dead/paused 로그로 H1 vs H2 판별 기록.
+4. (볼륨 마운트 적용 시) 컨테이너 재시작 후 frontend.log 보존 확인.
+
+### 사용자에게 물어볼 진단 질문 (원인 특정 최소 세트)
+1. **어느 빌드**를 테스트하셨나요? 앱 버전(1.1.0/1.1.1)과 설치 시점 — 혹시 그 전(1.0.0, 9/18~20 설치) APK 그대로인가요?
+2. **기기 모델과 Android 버전**(설정>휴대전화 정보)은? — Android 15 이상 여부가 원인 판정의 갈림길입니다.
+3. 증상이 정확히 어느 쪽인가요? (a) 화면을 끄면 **즉시** 멈춤 (b) 몇 분 재생되다 멈춤(대략 몇 분?) (c) 듣던 곡은 끝까지 나오는데 **다음 곡으로만** 안 넘어감
+4. 화면을 켠 채 **다른 앱으로 전환**했을 때는 재생이 유지되나요? (화면 꺼짐과 앱 전환의 분리)
+5. 이어폰/블루투스(차량 포함) 연결 상태였나요, 스피커였나요? 배터리 절전 모드/앱 배터리 최적화 설정은?
+6. 멈춘 뒤 앱으로 돌아가면 어떤 상태인가요? (일시정지 표시 / 처음 화면부터 재시작 / 재생 표시인데 무음)
+
+## v3.212 (2026-09-23) — 추천하기 공유 개편: 옵션 2개 축소·멘트 랜딩 톤 정렬·초대 페이지 CTA 2원화(Play 내부테스트+웹앱)·OG 이미지 신규 제작(AIDOL 구브랜딩 제거)
+
+### 사용자 요청 원문
+"상단바 추천하기 기능에서 카카오톡이랑 링크 복사만 남기고 나머지는 지워줘. 그리고 공유하기 하면 이렇게 보이는데. 카카오톡 멘트도 변경해주고. 최대한 maidol.ai.kr 이랑 app.maidol.ai.kr 페이지의 멘트, 느낌이 비슷하게 가야해. 그리고 구글 플레이 다운로드, 웹에서 실행 이렇게 두가지로 실행되게 해야할 것 같아(안드로이드는 구글 플레이가 되지만 IOS는 웹에서 실행하도록 권장) 현재 https://play.google.com/apps/internaltest/4700477405401874414 이게 내부 테스트 링크고 웹앱버젼은 app.maidol.ai.kr 로 연결되게 해야하고. 공유할때 카카오톡에 뜨는 이미지랑 클릭했을때 링크가 보이는 이미지가 촌스러운것 같아. 웹페이지를 최대한 참고해서 수정해봐."
+
+### Plan verification findings (파일:라인 — 서버는 프로덕션 EC2 실측)
+
+**F1. 앱 추천하기 흐름 실측 — 공유 4종 전부 "네이티브 시트 위임"(카카오 SDK 미사용)**
+- 진입점: `2_housing/components/HomeHeaderActions.tsx:78` (헤더 친구초대 아이콘 → uiStore.openInvite) → `2_housing/components/AppShareModal.tsx` (전체 141줄).
+- 공유 버튼: `AppShareModal.tsx:16-20` SHARE_BUTTONS = 카카오톡/인스타그램/페이스북 3종 + 링크 복사(:110-112) = 총 4개. **삭제 대상 = 인스타그램·페이스북**.
+- 카카오 공유 방식: 카카오 SDK 아님 — 세 소셜 버튼 모두 `Share.share({message})`(:66-74, RN 시스템 공유 시트)로 동일 동작. package.json 에 kakao 계열 의존성 0.
+- 공유 멘트: :53-54 `shareTextBase` = "MAIDOL — AI가 만든 음악의 새로운 세계\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: {code}" + URL. 스크린샷 2의 노란 말풍선 텍스트와 정확히 일치 — 이 문자열이 교체 대상.
+- 링크 복사(:62-65)는 shareTextFull 전체를 클립보드에 복사(URL 포함) — 유지.
+
+**F2. 초대 랜딩(서버) 실측 — EC2 `backend_9004/app/routes/referral.py`(venv uvicorn 직기동, restart_9004.sh)**
+- 라우트: `GET|HEAD /invite/{code}` public_router(:253-) → `_render_invite_html`(:84-) f-string 인라인 템플릿. 무효 코드 = 404 HTML 변형(코드 박스 대신 안내 + CTA 유지).
+- 현재 CTA: **단일 버튼** `Google Play에서 다운로드` href=`settings.play_store_url` — `app/config.py:170` 기본값 `https://play.google.com/store/apps/details?id=com.maidol.app` = **미출시 플레이스홀더(스토어에서 404)**. `.env` 에 PLAY_STORE_URL 부재 실측(grep 0건) — pydantic `model_config env_file=".env"`(:291)라 .env 추가만으로 교체 가능(코드 무수정, config.py:169 주석의 설계 의도 그대로).
+- 웹앱 CTA 없음. "이미 설치했다면 앱 열기" = `aidol://`(:79, app.json scheme "aidol" 실측 일치) — 유지.
+- OG: :77 `_OG_IMAGE_URL = https://api.maidol.ai.kr/static/og/invite_og.png` ← EC2 실물 `app/static/og/invite_og.png`(1200×630 PNG, 56KB. main.py:886-889 /static 마운트). **이미지 실측: 좌상단 워드마크가 "AIDOL"(구 브랜딩 위반) + 브라우저 창 프레임 + 클립아트 입체 별** — 스크린샷 2의 카드 이미지와 동일. 동일 바이트의 beta-event-og.png 는 서버 py 코드 참조 0건(방치 파일).
+- og:title "MAIDOL 초대장 — {nick}님의 초대" / og:desc "베타 테스트 기간 가입 시 스타 50 추가 증정! 추천코드 {code}"(:100-107) — 멘트 교체 대상.
+- 페이지 스타일: bg `#0d0820`·바이올렛 `#a855f7` 계열 — 랜딩 실측 토큰(`/Users/pearl/homepage/maidol/www/index.html:18-26` --bg:#0a0a1a·--violet:#8b5cf6·--violet-soft:#a78bfa, :15 Pretendard CDN)과 근소 상이. 구조는 이미 유사 → 토큰·폰트만 정렬(최소 수정).
+
+**F3. 랜딩(maidol.ai.kr) 카피 실측 — 멘트 톤의 근거(이 파일은 읽기 전용, 수정 금지)**
+- `index.html:6` title "MAIDOL — 나의 AI 아이돌, 나만의 기획사" / :224 "MY AI IDOL · OPEN BETA 진행 중" / :225 h1 "나의 AI 아이돌, AI 음악 창작 놀이터" / :226 lede "작사·작곡부터 앨범 커버까지, AI가 무료로 완성합니다. 나의 AI 아티스트를 데뷔시키고, 차트에 도전하세요." / :317 "시작은 3분이면 충분해요" / :339-341 "지금, 웹에서 바로 시작하세요 … 설치 없이 브라우저에서 무료로" + CTA "웹에서 바로 시작하기"(→ app.maidol.ai.kr).
+
+**F4. 웹앱 추천코드 자동 적용 경로 — 현재 부재, 5줄 프리필로 해소**
+- 웹앱(app.maidol.ai.kr) = 동일 RN 코드베이스 웹 빌드. 가입 폼 `2_housing/components/auth/AuthPanel.tsx:79,561-568` 추천코드 수동 입력(4자, REFERRAL_RE :38). URLSearchParams/location.search 사용처 전 코드베이스 0건 실측 → `?ref=` 쿼리는 현재 무시됨. 웹 한정(Platform.OS==='web') 초기값 프리필 약 5줄로 자동 적용 가능 — 포함(가입 API 계약 무변경).
+
+**F5. OG 이미지 제작 방식 실측 — 로컬 Chrome 헤드리스 스크린샷 채택**
+- 로컬 도구: rsvg-convert·ImageMagick·cairosvg 부재 / **Chrome 실행파일 존재** + Pillow 12.3(검증용). → HTML(랜딩 토큰·Pretendard CDN) 작성 → `chrome --headless --screenshot --window-size=1200,630 --hide-scrollbars` → PNG. 한글 폰트·그라데이션을 랜딩과 픽셀 단위로 정합시키는 최적 경로. 서버는 정적 서빙뿐이라 서버측 변환 불요.
+- 캐시 이슈: 카카오는 **페이지 URL 기준으로 OG 스크랩 캐시**. 파일명을 `invite_og_v2.png` 로 변경해 중간 캐시(브라우저/프록시) 회피 + 기존 스크랩된 invite URL 은 카카오 공유 디버거 수동 초기화 필요(사용자 안내 항목).
+
+### 확정 스펙
+
+**① 앱 공유 모달 (AppShareModal.tsx)**
+- 버튼 [카카오톡으로 공유 | 링크 복사] 2개만(인스타그램·페이스북 삭제). 카카오톡 버튼 = 현행 네이티브 공유 시트 유지(카카오 SDK 도입은 네이티브 모듈·앱키·빌드 영향으로 이번 범위 밖 — 이월. 시트에서 카카오톡 선택 시 스크린샷 2와 같은 텍스트 공유로 정상 동작 실증됨).
+- 공유 멘트 확정본(shareTextBase — 이모지 금지·⭐ 예외 규칙 준수):
+```
+나의 AI 아이돌, MAIDOL
+작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.
+추천코드 {code} 입력하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요.
+```
+  (+ 줄바꿈 + inviteUrl = shareTextFull. 링크 복사도 동일 전문)
+- 모달 안내문(:93-95)은 현행 유지(보상 설명 정확). 버튼 2개 폭 48% 셀 그대로(2열 1행).
+
+**② 초대 랜딩 (server_staging_v3212/referral.py — EC2 원본 scp 후 .orig 보존 수정)**
+- CTA 2원화(둘 다 항상 노출, UA 서버측 분기 — invite_landing 이미 Request 수신):
+  - [Google Play에서 다운로드] → `settings.play_store_url` (.env `PLAY_STORE_URL=https://play.google.com/apps/internaltest/4700477405401874414` 추가로 교체 — 코드 무수정, 배포 단계 항목)
+  - [웹에서 바로 시작하기] → `_WEBAPP_URL = "https://app.maidol.ai.kr"` 상수 신설, 유효 코드면 `?ref={code}` 부착(④ 프리필과 연동)
+  - UA 에 "Android" 포함 → Play 버튼이 primary(그라데이션)·웹 버튼 secondary(아웃라인), iOS/기타 → 웹 버튼 primary + 보조문구 "iOS는 웹 버전을 권장해요 — 설치 없이 바로 시작". `aidol://` 앱 열기 링크 유지.
+- 카피·토큰 랜딩 정렬: tagline "MY AI IDOL · AI 음악 창작 놀이터", 리워드 박스 위에 lede 1줄 "작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요." 추가. bg #0d0820→#0a0a1a, 바이올렛 #a855f7 계열→#8b5cf6/#a78bfa/#6d28d9, Pretendard CDN link 추가(폴백 현행 스택 유지).
+- OG 메타 확정본: og:title 유효 "「{nickname}」님이 MAIDOL에 초대했어요" / 무효 "MAIDOL — 나의 AI 아이돌" · og:description "작사·작곡부터 앨범 커버까지 AI가 무료로 완성. 추천코드 {code} 입력하면 두 사람 모두 스타 50!"(무효 코드는 코드 문장 생략) · og:image → `/static/og/invite_og_v2.png`.
+- 보상 로직·/api/referral/* JSON 계약·404 변형·XSS escape 구조 무변경(표시 계층만).
+
+**③ OG 이미지 신규 (server_staging_v3212/static/og/invite_og_v2.png)**
+- 1200×630. 랜딩 디자인 언어: #0a0a1a 배경 + 상단 라디얼 바이올렛 글로우(rgba(124,58,237,.28)), 중앙 MAIDOL 그라데이션 워드마크(#c084fc→#7c3aed, 자간 넓게), 서브카피 "MY AI IDOL · AI 음악 창작 놀이터", 하단 필 배지 "OPEN BETA"+"추천코드 가입 시 두 사람 모두 ⭐50". 브라우저 창 프레임·입체 별 클립아트·"AIDOL" 표기 전면 제거.
+- 제작: 로컬 HTML → Chrome 헤드리스 1200×630 스크린샷(F5 방식) → Pillow 로 규격 검증 → 스테이징 배치. 배포 시 EC2 `app/static/og/` 에 v2 추가(기존 invite_og.png 는 삭제하지 않고 존치 — 이미 스크랩된 구 카드의 이미지 404 방지).
+
+**④ 웹앱 추천코드 프리필 (AuthPanel.tsx — 웹 한정)**
+- `referralCode` 초기값: Platform.OS==='web' 이고 `location.search` 의 `ref` 가 REFERRAL_RE 통과 시 대문자 프리필(약 5줄, try/catch). 네이티브 경로 무영향, 가입 payload 계약 무변경.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| 2_housing/components/AppShareModal.tsx | SHARE_BUTTONS 카카오톡 1종 축소, 공유 멘트 확정본 교체, 헤더 주석 갱신 | app-dev | `[AppShareModal]` |
+| 2_housing/components/auth/AuthPanel.tsx | 웹 한정 ?ref 프리필 초기값 약 5줄 | app-dev | `[AuthPanel]` |
+| server_staging_v3212/referral.py | CTA 2원화+UA 분기, _WEBAPP_URL, OG 메타·카피·토큰 정렬, og:image v2 경로 | backend-dev(스테이징만) | 서버 `[invite]` |
+| server_staging_v3212/static/og/invite_og_v2.png | 신규 제작(Chrome 헤드리스) | backend-dev | — |
+| EC2 .env | `PLAY_STORE_URL=<내부테스트 링크>` 1줄 추가 | 오케스트레이터(배포 단계) | — |
+
+- 배포: 프로덕션 referral.py scp → 스테이징 수정(.orig 보존) → EC2 `.bak_pre_v3212` 백업 → scp(py+png) → .env 1줄 → `restart_9004.sh` (docker 아님 — venv uvicorn 직기동 실측). EC2 직접 편집 금지 준수.
+
+### 40% 룰 판정
+앱 2파일 국소(합계 약 40줄)·서버 1파일 표시 계층 + 정적 이미지 1개·API 계약 무변경 — **초과 아님(가결)**. 이월: 카카오 SDK 공식 공유(메시지 템플릿 카드), 웹앱 로그인 화면 딥링크 라우팅 고도화, beta-event-og.png 정리.
+
+### test-designer 테스트 항목
+1. 앱 모달: 버튼 정확히 2개(카카오톡·링크 복사), 인스타/페북 부재. 링크 복사 클립보드 값 = 확정 멘트 3줄 + invite URL. 공유 시트 호출 메시지 동일.
+2. 랜딩 UA 분기: `curl -A "...Android..."` vs `-A "...iPhone..."` → primary/secondary 클래스 역전 실증, 두 CTA href = 내부테스트 링크 / `https://app.maidol.ai.kr?ref={code}`. 두 버튼 모두 양 UA 에서 존재.
+3. OG: `curl /invite/{유효코드}` → 신규 og:title/description 문안, og:image=invite_og_v2.png · 이미지 GET 200 + 1200×630 PNG 실측 + "AIDOL" 워드마크 부재(육안).
+4. 무효 코드: 404 + HTML 변형(안내문·CTA 2개 유지) 회귀. HEAD 프리플라이트 200/404 정상.
+5. 웹 프리필: `app.maidol.ai.kr?ref=7VFU` 가입 폼 자동 입력(웹), `ref=zz!` 형식 무효 시 공란, 네이티브 앱 가입 폼 회귀 무영향.
+6. 회귀: GET /api/referral/my-code JSON 계약 불변, 추천 가입 양측 ⭐50 적립 로직 무변경 스모크, `aidol://` 앱 열기 링크 존치.
+
+### 사용자 결정 필요 사안
+1. **멘트 문안 검수** — 앱 공유 멘트·OG title/description·랜딩 lede 확정본(위 ①②)을 제시했으나 배포 전 사용자 검수 권고(톤은 maidol.ai.kr 실측 카피 기반).
+2. **카카오톡 버튼 방식** — 기본안: 네이티브 공유 시트 유지(SDK 미도입, 텍스트+링크 공유 → OG 카드는 카카오가 자동 생성). 공식 카카오 SDK 카드 템플릿은 이월 — 수용 여부.
+3. **카카오 OG 캐시 초기화(수동 필요)** — 배포 후 https://developers.kakao.com/tool/debugger/sharing 에서 기존 공유된 `api.maidol.ai.kr/invite/{code}` URL 캐시 초기화해야 이미 스크랩된 코드의 카드가 갱신됨(신규 코드는 즉시 신규 카드).
+4. (참고) Play 내부 테스트 링크는 테스터 등록 계정만 접근 가능 — 비테스터 수신자는 웹 버튼 경로가 실질 진입로임을 전제로 iOS 외 안내문구도 중립 유지.
+
+---

@@ -147,6 +147,28 @@ export async function uploadCoverBackground(file: PickedFile): Promise<{ object_
   return res.data;
 }
 
+/**
+ * v3.210 ③: AI 곡 Inst.(보컬 제거) 버전 생성 — 계약(PLAN v3.210, backend 조 병렬 작업):
+ *   POST /tracks/{track_id}/instrumental — 소유자 전용·⭐5 선차감·중복 요청 락.
+ *     402=잔액 부족, 409=이미 진행 중(락). 완료 시 서버가 "<원제> (Inst.)" 신규 트랙을
+ *     자동 발매(커버·장르·무드·artist_name 승계, is_public=원곡 동일)하고 실패 시 환불.
+ *   GET /tracks/{track_id}/instrumental/status — { status, error? } (generations 관행:
+ *     pending|processing|completed|failed 어휘 — musicService.isGenerationInProgress와 동일 축).
+ */
+export const INSTRUMENTAL_STAR_COST = 5;
+
+export async function requestInstrumental(trackId: string): Promise<any> {
+  if (__DEV__) console.info('[Inst] 생성 요청', { trackId });
+  const res = await api.post(`/tracks/${trackId}/instrumental`);
+  if (__DEV__) console.info('[Inst] 생성 요청 수락', { trackId, status: res.data?.status });
+  return res.data;
+}
+
+export async function getInstrumentalStatus(trackId: string): Promise<any> {
+  const res = await api.get(`/tracks/${trackId}/instrumental/status`);
+  return res.data;
+}
+
 export async function uploadTrackCover(trackId: string, file: PickedFile): Promise<any> {
   const formData = new FormData();
   await appendFile(formData, 'file', file, file.mimeType || guessImageMime(file.fileName));

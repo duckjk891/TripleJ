@@ -61,7 +61,18 @@ interface FeedPost {
   like_count?: number;
   comment_count?: number;
   created_at?: string;
+  is_public?: boolean; // v3.210 ①: 비공개 칩·공개 전환(내 글 탭은 비공개 포함 응답)
+  kind?: string;       // 'feed' | 'community'
 }
+
+// v3.210 ①: 상단 세그먼트 탭 — [전체]=기존 timeline, [내 피드]/[내 공지]=/feeds/user/{me}?kind=
+// (서버 v137: viewer==owner면 비공개 글 포함 — MyMusicScreen fetchFeeds와 동일 계약)
+type FeedTab = 'all' | 'mine' | 'notice';
+const FEED_TABS: { key: FeedTab; label: string }[] = [
+  { key: 'all', label: '전체' },
+  { key: 'mine', label: '내 피드' },
+  { key: 'notice', label: '내 공지' },
+];
 
 // v3.70: 착장 아이템 첨부(공구 광고) — 서버 블록 화이트리스트가 text|track뿐이라
 // 텍스트 블록에 [item]{JSON} 마커로 실어 보낸다(작성 화면과 짝). 파싱 실패 시 일반 텍스트로 폴백.
@@ -88,6 +99,8 @@ export default function FeedScreen() {
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // v3.210 ①: 세그먼트 탭 — 비로그인은 [전체]만(탭바 숨김)
+  const [tab, setTab] = useState<FeedTab>('all');
   // 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님)
   const [ctaVisible, setCtaVisible] = useState(false);
   // v3.69: 트랙 스탯(재생수·좋아요) 병합 캐시 + ⋮ 액션시트 대상
@@ -121,16 +134,25 @@ export default function FeedScreen() {
     return () => unregisterAnchor('feed-compose');
   }, [user, fabHidden]);
 
+  // v3.210 ①: 로그아웃 시 내 글 탭에 남지 않도록 [전체]로 복귀
+  useEffect(() => {
+    if (!user && tab !== 'all') setTab('all');
+  }, [user, tab]);
+
   const fetchFeed = useCallback(async () => {
     // 피드는 비로그인도 우선 노출(공개 타임라인). 스크롤/클릭 시 로그인 CTA를 띄운다.
-    if (__DEV__) console.info('[FeedScreen] fetchFeed 호출');
+    // v3.210 ①: [내 피드]/[내 공지]는 /feeds/user/{me}?kind= (MyMusicScreen fetchFeeds와 동일 계약)
+    if (__DEV__) console.info('[Feed] fetchFeed 호출', { tab });
     try {
       setLoading(true);
-      const res = await api.get('/feeds/timeline');
+      const uid = useAuthStore.getState().user?.id;
+      const res = tab !== 'all' && uid
+        ? await api.get(`/feeds/user/${uid}`, { params: { kind: tab === 'notice' ? 'community' : 'feed', limit: 50 } })
+        : await api.get('/feeds/timeline');
       const data: FeedPost[] = Array.isArray(res.data)
         ? res.data
         : (res.data?.feeds || res.data?.items || res.data?.posts || []);
-      if (__DEV__) console.info('[FeedScreen] fetchFeed 응답', { count: data.length });
+      if (__DEV__) console.info('[Feed] fetchFeed 응답', { tab, count: data.length });
       setPosts(data);
       // v3.69: timeline엔 재생수·좋아요가 없어 고유 트랙(최대 20곡)의 상세를 병합
       const ids = [...new Set(data.flatMap((p) => (p.blocks || [])
@@ -146,12 +168,12 @@ export default function FeedScreen() {
         setTrackStats((prev) => ({ ...prev, ...next }));
       }
     } catch (err: any) {
-      console.error('[FeedScreen] fetchFeed 실패', { status: err?.response?.status });
+      console.error('[Feed] fetchFeed 실패', { tab, status: err?.response?.status });
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [tab]);
 
   useFocusEffect(useCallback(() => { fetchFeed(); }, [fetchFeed]));
 
@@ -258,6 +280,8 @@ export default function FeedScreen() {
           if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
         }}
         onDeleted={() => fetchFeed()}
+        // v3.210 ①: 공개 전환 후 목록 갱신([전체] 탭에서 비공개 전환 시 타임라인에서 빠짐)
+        onUpdated={() => fetchFeed()}
         renderBlocks={() => (
           <View>
             {textBlocks.map((b, i) => (
@@ -277,6 +301,26 @@ export default function FeedScreen() {
 
   return (
     <ScreenLayout>
+      {/* v3.210 ①: 세그먼트 탭 — MyMusicScreen tabBar 스타일 재사용. 비로그인은 [전체]만이라 탭바 숨김 */}
+      {user ? (
+        <View style={styles.tabBar}>
+          {FEED_TABS.map((t) => (
+            <TouchableOpacity
+              key={t.key}
+              style={[styles.tab, tab === t.key && styles.tabActive]}
+              onPress={() => {
+                if (tab === t.key) return;
+                if (__DEV__) console.info('[Feed] 탭 전환', { tab: t.key });
+                setPosts([]);
+                setTab(t.key);
+              }}
+              accessibilityLabel={`피드 탭 ${t.label}`}
+            >
+              <AppText style={[styles.tabText, tab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
       {loading && posts.length === 0 ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
       ) : posts.length > 0 ? (
@@ -307,6 +351,19 @@ export default function FeedScreen() {
         />
       ) : !user ? (
         <View style={{ flex: 1 }} />
+      ) : tab === 'mine' ? (
+        // v3.210 ①: 내 글 탭 빈 상태 — MyMusicScreen 피드/커뮤니티 탭 문구 관행
+        <EmptyState
+          icon={<Feather name="edit-3" size={44} color={colors.text.muted} />}
+          title="아직 작성한 피드가 없어요"
+          hint="오른쪽 아래 버튼으로 내 곡과 소식을 알려보세요!"
+        />
+      ) : tab === 'notice' ? (
+        <EmptyState
+          icon={<Feather name="bell" size={44} color={colors.text.muted} />}
+          title="아직 작성한 공지가 없어요"
+          hint="오른쪽 아래 버튼으로 구독자에게 소식을 전해보세요!"
+        />
       ) : (
         <EmptyState
           icon={<Feather name="users" size={44} color={colors.text.muted} />}
@@ -328,8 +385,16 @@ export default function FeedScreen() {
       />
 
       {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
+      {/* v3.210 ①: [내 공지] 탭에서는 kind='community'로 작성 진입(MyMusicScreen 새 공지 작성 관행) */}
       {user ? (
-        <Fab onPress={() => navigation.navigate('FeedCompose')} accessibilityLabel="피드 작성">
+        <Fab
+          onPress={() => {
+            const kind = tab === 'notice' ? 'community' : 'feed';
+            if (__DEV__) console.info('[Feed] 작성 진입', { kind });
+            navigation.navigate('FeedCompose', kind === 'community' ? { kind } : undefined);
+          }}
+          accessibilityLabel={tab === 'notice' ? '공지 작성' : '피드 작성'}
+        >
           {/* v3.207 ①: 튜토리얼 anchor 측정용 래퍼 — collapsable={false}로 네이티브 뷰 보존 */}
           <View ref={fabIconRef} collapsable={false} onLayout={registerFabAnchor}>
             <Feather name="edit-3" size={22} color="#fff" />
@@ -359,6 +424,29 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   spinner: { marginTop: spacing.huge },
+  // v3.210 ①: 세그먼트 탭 — MyMusicScreen tabBar 관행(하단 보더 + 액센트 언더라인)
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.bg.surface1,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  tabActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: colors.accent.primary,
+  },
+  tabText: {
+    fontSize: 15,
+    color: colors.text.muted,
+    fontWeight: '600',
+  },
+  tabTextActive: {
+    color: colors.accent.primary,
+  },
   // v3.49: 가로 패딩 16→12 + FeedCard 자체 margin 제거 — 카드가 화면을 거의 꽉 채우도록(이중 여백 해소)
   list: { paddingVertical: spacing.lg, paddingHorizontal: spacing.md, paddingBottom: 100 },
   card: { marginBottom: spacing.md },
