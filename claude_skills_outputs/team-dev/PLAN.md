@@ -4024,3 +4024,78 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 2. **보상 정책 확정 — 기본안 (b)**: (a) 광고 1회=광고권 +1 적립만(수동 소비) (b) 적립 즉시 자동 소비=**광고 보고 30분 단축**(서버 무수정, 잔여 쿨다운엔 반복 시청 가능) (c) 광고 1회=쿨다운 전체 해제 — 서버 수정 필요+사다리(2~12h) 경제 붕괴 위험으로 **기각 권고**.
 3. **시청 상한**: 서버 캡 없음 — AdMob 콘솔 게재빈도 캡(예: 1일 5회)으로 갈음할지, 차기 서버 캡 도입할지.
 - SSV 도입 여부는 결정 사안 아님 — **서버에 이미 구현 완료라 사용 확정**(F2).
+
+---
+
+## v3.209 (2026-09-22) — 공유영상(영상 디렉터): 단색(이미지 없는) 배경 옵션 + 자막 테두리 on/off·테두리 색 선택
+
+### 요청(원문)
+"영상 디렉터가 영상 생성할때 배경에는 원본 이미지가 꼭 있는 형태이던데 원본 이미지 없이 색상만 있는 배경도 가능하게 하라는 소리였어. 그리고 폰트가 테두리가 있던데 테두리 있게 없게도 선택을 할 수 있어야하고 색상을 선택할 수 있도록 해줘."
+→ ① 배경: 단색(원본 이미지 미노출) 옵션 ② 자막 폰트: 테두리 on/off + 색 선택. "색상"의 대상은 코드 실측으로 **테두리 색**으로 확정 — 글자색 선택은 이미 존재(fontColor 단계, v3.182)하고, 현재 하드코딩돼 선택 불가한 색은 테두리(OutlineColour 검정 고정)뿐.
+
+### Plan verification findings (파일:라인 — 서버는 프로덕션 EC2 실측, 로컬 미러 아님)
+
+**F1. 앱 흐름 실측 — 대상 화면은 VideoDirectorScreen 단일, 배경 3모드 모두 "이미지 위" 합성**
+- 화면: `2_housing/screens/VideoDirectorScreen.tsx` (724줄, 추적자 `[VideoDirector]`). 대화 단계 Step 유니언 :28-30, 사용자 버블 탭→해당 단계 롤백(handleEditChoice :138-145, v3.182 방식 — AnswerEditModal 미사용, 이 화면 고유 관행 유지).
+- 배경 소스는 **트랙 커버 이미지 고정**(`/tracks/my` 목록 :119, coverUriOf :63-66) — 업로드 경로 없음. 배경 질문(bg 단계 :523-537)은 **center 레이아웃에서만** 노출(layout full 이면 :173-174 에서 곧장 font 로 skip, styleParams :266 이 `bg`를 'blur' 로 강제). 3모드 clean(원본+어둠막)/blur(3강도)/color(색+투명도 25·45·70%) 모두 커버 이미지가 기저 — **투명도 최대 70%라 원본이 항상 비침** = 사용자 지적과 정확히 일치.
+- 생성 요청: `POST /tracks/{id}/share-video` 쿼리 파라미터(:289, styleParams :263-270 — format/layout/shape/lyrics/font/fontcolor/bg/bgblur/bgcolor/bgalpha/fontbold/fontitalic/subpos). 색 팔레트 관행: 프리셋 12색 + hex 표시(PALETTE :50-54, 글자색·배경색 공용).
+- 제2 호출부(회귀 대상): `components/TrackShareDownloadSheet.tsx:53` — **format 만 전송**(구식 최소 페이로드) → 신규 파라미터는 서버 기본값=현행 동작이어야 함.
+
+**F2. 서버 파이프라인 실측 — 자막 테두리는 검정·두께3 하드코딩, 배경은 drawbox 오버레이**
+- 라우트: EC2 `backend_9004/app/routes/tracks.py:2421-2555` (POST, Query 13종 :2424-2436, 스타일 검증 :2463-2471, 캐시 히트 무과금 :2517-2521, ⭐과금 ref=비기본 축만 직렬화 :2527-2530, 실패 환불 :2545-2552) + `GET …/share-video/file :2558-2630`(무인증 프록시, share_object_name **위치 인자** 호출 :2605-2608 — 시그니처 확장 시 이 호출부 동기 필수).
+- 파이프라인: `app/services/share_video.py` (817줄). center 배경 체인 :664-672 — `bg=="color"` 시 `drawbox=c=0x{bgcolor}@{alpha}:t=fill`(:670), alpha 는 `STYLE_BGALPHAS={"25","45","70"}`(:117) 한정 → **alpha=1.0 만 허용하면 drawbox 가 커버를 완전 차폐 = 단색 배경**. ffmpeg color source 신설 불필요(입력 그래프 무변경 — 최소 diff).
+- 자막(ASS) 스타일: `_build_ass` :305-307 · `_build_ass_scroll` :386-387 — Style 줄에 `OutlineColour=&H00000000`(검정)·`BorderStyle=1, Outline=3, Shadow=0` **하드코딩**. 즉 현재 모든 자막 = 검정 테두리 두께 3 고정. 폰트는 번들 fontsdir(:737, assets/fonts) — mv_pipeline.py(AI MV job, routes/mv.py)와는 **별개 파이프라인**(share-video 는 fontconfig 미의존, 오케스트레이터 참고사항의 mv_pipeline 은 이번 대상 아님).
+- hex→ASS 변환기 기존재: `font_colour_ass` :149-156 (RRGGBB→&H00BBGGRR) — 테두리 색에 그대로 재사용 가능.
+- 캐시·과금 키: `_style_tuple` :163-164(12원소) → `_style_suffix` :167-172(기본 튜플=빈 suffix, 비기본=md5 8자) → `share/v6/{id}{fmt}{suffix}.mp4`(:185). 과금 ref(:2527-2530)·video_url 쿼리(:2501-2507)도 "비기본 축만" 직렬화 — **신규 축을 '기본값이면 무흔적'으로 설계하면 캐시·환불멱등·URL 전부 자동 하위호환**.
+- heavy_job_slot :575-577 — 스타일 문자열 키에 신규 축 추가만(무해).
+
+**F3. 로컬 미러 부실 — 스테이징은 프로덕션 원본에서 출발 필수**
+- `0_platform_music/backend_9004`(로컬 미러): share_video.py md5 상이(af7057… vs 프로덕션 9c5d13…), routes/tracks.py 는 **미러에 아예 없음**. → backend-dev 는 `scp maidol-ec2:…/app/{services/share_video.py,routes/tracks.py}` 원본을 `server_staging_v3209/` 로 받아 `.orig` 보존 후 수정(스테이징 관행 = 루트 `server_staging_v3207/`·`v3208/` 과 동일).
+
+**F4. 40% 압축 판정 — 배경 단색은 신규 모드 신설 대신 기존 color 모드의 alpha 100% 승인 1줄**
+- A안(bg='solid' 신설): STYLE_BGS·검증·분기·캐시축 다수 수정. B안(**채택**): `STYLE_BGALPHAS` 에 `"100"` 추가 **서버 1줄** — :669 `alpha=1.0` → drawbox 완전 불투명 = 원본 완전 차폐. 검증(:2467)·GET 검증(:2586)은 동일 상수 import 라 자동 통과, 캐시 suffix 는 bgalpha 가 이미 튜플 원소라 자동 분리. 시각 결과 동일·회귀면 최소로 B안 우월.
+- 자막 테두리는 지름길 없음 — 신규 축 2종(fontoutline·outlinecolor) 정식 추가.
+
+**F5. 기타 영향 실측**
+- creationLog: VideoDirectorScreen 은 creationLogService 미사용·서버 share-video 도 창작기록 미적재(현행) — 이번 사이클 무변경(현행 유지).
+- 비용·시간: 신규 외부 API 0, ffmpeg 단일 패스 유지(단색 배경은 blur 대비 오히려 경량). ⭐과금은 기존 POINT_COSTS['share_video'] 스타일 조합별 1회 그대로.
+- 400 "커버 이미지가 없는 곡"(:2495-2496) 게이트는 유지 — center 레이아웃 중앙 이미지에 커버가 여전히 필요.
+
+### 확정 스펙
+
+**① 배경 단색 (center 레이아웃 배경 단계에 4번째 선택지)**
+- 앱: bg 단계 카드 4개 — 원본/흐린/색으로 덮기/**「단색 배경」(desc "이미지 없이 색만")**. 단색 선택 → 색 팔레트(기존 bgColor 단계 재사용, PALETTE 12색+hex) → **진하기 단계 skip** → 폰트 단계. 미리보기는 이미지 없는 순수 색 스와치(정직한 근사).
+- 전송 매핑(styleParams): 앱 내부 상태 `pickedBg='solid'` → API 로는 `bg=color & bgcolor={hex} & bgalpha=100` (계약 신설 0). 롤백 버블 step='bg' 기록 — 기존 탭-수정 호환.
+- 서버: `STYLE_BGALPHAS = {"25","45","70","100"}` — 1줄. (:669 기존 로직이 1.00 을 그대로 처리)
+
+**② 자막 테두리 on/off + 테두리 색 (신규 API 축 2종 — 기본값=현행과 완전 동일)**
+- API 계약(POST·GET file 공통 Query 추가): `fontoutline` "1"(기본, 테두리 있음)|"0" · `outlinecolor` ""(기본=검정)|hex6. 검증: `fontoutline in {"0","1"}`, `outlinecolor=="" or _HEX6_RE`.
+- 서버 반영: `_build_ass`/`_build_ass_scroll` 파라미터화 — Outline 폭 `3 if fontoutline=="1" else 0`, OutlineColour `font_colour_ass(outlinecolor) if outlinecolor else "&H00000000"` (Style 줄 첫 &H00000000 만 치환, BackColour 불변). scroll 인라인 오버라이드(\1c·\alpha)는 무수정(스타일 기본값이 테두리 색 전달).
+- **캐시·과금 하위호환(핵심)**: `_style_tuple` 14원소 확장 + `_style_suffix` 에서 **말미 신규 축이 기본값("1","")이면 절단 후 md5** → 기존 전 조합(기본·비기본 모두)의 object name·과금 ref·video_url 이 배포 전후 비트 동일. route `_defaults` 에 두 키 추가(비기본만 쿼리/ref 직렬화 — 기존 메커니즘 자동 적용). GET file 의 위치 인자 호출(:2605-2608)도 확장 동기.
+- 앱: fontColor 단계 뒤 신규 2단계 — `fontOutline`(카드 2: 「테두리 있음(기본)」/「없음」, 미리보기 textShadow 근사) → 있음이면 `outlineColor`(PALETTE 재사용, 기본 검정 표시). 전송: `fontoutline=pickedOutline?'1':'0'`, `outlinecolor=` 테두리 on 이고 검정(000000)이 아닐 때만 hex, 그 외 ""(**검정 선택=기본값 정규화** → 레거시 캐시 적중). 이후 lyricsMode → subPos 기존 흐름.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| 2_housing/screens/VideoDirectorScreen.tsx | Step 에 fontOutline·outlineColor 추가, bg 단계 4번째 카드(단색), solid→color/100 매핑, 진하기 skip 분기, 신규 상태 3종(pickedOutline·pickedOutlineColor·pickedBg 'solid'), styleParams 확장, 디렉터 질문 문구 2건 | app-dev | `[VideoDirector]` |
+| server_staging_v3209/share_video.py | STYLE_BGALPHAS +"100" · STYLE_FONTOUTLINES 검증 상수 · _build_ass/_build_ass_scroll 테두리 파라미터화 · _style_tuple/_DEFAULT_STYLE_TUPLE 14원소 · _style_suffix 말미 기본값 절단 · share_object_name/generate_share_video/_impl/heavy 슬롯 키 시그니처 확장 | backend-dev(스테이징만) | 서버 `[share-video]` |
+| server_staging_v3209/tracks.py | POST·GET file 라우트 Query 2종 추가 + 검증식 확장 + _defaults 2키 + generate 호출·share_object_name 위치 인자 확장 | backend-dev(스테이징만) | 서버 `[share-video]` |
+
+- 앱 TrackShareDownloadSheet·기타 화면 무수정(서버 기본값=현행). 배포: 프로덕션 원본 scp → `server_staging_v3209/`(`.orig` 보존) 수정 → 오케스트레이터 v3.207/8 절차(EC2 `.bak_pre_v3209` 백업 → scp → docker build+재생성). EC2 직접 쓰기 금지 준수.
+
+### 40% 룰 판정
+앱 1파일 국소(+약 90줄)·서버 2파일 국소(신규 엔드포인트 0·계약은 선택 Query 2종 추가) — **초과 아님(가결)**. 이월: full 레이아웃 단색(아래 결정 1), 커버 없는 곡의 가사-only 영상, 테두리 두께 선택, share-video 창작기록 적재.
+
+### test-designer 테스트 항목
+1. **하위호환(최중요)**: 구 페이로드(format 만 — TrackShareDownloadSheet 경로) 및 기존 비기본 스타일 조합(예: center/circle/line/dohyeon/hex색) — 배포 전후 `share_object_name` **문자열 동일** 실증(파이썬 단위 비교) + 기존 생성물 재요청 `cached:true`·무과금.
+2. **단색 배경**: center+단색 생성 영상 프레임 샘플링 — 배경 픽셀=지정색 단일(커버 미노출), 중앙 커버·자막·워터마크 정상. bgalpha=100 검증 통과(POST·GET 모두).
+3. **테두리**: fontoutline=0 → ASS Style `Outline=0` 실측(임시 ASS 검사 또는 로그)+시각상 테두리 없음(scroll·line 양모드). outlinecolor=FF6FA5 → `OutlineColour=&H00A56FFF`(BBGGRR 반전) 정확. 기본(미전송)=검정 두께3 현행 동일.
+4. **검증 400**: fontoutline=2 · outlinecolor=GGGGGG · bg=color&bgcolor 누락 → 400 "지원하지 않는 스타일".
+5. **과금·환불**: 신규 축 비기본 조합 첫 생성 ⭐차감(ref 에 fontoutline/outlinecolor 포함), 동일 조합 재요청 무과금, 강제 실패 시 환불 멱등.
+6. **앱 UX**: 신규 2단계 대화 진행·사용자 버블 탭 롤백(fontOutline/outlineColor/bg 단계 포함), 단색 선택 시 진하기 질문 미출현, kakao·wide 포맷 각 1건 회귀.
+
+### 사용자 결정 필요 사안
+1. **full(화면 꽉 채우기) 레이아웃에도 단색 배경 제공 여부** — 기본안: **이번 사이클 제외(center 전용)**. full 은 커버가 화면 전체(=콘텐츠 그 자체)라 단색이면 이미지 0%의 가사-only 영상이 됨 — 커버 없는 곡 지원과 묶어 별도 기획 권고. (배경 질문 자체가 현재 center 에서만 나오므로 사용자 지적 문맥과도 일치)
+2. **테두리 색 팔레트** — 기본안: 글자색과 동일 프리셋 12색 재사용(기본=검정 강조 표시). 자유 색상환(컬러 휠)은 디렉터 대화 관행(프리셋+hex 표시, v3.182) 대비 과잉으로 판정 — 미채택.
+3. (참고) 테두리 두께는 현행 3 고정 유지 — 요청 범위 밖, 필요 시 차기.

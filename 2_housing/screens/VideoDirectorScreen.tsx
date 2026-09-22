@@ -3,6 +3,9 @@
 //   ②내 답변(user 버블) 탭 → 그 단계로 되돌아가 다시 선택 ③배경 3모드(원본/블러 강도/색+투명도,
 //   커버 실사 미리보기) ④폰트 5종+볼드/기울임 ⑤글자색 컬러 팔레트(+hex 표시) ⑥기기 저장(MediaLibrary)과
 //   공유(OS 시트) 분리. v3.187: 보관함 제거(대표 확정 — 서버 API 는 존치). 추적자 [VideoDirector].
+// v3.209: ①배경 4번째 카드 「단색 배경」(center 전용) — 내부 solid 모드, API 는 bg=color&bgalpha=100 매핑,
+//   진하기 질문 생략 ②자막 테두리 신규 2단계 — 유무(기본 있음) → 테두리 색(팔레트 12색, 기본 검정).
+//   기본 조합(있음·검정)은 outlinecolor "" 정규화 — 레거시 캐시 적중.
 import { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
@@ -27,7 +30,8 @@ interface MyTrack {
 
 type Step =
   | 'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
-  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'subPos' | 'making' | 'done';
+  | 'font' | 'fontStyle' | 'fontColor' | 'fontOutline' | 'outlineColor'
+  | 'lyricsMode' | 'subPos' | 'making' | 'done';
 
 // user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
 interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
@@ -79,7 +83,8 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [pickedFormat, setPickedFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
   const [pickedLayout, setPickedLayout] = useState<'full' | 'center'>('full');
   const [pickedShape, setPickedShape] = useState<'square' | 'circle'>('square');
-  const [pickedBg, setPickedBg] = useState<'blur' | 'clean' | 'color'>('blur');
+  // v3.209: 'solid' = 단색 배경(앱 내부 모드 — API 로는 bg=color&bgalpha=100 매핑)
+  const [pickedBg, setPickedBg] = useState<'blur' | 'clean' | 'color' | 'solid'>('blur');
   const [pickedBgBlur, setPickedBgBlur] = useState<'light' | 'mid' | 'strong'>('mid');
   const [pickedBgColor, setPickedBgColor] = useState<string>('1B1035');
   const [pickedBgAlpha, setPickedBgAlpha] = useState<string>('45');
@@ -87,6 +92,9 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [pickedBold, setPickedBold] = useState(false);
   const [pickedItalic, setPickedItalic] = useState(false);
   const [pickedColor, setPickedColor] = useState<string>('FFFFFF');
+  // v3.209: 자막 테두리 — 유무(기본 있음)·색(기본 검정 = 현행 서버 하드코딩과 동일)
+  const [pickedOutline, setPickedOutline] = useState(true);
+  const [pickedOutlineColor, setPickedOutlineColor] = useState<string>('000000');
   // v3.183(대표): 자막 위치 — near(이미지 가까이)/mid/low. 플레이어 스타일 기본=near
   const [pickedLyricsMode, setPickedLyricsMode] = useState<'scroll' | 'line'>('scroll');
   const [saving, setSaving] = useState(false);
@@ -178,18 +186,23 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const handlePickShape = (shape: 'square' | 'circle') => {
     setPickedShape(shape);
     pushUser(shape === 'square' ? '둥근 네모' : '동그라미', 'shape');
-    pushDirector('배경은 어떻게 할까요?\n원본 그대로, 흐리게(정도 선택), 색으로 덮기(색·투명도 선택) 중에 골라주세요.');
+    pushDirector('배경은 어떻게 할까요?\n원본 그대로, 흐리게(정도 선택), 색으로 덮기(색·투명도 선택), 단색 배경(이미지 없이 색만) 중에 골라주세요.');
     setStep('bg');
   };
 
-  const handlePickBg = (bg: 'clean' | 'blur' | 'color') => {
+  const handlePickBg = (bg: 'clean' | 'blur' | 'color' | 'solid') => {
     setPickedBg(bg);
-    pushUser(bg === 'clean' ? '원본 배경' : bg === 'blur' ? '흐린 배경' : '색으로 덮기', 'bg');
+    pushUser(bg === 'clean' ? '원본 배경' : bg === 'blur' ? '흐린 배경' : bg === 'color' ? '색으로 덮기' : '단색 배경', 'bg');
     if (bg === 'blur') {
       pushDirector('얼마나 흐리게 할까요? 미리보기를 참고해 골라주세요.');
       setStep('bgBlurLevel');
-    } else if (bg === 'color') {
-      pushDirector('어떤 색으로 덮을까요? 색을 고르면 색상 코드도 보여드릴게요.');
+    } else if (bg === 'color' || bg === 'solid') {
+      // v3.209: 단색도 색 팔레트는 공용 — 이후 분기(진하기 skip)는 handlePickBgColor 에서
+      pushDirector(
+        bg === 'solid'
+          ? '어떤 색의 단색 배경으로 할까요? 색을 고르면 색상 코드도 보여드릴게요.'
+          : '어떤 색으로 덮을까요? 색을 고르면 색상 코드도 보여드릴게요.'
+      );
       setStep('bgColor');
     } else {
       pushDirector('가사 폰트는 어떤 걸로 할까요?');
@@ -207,8 +220,15 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const handlePickBgColor = (hex: string) => {
     setPickedBgColor(hex);
     pushUser(`배경색 #${hex}`, 'bgColor');
-    pushDirector('색을 얼마나 진하게 덮을까요?');
-    setStep('bgAlpha');
+    if (pickedBg === 'solid') {
+      // v3.209: 단색 배경은 완전 불투명(100%) 고정 — 진하기 질문 생략
+      if (__DEV__) console.info('[VideoDirector] 단색 배경 — 진하기 단계 생략', { hex });
+      pushDirector('가사 폰트는 어떤 걸로 할까요?');
+      setStep('font');
+    } else {
+      pushDirector('색을 얼마나 진하게 덮을까요?');
+      setStep('bgAlpha');
+    }
   };
 
   const handlePickBgAlpha = (alpha: string) => {
@@ -236,8 +256,33 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const handlePickColor = (hex: string) => {
     setPickedColor(hex);
     pushUser(`글자색 #${hex}`, 'fontColor');
+    pushDirector('자막 글자에 테두리를 둘까요? 테두리가 있으면 배경 위에서 글자가 더 또렷해요.');
+    setStep('fontOutline');
+  };
+
+  // v3.209: 다음 질문(가사 표시 방식) — 테두리 단계 2곳에서 공용
+  const askLyricsMode = () => {
     pushDirector('가사는 어떻게 보여드릴까요?\n여러 줄이 흘러가는 방식과 한 줄씩 나오는 방식이 있어요.');
     setStep('lyricsMode');
+  };
+
+  // v3.209: 자막 테두리 유무 → 있음이면 테두리 색 선택으로
+  const handlePickFontOutline = (on: boolean) => {
+    setPickedOutline(on);
+    pushUser(on ? '테두리 있음' : '테두리 없음', 'fontOutline');
+    if (on) {
+      pushDirector('테두리 색은 어떤 걸로 할까요? 기본은 검정이에요.');
+      setStep('outlineColor');
+    } else {
+      askLyricsMode();
+    }
+  };
+
+  // v3.209: 테두리 색 선택
+  const handlePickOutlineColor = (hex: string) => {
+    setPickedOutlineColor(hex);
+    pushUser(`테두리색 #${hex}`, 'outlineColor');
+    askLyricsMode();
   };
 
   const handlePickLyrics = (lyricsMode: 'scroll' | 'line') => {
@@ -263,9 +308,14 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const styleParams = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => ({
     format: pickedFormat!, layout: pickedLayout, shape: pickedShape, lyrics: lyricsMode,
     font: pickedFont, fontcolor: pickedColor === 'FFFFFF' ? 'white' : pickedColor,
-    bg: pickedLayout === 'center' ? pickedBg : 'blur',
-    bgblur: pickedBgBlur, bgcolor: pickedBg === 'color' ? pickedBgColor : '',
-    bgalpha: pickedBgAlpha, fontbold: pickedBold ? '1' : '0', fontitalic: pickedItalic ? '1' : '0',
+    // v3.209: 단색(solid)은 기존 color 모드 + 완전 불투명 100 으로 매핑 — API 계약 신설 0
+    bg: pickedLayout === 'center' ? (pickedBg === 'solid' ? 'color' : pickedBg) : 'blur',
+    bgblur: pickedBgBlur, bgcolor: pickedBg === 'color' || pickedBg === 'solid' ? pickedBgColor : '',
+    bgalpha: pickedLayout === 'center' && pickedBg === 'solid' ? '100' : pickedBgAlpha,
+    fontbold: pickedBold ? '1' : '0', fontitalic: pickedItalic ? '1' : '0',
+    // v3.209: 자막 테두리 — 기본 조합(있음·검정)은 outlinecolor "" 정규화 → 레거시 캐시 적중
+    fontoutline: pickedOutline ? '1' : '0',
+    outlinecolor: pickedOutline && pickedOutlineColor !== '000000' ? pickedOutlineColor : '',
     subpos,
   });
 
@@ -534,6 +584,10 @@ export default function VideoDirectorScreen({ navigation }: any) {
                 <View style={[styles.bgColorOverlay, { backgroundColor: '#1B1035', opacity: 0.6 }]} />
               </View>
             </Card>
+            {/* v3.209: 단색 배경 — 원본 이미지 없이 색만 (미리보기도 이미지 없는 순수 색 스와치) */}
+            <Card onPress={() => handlePickBg('solid')} label="단색 배경" desc="이미지 없이 색만">
+              <View style={styles.bgSolidDemo} />
+            </Card>
           </View>
         )}
         {step === 'bgBlurLevel' && (
@@ -598,6 +652,28 @@ export default function VideoDirectorScreen({ navigation }: any) {
               <TouchableOpacity key={hex} style={styles.paletteItem} onPress={() => handlePickColor(hex)} activeOpacity={0.8} accessibilityLabel={`글자색 ${hex}`}>
                 <View style={[styles.paletteSwatch, { backgroundColor: `#${hex}` }]} />
                 <AppText style={styles.paletteHex}>#{hex}</AppText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        {/* v3.209: 자막 테두리 유무 — textShadow 근사 미리보기 */}
+        {step === 'fontOutline' && (
+          <View style={styles.formatRow}>
+            <Card onPress={() => handlePickFontOutline(true)} label="테두리 있음" desc="기본 추천">
+              <AppText style={styles.outlineDemoOn}>가나다</AppText>
+            </Card>
+            <Card onPress={() => handlePickFontOutline(false)} label="테두리 없음" desc="글자만 깔끔하게">
+              <AppText style={styles.outlineDemoOff}>가나다</AppText>
+            </Card>
+          </View>
+        )}
+        {/* v3.209: 테두리 색 — 글자색과 동일 팔레트 재사용, 기본=검정 강조 표시 */}
+        {step === 'outlineColor' && (
+          <View style={styles.paletteWrap}>
+            {PALETTE.map((hex) => (
+              <TouchableOpacity key={hex} style={styles.paletteItem} onPress={() => handlePickOutlineColor(hex)} activeOpacity={0.8} accessibilityLabel={`테두리색 ${hex}`}>
+                <View style={[styles.paletteSwatch, { backgroundColor: `#${hex}` }, hex === '000000' ? styles.paletteSwatchDefault : null]} />
+                <AppText style={styles.paletteHex}>#{hex}{hex === '000000' ? ' (기본)' : ''}</AppText>
               </TouchableOpacity>
             ))}
           </View>
@@ -706,6 +782,15 @@ const styles = StyleSheet.create({
   bgPreview: { width: 44, height: 70, borderRadius: 8 },
   bgPreviewPh: { width: 44, height: 70, borderRadius: 8, backgroundColor: colors.bg.surface2 },
   bgColorOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 8 },
+  // v3.209: 단색 배경 카드 — 이미지 없는 순수 색 스와치
+  bgSolidDemo: { width: 44, height: 70, borderRadius: 8, backgroundColor: '#1B1035', borderWidth: 1, borderColor: colors.border.subtle },
+  // v3.209: 자막 테두리 미리보기(textShadow 근사) 및 기본색 강조
+  outlineDemoOn: {
+    fontSize: 20, fontWeight: '700', color: '#FFFFFF',
+    textShadowColor: '#000000', textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 3,
+  },
+  outlineDemoOff: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  paletteSwatchDefault: { borderWidth: 2, borderColor: colors.accent.primary },
   // 컬러 팔레트 그리드
   paletteWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   paletteItem: { alignItems: 'center', width: 64, paddingVertical: 4 },

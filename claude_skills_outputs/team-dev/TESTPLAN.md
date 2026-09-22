@@ -2564,3 +2564,110 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1 ③④(테스트 광고 시청→SSV 적립→자동 30분 단축 체인 + 서버 증적)가 이번 사이클 최상위 완료 조건 — 단, 사용자 결정 사안 1(콘솔 발급값) 미회신 시 U+A까지로 "부분 완료(적립 E2E 대기)" 판정 허용(PLAN 명기 — TestIds 폴백 UI 배선까지 출고 가능).
 - **핵심 FAIL 게이트 5건**: ① **U-4 ②**(광고 단위 ID 하드코딩·실값 커밋) ② **U-3**(SSV customData=user_id 누락 — 보상자 식별 불가·적립 0) ③ **U-5 ⑤/E-1**(시청 완료·서버 적립 확인 없이 보상 지급 — 클라 단독 보상 경로) ④ **U-5 ①③/E-4 ①**(12곳 호출부 수정·기존 ⭐/광고권 스킵 경로 파괴) ⑤ **U-7 ①③**(v3.207 형상 회귀·diff 격리 위반) — 추가: **A-0**(무승인 배포 = 최상위)·**A-2 ①**(위조 서명 통과)·**A-3**(dedup 이중 적립)·**E-0 ③**(실광고 클릭 — 절차 FAIL). 1건이라도 FAIL이면 커밋·배포·출고 금지(서버/E2E 트랙 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
 - 이월(판정 대상 아님): iOS ATT/SKAdNetwork·실광고 전환(스토어 공개+app-ads.txt)·서버측 일일 적립 캡(콘솔 게재빈도 캡으로 갈음 — 사용자 결정 사안 3)·WaitTimerScreen 완전 삭제.
+
+---
+
+## v3.209 (2026-09-22) — 공유영상(영상 디렉터): 단색(이미지 없는) 배경 + 자막 테두리 on/off·테두리 색 선택
+
+> 대상: PLAN.md v3.209(:4030~) — 앱 1파일(`2_housing/screens/VideoDirectorScreen.tsx`: bg 단계 4번째 카드「단색 배경」·solid→`bg=color&bgalpha=100` 매핑·진하기 skip·신규 2단계 fontOutline/outlineColor) + 서버 스테이징 2파일(`server_staging_v3209/share_video.py`: STYLE_BGALPHAS +"100"·_build_ass 테두리 파라미터화·_style_tuple 14원소+말미 기본값 절단 / `server_staging_v3209/tracks.py`: POST·GET file Query 2종 `fontoutline`·`outlinecolor` + 검증 + _defaults 2키 + share_object_name **위치 인자** 호출 동기 :2605-2608). 신규 엔드포인트 0 — 계약은 선택 Query 2종 추가뿐, **기본값 조합 = 현행과 비트 동일**이 설계 핵심.
+> 실행 전제: 앱 `/Users/pearl/TripleJ/2_housing`(frontend, v3.208 합격 형상 기준선). 서버는 **스테이징(`server_staging_v3209/`, 프로덕션 EC2 원본 scp + `.orig` 보존)만 접촉** — 로컬 미러 `0_platform_music/backend_9004`는 원본과 상이(PLAN F3)하므로 **비교 기준으로도 수정 대상으로도 사용 금지**. 프로덕션 배포는 오케스트레이터가 사용자 최종 확인 후 v3.207/8 절차(`.bak_pre_v3209` 백업 → scp → docker build+재생성) 재사용. [api]는 배포 완료 후 착수(전이면 "대기" 보고), test-designer/tester의 프로덕션 접근은 **무인증 GET만**(쓰기·ssh 0 — POST 생성·과금 항목은 오케스트레이터/자체 테스트 계정 경유 실행 결과를 판독). [e2e]는 실기기(Android)에서 수행.
+> 시크릿 기재 금지: 계정 토큰·user_id·track_id 실값·EC2 호스트 상세는 증적에 플레이스홀더(`user_xxxx`·`track_xxxx`·`maidol-ec2`)만 표기. 테스트 곡은 자기 계정 소유 트랙만 사용.
+
+### [unit] 앱 정적 검증 (머지 게이트 — 서버 배포와 독립 트랙)
+
+**U-1. 선행 게이트 — 클린 기준선 + 접촉 허용 목록 + tsc exit 0 [unit]**
+- Given: v3.208 합격 형상 클린 기준선. 접촉 허용 목록 = 앱 `screens/VideoDirectorScreen.tsx` **1파일**(+서버 스테이징 `server_staging_v3209/` 2파일 — S 트랙에서 판정). 그 외 앱 파일 전부 diff 0이어야 U-7 diff 귀속이 성립.
+- When: ① `git log --oneline -1`+`git status --short`(2_housing 스코프) 클린 기준선 확인(미커밋 잔존 시 착수 금지·반려). ② 구현 합류 후 `cd /Users/pearl/TripleJ/2_housing && npx tsc --noEmit`. ③ `components/TrackShareDownloadSheet.tsx`(:53 format-only 구 페이로드 — 제2 호출부) diff **0** 선확인.
+- Then: ② **exit 0** — Step 유니언 확장(fontOutline·outlineColor)·신규 상태 3종(pickedBg 'solid'·pickedOutline·pickedOutlineColor)·styleParams 확장이 컴파일 정합. ③ 위반 = 구 호출부 접촉 반려.
+
+**U-2. 배경 단계 4카드 — 단색은 center 전용 노출 [unit]**
+- Given: 배경 질문(bg 단계 :523-537)은 **center 레이아웃에서만** 노출 — layout full이면 :173-174에서 font로 skip, styleParams :266이 bg='blur' 강제(현행). 사용자 결정 사안 1 기본안 = full 제외.
+- When: ① bg 단계 카드 **4개** 문자 확인: 원본/흐린/색으로 덮기/**「단색 배경」(desc "이미지 없이 색만")** — center 분기 내부에만 추가. ② full 레이아웃 경로: bg 단계 skip 로직·bg='blur' 강제 diff 0(단색 카드가 full에서 노출되는 경로 0). ③ 단색 카드 미리보기 = 이미지 없는 순수 색 스와치(커버 이미지 미합성 — 정직한 근사) 렌더 코드 확인. ④ 기존 3카드(clean/blur/color)의 라벨·핸들러·후속 단계 hunk 0(카드 배열 항목 추가만 허용).
+- Then: ①~④ 전부 충족 — ②(full 오염)·④(기존 3모드 파괴)가 판정 중심.
+
+**U-3. 단색 선택 흐름 — 진하기 skip + bg=color&bgalpha=100 매핑 [unit]**
+- Given: 확정 스펙 ① — 앱 내부 `pickedBg='solid'`, API 계약 신설 0(기존 `bg=color&bgcolor={hex}&bgalpha=100`으로 매핑).
+- When: ① 단색 선택 → 색 팔레트 단계(기존 bgColor 단계 재사용, PALETTE 12색+hex :50-54) → **진하기(투명도 25/45/70) 단계 미출현** → 폰트 단계 직행 — 단계 전이 분기 문자 추적. ② styleParams(:263-270) 매핑: `pickedBg==='solid'` → `bg=color & bgcolor={선택 hex} & bgalpha=100` 정확(다른 신규 쿼리 키 신설 0). ③ 기존 '색으로 덮기'(color) 경로: 색→진하기(25/45/70) 3단계 흐름 hunk 0 — bgalpha 25/45/70 매핑 불변. ④ 사용자 버블 step='bg' 기록 — 롤백 호환(U-5와 교차).
+- Then: ①~④ 전부 충족 — ②(매핑 오류 = 서버 400 또는 원본 비침)·③(기존 color 회귀)가 판정 중심.
+
+**U-4. 테두리 2단계 전이 — 없게 선택 시 색 질문 skip + 기본값 정규화 [unit]**
+- Given: 확정 스펙 ② — fontColor 단계 뒤 신규 2단계: `fontOutline`(카드 2:「테두리 있음(기본)」/「없음」, textShadow 근사 미리보기) → 있음이면 `outlineColor`(PALETTE 재사용, 기본=검정 강조 표시) → 이후 lyricsMode→subPos 기존 흐름.
+- When: ① 전이 표 문자 추적: fontColor→fontOutline→(있음)→outlineColor→lyricsMode / fontOutline→(없음)→**outlineColor skip**→lyricsMode. ② 전송 규칙: `fontoutline = pickedOutline ? '1' : '0'`, `outlinecolor =` 테두리 on **이고 검정(000000)이 아닐 때만** hex — **검정 선택 = ""(기본값 정규화)** 문자 확인(레거시 캐시 적중 조건). ③ **기본값 조합 파라미터 생략**: 테두리 있음+검정(=기본) 선택 시 styleParams가 fontoutline·outlinecolor **키 자체를 생략**(또는 서버 _defaults와 동치인 값만 전송 — 구현 방식 실측 기록, 단 S-4/A-1의 object name 동일성으로 최종 판정). 단색 아닌 기본 배경 조합도 bgalpha=100 미전송. ④ 디렉터 질문 문구 2건(배경·테두리) 추가 확인 — 기존 질문 문구 hunk 0.
+- Then: ①~④ 전부 충족 — ②·③(기본값 정규화 실패 = 전 사용자 캐시 미스·재렌더 폭증) = **FAIL 게이트(캐시 키 보존)와 직결**.
+
+**U-5. 답변 버블 편집(롤백) 신규 스텝 호환 [unit]**
+- Given: 이 화면의 답변 편집 관행 = **사용자 버블 탭 → 해당 단계 롤백**(handleEditChoice :138-145, v3.182 방식 — **AnswerEditModal 미사용 화면**임을 PLAN F1 실측 명기; 구현이 AnswerEditModal을 도입했다면 그 경로로 동일 판정).
+- When: ① 신규 스텝 3종(bg 단색 카드 포함·fontOutline·outlineColor)의 사용자 버블이 step 기록을 가져 탭 시 해당 단계로 롤백 — 롤백 후 후속 상태(pickedOutline·pickedOutlineColor·pickedBg) 초기화/재수집 정확. ② 교차 편집: 단색→'색으로 덮기'로 변경 시 진하기 단계 **재출현**, '있음'→'없음' 변경 시 outlineColor 답변 폐기(스테일 outlinecolor 전송 0). ③ 기존 스텝(format/layout/shape/font/fontColor/lyricsMode/subPos) 롤백 로직 hunk 0.
+- Then: ①~③ 전부 충족 — ②(스테일 상태 잔존 → 모순 파라미터 전송)가 판정 중심.
+
+**U-6. diff 격리 + v3.205~208 회귀 0 [unit] — FAIL 게이트**
+- Given: 접촉 허용 = U-1 목록(앱 1파일). 직전 사이클 합격 형상: v3.205(꾸미기)·v3.206(카테고리 개편)·v3.207(실기기 12건·keyboard-controller)·v3.208(보상형 광고 배선) — 이번 매트릭스와 **겹치는 파일 0**(VideoDirectorScreen은 4개 사이클 모두 무접촉이었음).
+- When: ① `git status --short`+`git diff --stat`(2_housing 스코프): VideoDirectorScreen.tsx 외 접촉 0 — 특히 TrackShareDownloadSheet.tsx·fatigueGate.ts·useRewardedSkipAd.ts·App.tsx·package.json·app.json·eas.json **전부 diff 0**, 로컬 서버 소스(`0_platform_music/backend_9004`) diff 0(스테이징 `server_staging_v3209/`만 허용). ② VideoDirectorScreen.tsx hunk 귀속: 변경 매트릭스 항목(Step 확장·4번째 카드·solid 매핑·진하기 skip·신규 상태 3종·styleParams·질문 문구 2건) 외 hunk 0 — kakao/wide 포맷·circle/square shape·가사 모드·자막 위치 로직 불변. ③ v3.208 합격 기능 스모크 diff 0: 광고 훅·fatigueGate 12곳 호출부·SSV 배선 재유입/변형 0. ④ 증적·스크립트 git 미추적(scratchpad 한정). ⑤ `npx tsc --noEmit` 최종 형상 재실행 exit 0.
+- Then: ①~⑤ 전부 충족 — **①(목록 외/서버 원본 diff)·③(직전 사이클 회귀) = FAIL 게이트**.
+
+### [unit] 서버 스테이징 정적 검증 (배포 전 — `server_staging_v3209/`만, 프로덕션 무접촉)
+
+**S-1. 스테이징 출처·diff 스코프 게이트 [unit]**
+- Given: PLAN F3 — 로컬 미러 부실(share_video.py md5 상이 af7057…↔프로덕션 9c5d13…, tracks.py 미러 부재). 스테이징은 **프로덕션 EC2 원본 scp**에서 출발.
+- When: ① `server_staging_v3209/*.orig` 존재 + `.orig` md5가 프로덕션 원본과 일치(share_video.py 9c5d13… 기준) 확인. ② `diff .orig 수정본` hunk가 변경 매트릭스 항목(STYLE_BGALPHAS·STYLE_FONTOUTLINES·_build_ass/_build_ass_scroll 파라미터화·_style_tuple/_DEFAULT_STYLE_TUPLE 14원소·_style_suffix 절단·share_object_name/generate 시그니처 / tracks.py Query 2종·검증·_defaults 2키·호출 확장)에 전부 귀속 — 그 외 hunk 0. ③ EC2 직접 쓰기 흔적 0(배포는 오케스트레이터 승인 후).
+- Then: ①~③ 충족 — ①(로컬 미러 출발 = 프로덕션과 다른 코드 배포) 1건 = 반려.
+
+**S-2. STYLE_BGALPHAS +"100" — 단색 배경 1줄 [unit]**
+- Given: F4 B안 — `STYLE_BGALPHAS = {"25","45","70","100"}`(:117) 1줄로 :670 `drawbox=c=0x{bgcolor}@{alpha}:t=fill`이 alpha=1.0 완전 불투명 = 커버 완전 차폐.
+- When: ① 상수에 "100" 추가 문자 확인 + :669 alpha 계산식(`int(bgalpha)/100` 상당)이 "100"→1.0을 그대로 처리(별도 분기 신설 0 — 최소 diff). ② POST 검증(:2463-2471)·GET file 검증(:2586)이 동일 상수 import로 자동 통과함을 import 경로 판독으로 확증(중복 하드코딩 상수 발견 시 동기 누락 반려). ③ drawbox 체인(:664-672)의 clean/blur 분기 hunk 0.
+- Then: ①~③ 전부 충족.
+
+**S-3. fontoutline/outlinecolor 검증식 + ASS Outline=0·BGR 변환 정확성 [unit]**
+- Given: 계약 — `fontoutline` "1"(기본)|"0", `outlinecolor` ""(기본=검정)|hex6. 현행 하드코딩: `_build_ass` :305-307·`_build_ass_scroll` :386-387 `OutlineColour=&H00000000`·`Outline=3`.
+- When: ① 검증식 문자 확인: `fontoutline in {"0","1"}`, `outlinecolor=="" or _HEX6_RE.match(...)` — **hex6 아닌 값(GGGGGG·7자리·#접두 등) 거부** 경로가 POST·GET file 양쪽에 존재. ② Style 줄 파라미터화: Outline 폭 `3 if fontoutline=="1" else 0`, OutlineColour `font_colour_ass(outlinecolor) if outlinecolor else "&H00000000"` — **Style 줄 첫 &H00000000만 치환, BackColour 불변** + scroll 인라인 오버라이드(\1c·\alpha) 무수정. ③ **BGR 변환 정확성**: `font_colour_ass`(:149-156) 재사용 확인 + 파이썬 단독 실행 실측 — `FF6FA5 → &H00A56FFF`·`FFFFFF → &H00FFFFFF`·`FF0000 → &H000000FF`(RRGGBB→&H00BBGGRR 반전) 3케이스 표 기록. ④ 스테이징 파일 파이썬 단독 로드로 임시 ASS 생성(일반·scroll 각 1) — fontoutline=0 산출물에 `Outline=0`, outlinecolor=FF6FA5 산출물에 `OutlineColour=&H00A56FFF` 문자열 실증.
+- Then: ①~④ 전부 충족 — ③·④(BGR 반전 오류 = 사용자가 고른 색과 다른 테두리)가 판정 중심.
+
+**S-4. 캐시 키 보존 실측 — 기본값 조합 suffix 비트 동일 [unit] — FAIL 게이트(최중요)**
+- Given: `_style_tuple`(:163-164) 12→14원소 + `_style_suffix`(:167-172) **말미 신규 축이 기본값("1","")이면 절단 후 md5** → 기존 전 조합의 object name(`share/v6/{id}{fmt}{suffix}.mp4` :185)·과금 ref(:2527-2530)·video_url 쿼리(:2501-2507)가 배포 전후 비트 동일해야 함(기존 영상 URL·캐시·환불멱등 보존).
+- When: ① **파이썬 단위 비교 스크립트**(scratchpad): `.orig`와 수정본을 각각 로드해 `share_object_name` 문자열을 조합 표로 대조 — (a) 전 기본값, (b) 구 비기본 대표 5종+(예: center/circle/line/dohyeon/hex 글자색/bg=color·bgalpha=45 — 기존 12축 조합), (c) kakao·wide 포맷 각 1 — **전 케이스 문자열 완전 동일**. ② 신규 축 비기본(fontoutline=0 / outlinecolor=FF6FA5 / bgalpha=100)은 **기존과 다른 suffix** 생성(충돌 0 — 구 캐시 오염 방지). ③ _DEFAULT_STYLE_TUPLE 14원소와 route `_defaults` 2키(fontoutline "1"·outlinecolor "")의 값 일치(불일치 = 기본값 요청이 비기본으로 과금·캐시 분열). ④ heavy_job_slot(:575-577) 스타일 키에 신규 축 포함 확인. ⑤ GET file의 share_object_name **위치 인자** 호출(:2605-2608) 인자 순서·개수가 확장 시그니처와 정합(어긋나면 GET 프록시 전면 404/오객체 — tsc 같은 컴파일 게이트가 없으므로 문자 대조 필수).
+- Then: ①~⑤ 전부 충족 — **①(기본·구 비기본 조합 object name 1건이라도 상이 = 기존 영상 URL 파손) = FAIL 게이트. ⑤(위치 인자 불일치)도 동급.**
+
+### [api] 프로덕션 검증 (배포 완료 후 — 전이면 "대기" 보고, 무승인 배포 = 최상위 FAIL)
+
+**A-0. 실행 게이트 [api]**
+- Given: 배포는 오케스트레이터가 사용자 최종 확인 후 실행(`.bak_pre_v3209` → scp → docker build+재생성). When/Then: 배포 전 `/health` 200 스냅샷 + 사용자 승인 기록 확인 — **승인 전 프로덕션 쓰기 1건 = 최상위 FAIL**. 대기 중이면 A-1~A-4 "대기" 보고, [unit] 트랙(U·S)만 진행.
+
+**A-1. 하위호환 — 파라미터 미전송 요청 = 기존 캐시 히트·신규 렌더 0 [api] — FAIL 게이트**
+- Given: 배포 전 자기 계정 트랙으로 기본 스타일·비기본 스타일(S-4 ① (b) 대표 1종) 영상을 각 1건 **선생성**해 video_url·object name 스냅샷 확보(배포 전 준비 항목).
+- When: ① 배포 후 동일 트랙·동일 파라미터(신규 키 미전송 — TrackShareDownloadSheet 경로와 동형인 format-only 포함) 재요청 → 응답 `cached:true` + **⭐무과금**(잔액 전후 대조) + video_url 문자열이 배포 전 스냅샷과 동일. ② 서버 로그(오케스트레이터 경유) ffmpeg 신규 렌더 발화 0. ③ 기존 발급 video_url 무인증 GET → 200·기존 mp4 그대로.
+- Then: ①~③ 전부 충족 — **캐시 미스·재렌더·URL 변경 1건 = FAIL 게이트(전 사용자 기존 영상 파손+렌더 폭증)**.
+
+**A-2. 신규 파라미터 정상 경로 [api]**
+- When/Then(자기 테스트 계정·자기 트랙 한정): ① `bg=color&bgcolor={hex}&bgalpha=100`(center) → 정상 201/200 + video_url 발급 + GET file 200(다운로드 산출물은 E-1로 이관). ② `fontoutline=0` → 정상 처리(400 아님). ③ `fontoutline=1&outlinecolor=FF6FA5` → 정상 처리 + video_url 쿼리·과금 ref에 비기본 축 직렬화 확인. ④ GET `…/share-video/file`에 동일 신규 쿼리 → 200(POST·GET 검증 동치 — S-2 ②·S-3 ① 실배포 확증).
+
+**A-3. 검증 400 경로 [api]**
+- When/Then: ① `fontoutline=2` → 400 "지원하지 않는 스타일". ② `outlinecolor=GGGGGG`(비hex6) → 400. ③ `bg=color&bgcolor` 누락 → 400(기존 검증 불변). ④ `bgalpha=99`(비허용값) → 400 — 각 케이스 5xx 크래시 0·서버 로그 traceback 0.
+
+**A-4. 과금·환불 멱등 + 스모크 [api]**
+- When/Then(자기 테스트 계정): ① 신규 축 비기본 조합 **첫 생성** ⭐차감 1회(POINT_COSTS['share_video'] 기존 단가) + ref에 fontoutline/outlinecolor 포함. ② **동일 조합 재요청** `cached:true`·무과금(차감 0). ③ 실패 유도(또는 코드 판독 병기 :2545-2552) 시 환불 멱등 — 이중 환불·미환불 0. ④ 배포 후 스모크: `/health` 200 + 커버 없는 곡 400 게이트(:2495-2496) 불변 + 컨테이너 재시작 이력 배포 1회분만.
+
+### [e2e] 실기기 (Android — 앱 머지 + 서버 배포 완료 후)
+
+**E-1. 단색 배경 — 결과 영상에 원본 이미지 흔적 0 [e2e] — 핵심 FAIL 게이트**
+- Given: 자기 계정·커버 있는 트랙, 영상 디렉터(center 레이아웃) 진입.
+- When: ① 디렉터 대화에서 배경 「단색 배경」 선택 → 색(예: PALETTE 중 1) → **진하기 질문 미출현 실기기 확인** → 나머지 단계 진행 → 생성 완료. ② 결과 영상 재생 + 프레임 샘플링(초반·중반·종반 3점 캡처): **배경 영역 픽셀 = 지정색 단일 — 원본 커버 이미지 흔적(윤곽·블러 잔상 포함) 0**. ③ 중앙 커버 이미지·자막·워터마크는 정상 표시(배경만 단색).
+- Then: ①~③ 충족 — **②(원본 비침 1건 = alpha 미적용/매핑 오류) = 핵심 FAIL 게이트**.
+
+**E-2. 테두리 없게 — 자막 테두리 부재 [e2e]**
+- When/Then: ① 테두리 「없음」 선택 → outlineColor 질문 **미출현** → 생성. ② 결과 자막 확대 캡처 — 글자 외곽 테두리 부재(글자색만, 흰 글자면 어두운 배경 조합으로 판독). ③ line(scroll)·일반 가사 양모드 각 1건.
+
+**E-3. 테두리 있게 + 색 선택 — 해당 색 테두리 [e2e]**
+- When/Then: ① 테두리 「있음」 → 색 팔레트(기본=검정 강조 표시 확인) → 비검정 색(예: FF6FA5) 선택 → 생성 → 자막 확대 캡처에서 **선택색 테두리** 확인(색상 오프셋 시 S-3 BGR 표와 대조). ② 검정 선택 → 생성 — 현행과 동일 검정 두께3 + (가능하면 video_url 대조로) 레거시 캐시 적중 확인. ③ 글자색과 테두리색 조합(예: 흰 글자+분홍 테두리) 시인성 정상.
+
+**E-4. 기존 이미지 배경 3모드 회귀 [e2e]**
+- When/Then: ① 원본/흐린/색으로 덮기(진하기 45) 각 1건 생성 — v3.208 이전과 동일 산출(원본 비침 정도·블러·어둠막 현행 유지). ② kakao·wide 포맷 각 1건 + full 레이아웃 1건(배경 질문 미출현·blur 강제 현행) 회귀. ③ TrackShareDownloadSheet 다운로드 경로(format-only) 1건 — 정상 다운로드·기존 캐시 활용(A-1 교차). ④ 테두리 질문에서 기본(있음·검정) 선택 시 결과가 기존 영상과 시각 동일.
+
+**E-5. 답변 버블 편집으로 배경/테두리 변경 재생성 [e2e]**
+- When/Then: ① E-1 완료 상태에서 배경 답변 버블 탭 → bg 단계 롤백 → '색으로 덮기'로 변경 시 **진하기 질문 재출현** → 재생성 정상. ② 테두리 답변 버블 탭 → 「없음」→「있음+색」 왕복 변경 → 재생성 결과에 최종 선택만 반영(스테일 파라미터 0 — U-5 ② 실기기 확증). ③ 편집-재생성 반복 중 크래시 0·기존 스텝(포맷·폰트 등) 답변 보존.
+
+### 게이트 요약
+
+- **머지 게이트(앱)**: U-1~U-6 전부 PASS 시 머지 허용(frontend 자동 push 관례). 서버 트랙: S-1~S-4 PASS → A-0 승인 → 배포 → A-1~A-4. E2E 트랙: 앱+서버 완료 후 E-1~E-5. 각 트랙 대기 시 "대기" 보고, 앱 머지와 독립.
+- **완료 조건**: E-1 ②(단색 배경 완전 차폐)·E-2·E-3(테두리 on/off·색 반영)이 이번 사이클 사용자 요청 직결 완료 조건.
+- **핵심 FAIL 게이트 4건**: ① **S-4 ①/A-1**(캐시 키 변경 — 기존 영상 URL 파손·기본값 조합 suffix 불일치) ② **E-1 ②**(단색인데 원본 비침) ③ **U-1 ③/S-4 ⑤/E-4 ③**(구 호출부 파손 — TrackShareDownloadSheet format-only·GET file 위치 인자) ④ **U-6 ①③**(직전 사이클 v3.205~208 회귀·diff 격리 위반) — 추가: **A-0**(무승인 배포 = 최상위)·**S-1 ①**(로컬 미러 출발 배포). 1건이라도 FAIL이면 커밋·배포·출고 금지(서버/E2E 트랙 FAIL은 해당 트랙 한정 판정 — 앱 머지 게이트와 분리).
+- 이월(판정 대상 아님): full 레이아웃 단색·커버 없는 곡 가사-only 영상·테두리 두께 선택·share-video 창작기록 적재(PLAN 40% 룰 이월 목록).
