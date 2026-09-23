@@ -28,6 +28,7 @@ export const FATIGUE_DIRECTOR_LABELS: Record<FatigueDirector, string> = {
   lyricist: '작사',
   image: '커버',
   artist: '아티스트',
+  video: '영상', // v3.214 ⑨: 영상 디렉터 피로도 게이트
 };
 
 export const getFatigueStatus = async (

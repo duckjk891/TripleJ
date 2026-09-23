@@ -4448,3 +4448,145 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 3. (예고된 후속) 검수 완료 후 "최초 접속·가입 후 최초 사용만" 복귀는 `TUTORIAL_REVIEW_MODE=false` 1줄 — 사용자 지시 시 즉시 처리.
 
 ---
+
+---
+
+# v3.214 — 1.1.3 실기기 피드백 10건 (튜토리얼 형태·기록안내 시트·Inst·영상 디렉터 종합)
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend). 서버 변경은 **server_staging_v3214** 스테이징 전제(운영 9004 직접 수정 금지, 배포는 사용자 승인·rsync). 서버 소스 실측 = 9004 (읽기 전용, ssh -p 2222 <SSH_HOST>).
+③ Inst 실패 원인은 오케스트레이터가 확증 완료(POST /instrumental 404 = v3.210 서버 미배포, 배포 커맨드 사용자 전달) — 본 계획은 앱 오류 문구 1건만 다룸.
+
+## 0단계 findings (실측 요약)
+
+**F1. ① 작업실 하이라이트 형태 (TutorialOverlay.tsx)**
+- 현행: 딤 = 4분할 사각(dimPart, :253-258) + 구멍 위 highlightBox(:336-348, borderRadius `radius.lg`=12 고정, HOLE_PAD 8). Step 타입(:37-44)에 shape 개념 없음.
+- 디렉터 비주얼(MapScreen/Character.tsx): 스프라이트 32×64(맵단위 48×96, 세로 1:2) + 하단 이름 배지(폭 ~88px). anchor = (d.x±70,d.y±70)*mapScale 정사각(:247-263). isNext 펄스는 이미 **완전 원형**(borderRadius 70*mapScale, :617-635).
+- **제약**: borderRadius만 키우면 4분할 딤의 모서리가 사각으로 밝게 남음 → 라운딩 밖 모서리를 덮는 "코너 마스크"(구멍보다 큰 View + 두꺼운 DIM_COLOR border + borderRadius r+B) 필요. SVG 마스크 불요.
+- 원형 반지름 ≈46.8px(폭390 기준)이면 이름 배지(하단 +28~+48px, 폭 88px) 모서리가 잘림 → 박스 하단 확장 필요.
+
+**F2. ② 창작과정 기록안내 시트 (위치 정정: TrackUploadScreen 아님)**
+- 실체 = **DialogueScreen.tsx(작사 디렉터)** 저작권 등록 모드 recChip(:473-483) → **PolicySheet**(components/PolicySheet.tsx, DialogueScreen :487-493, 타이틀 '창작 과정 기록 안내').
+- PolicySheet = 비투명 **전체 화면 Modal**(flex:1, paddingTop: insets.top만) — 약관/개인정보 전문용 설계를 재사용한 것. 상단바(네이티브 헤더)를 완전히 덮는 게 침범의 원인. maxHeight 개념 없음.
+- 앱 시트 관행(TrackActionSheet·TrackShareDownloadSheet·PlaylistPickerSheet): `Modal transparent` + backdrop rgba(0,0,0,0.6) + flex-end + maxHeight '60%' + paddingBottom insets.bottom+spacing.xl.
+- 헤더 높이: 커스텀 상수 없음. `useHeaderHeight()`(@react-navigation/elements, 이미 의존) 사용 가능 — DialogueScreen에서 호출해 prop으로 전달(Modal 별창 안에서는 훅 무효).
+
+**F3. ③⑩ Inst (MyMusicScreen.tsx)**
+- 확인 다이얼로그(:349-386): "스타 ${INSTRUMENTAL_STAR_COST}개가 차감되며" — 관행(`⭐${n}이 소모돼요`, VideoDirectorScreen:326 등)과 불일치. INSTRUMENTAL_STAR_COST=5 (services/trackService.ts:158).
+- 오류 처리(:366-381): 402/409 분기만 존재, **404 전용 분기 없음** → 서버 미배포 404가 generic "Inst. 생성 요청에 실패했어요"로 표기. 개선 여지 1건.
+
+**F4. ④⑦⑧ 서버 share_video.py 실측 (9004, 817줄)**
+- 가사 없는 곡: segments=[] → subtitled=False → **무자막 스틸+워터마크만**(현행). 제목 표시 없음.
+- **⑦ 자막 위치 버그 확증 — 좌표 셈법**: center 레이아웃 커버 = size 0.68·min(W,H)(wide 0.60), 중심 y=0.32H(wide는 정중앙). 커버 점유: sns 247–981 / kakao 382–1116 / **wide 216–864**.
+  - sns: near/mid/low(scroll cy 1150/1265/1380, line MarginV 760/560/380) 전부 커버 아래 — 정상.
+  - **kakao**: line(alignment=8 상단 기준) mid=900·low=600 → **이미지 위에 얹힘**(382–1116 내) + low가 mid보다 위(의미 역전). scroll cy mid=1000·low=820도 이미지 위. ✗
+  - **wide**: scroll cy 650/685/720 → **세 값 전부 이미지(216–864) 위**. ✗ ← "중간 선택했는데 이미지 위에 뜬다" 재현 경로(사용자 wide 또는 kakao 생성 추정).
+  - 원인: `_SUBPOS_MARGIN_V`/`_SUBPOS_SCROLL_CY` 하드코딩 표가 center 레이아웃의 커버 기하와 무관하게 정의됨.
+- **⑧ 워터마크 현행**: watermark_logo.png 록업(보라 심볼+MAIDOL+AI 생성) 1장을 h=40으로 우하단 오버레이(_WATERMARK_LOGO_SPEC). 좌하단 요소 없음. 서버 PIL 10.4 가용, 폰트 5종 번들(assets/fonts, Regular만).
+- 과금(routes/tracks.py:2474-2508): **캐시 미스에만** POINT_COSTS["share_video"]=⭐5 spend, 실패 시 환불. 캐시 히트 무과금. 피로도 훅 없음.
+- 피로도(fatigue_service.py): DIRECTORS=("composer","lyricist","image","artist") — **'video' 없음**. 사다리 전원 {1:2h,2:4h,3:8h,max 12h}, 스킵비 = 생성비 1/3 반올림(compose15→5, character10→3, 5짜리→2). on_generation_completed는 각 생성 라우트가 완료 시 호출.
+
+**F5. ⑤⑥ VideoDirectorScreen.tsx 결과 화면**
+- 버튼 4종 2행: 1행(기기에 저장/공유하기) = width:300 고정, primaryBtn(padV 12, radius 12) fs14. 2행(다른 형식으로/다른 곡으로) = **width 미지정(전폭)**, outlineBtn padV 10, fs13 → 폭·높이·폰트 모두 상이. "다시 만들기" 버튼은 없음(답변 버블 탭 = handleEditChoice로 재생성).
+- **⑥ 공유하기 = 이미 expo-sharing 구현됨**(:394-411, expo-sharing ~14.0.8 설치, TrackShareDownloadSheet도 사용): downloadToCache → `Sharing.shareAsync(uri)`. 그런데 실기기에서 "다운로드만" 증상 → 유력 원인 후보: (a) 캐시 파일명 `${title}_${format}.mp4` — 한글·공백·특수문자 미새니타이즈로 downloadAsync 실패 가능, (b) shareAsync에 mimeType/UTI 미지정(Android 공유 대상 축소·실패), (c) catch 시 무피드백. 웹 세션은 Linking.openURL(=다운로드)이 정상 스펙.
+- API: POST /tracks/{id}/share-video, format은 사용자가 매번 선택(sns/wide/kakao), subpos 라벨 near='이미지 가까이(center)/위쪽(full)', mid='중간', low='아래쪽'.
+- 확인 팝업 "새 영상 생성 시 ⭐{cost}이 소모돼요 (같은 곡·형식·스타일은 무료)" 기존재. 402 처리 기존재. 피로도 게이트 없음.
+
+**F6. ⑧ 앱 기준 스타일 (배지·로고)**
+- PlayerScreen "AI 생성" 배지(:1561-1567): `bg rgba(0,0,0,0.55), borderRadius 6, padH 7, padV 3, 텍스트 rgba(255,255,255,0.85) fs10 w700`, 커버 우하단 8px 인셋.
+- 상단바 로고(App.tsx:261-267 LogoTitle): `M`+`AI`+`DOL`, fs24 w700 letterSpacing 1, M/DOL=#ffffff, AI=#a855f7(colors.accent.primary). 시스템 폰트(fontFamily 미지정).
+
+## 항목별 확정 스펙
+
+### ① 작업실 디렉터 하이라이트 = 필(pill) 형태 [app]
+- `TutorialStep`에 `shape?: 'rect' | 'pill'` 추가(기본 'rect'=현행 radius 12). pill = `borderRadius: min(w,h)/2`.
+- 딤 코너 마스크: validAnchor 분기에서 구멍 위에 **마스크 View 1장 추가** — `left: hole.x−B, top: hole.y−B, width: hole.w+2B, height: hole.h+2B, borderWidth: B, borderColor: DIM_COLOR, borderRadius: r+B, backgroundColor: 'transparent', pointerEvents: 'none'` (B=40). shape 무관 항상 렌더(rect도 radius 12 모서리 정합 개선). highlightBox radius = r(shape 연동).
+- MapScreen: 디렉터 5스텝(map-artist~map-video)에 `shape:'pill'`. anchor 박스 하단 확장 — `(d.x±70, d.y−70 ~ d.y+94)*mapScale`(하단 +24 맵단위, 이름 배지 포함; DIRECTOR_ANCHOR_HALF 상수 분리 유지). 140×164 → pill radius = 70*mapScale ≈ isNext 펄스와 동일 시각 언어. map-history·타 화면 스텝은 rect 유지.
+
+### ② 창작과정 기록안내 = 헤더 하단 제한 바텀시트 [app]
+- PolicySheet에 `variant?: 'page' | 'sheet'`(기본 'page'=현행 전체화면 — 약관·개인정보 사용처 무변경) + `topLimit?: number` prop.
+- variant='sheet': `Modal transparent statusBarTranslucent animationType="slide"` + backdrop rgba(0,0,0,0.6) flex-end + 시트 `maxHeight: winH − topLimit − spacing.md`, 상단 radius.xxl, paddingBottom insets.bottom+spacing.xl, body ScrollView flexGrow:0 (앱 시트 관행 준수).
+- DialogueScreen: `useHeaderHeight()` 호출값을 topLimit으로 전달(훅 실패/0이면 fallback `insets.top + 56`). 규칙: **시트 상단 ≥ 헤더 하단**.
+
+### ③ Inst 404 문구 [app, 소규모]
+- MyMusicScreen catch에 404 분기 추가: `showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.')` — 서버 배포 전 과도기 안내(배포 후 404는 곡 미존재 케이스뿐이라 무해).
+
+### ⑩ Inst 팝업 ⭐ 표기 [app, 확정 소규모]
+- :353 메시지 "스타 ${INSTRUMENTAL_STAR_COST}개가 차감되며" → **"⭐${INSTRUMENTAL_STAR_COST}이 차감되며"** (관행: VideoDirectorScreen:326 "⭐{n}이 소모돼요" — ⭐는 이모지 금지의 명시 예외).
+
+### ④ 가사 없는 곡 = 제목 마퀴 [server_staging_v3214]
+- 조건: `segments==[]` **그리고 Inst 트랙 아님**(판별: /instrumental 생성 트랙 마킹 필드 — 구현 시 tracks.py instrumental 라우트의 실제 필드명(source_track_id 류) 확인, 부재 시 제목 " (Inst.)" 접미사 판별 폴백). Inst는 현행 유지(세그먼트 있으면 가사, 없으면 무자막) — 사용자 원문 "Inst 제외" 준수.
+- 구현 판정: **ffmpeg drawtext 채택**(ASS 반복 이벤트 대비 단순, 조건 분기 내장) —
+  `drawtext=fontfile=<선택 폰트 ttf>:text=<제목>:fontsize=<ass fontsize>:fontcolor=<선택 색>:borderw=3:x='if(gt(text_w,w-80), w-mod(t*140,text_w+w), (w-text_w)/2)':y=<subpos 밴드의 line모드 y>`
+  → 폭 초과 시에만 우→좌 140px/s 무한 마퀴, 아니면 중앙 정적. 제목 이스케이프(`:'\,%` → drawtext 규칙) 필수.
+- route: find_one 프로젝션에 `title` 추가, generate_share_video에 `title` 전달. 마퀴 시 frame_rate=20 (스틸 -r 2 금지). kakao 클립도 동일 적용.
+
+### ⑦ 자막 위치 좌표 명세 — center 레이아웃 기하 유도 [server_staging_v3214]
+- 원칙: **center = "이미지 하단 ~ 워터마크 상단" 밴드 안에서 3단**, full = 현행 표 유지(이미지가 전면 배경이라 겹침이 정상 — 위/중/아래 현행 좌표 무변경).
+- wide center 커버 수직 중심 0.5H → **0.42H 상향**(자막 밴드 확보 — 기존엔 하단 여백 216px뿐), size 0.60 유지.
+- 확정 좌표 표 (center 레이아웃, 커버 하단 ib / 워터마크 상단 wt / pad 20):
+
+| fmt | 커버 점유 | 밴드 | scroll(window,rh) | scroll cy near/mid/low | line(anchor) MarginV near/mid/low |
+|---|---|---|---|---|---|
+| sns 1080×1920 | 247–981 | 1001–1840 | ±2, 110 | 1221 / 1421 / 1620 | (al=2 하단) 830 / 470 / 110 |
+| wide 1920×1080 | 130–778 (0.42H) | 798–1000 | ±1, 70 | 872 / 906 / 940 | (al=2) 230 / 150 / 80 |
+| kakao 1080×2340 | 382–1116 | 1136–1384* | ±1, 90 | 1250 (3단 클램프 단일) | (al=8 상단) 1136 (단일) |
+
+  *kakao는 프로필 UI 가림(y>1404) 제약으로 밴드 248px — 3단 미분화, near/mid/low 동일 클램프(문서화·400 아님). kakao line 역전(low가 위) 구조 소멸.
+- 구현: `_SUBPOS_MARGIN_V`/`_SUBPOS_SCROLL_CY`를 `_subpos_positions(fmt, layout)` 함수로 대체 — full은 기존 수치 그대로 반환(회귀 0), center는 위 표.
+- **캐시 승격 v6→v7**(share/v7/) — ⑦⑧④ 가시 변경 일괄 반영. share_object_name·주석 갱신.
+
+### ⑧ AI 생성 배지 + MAIDOL 워터마크 [server_staging_v3214]
+- 록업 PNG 1장 → **PIL 런타임 렌더 스트립**으로 교체(폭 W, 투명 배경, 좌우 요소 포함 1장 — ffmpeg 그래프의 기존 워터마크 입력 슬롯 그대로 재사용).
+- 좌하단 "AI 생성" 칩 = PlayerScreen 배지 스케일업: 텍스트 fontsize = **round(0.56×자막 fontsize)**(sns 36 / wide 32 / kakao 34 — "자막보단 작고 지금(h40 록업 내 ~20px)보다 큼"), `bg rgba(0,0,0,0.55)`, **rounded rect** radius=0.6×fontsize(PIL rounded_rectangle), padH=0.7×fs, padV=0.3×fs, 텍스트 색 rgba(255,255,255,0.85), 유사볼드 stroke_width 1(번들에 Bold ttf 없음).
+- 우하단 "MAIDOL" = 동일 fontsize, M·DOL #FFFFFF / AI #A855F7, letterSpacing ~1px, 박스 없음 — 칩과 **수직 중앙선 정렬(같은 라인)**.
+- 배치: 좌 x=20, 우 x=W−w−20, y=H−h−20 (kakao만 y=H−h−56 현행 유지). 자막 low 밴드와 비침범 검증됨(sns low 하한 1810 < 배지 상단 ~1842).
+- 폰트: NanumGothic-Regular(번들). 보라 그라데이션은 미적용(단색 #A855F7 — ffmpeg/PIL 단순성 판정).
+
+### ⑨ 영상 디렉터 피로도 + 재생성 과금 [server_staging_v3214 + app]
+- 서버: `DIRECTORS += ("video",)`, SKIP_POINT_COSTS["video"]=**2**(share_video 5의 1/3 반올림 — 기존 규칙 그대로), 사다리 {1:2,2:4,3:8}/max12(타 디렉터 동일). tracks.py POST share-video: **spend 직전 check_gate 429**(타 디렉터와 동일: 게이트→과금 순서), 생성 성공 후 `on_generation_completed(director="video")` best-effort. **캐시 히트 경로는 게이트·피로 미적용**(무비용 재다운로드 유지).
+- 앱: types FatigueDirector에 'video', fatigueGate.ts fallback 스킵비 video:2, VideoDirectorScreen에 MusicGenerationScreen 패턴 이식 — 진입/포커스 시 status fetch, startGeneration 직전 쿨다운이면 showFatigueCooldownDialog(스킵 ⭐2·광고권), POST 429 응답도 동일 다이얼로그.
+- 과금 기본안(사용자 결정 ②): 새 스타일 조합=⭐5(현행 서버 로직 그대로 — "다시 만들기"는 조합 변경이므로 자연 과금), **동일 조합 캐시 히트=무과금·무피로 유지**(산출 결정적 동일물 재과금은 소비자 손해). 확인 팝업 문구 현행 유지.
+
+### ⑤ 결과 버튼 크기 통일 [app]
+- 2행(:500)에 `width: 300, maxWidth: '100%'` 부여(1행과 동일), outlineBtn `paddingVertical: 10→12`, outlineBtnText `fontSize: 13→14` → 4버튼 전부 동일 규격(색 체계는 현행: 저장=채움, 나머지=아웃라인). 부수: 확인 팝업 취소 시 subpos 답변 버블 잔존(:304/:332) 정리 1줄.
+
+### ⑥ 공유하기 시스템 공유 시트 [app]
+- handleShare/downloadToCache 보강: ① 캐시 파일명 새니타이즈 `title.replace(/[^\w가-힣.-]+/g,'_').slice(0,40)` ② `Sharing.shareAsync(uri, { mimeType: 'video/mp4', UTI: 'public.mpeg-4', dialogTitle: '영상 공유' })` ③ 다운로드·공유 실패 catch에 showAlert('오류', …) — 무피드백 금지 ④ 진행 중 로딩 인디케이터(다운로드가 수십 MB). 카카오톡은 시스템 시트 경유(별도 SDK 미도입 — MVP). TrackShareDownloadSheet의 shareAsync에도 동일 mimeType 보강.
+- tester: 실기기 재현 로그 확보(실패 지점 a/b/c 확정) — 스펙은 3후보 동시 봉합.
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| components/TutorialOverlay.tsx | shape prop·pill radius·딤 코너 마스크 | app-dev | `[TutorialOverlay]` |
+| screens/MapScreen.tsx | 디렉터 5스텝 shape:'pill'·anchor 하단 +24 확장 | app-dev | `[MapScreen]` |
+| components/PolicySheet.tsx | variant 'page'/'sheet'·topLimit·바텀시트 렌더 | app-dev | `[PolicySheet]` |
+| screens/DialogueScreen.tsx | useHeaderHeight→topLimit 전달, variant='sheet' | app-dev | `[DialogueScreen]` |
+| screens/MyMusicScreen.tsx | ⭐5 표기(:353)·404 분기(:380) | app-dev | `[MyMusicScreen]` |
+| screens/VideoDirectorScreen.tsx | 버튼 규격 통일·공유 보강·피로도 게이트·429 | app-dev | `[VideoDirector]` |
+| components/TrackShareDownloadSheet.tsx | shareAsync mimeType 보강 | app-dev | `[ShareSheet]` |
+| types/index.ts, utils/fatigueGate.ts | FatigueDirector+'video', 스킵비 2 | app-dev | `[Fatigue]` |
+| (서버) services/share_video.py | 제목 마퀴 drawtext·subpos 기하 유도·PIL 배지 스트립·캐시 v7 | backend-dev | `[share-video]` |
+| (서버) routes/tracks.py | title 프로젝션·check_gate·on_generation_completed('video') | backend-dev | `[tracks]` |
+| (서버) services/fatigue_service.py | DIRECTORS+video·스킵비·사다리 | backend-dev | `[fatigue]` |
+
+## 40% 룰 판정
+앱 8파일·서버 3파일이나 상호 독립 개선 10건(신규 화면·신규 스토어 0, 최대 공정 = share_video.py subpos 재설계+배지 렌더). v3.213(10파일 튜토리얼 전면 재설계)과 유사 체급, 각 항목이 국소적 — **초과 아님(가결)**. 이월 후보: 카카오 SDK 직공유, kakao center 밴드 재설계(커버 축소), Inst 트랙 마킹 필드 정식화.
+
+## test-designer 항목
+1. [unit/server] `_subpos_positions`: full=기존 수치 바이트 일치(회귀 0), center 표값 일치, kakao center 3단 동일 클램프, wide center 커버 0.42H.
+2. [unit/server] 제목 마퀴: segments=[] & 비Inst → drawtext 포함 cmd, Inst → 현행, 제목 특수문자(`:',%`) 이스케이프, frame_rate 20.
+3. [unit/server] 캐시 v7 객체명, video 피로도: check_gate 429 → spend 미발생, 성공 시 on_generation_completed, 캐시 히트 무게이트·무피로.
+4. [unit/app] fatigueGate 'video' 스킵비 2, PolicySheet variant 기본 'page' 회귀.
+5. [e2e(web)] 작업실 튜토리얼: 디렉터 스텝 하이라이트가 pill(radius=min(w,h)/2)·코너 밝은 사각 잔존 없음(스크린샷), 배지 포함 박스, 타 화면 rect 회귀.
+6. [e2e(web)] 기록안내 시트: 시트 상단 y ≥ 헤더 하단 y(측정), backdrop 탭/닫기, 약관·개인정보 전체화면 회귀.
+7. [e2e(web)] 영상 결과 4버튼 rect 폭·높이 동일(측정), Inst 팝업 "⭐5" 문구, 404 시 "준비 중" 문구.
+8. [통합/스테이징] center×{sns,wide,kakao}×{near,mid,low}×{scroll,line} 생성 → 자막이 커버 미침범(프레임 캡처 y 검증), full 3종 회귀, 가사 없는 곡 제목 마퀴(장·단 제목), 배지: 좌 칩 rounded rect+우 MAIDOL(AI 보라) 동일 라인.
+9. [실기기/tester] 공유하기 → 시스템 공유 시트 표시(카카오 포함), 한글 긴 제목 곡, 실패 시 오류 팝업.
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **④ Inst 해석**: 기본안 = Inst 트랙은 제목 마퀴 대상 제외(원문 그대로), 세그먼트 있으면 가사 표시 현행 유지. Inst도 제목 마퀴로 바꾸려면 지시 1줄.
+2. **⑨ 재생성 과금**: 기본안 = 새 조합 ⭐5 / 동일 조합 캐시 히트 무과금·무피로. 캐시 v7 승격으로 **기존 생성분도 다음 요청 시 1회 재과금** 발생(대안: v6 객체 존재 시 무과금 이관 — 복잡도↑로 기본안은 수용).
+3. **① 형태**: 기본안 = 디렉터 5종 pill(원형 계열, isNext 펄스와 통일). 순수 원형(배지 제외) 원하면 지시.
+4. **⑦ wide center 커버 상향(0.42H)**: 자막 밴드 확보를 위한 구도 변경 — 미세 톤 조정 가능.
+
+규칙: 민감 정보 플레이스홀더(<SSH_HOST>), 서버 수정은 server_staging_v3214에서만, git 커밋은 오케스트레이터 승인 후.

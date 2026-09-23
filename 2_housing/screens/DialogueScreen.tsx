@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+// v3.214 ②: 기록안내 시트 상한 = 네이티브 헤더 하단 — useHeaderHeight 측정값을 PolicySheet 로 전달
+// (Modal 은 별도 창이라 시트 내부에서 훅 호출이 무효 → 화면에서 재서 prop 으로 내린다)
+import { useHeaderHeight } from '@react-navigation/elements';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import {
   StyleSheet,
@@ -86,6 +90,10 @@ export default function DialogueScreen({ route, navigation }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   // v3.202(C): 창작 과정 기록 가이드 시트 — recChip 탭·모드 안내 '자세히 보기'로 열림(재열람 가능)
   const [recordGuideVisible, setRecordGuideVisible] = useState(false);
+  // v3.214 ②: 시트 상단 ≥ 헤더 하단 — 훅 실패/0(헤더 미측정)이면 insets.top + 56 폴백
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
+  const recordGuideTopLimit = headerHeight > 0 ? headerHeight : insets.top + 56;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // v3.199(B): 대화 중 상단 명시적 뒤로가기 — Studio 탭 헤더(headerLeft)에 back 주입.
@@ -484,12 +492,15 @@ export default function DialogueScreen({ route, navigation }: Props) {
         </View>
       )}
 
-      {/* v3.202(C): 창작 과정 기록 가이드 — consentTexts 단일 출처, 사실 서술만(금지어 없음) */}
+      {/* v3.202(C): 창작 과정 기록 가이드 — consentTexts 단일 출처, 사실 서술만(금지어 없음)
+          v3.214 ②: 전체화면 → 헤더 하단 제한 바텀시트(상단바 침범 봉합) — 약관·개인정보는 page 유지 */}
       <PolicySheet
         visible={recordGuideVisible}
         title={COPYRIGHT_RECORD_GUIDE.label}
         body={COPYRIGHT_RECORD_GUIDE.body}
         onClose={() => setRecordGuideVisible(false)}
+        variant="sheet"
+        topLimit={recordGuideTopLimit}
       />
     </Animated.View>
   );

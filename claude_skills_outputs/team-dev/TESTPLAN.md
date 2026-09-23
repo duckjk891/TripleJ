@@ -2973,3 +2973,132 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1(비로그인 차트 진입마다 2스텝)·E-2(로그인 4영역 전부 진입마다 + 작업실 자동 스크롤)·E-4(반투명 박스 육안)가 사용자 3요청(①반투명 ②상시 노출 ③문안 교체) 직결.
 - **핵심 FAIL 게이트**: ① **U-4 ③**(REVIEW_MODE=false 전환 시 v3.211 first-run 미복귀 — 1줄 복귀 약속 불성립) ② **U-2/E-3 ①**(플레이리스트 튜토리얼 잔재) ③ **U-3/E-1 ④⑤/E-2 ①**(게이팅 역전 — 비로그인↔로그인 노출 교차) ④ **U-8 ②/E-5**(직전 사이클 회귀 — diff 격리·v3.210~212 스모크) — 추가: U-1(문안 확정본 불일치)·U-6(반투명 수치 불일치·2px 테두리 잔재)·E-2 ④(자동 스크롤 실패). 1건이라도 FAIL이면 커밋·출고 금지.
 - 판정 대상 아님(기록만): 오탈자 교정은 확정본에 기 반영(U-1 기준) — 원문 고수로 재변경 시 사용자 지시 필요. 플레이어 튜토리얼 제거/재작성·search-row-more 키 정리는 사용자 결정 대기(이월). 검수 완료 후 first-run 복귀는 별도 사이클(TUTORIAL_REVIEW_MODE=false 1줄 + U-4 ③ 재실행).
+
+---
+
+## v3.214 (2026-09-23) — 1.1.3 실기기 피드백 10건: 튜토리얼 pill·기록안내 시트·Inst 문구/⭐5·제목 마퀴·4버튼 통일·공유 봉합·자막 기하 유도(캐시 v7)·AI 칩+MAIDOL 록업·영상 피로도
+
+대상: 앱 = `2_housing/` 8항목(TutorialOverlay·MapScreen·PolicySheet·DialogueScreen·MyMusicScreen·VideoDirectorScreen·TrackShareDownloadSheet·types/index.ts+utils/fatigueGate.ts). 서버 = **server_staging_v3214/** 3파일(services/share_video.py·routes/tracks.py·services/fatigue_service.py) — 운영 9004 직접 수정 금지·9005 미러링 금지, [unit/서버]는 스테이징 정적 검증만, [api]는 사용자 승인 배포 후. 민감값 플레이스홀더(<SSH_HOST>·<TEST_ACCOUNT>). 피로도 상태코드 관행(fatigueService.ts 실측 기준): **생성 429**(director_fatigue) / **스킵 402**(별 부족) / **스킵 409**(활성 쿨다운 없음·무과금).
+
+### [unit] 앱 정적 검증 (코드 판독·grep·tsc — 빌드 불요, 머지 게이트)
+
+**U-1. 튜토리얼 shape 메타·코너 마스크 렌더 조건 [unit] — FAIL 게이트(v3.213 회귀)**
+- Given: TutorialStep에 `shape?: 'rect' | 'pill'`(기본 'rect'), pill radius = `min(w,h)/2`. 코너 마스크 = 구멍 위 View 1장(`left: hole.x−B, top: hole.y−B, width: hole.w+2B, height: hole.h+2B, borderWidth: B, borderColor: DIM_COLOR, borderRadius: r+B, backgroundColor 'transparent', pointerEvents 'none'`, B=40) — **shape 무관 항상 렌더**.
+- When: ① shape 기본 'rect' = radius 12(radius.lg) 현행 등가 — shape 미지정 스텝(차트·피드·검색·상단바·map-history) 시각 회귀 0(문자 추적). ② pill 분기: highlightBox radius = min(w,h)/2 계산식 실측 + 코너 마스크 radius = r+B 연동. ③ 코너 마스크 렌더 조건: validAnchor 분기에서만·rect/pill 공통·pointerEvents 'none'(터치 간섭 0)·DIM_COLOR 문자 일치(v3.213 `rgba(13, 8, 32, 0.68)` — 딤과 이음새 무단차). ④ MapScreen: 디렉터 5스텝(map-artist~map-video)에만 `shape:'pill'` — 전체 grep으로 타 스텝 pill 오염 0. ⑤ anchor 하단 확장: `(d.x±70, d.y−70 ~ d.y+94)*mapScale`(하단 +24 맵단위, 이름 배지 포함)·DIRECTOR_ANCHOR_HALF 상수 분리 유지 — 140×164 → pill radius ≈ 70*mapScale(isNext 펄스와 동일 시각 언어). ⑥ v3.213 하이라이트 수치(틴트 rgba(168,85,247,0.16)·헤어라인·글로우·HOLE_PAD 8)·문안·게이팅·onStepChange 자동 스크롤에 hunk 0.
+- Then: ①~⑥ 전부 충족 — **①·⑥(v3.213 튜토리얼 회귀) = FAIL 게이트**.
+
+**U-2. PolicySheet variant·maxHeight 셈법 — 타 소비처 회귀 0 [unit] — FAIL 게이트**
+- Given: `variant?: 'page' | 'sheet'`(기본 'page'=현행 전체화면) + `topLimit?: number`. sheet의 maxHeight = `winH − topLimit − spacing.md`.
+- When: ① variant 기본값 'page' 실측 + 기존 소비처 전수 grep(약관·개인정보 등): variant 미전달 → 렌더 경로 무변경(전체화면 그대로). ② sheet 분기 관행 정합: `Modal transparent statusBarTranslucent animationType="slide"`·backdrop rgba(0,0,0,0.6)·flex-end·상단 radius.xxl·paddingBottom insets.bottom+spacing.xl·body ScrollView flexGrow:0 — TrackActionSheet 등 앱 시트 관행과 대조. ③ maxHeight 식 문자 일치 + topLimit 미전달/0 시 안전 가드(NaN·winH 초과 없음). ④ DialogueScreen: `useHeaderHeight()`가 **Modal 밖(화면 본체)에서 호출**되어 prop으로 전달(Modal 별창 훅 무효 함정 회피) + fallback `insets.top + 56`. 규칙 "시트 상단 ≥ 헤더 하단" 산식 성립. ⑤ variant='sheet' 전달처 = 기록안내('창작 과정 기록 안내') 경로뿐 — 타 호출처 sheet 오염 0.
+- Then: ①~⑤ 전부 충족 — **①·⑤(page 소비처 회귀) = FAIL 게이트**.
+
+**U-3. 결과 화면 4버튼 규격 + subpos 버블 정리 [unit]**
+- When: ① 2행(다른 형식으로/다른 곡으로)에 `width: 300, maxWidth: '100%'`(1행과 동일), outlineBtn paddingVertical 10→**12**, outlineBtnText fontSize 13→**14** — 4버튼 폭·높이·폰트 동일 규격(색 체계는 현행: 저장=채움·나머지 아웃라인 무변경). ② 확인 팝업 취소 시 subpos 답변 버블 잔존(:304/:332 상당) 정리 코드 존재 — 취소 경로 버블 제거 문자 추적.
+- Then: ①~② 충족.
+
+**U-4. 공유 봉합 3종 — 새니타이즈·mimeType·실패 피드백 [unit] — FAIL 게이트**
+- Given: 실기기 "다운로드만" 증상 3후보(a 파일명, b mimeType, c 무피드백) 동시 봉합 스펙.
+- When: ① 캐시 파일명 새니타이즈: `title.replace(/[^\w가-힣.-]+/g,'_').slice(0,40)` 상당 — 한글 보존·공백/특수문자 치환·40자 제한(정규식 문자 대조). ② `Sharing.shareAsync(uri, { mimeType: 'video/mp4', UTI: 'public.mpeg-4', dialogTitle })` — VideoDirectorScreen·**TrackShareDownloadSheet 양쪽** 적용. ③ 다운로드·공유 catch 전 경로에 showAlert 피드백(앱 다이얼로그 관행 — 시스템 Alert 금지·무피드백 0) + 진행 중 로딩 인디케이터. ④ 웹 세션 분기 = Linking.openURL 현행 유지(회귀 0).
+- Then: ①~④ 전부 충족 — **②·③(3후보 중 미봉합 잔존) = FAIL 게이트**. 실기기 실패 지점 a/b/c 확정 로그는 E-5 ④에서 채증.
+
+**U-5. fatigueGate 'video' — 기존 관행 재사용·기존 디렉터 회귀 0 [unit] — FAIL 게이트**
+- Given: types FatigueDirector += 'video', fatigueGate.ts fallback 스킵비 video: **2**, VideoDirectorScreen에 MusicGenerationScreen 패턴 이식.
+- When: ① FatigueDirector union 'video' 추가·fallback 스킵비 표 video:2 실측. ② VideoDirectorScreen 배선: 진입/포커스 status fetch → startGeneration **직전** 쿨다운이면 showFatigueCooldownDialog(스킵 ⭐2·광고권) → POST **429** 응답도 동일 다이얼로그(isDirectorFatigued 관행) — **기존 fatigueGate 단일 지점 관행(기존 소비처 ~12곳)의 재사용**임을 확인: 자체 다이얼로그·중복 쿨다운 로직 신설 0(grep). ③ 기존 4 디렉터(composer·lyricist·image·artist) 소비처 hunk 0 — 스킵비·다이얼로그·409/402 처리 회귀 0. ④ 캐시 히트(동일 조합) 흐름이 앱 게이트에 선차단되지 않는 구조(서버가 캐시 판정 — 앱은 429 수신 시에만 다이얼로그) 확인.
+- Then: ①~④ 전부 충족 — **③(기존 디렉터 피로도 회귀) = FAIL 게이트**.
+
+**U-6. Inst 문구 2건 — 404 분기·⭐5 표기 [unit]**
+- When: ① MyMusicScreen :353 상당 = **"⭐${INSTRUMENTAL_STAR_COST}이 차감되며"** — 구표기 "스타 5개/스타 ${…}개" 잔재 0, INSTRUMENTAL_STAR_COST 상수 참조 유지(하드코딩 5 금지, trackService.ts:158 =5 실측). ② catch **404 전용 분기** 추가: `showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.')` 문자 일치 — 기존 402/409 분기 무변경·generic 문구는 그 외 오류로 존치. ③ 노출 문자열 이모지 금지 예외(⭐)만 사용·`\bAIDOL\b` 0.
+- Then: ①~③ 충족.
+
+**U-7. tsc + diff 격리 [unit] — FAIL 게이트(직전 사이클 회귀)**
+- When: ① `2_housing/`에서 `npx tsc --noEmit` exit 0(기존 에러 존재 시 기준선 대조 증분 0). ② `git diff` 실측: 이번 사이클 앱 hunk = 변경 매트릭스 8항목 파일에 한정 — 공유 파일(TutorialOverlay·MapScreen)은 hunk가 shape/코너 마스크/anchor 확장·피로도 배선에 한정, v3.213 파일군(tutorialGate·tutorialAnchors·ChartScreen·HomeHeaderActions·App.tsx·FeedScreen·SearchScreen·PlaylistScreen)에 이번 사이클發 hunk 0, v3.210~212 파일군·`1_MV_wedding/`·`0_platform_music/` 기존 dirty 무접촉. ③ 서버 변경이 앱 트리 유입 0.
+- Then: ①~③ 전부 충족 — **②(diff 격리 위반) = FAIL 게이트**.
+
+### [unit] 서버 스테이징 정적 검증 (`server_staging_v3214/`만 — 프로덕션 9004 무접촉, 배포 전 수행)
+
+**S-1. `_subpos_positions` 좌표표 — 전 레이아웃×포맷×3단, 커버 겹침 0 판정식 [unit] — FAIL 게이트**
+- Given: PLAN ⑦ 확정 표. 겹침 0 판정식(center): 자막 점유 구간(scroll = cy±rh/2 윈도우, line = alignment 기준 MarginV 환산 y구간)의 상단 ≥ 커버 하단 ib+pad(20) **그리고** 하단 ≤ 워터마크 상단 wt.
+- When: ① `_subpos_positions(fmt, layout)` 함수 존재 — 구 `_SUBPOS_MARGIN_V`/`_SUBPOS_SCROLL_CY` 하드코딩 표 직접 참조 잔재 0(grep). ② **full 레이아웃 = 기존 수치 전항 동일**(sns/wide/kakao × near/mid/low × scroll/line — 반환값 바이트 대조, 회귀 0 — 캐시 관점에서도 full 산출 기하 불변 확인). ③ center 표값 문자 대조: sns(커버 247–981) scroll cy 1221/1421/1620·line(al=2) MarginV 830/470/110 / wide **커버 중심 0.42H·size 0.60**(점유 130–778) scroll cy 872/906/940·line 230/150/80 / kakao(점유 382–1116) **3단 동일 클램프**(scroll cy 1250 단일·line al=8 1136 단일 — 400 아님·프로필 UI 제약 주석 문서화). ④ 겹침 0 전수 대입: center 9조합(fmt3×subpos3)×2모드를 판정식에 대입해 침범 0 — 특히 구버그 재현 조합(kakao line mid/low·kakao scroll mid/low·wide scroll near/mid/low) 전부 밴드 내. ⑤ kakao line 역전(low가 mid보다 위) 구조 소멸. ⑥ kakao 배지 y=H−h−56 예외 반영 시에도 wt 계산 정합.
+- Then: ①~⑥ 전부 충족 — **②(full 회귀)·④(겹침 잔존) = FAIL 게이트**.
+
+**S-2. 제목 마퀴 분기 — 가사 유무·Inst 제외 [unit]**
+- When: ① 분기 조건: `segments==[]` **그리고 비Inst**(instrumental 마킹 필드 — 부재 시 " (Inst.)" 접미사 폴백; 구현이 채택한 판별자를 tracks.py instrumental 라우트 실필드와 교차 확인) → drawtext 포함, **Inst 트랙 → 현행 유지**(세그먼트 있으면 가사·없으면 무자막 — 마퀴 미적용). ② drawtext 식: `x='if(gt(text_w,w-80), w-mod(t*140,text_w+w), (w-text_w)/2)'` — 폭 초과 시에만 우→좌 140px/s 마퀴, 아니면 중앙 정적(문자 대조)·y = subpos 밴드 line모드 y·borderw 3. ③ 제목 이스케이프: drawtext 규칙(`: ' \ , %`) 처리 함수 존재 + 특수문자 제목 케이스 검증. ④ 마퀴 시 frame_rate=**20**(스틸 -r 2 금지)·kakao 클립 동일 적용. ⑤ routes/tracks.py: find_one 프로젝션 `title` 추가·generate_share_video에 title 전달.
+- Then: ①~⑤ 충족.
+
+**S-3. 캐시 v7 승격 — 범위·객체명·v6 비파괴 [unit] — FAIL 게이트**
+- When: ① share_object_name = `share/v7/` 경로 — 생성·조회 양쪽 일관. ② **승격 범위 판정**: ⑧ 배지 스트립·④ 마퀴는 전 포맷·전 레이아웃 공통 가시 변경이므로 v7은 **center 한정이 아니라 전 생성물** 적용이어야 함 — 레이아웃/포맷 조건부로 v6 경로에 쓰는 신규 생성 잔존 0(center만 v7이면 full 생성물이 구 배지로 남는 모순 → FAIL). ③ **v6 객체 삭제·마이그레이션 코드 0** — 기존 v6 URL 잔존 보장(삭제 로직 발견 시 FAIL). ④ 주석·버전 문자열 v7 갱신.
+- Then: ①~④ — **②(신규 경로 v6 잔존)·③(v6 파괴 코드) = FAIL 게이트**.
+
+**S-4. 록업 PIL 렌더 — 칩 규격·MAIDOL 색 분리·정렬 [unit]**
+- When: ① watermark_logo.png 정적 록업 참조 제거 → PIL 런타임 스트립(폭 W·투명 배경 1장) — ffmpeg 필터그래프의 **기존 워터마크 입력 슬롯 그대로 재사용**(그래프 구조 hunk 최소). ② 좌하단 "AI 생성" 칩: fontsize = round(0.56×자막 fs)(sns 36/wide 32/kakao 34), `rounded_rectangle` radius 0.6fs·padH 0.7fs·padV 0.3fs·bg rgba(0,0,0,0.55)·텍스트 rgba(255,255,255,0.85)·stroke_width 1(유사볼드). ③ 우하단 "MAIDOL": 동일 fontsize, **M·DOL #FFFFFF / AI #A855F7(단색)** 분리 렌더·letterSpacing ~1px·박스 없음·칩과 **수직 중앙선 정렬(같은 라인)**. ④ 배치: 좌 x=20·우 x=W−w−20·y=H−h−20(**kakao만 H−h−56**). ⑤ 폰트 NanumGothic-Regular 번들 경로 실존(assets/fonts). ⑥ 자막 low 밴드 비침범 수식 재검(sns low 하한 1810 < 배지 상단 ~1842).
+- Then: ①~⑥ 충족.
+
+**S-5. video 과금 체인 — 게이트→spend 순서·캐시 히트 무과금 [unit] — FAIL 게이트**
+- When: ① fatigue_service.py: `DIRECTORS += ("video",)`, SKIP_POINT_COSTS["video"]=**2**(share_video 5의 1/3 반올림 규칙), 사다리 {1:2h,2:4h,3:8h}/max 12h 타 디렉터 동일 — **기존 4종 수치 hunk 0**. ② tracks.py POST share-video 호출 순서: 캐시 확인 → (미스 시) **check_gate 429 → spend ⭐5** → 생성 → 성공 시 `on_generation_completed(director="video")` best-effort → 실패 시 환불 현행 유지 — 게이트가 spend보다 **앞**임을 문자 추적(타 디렉터와 동일 순서). ③ **캐시 히트 경로: check_gate·spend·on_generation_completed 전부 미호출**(무과금·무게이트·무피로 — 호출 그래프 추적). ④ 기존 4 디렉터의 check_gate·on_generation_completed 호출부 hunk 0. ⑤ 스킵 라우트: video도 402(별 부족)/409(활성 쿨다운 없음·무과금) 관행 그대로 통과(디렉터 화이트리스트에 video 포함).
+- Then: ①~⑤ 전부 충족 — **②(spend가 게이트보다 앞)·③(캐시 히트 과금) = FAIL 게이트**.
+
+**S-6. py_compile + 스테이징 격리 [unit]**
+- When: ① `server_staging_v3214/` 변경 3파일 `python3 -m py_compile` exit 0. ② 스테이징 diff가 계획 3파일(share_video.py·tracks.py·fatigue_service.py)에 한정 — 프로덕션 9004·9005·타 스테이징 사본(v3210 등) 무접촉.
+- Then: ①~② 충족.
+
+### [api] 프로덕션 실측 (사용자 승인 배포 완료 후 — 전이면 "대기" 보고, 무승인 배포 = 최상위 FAIL. 검증용 쓰기는 <TEST_ACCOUNT> 한정)
+
+**A-1. 신규 v7 생성 1건 — 좌표 실측 [api]**
+- When: <TEST_ACCOUNT> 토큰으로 POST /tracks/{id}/share-video — **구버그 재현 조합 우선**(center×wide×mid 또는 center×kakao×mid) 1건 이상 → ① 산출 URL이 `share/v7/`. ② 프레임 캡처(ffmpeg/ffprobe)로 자막 y가 커버 하단 아래 밴드 내(S-1 표 기대값 ±수 px 실측 기록). ③ ⭐5 차감 1회(잔액 전후 대조).
+- Then: ①~③ 충족. 배포 전이면 "대기" 기록.
+
+**A-2. 캐시 히트 무과금·무피로 [api] — FAIL 게이트**
+- When: A-1과 **동일 조합** 재요청 → ① 동일 v7 URL 즉시 반환. ② 포인트 잔액 변동 0. ③ 피로도 스택·쿨다운 변동 0(GET fatigue status 전후 대조). ④ 쿨다운 중이어도 캐시 히트는 429 없이 반환.
+- Then: ①~④ — **차감 또는 스택 증가 발생 = FAIL 게이트**. (참고 기록: v6 시절 생성분은 v7 캐시 부재로 다음 요청 시 1회 재과금 — 사용자 결정 기본안 수용, FAIL 아님.)
+
+**A-3. video 쿨다운·스킵 상태코드 [api]**
+- When: ① 새 조합 생성 성공 직후 **또 다른 새 조합** 요청 → **429** {"error":"director_fatigue"} + 잔여 시간 필드(타 디렉터 스키마 동일). ② 스킵: 활성 쿨다운 중 잔액 충분 → 200·⭐2 차감, 잔액 부족 → **402**, 쿨다운 없음 상태 → **409**(무과금) — fatigue.py 관행 그대로. ③ 스킵 후 생성 재시도 정상.
+- Then: ①~③ 충족(브리핑의 "쿨다운 409" 표기는 스킵 409 관행으로 정정 — 게이트는 429가 스펙·실측 기준).
+
+**A-4. 기존 v6 URL 재생 잔존 [api] — 최상위 FAIL 게이트**
+- When: **배포 전에** 기존 v6 공유영상 URL(무인증 GET 가능 공개 URL) ≥1건 확보(값은 플레이스홀더 관리) → 배포 후 동일 URL GET **200**·Content-Type video/mp4·선두 바이트 정상(재생 가능).
+- Then: 200 재생 — **404/파손 = 최상위 FAIL**(기존 사용자 공유 링크 파괴).
+
+### [e2e] 실기기/새 빌드 (앱 머지 + 서버 배포 완료 후 — 육안 판정은 스크린샷 채증)
+
+**E-1. 작업실 튜토리얼 pill 육안 [e2e] — 완료 조건 직결(①)**
+- When: ① 디렉터 5스텝 하이라이트가 pill(상하 반원)로 보이고 **라운딩 밖 코너에 밝은 사각 잔존 0**(코너 마스크 — 4모서리 확대 캡처). ② 하이라이트가 스프라이트+하단 이름 배지를 함께 감쌈(배지 모서리 잘림 0). ③ map-history·차트·피드·검색·상단바 스텝은 rect 유지(radius 12 모서리도 마스크로 정합 개선 확인). ④ isNext 펄스(원형)와 시각 언어 정합 육안.
+- Then: ①~④ — **①(코너 밝은 사각 잔존) = FAIL 게이트**.
+
+**E-2. 기록안내 시트 — 헤더 하단 제한 [e2e] — 완료 조건 직결(②)**
+- When: ① 작사 디렉터 저작권 등록 모드 → recChip 탭 → **시트 상단 y ≥ 헤더 하단 y**(스크린샷 측정 — 상단바·타이틀 완전 노출·침범 0). ② backdrop 탭·닫기 정상, 본문 스크롤 정상, 하단 세이프에어리어 여백 정상. ③ 약관·개인정보 등 기존 PolicySheet 소비처는 전체화면 현행 그대로(회귀 0).
+- Then: ①~③ 전부 충족 — ③(page 회귀) 포함.
+
+**E-3. 연주곡(가사 없는 곡) 제목 마퀴 [e2e] — 완료 조건 직결(④)**
+- When: ① 가사 없는 일반 곡 영상 생성 → 짧은 제목 = 중앙 정적, 긴 제목(폭 초과) = 우→좌 마퀴 순환(끊김 없는 재생 육안). ② **Inst 트랙은 마퀴 미적용**(현행 유지 — 원문 "Inst 제외"). ③ 특수문자(`:',%`) 포함 제목 1건 깨짐 0.
+- Then: ①~③ 충족.
+
+**E-4. 결과 4버튼·⭐ 문구·404 문구 [e2e]**
+- When: ① 완료 화면 버튼 4개(기기에 저장/공유하기/다른 형식으로/다른 곡으로) **폭·높이·폰트 동일**(스크린샷 측정 — 색 체계 현행). ② Inst 확인 팝업 "**⭐5이 차감되며**" 표기. ③ Inst 404 문구 "Inst. 만들기 준비 중이에요…" — 서버 v3.210 /instrumental **미배포 상태에서만** 검증 가능(배포 완료 후엔 N/A 기록·강제 재현 불요).
+- Then: ①~③ 충족(③ N/A 허용).
+
+**E-5. 공유 시트 — 카카오 포함 [e2e] — 완료 조건 직결(⑥)**
+- When: ① 공유하기 → **시스템 공유 시트 표시**(카카오톡 항목 포함) → 카카오톡 전송 1건 성공(시스템 시트 경유 — SDK 직공유는 이월). ② 한글 긴 제목·특수문자 제목 곡 반복 — 다운로드→공유 성공(새니타이즈 검증). ③ 실패 유도(비행기모드 등) 시 오류 showAlert 표시(무피드백 0) + 진행 중 로딩 인디케이터 노출. ④ 실패 재현 시 a/b/c(파일명/mimeType/무피드백) 원인 로그 채증·보고.
+- Then: ①~④ — **①(시트 미표시 = "다운로드만" 증상 잔존) = FAIL 게이트**.
+
+**E-6. 자막 위치 — 카드형·배경형 각각 [e2e] — 완료 조건 직결(⑦)**
+- When: ① **카드형(center)**: sns·wide·kakao 각 '중간' 선택 생성 → 자막이 **커버 이미지 아래** 밴드에 위치(겹침 0 — 프레임 캡처 y 실측). ② wide 카드형 커버 0.42H 상향 구도 확인(미세 톤은 사용자 판단 기록). ③ **배경형(full)**: 위/중/아래 현행 위치 그대로 — 이미지 위 표시가 정상(회귀 0, 3종 스팟). ④ kakao 카드형 3단 동일 클램프 = 문서화된 제약(오류 아님)으로 기록.
+- Then: ①~④ — **①(카드형 겹침 잔존) = FAIL 게이트**.
+
+**E-7. AI 생성 칩 + MAIDOL 록업 [e2e] — 완료 조건 직결(⑧)**
+- When: ① 생성 영상 좌하단 "AI 생성" rounded 칩 + 우하단 MAIDOL(**AI만 보라 #A855F7**) — **같은 수평 라인 정렬** 육안+캡처(sns·wide·kakao 각 1). ② 자막 '아래' 선택 포함 배지-자막 비침범. ③ 구 록업(단일 watermark_logo h40) 형태 잔존 0.
+- Then: ①~③ 충족.
+
+**E-8. 재생성 ⭐ 차감·쿨다운 [e2e] — 완료 조건 직결(⑨)**
+- When: ① 다시 만들기(새 스타일 조합) → **⭐5 차감** + 생성 성공 후 쿨다운 시작(1회차 2h). ② 쿨다운 중 새 조합 재시도 → 앱 다이얼로그(**스킵 ⭐2**·광고권 — 타 디렉터와 동일 UI, 시스템 Alert 아님). ③ 스킵 선택 → ⭐2 차감 후 생성 진행. ④ **동일 조합(캐시 히트)은 쿨다운 중에도 무과금 즉시 반환**(차단·차감 0). ⑤ 기존 디렉터 쿨다운 UI 회귀 0(작곡 1회 스모크).
+- Then: ①~⑤ — **④(캐시 히트 과금/차단) = FAIL 게이트**.
+
+**E-9. 직전 사이클 회귀 스모크 [e2e] — FAIL 게이트**
+- When/Then: ① v3.213 튜토리얼: 비로그인 차트 2스텝·로그인 상단바 6스텝·작업실 6스텝(자동 스크롤 포함) 리뷰 모드 재노출 정상 — pill 변경이 rect 스텝·문안·게이팅·자동 스크롤에 영향 0. ② v3.212 추천하기 모달 스모크. ③ v3.211 백그라운드 재생 검증 화면 진입(크래시 0). ④ v3.210 피드 탭 3종 전환 + Inst 생성 진입. ⑤ 헤더 레이아웃·차트 재생·⋮ 시트 기본 흐름. — **1건이라도 회귀 = FAIL**.
+
+### 게이트 요약
+
+- **트랙 구조**: 머지 게이트 = U-1~U-7 + S-1~S-6 전부 PASS(frontend 자동 push 관례 — FAIL 1건이라도 있으면 커밋 금지. 서버는 스테이징 정적까지 — 배포는 사용자 승인 후 rsync). [api] = 배포 완료 확인 후 A-1~A-4(전이면 "대기" 보고 — 단 **A-4의 v6 URL 확보는 배포 전 선행**). [e2e] = 새 빌드 + 배포 후 E-1~E-9.
+- **완료 조건**: E-1(pill)·E-2(시트 헤더 제한)·E-3(제목 마퀴)·E-4(4버튼·⭐5)·E-5(공유 시트)·E-6(자막 겹침 0)·E-7(칩+록업)·E-8(⭐·쿨다운)이 사용자 피드백 10건 직결.
+- **핵심 FAIL 게이트**: ① **A-4**(기존 v6 영상 URL 파손 — 최상위·S-3 ③ 정적 선차단) ② **S-5 ③/A-2/E-8 ④**(캐시 히트 과금) ③ **S-1 ④/E-6 ①**(자막-커버 겹침 잔존) ④ **U-7 ②/E-9**(직전 사이클 회귀 — v3.213 튜토리얼 포함) — 추가: U-1 ⑥(v3.213 하이라이트 회귀)·U-2(PolicySheet page 소비처 회귀)·U-4(공유 3후보 미봉합)·U-5 ③(기존 디렉터 피로도 회귀)·S-3 ②(신규 경로 v6 잔존)·S-5 ②(게이트-spend 순서 역전)·E-1 ①(코너 사각 잔존)·E-5 ①(공유 시트 미표시). 1건이라도 FAIL이면 커밋·출고 금지.
+- 판정 대상 아님(기록만): v6→v7 승격으로 기존 생성분 다음 요청 시 1회 재과금(사용자 결정 ② 기본안 수용). kakao 카드형 3단 클램프·wide 0.42H 구도 = 스펙 확정(사용자 결정 ④ 미세 조정 여지). 브리핑 "쿨다운 409"는 스킵 409(쿨다운 없음) 관행으로 정정 — 게이트 스펙 = 429. 카카오 SDK 직공유·kakao center 밴드 재설계·Inst 마킹 필드 정식화 = 이월 후보.

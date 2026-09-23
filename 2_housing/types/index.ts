@@ -133,8 +133,9 @@ export interface GenerationResult {
  * ladder = {"1":2,"2":4,"3":8,"4+":12} — 그날 n곡째 완성 시 쿨다운(시간). KST 자정 리셋.
  * skip_wait_count = AdMob SSV 적립 광고권 잔량 (fatigue.py:33 _skip_wait_count).
  */
-/** v3.118: 피로/쿨다운 디렉터 차원 (backend_9004 v220 fatigue_service.DIRECTORS) — 미지정=composer */
-export type FatigueDirector = 'composer' | 'lyricist' | 'image' | 'artist';
+/** v3.118: 피로/쿨다운 디렉터 차원 (backend_9004 v220 fatigue_service.DIRECTORS) — 미지정=composer
+ *  v3.214 ⑨: 'video' 추가 — 영상 디렉터(share-video) 피로도 게이트 (스킵비 ⭐2 = share_video 5의 1/3 반올림) */
+export type FatigueDirector = 'composer' | 'lyricist' | 'image' | 'artist' | 'video';
 
 export interface FatigueStatus {
   director?: FatigueDirector; // v3.118(v220): 응답에 director 키 추가 — 구 서버 호환 optional

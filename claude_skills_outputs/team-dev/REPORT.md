@@ -2771,3 +2771,22 @@ U-1~U-8 전부 PASS — 문안 14스텝 문자 일치·교정 전 잔재 0 / 플
 ### 이월·대기
 
 플레이어 기존 3스텝 존치(기본안 — 스펙 재정의 시 교체), search-row-more 키 미사용 존치. 사용자 검수 후: REVIEW_MODE=false 전환 + 최종 빌드. v3.210 Inst 서버 배포 승인 대기 지속.
+
+## v3.214 (2026-09-23) — 1.1.3 실기기 피드백 12건: 자막 위치 기하 유도·록업·제목 마퀴·영상 과금·튜토리얼 pill·공유 봉합 + Inst 장애 3단 디버깅 완결
+
+**요청 12건**: ①작업실 튜토리얼 pill/원형 ②창작기록 안내 팝업 상단바 침범 ③Inst 실패 ④연주곡 제목 마퀴(Inst 제외) ⑤완료 화면 4버튼 통일 ⑥영상 공유(다운로드만 됨) ⑦자막 '중간'이 커버 위에 얹힘 ⑧AI 생성 배지(nowplaying 동일+확대+둥근 칩)+우하단 MAIDOL 록업 ⑨다시 만들기 과금·쿨다운 ⑩Inst 팝업 ⭐ 표기 (+추가 지시 2건 반영).
+
+### ③ Inst 장애 — 3단 디버깅으로 완결 (프로덕션 실증)
+
+1. **1차: 미배포 404** — 로그 실증 후 v3.210 서버 배포(사용자 재승인 후 오케스트레이터 실행).
+2. **2차: Suno 작업 등록 거부** — 콜백 localhost 교체로도 재현 → **대조 실험**(짧은 공개 URL은 즉시 접수, 1,924자 presigned URL은 거부)으로 원인 확정: 게이트웨이가 긴 서명 URL(IAM 세션 토큰) 거부.
+3. **3차 픽스: 짧은 토큰 리다이렉트** — `/api/tracks/inst-audio/{job}/{token}`(1회성 난수·2시간 유효·hmac 대조) → presigned 302. 배포 후 **실기기 3차 시도 전 구간 성공**: 접수(taskId)→게이트웨이 fetch 2회→SUCCESS(~90초)→다운로드 3.65MB→자체 스토리지 이관(sha256 기록). 실패 2회분 ⭐5는 전부 자동 환불 실증(환불 대칭 실검증). Suno 크레딧 잔액 9,750 확인.
+
+### 수행 결과 (코드분)
+
+- **앱(10+2파일)**: ① TutorialOverlay shape 메타+코너 마스크(B=40 — pill 시 딤 모서리 잔존 제거), 작업실 디렉터 5스텝 pill(이름 배지 포함 +24) ② PolicySheet variant='sheet'+useHeaderHeight 상한(작사 기록안내 — page 소비처 무변경) ⑤ 4버튼 width 300·padV 12·fs14 + 취소 시 버블 롤백 ⑥ 공유 3종 봉합(파일명 새니타이즈·mp4 mimeType/UTI·실패 showAlert — 음원 시트도 보강) ⑨ fatigueGate 'video' 게이트(⭐2 스킵·429 대응·**세션 성공 조합은 선게이트 생략 — tester U-5④ 캐시 히트 차단 결함 즉시 픽스**) ③⑩ 404 안내·⭐5 표기.
+- **서버 스테이징(server_staging_v3214, 3파일)**: ⑦ `_subpos_positions` 기하 유도(full 바이트 동일 실증·center 좌표 명세표 확정·kakao 역전 소멸·**wide line near 230→220 즉시 픽스**)+캐시 v6→v7(스타일 suffix 비트 동일, prefix만) ④ 제목 마퀴(textfile+expansion=none — 이스케이프 인젝션 원천 차단, 프로덕션 ffmpeg 프레임 캡처 검증, Inst=source_track_id 판별 제외) ⑧ PIL 록업 스트립(AI 생성 둥근 칩 0.56×자막·MAIDOL AI만 #A855F7 동일 라인 — 3포맷 실렌더 검증) ⑨ DIRECTORS+'video'(⭐5 생성·⭐2 스킵·캐시 히트 3함수 미호출) — DEPLOY.md 준비.
+
+### 검증 (tester)
+
+U-1~U-7 + S-1~S-6: FAIL 1(U-5④)·경계 1(S-1④) 즉시 픽스 후 tsc·py_compile 재확인, 그 외 전항 PASS — full ASS 18조합 바이트 동일·object name suffix 비트 동일 독립 재실증, 429 shape·⭐ 상수 등 계약 교차 5항 정합. S-6 WARN(v3210 스테이징 금일 갱신)은 오케스트레이터의 Inst 짧은 URL 픽스 — 정상 경위. A(배포 후: v6 URL은 object형 프록시로 확보 주의)·E(새 빌드) 대기.

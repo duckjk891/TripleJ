@@ -6,7 +6,8 @@
 // v3.209: ①배경 4번째 카드 「단색 배경」(center 전용) — 내부 solid 모드, API 는 bg=color&bgalpha=100 매핑,
 //   진하기 질문 생략 ②자막 테두리 신규 2단계 — 유무(기본 있음) → 테두리 색(팔레트 12색, 기본 검정).
 //   기본 조합(있음·검정)은 outlinecolor "" 정규화 — 레거시 캐시 적중.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
 } from 'react-native';
@@ -20,6 +21,11 @@ import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePointsStore } from '../stores/pointsStore';
+// v3.214 ⑨: 영상 디렉터 피로도 게이트 — MusicGenerationScreen 패턴 이식(진입/포커스 status,
+// 생성 직전 게이트 + 서버 429 동일 다이얼로그). 스킵비 ⭐2(share_video 5의 1/3 반올림).
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -100,7 +106,46 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  // v3.214 tester U-5④: 이 세션에서 생성 성공한 조합(트랙+스타일) 시그니처 —
+  // 재요청은 서버 캐시 히트(무과금·무피로)이므로 쿨다운 선게이트를 건너뛴다.
+  // 캐시 미스로 판명되면 서버 429가 동일 다이얼로그로 최종 방어한다.
+  const succeededSigsRef = useRef<Set<string>>(new Set());
   const [videoCost, setVideoCost] = useState<number | null>(null);
+
+  // v3.214 ⑨: 영상 디렉터 피로/쿨다운 — GET /fatigue/status?director=video (MusicGeneration 패턴)
+  const [fatigue, setFatigue] = useState<FatigueStatus | null>(null);
+  const [fatigueRemainSec, setFatigueRemainSec] = useState(0);
+
+  const applyFatigueStatus = useCallback((data: FatigueStatus) => {
+    setFatigue(data);
+    setFatigueRemainSec(Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)));
+  }, []);
+
+  const refreshFatigue = useCallback(async () => {
+    try {
+      const data = await getFatigueStatus('video');
+      applyFatigueStatus(data);
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 게이트(429)가 최종 방어 (구 서버는 video 미지원 → 무게이트 자연 호환)
+      console.warn('[VideoDirector] [fatigue] 상태 조회 실패:', err?.response?.status, err?.message);
+    }
+  }, [applyFatigueStatus]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshFatigue();
+    }, [refreshFatigue])
+  );
+
+  // 쿨다운 카운트다운 — 0 도달 직전 서버 재확인 (MusicGeneration 동일)
+  useEffect(() => {
+    if (fatigueRemainSec <= 0) return undefined;
+    const timer = setInterval(() => {
+      setFatigueRemainSec((s) => Math.max(0, s - 1));
+      if (fatigueRemainSec === 1) refreshFatigue();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [fatigueRemainSec, refreshFatigue]);
 
   useEffect(() => {
     let alive = true;
@@ -319,7 +364,33 @@ export default function VideoDirectorScreen({ navigation }: any) {
     subpos,
   });
 
-  const startGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
+  // v3.214 ⑤ 부수: 확인 팝업/게이트 취소 시 subPos 답변 버블 잔존 정리 — 마지막 user 버블 1개 제거
+  const rollbackToSubPos = () => {
+    setChat((p) => (p[p.length - 1]?.type === 'user' ? p.slice(0, -1) : p));
+    setStep('subPos');
+  };
+
+  // v3.214 ⑨: 생성/다시 만들기 진입 게이트 — 쿨다운 중이면 과금 확인 전에 쿨다운 다이얼로그
+  // (12곳 관행 showFatigueCooldownDialog 재사용, director='video'). 해제 시 proceedGeneration 직행.
+  const startGeneration = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
+    if (!selected) return;
+    const sig = `${selected.id}:${JSON.stringify(styleParams(lyricsMode, subpos))}`;
+    if (fatigueRemainSec > 0 && !succeededSigsRef.current.has(sig)) {
+      console.info('[VideoDirector] [fatigue] 게이트 — 남은', fatigueRemainSec, '초');
+      showFatigueCooldownDialog({
+        status: fatigue,
+        remainingSec: fatigueRemainSec,
+        director: 'video',
+        onStatusUpdate: applyFatigueStatus,
+        onCleared: () => proceedGeneration(lyricsMode, subpos),
+        onCancel: rollbackToSubPos,
+      });
+      return;
+    }
+    proceedGeneration(lyricsMode, subpos);
+  };
+
+  const proceedGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
     if (!selected) return;
     if (typeof videoCost === 'number') {
       const ok = await new Promise<boolean>((resolve) => {
@@ -329,7 +400,7 @@ export default function VideoDirectorScreen({ navigation }: any) {
           { text: '진행', onPress: () => resolve(true) },
         ]);
       });
-      if (!ok) { setStep('subPos'); return; }
+      if (!ok) { rollbackToSubPos(); return; }
     }
     pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 잠시만 기다려주세요.');
     setStep('making');
@@ -341,12 +412,29 @@ export default function VideoDirectorScreen({ navigation }: any) {
       if (!path) throw new Error('video_url 없음');
       setVideoUrl(path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`);
       setMadeFormat(params.format);
+      succeededSigsRef.current.add(`${selected.id}:${JSON.stringify(params)}`);
       pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
       usePointsStore.getState().fetchBalance();
+      refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
       setStep('done');
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[VideoDirector] share-video 실패', { trackId: selected.id, status });
+      // v3.214 ⑨: 서버 check_gate 429(과금 전 무비용) — 게이트와 동일 쿨다운 다이얼로그로 대응
+      if (status === 429) {
+        const remain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+        setFatigueRemainSec(remain);
+        pushDirector('영상 디렉터가 잠시 쉬는 중이에요. 휴식을 단축하거나 잠시 후 다시 시도해주세요.');
+        setStep('subPos');
+        showFatigueCooldownDialog({
+          status: fatigue,
+          remainingSec: remain > 0 ? remain : 1,
+          director: 'video',
+          onStatusUpdate: applyFatigueStatus,
+          onCleared: () => proceedGeneration(lyricsMode, subpos),
+        });
+        return;
+      }
       pushDirector(
         status === 402 ? '스타가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
         : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
@@ -358,10 +446,13 @@ export default function VideoDirectorScreen({ navigation }: any) {
   };
 
   // v3.182: 기기 저장(사진 앨범) — 공유와 분리
+  // v3.214 ⑥-a: 캐시 파일명 새니타이즈 강화 — 한글·공백·특수문자 연속을 _ 1개로, 40자 상한
+  // (한글 긴 제목에서 downloadAsync 실패 → "다운로드만 되고 공유 시트 안 뜸" 증상 봉합 후보 a)
   const downloadToCache = async (): Promise<string | null> => {
     if (!videoUrl) return null;
-    const base = (selected?.title || 'maidol').replace(/[^\w가-힣]/g, '_');
+    const base = (selected?.title || 'maidol').replace(/[^\w가-힣.-]+/g, '_').slice(0, 40) || 'maidol';
     const dest = `${FileSystem.cacheDirectory}${base}_${madeFormat || 'video'}.mp4`;
+    if (__DEV__) console.info('[VideoDirector] 캐시 다운로드', { dest });
     const res = await FileSystem.downloadAsync(videoUrl, dest);
     return res.uri;
   };
@@ -399,8 +490,17 @@ export default function VideoDirectorScreen({ navigation }: any) {
         await Linking.openURL(videoUrl);
       } else {
         const uri = await downloadToCache();
-        if (uri && (await Sharing.isAvailableAsync())) await Sharing.shareAsync(uri);
-        else showAlert('안내', '이 기기에서는 공유 시트를 열 수 없어요.');
+        // v3.214 ⑥-b: mimeType(Android 공유 대상 확장)·UTI(iOS) 명시 — 미지정 시 일부 기기에서
+        // 공유 시트가 축소/실패하던 증상 봉합 후보 b. 실패는 catch 의 showAlert 로 무피드백 금지(후보 c).
+        if (uri && (await Sharing.isAvailableAsync())) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'video/mp4',
+            UTI: 'public.mpeg-4',
+            dialogTitle: '영상 공유',
+          });
+        } else {
+          showAlert('안내', '이 기기에서는 공유 시트를 열 수 없어요.');
+        }
       }
     } catch (err: any) {
       console.error('[VideoDirector] 공유 실패', { message: err?.message });
@@ -497,7 +597,8 @@ export default function VideoDirectorScreen({ navigation }: any) {
                   : <AppText style={[styles.primaryBtnText, { color: colors.accent.primary }]}>공유하기</AppText>}
               </TouchableOpacity>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            {/* v3.214 ⑤: 2행도 1행과 동일 규격(width 300·padV 12·fs14) — 4버튼 통일 */}
+            <View style={{ flexDirection: 'row', gap: 8, width: 300, maxWidth: '100%' }}>
               <TouchableOpacity style={[styles.outlineBtn, { flex: 1 }]} onPress={handleAnotherFormat} activeOpacity={0.8}>
                 <AppText style={styles.outlineBtnText}>다른 형식으로</AppText>
               </TouchableOpacity>
@@ -746,11 +847,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  // v3.214 ⑤: 결과 4버튼 규격 통일 — primaryBtn(padV 12·fs14)과 동일
   outlineBtn: {
     borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 12,
-    paddingVertical: 10, alignItems: 'center',
+    paddingVertical: 12, alignItems: 'center',
   },
-  outlineBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 13 },
+  outlineBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
   inputArea: { borderTopWidth: 1, borderTopColor: colors.border.subtle, padding: 12, paddingBottom: 20 },
   trackRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 8,

@@ -41,6 +41,11 @@ export interface TutorialStep {
   anchorKey?: TutorialAnchorKey;
   /** 카드 배치 강제 — 생략 시 anchor 위치 기준 자동(화면 상반부 anchor → 카드 below) */
   placement?: 'above' | 'below';
+  /**
+   * v3.214 ①: 하이라이트 형태 — 'rect'(기본, radius 12 현행) | 'pill'(radius = min(w,h)/2).
+   * 작업실 디렉터 스텝이 pill(isNext 원형 펄스와 동일 시각 언어), 그 외 rect 유지.
+   */
+  shape?: 'rect' | 'pill';
 }
 
 export interface TutorialOverlayHandle {
@@ -68,6 +73,9 @@ const ARROW_GAP = 4; // 구멍 ↔ 화살표 간격
 const CARD_GAP = 8; // 화살표 ↔ 카드 간격
 // v3.213: 순흑 0.6 → colors.bg.deepest(#0d0820) 틴트 딤 — 브랜드 톤 정렬
 const DIM_COLOR = 'rgba(13, 8, 32, 0.68)';
+// v3.214 ①: 딤 코너 마스크 두께 — 4분할 사각 딤은 구멍 라운딩 밖 모서리가 밝게 남으므로
+// 구멍보다 큰 View 에 두꺼운 DIM_COLOR border(+borderRadius r+B)를 둘러 모서리 잔존을 덮는다.
+const CORNER_MASK_B = 40;
 
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
   ({ screenKey, steps, enabled = true, onStepChange }, ref) => {
@@ -240,6 +248,8 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
         h: Math.min(winH, validAnchor.y + validAnchor.height + HOLE_PAD) -
           Math.max(0, validAnchor.y - HOLE_PAD),
       };
+      // v3.214 ①: 스텝별 하이라이트 형태 — pill = min(w,h)/2 (140×164 anchor 기준 좌우 반원)
+      const holeRadius = current.shape === 'pill' ? Math.min(hole.w, hole.h) / 2 : radius.lg;
       const holeCenterX = hole.x + hole.w / 2;
       const placement: 'above' | 'below' =
         current.placement ?? (hole.y + hole.h / 2 < winH / 2 ? 'below' : 'above');
@@ -256,12 +266,28 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
             style={[styles.dimPart, { top: hole.y, height: hole.h, left: hole.x + hole.w, right: 0 }]}
           />
           <View style={[styles.dimPart, { top: hole.y + hole.h, left: 0, right: 0, bottom: 0 }]} />
+          {/* v3.214 ①: 딤 코너 마스크 — 구멍 라운딩(rect 12 / pill 반원) 밖에 4분할 딤이 못 덮은
+              밝은 모서리 잔존을 두꺼운 DIM_COLOR border 로 가린다. shape 무관 항상 렌더. */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: hole.x - CORNER_MASK_B,
+              top: hole.y - CORNER_MASK_B,
+              width: hole.w + CORNER_MASK_B * 2,
+              height: hole.h + CORNER_MASK_B * 2,
+              borderWidth: CORNER_MASK_B,
+              borderColor: DIM_COLOR,
+              borderRadius: holeRadius + CORNER_MASK_B,
+              backgroundColor: 'transparent',
+            }}
+          />
           {/* v3.213: 구멍 위 보라 틴트 반투명 하이라이트 박스 (테두리 최소화 — 헤어라인 글로우 톤) */}
           <View
             pointerEvents="none"
             style={[
               styles.highlightBox,
-              { left: hole.x, top: hole.y, width: hole.w, height: hole.h },
+              { left: hole.x, top: hole.y, width: hole.w, height: hole.h, borderRadius: holeRadius },
             ]}
           />
           {/* 대상 지시 화살표 — 카드가 아래면 위(대상) 방향, 위면 아래 방향 */}

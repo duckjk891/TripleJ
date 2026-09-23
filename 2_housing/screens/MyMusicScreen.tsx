@@ -350,7 +350,8 @@ export default function MyMusicScreen({ navigation }: any) {
     const trackId = String(track.id);
     showAlert(
       'Inst. 버전 만들기',
-      `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들까요?\n\n스타 ${INSTRUMENTAL_STAR_COST}개가 차감되며, 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
+      // v3.214 ⑩: 재화 표기 관행 통일 — "스타 n개" → "⭐n" (VideoDirectorScreen "⭐{n}이 소모돼요" 동일)
+      `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들까요?\n\n⭐${INSTRUMENTAL_STAR_COST}이 차감되며, 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
       [
         { text: '취소', style: 'cancel' },
         {
@@ -376,6 +377,9 @@ export default function MyMusicScreen({ navigation }: any) {
                 } else {
                   showAlert('알림', '이미 이 곡의 Inst. 생성이 진행 중이에요.');
                 }
+              } else if (status === 404) {
+                // v3.214 ③: 서버 /instrumental 미배포(v3.210) 과도기 안내 — 배포 후 404는 곡 미존재뿐이라 무해
+                showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.');
               } else {
                 showAlert('오류', err?.response?.data?.error || 'Inst. 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
               }

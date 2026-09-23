@@ -61,12 +61,13 @@ const MAP_HEIGHT = 2208;
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 6스텝 — 디렉터 5(맵 좌표 anchor·자동 스크롤) + 생성 이력.
 // 스텝 0~4는 DIRECTORS 배열 순서와 1:1 (onStepChange 자동 스크롤이 이 정렬에 의존).
+// v3.214 ①: 디렉터 5스텝은 pill 하이라이트(isNext 원형 펄스와 동일 시각 언어), 생성이력은 rect 유지.
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '아티스트 디렉터', desc: '클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.', anchorKey: 'map-artist' },
-  { title: '작사 디렉터', desc: '클릭하여 가사를 작사할 수 있어요.', anchorKey: 'map-lyricist' },
-  { title: '작곡 디렉터', desc: '클릭하여 나만의 음악을 만들어요.', anchorKey: 'map-composer' },
-  { title: '이미지 디렉터', desc: '클릭하여 내 곡의 커버 이미지를 만들어요.', anchorKey: 'map-image' },
-  { title: '영상 디렉터', desc: '클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.', anchorKey: 'map-video' },
+  { title: '아티스트 디렉터', desc: '클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.', anchorKey: 'map-artist', shape: 'pill' },
+  { title: '작사 디렉터', desc: '클릭하여 가사를 작사할 수 있어요.', anchorKey: 'map-lyricist', shape: 'pill' },
+  { title: '작곡 디렉터', desc: '클릭하여 나만의 음악을 만들어요.', anchorKey: 'map-composer', shape: 'pill' },
+  { title: '이미지 디렉터', desc: '클릭하여 내 곡의 커버 이미지를 만들어요.', anchorKey: 'map-image', shape: 'pill' },
+  { title: '영상 디렉터', desc: '클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.', anchorKey: 'map-video', shape: 'pill' },
   { title: '생성이력', desc: '작업실에서 작업했던 과정을 확인할 수 있어요.', anchorKey: 'map-history' },
 ];
 
@@ -79,6 +80,9 @@ const DIRECTOR_ANCHOR_BY_TYPE: Partial<Record<DirectorType, TutorialAnchorKey>> 
   video: 'map-video',
 };
 const DIRECTOR_ANCHOR_HALF = 70; // 맵 좌표계 반경(= isNext 펄스 140×140 박스와 동일)
+// v3.214 ①: 하단 이름 배지(스프라이트 아래 +28~+48px, 폭 ~88px)가 pill 라운딩에 잘리지 않게
+// anchor 박스를 아래로만 +24(맵단위) 확장 — (x±70, y−70 ~ y+94). pill radius = min(w,h)/2 ≈ 70*scale 유지.
+const DIRECTOR_ANCHOR_BOTTOM_EXTRA = 24;
 const MAP_ANCHOR_KEYS: TutorialAnchorKey[] = [
   'map-artist', 'map-lyricist', 'map-composer', 'map-image', 'map-video', 'map-history',
 ];
@@ -128,8 +132,10 @@ const FATIGUE_DIRECTOR_BY_TYPE: Partial<Record<DirectorType, FatigueDirector>> =
   image: 'image',
   artist: 'artist',
 };
+// v3.214 ⑨: video 는 맵 휴식 티켓 미대상 유지(게이트는 VideoDirectorScreen에서 처리) — 목록 4종 그대로,
+// ZERO_REMAIN 만 FatigueDirector 확장('video')에 맞춰 키 보강.
 const FATIGUE_DIRECTORS: FatigueDirector[] = ['composer', 'lyricist', 'image', 'artist'];
-const ZERO_REMAIN: Record<FatigueDirector, number> = { composer: 0, lyricist: 0, image: 0, artist: 0 };
+const ZERO_REMAIN: Record<FatigueDirector, number> = { composer: 0, lyricist: 0, image: 0, artist: 0, video: 0 };
 
 // v3.107→v3.118: 캐릭터 위에 뜨는 휴식(쿨다운) 티켓 — 전 디렉터(작곡·작사·커버·아티스트)로
 // 확장 (서버 /fatigue/status?all=1 기반, 쿨다운 활성 디렉터에만 표시).
@@ -256,7 +262,8 @@ export default function MapScreen({ navigation }: Props) {
           x: sx + (d.x - DIRECTOR_ANCHOR_HALF) * mapScale,
           y: sy + (d.y - DIRECTOR_ANCHOR_HALF) * mapScale - scrollYRef.current,
           width: DIRECTOR_ANCHOR_HALF * 2 * mapScale,
-          height: DIRECTOR_ANCHOR_HALF * 2 * mapScale,
+          // v3.214 ①: 하단 +24(맵단위) 확장 — 이름 배지 포함 (140×164 좌표계)
+          height: (DIRECTOR_ANCHOR_HALF * 2 + DIRECTOR_ANCHOR_BOTTOM_EXTRA) * mapScale,
         });
       });
     });

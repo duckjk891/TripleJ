@@ -104,7 +104,12 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
       if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
       const res = await FileSystem.downloadAsync(url, dest);
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(res.uri);
+        // v3.214 ⑥: mimeType(Android)·UTI(iOS) 명시 — 미지정 시 공유 대상 축소/실패 봉합 (VideoDirector 동일)
+        const isMp3 = /\.mp3$/i.test(filename);
+        await Sharing.shareAsync(res.uri, {
+          mimeType: isMp3 ? 'audio/mpeg' : 'video/mp4',
+          UTI: isMp3 ? 'public.mp3' : 'public.mpeg-4',
+        });
       } else {
         showAlert('저장 완료', '파일이 저장되었습니다.');
       }

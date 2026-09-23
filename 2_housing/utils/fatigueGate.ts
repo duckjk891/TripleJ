@@ -45,7 +45,8 @@ export function showFatigueCooldownDialog(opts: {
   const director: FatigueDirector = opts.director ?? 'composer';
   const label = FATIGUE_DIRECTOR_LABELS[director];
   // v3.118: ⭐비용은 status 실값(디렉터별 차등 — v220). 폴백은 서버 계약 기본값.
-  const fallbackCost = { composer: 5, lyricist: 2, image: 2, artist: 3 }[director];
+  // v3.214 ⑨: video ⭐2 (share_video 5의 1/3 반올림 — 서버 SKIP_POINT_COSTS 동일 규칙)
+  const fallbackCost = { composer: 5, lyricist: 2, image: 2, artist: 3, video: 2 }[director];
   const cost = status?.skip_point_cost ?? fallbackCost;
   const minutes = status?.skip_minutes ?? 30;
   const adSkips = Math.max(0, Number(status?.skip_wait_count) || 0);
