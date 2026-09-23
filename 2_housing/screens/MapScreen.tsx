@@ -32,7 +32,14 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import TutorialOverlay from '../components/TutorialOverlay';
+import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
+// v3.213: 작업실 튜토리얼 anchor — 디렉터 5종(맵 좌표 계산)+생성 이력(고정 버튼 측정)
+import {
+  TutorialAnchorKey,
+  measureAndRegister,
+  registerAnchor,
+  unregisterAnchor,
+} from '../utils/tutorialAnchors';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
@@ -52,12 +59,28 @@ const WALK_ZONES: Record<string, Array<[number, number]>> =
 const MAP_WIDTH = 704;
 const MAP_HEIGHT = 2208;
 
-// v3.204 ⑥: 인라인 튜토리얼 Modal의 4개 항목을 공용 TutorialOverlay 스텝으로 이관 (문구 유지)
-const TUTORIAL_STEPS = [
-  { title: '작업실에 오신 걸 환영해요', desc: '각 디렉터를 탭해서 작업을 맡기세요.' },
-  { title: '다음 작업', desc: '빛나는 디렉터가 다음 작업할 분이에요.' },
-  { title: '결과 확인', desc: '작업을 맡기면 결과를 바로 확인할 수 있어요.' },
-  { title: '디렉터 휴식', desc: '작업을 완성하면 그 디렉터가 잠시 휴식해요. 휴식 중엔 탭해서 단축할 수 있어요.' },
+// v3.204 ⑥ → v3.213: 사용자 확정 문안 6스텝 — 디렉터 5(맵 좌표 anchor·자동 스크롤) + 생성 이력.
+// 스텝 0~4는 DIRECTORS 배열 순서와 1:1 (onStepChange 자동 스크롤이 이 정렬에 의존).
+const TUTORIAL_STEPS: TutorialStep[] = [
+  { title: '아티스트 디렉터', desc: '클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.', anchorKey: 'map-artist' },
+  { title: '작사 디렉터', desc: '클릭하여 가사를 작사할 수 있어요.', anchorKey: 'map-lyricist' },
+  { title: '작곡 디렉터', desc: '클릭하여 나만의 음악을 만들어요.', anchorKey: 'map-composer' },
+  { title: '이미지 디렉터', desc: '클릭하여 내 곡의 커버 이미지를 만들어요.', anchorKey: 'map-image' },
+  { title: '영상 디렉터', desc: '클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.', anchorKey: 'map-video' },
+  { title: '생성이력', desc: '작업실에서 작업했던 과정을 확인할 수 있어요.', anchorKey: 'map-history' },
+];
+
+// v3.213: 디렉터 타입 → anchor 키. 박스는 isNext 펄스와 동일한 (x±70, y±70)*mapScale 140×140 좌표계
+const DIRECTOR_ANCHOR_BY_TYPE: Partial<Record<DirectorType, TutorialAnchorKey>> = {
+  artist: 'map-artist',
+  lyricist: 'map-lyricist',
+  composer: 'map-composer',
+  image: 'map-image',
+  video: 'map-video',
+};
+const DIRECTOR_ANCHOR_HALF = 70; // 맵 좌표계 반경(= isNext 펄스 140×140 박스와 동일)
+const MAP_ANCHOR_KEYS: TutorialAnchorKey[] = [
+  'map-artist', 'map-lyricist', 'map-composer', 'map-image', 'map-video', 'map-history',
 ];
 
 const DIRECTOR_NAMES: Record<DirectorType, string> = {
@@ -204,7 +227,7 @@ type StudioStackParamList = {
 type Props = NativeStackScreenProps<StudioStackParamList, 'Map'>;
 
 export default function MapScreen({ navigation }: Props) {
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: winHeight } = useWindowDimensions();
   const mapScale = screenWidth / MAP_WIDTH;
   const displayHeight = MAP_HEIGHT * mapScale;
   const { user } = useAuthStore();
@@ -213,6 +236,58 @@ export default function MapScreen({ navigation }: Props) {
 
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
   const [hasArtistCharacter, setHasArtistCharacter] = useState(false);
+
+  // ── v3.213: 작업실 튜토리얼 anchor — 맵 좌표 기지라 measure 대신 스크롤 오프셋 기반 직접 계산 ──
+  // winY = 대상맵y*scale − scrollY + ScrollView 창 오프셋(컨테이너 top = 뷰포트 top).
+  const scrollRef = useRef<ScrollView>(null);
+  const containerRef = useRef<View>(null);
+  const historyBtnRef = useRef<any>(null);
+  const scrollYRef = useRef(0);
+
+  const registerDirectorAnchors = useCallback(() => {
+    const node = containerRef.current as any;
+    node?.measureInWindow?.((sx: number, sy: number) => {
+      DIRECTORS.forEach((d) => {
+        const key = DIRECTOR_ANCHOR_BY_TYPE[d.type];
+        if (!key) return;
+        // 화면 밖 rect도 등록 — 오버레이 validAnchor 검사로 카드 fallback되고,
+        // onStepChange 자동 스크롤 후 재등록되면 스포트라이트로 승격된다.
+        registerAnchor(key, {
+          x: sx + (d.x - DIRECTOR_ANCHOR_HALF) * mapScale,
+          y: sy + (d.y - DIRECTOR_ANCHOR_HALF) * mapScale - scrollYRef.current,
+          width: DIRECTOR_ANCHOR_HALF * 2 * mapScale,
+          height: DIRECTOR_ANCHOR_HALF * 2 * mapScale,
+        });
+      });
+    });
+  }, [mapScale]);
+
+  // 스텝 전환 시 대상 디렉터로 자동 스크롤 → 정착 후 새 오프셋으로 anchor 재계산.
+  // 스텝 0~4 = DIRECTORS[0~4], 스텝 5 = 생성 이력(고정 오버레이 버튼 — 스크롤 무관 재측정만).
+  const handleTutorialStepChange = useCallback(
+    (index: number) => {
+      const d = DIRECTORS[index];
+      if (!d) {
+        if (historyBtnRef.current) measureAndRegister('map-history', historyBtnRef.current);
+        return;
+      }
+      const targetY = Math.max(
+        0,
+        Math.min(d.y * mapScale - winHeight * 0.45, displayHeight - 1)
+      );
+      if (__DEV__) console.info('[Tutorial] map 스텝 자동 스크롤', { index, targetY });
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+      // 애니메이션 정착 대기 후 재등록(onMomentumScrollEnd 미발화 플랫폼 폴백 겸용)
+      setTimeout(registerDirectorAnchors, 450);
+    },
+    [mapScale, winHeight, displayHeight, registerDirectorAnchors]
+  );
+
+  // 언마운트 시 작업실 anchor 전체 해제 + 로그아웃 시 생성 이력 버튼 anchor 해제(버튼 언마운트)
+  useEffect(() => () => MAP_ANCHOR_KEYS.forEach(unregisterAnchor), []);
+  useEffect(() => {
+    if (!user) unregisterAnchor('map-history');
+  }, [user]);
 
   // 화면 포커스 시 내 아티스트 존재 여부 확인 (관리/생성 분기용)
   useFocusEffect(
@@ -499,14 +574,21 @@ export default function MapScreen({ navigation }: Props) {
       : 'image';
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} ref={containerRef} collapsable={false}>
       {/* 튜토리얼 힌트 말풍선은 헤더 내부(headerRight)로 이동됨 */}
 
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         bounces={false}
+        // v3.213: 튜토리얼 anchor용 스크롤 오프셋 추적 + 초기/정착 시 등록
+        onLayout={registerDirectorAnchors}
+        onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+        onMomentumScrollEnd={registerDirectorAnchors}
+        onScrollEndDrag={registerDirectorAnchors}
+        scrollEventThrottle={16}
       >
         <View style={{ width: screenWidth, height: displayHeight }}>
           {/* 배경 레이어 — 바닥/벽/가구1까지 (캐릭터 뒤) */}
@@ -617,6 +699,8 @@ export default function MapScreen({ navigation }: Props) {
       {/* v3.93: 생성 이력 진입 — 앱 이탈 후에도 진행 중 생성 이어보기/완료 결과 확인 */}
       {user && (
         <TouchableOpacity
+          ref={historyBtnRef}
+          onLayout={() => measureAndRegister('map-history', historyBtnRef.current)}
           style={styles.historyEntryBtn}
           activeOpacity={0.8}
           onPress={() => {
@@ -731,8 +815,14 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       </Modal>
 
-      {/* 첫 방문 튜토리얼 — v3.207 ⑫: ⓘ 재보기 제거, ⑪ first-run 게이트 하 최초 노출용으로만 존치 */}
-      <TutorialOverlay screenKey="map" steps={TUTORIAL_STEPS} />
+      {/* v3.213: 작업실 튜토리얼 6스텝 — 로그인 시에만(게스트는 guestTouchOverlay 잠금과 정합).
+          onStepChange: 화면 밖 디렉터(이미지·영상) 스텝에서 자동 스크롤 후 anchor 재계산 */}
+      <TutorialOverlay
+        screenKey="map"
+        steps={TUTORIAL_STEPS}
+        enabled={!!user}
+        onStepChange={handleTutorialStepChange}
+      />
     </View>
   );
 }

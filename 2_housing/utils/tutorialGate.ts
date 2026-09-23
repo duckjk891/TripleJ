@@ -13,10 +13,24 @@
 // 자체적으로 재호출한다(멱등 — 결과 promise 메모이즈라 레이스 없음).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+/**
+ * [TutorialGate] v3.213 리뷰 모드 스위치 — 이 상수 한 곳이 유일한 전환 지점.
+ * - true(현재): 사용자 검수용 상시 노출 — first-run 게이트·seen 키를 무시하고
+ *   화면 포커스(진입)마다 튜토리얼을 다시 보여준다.
+ *   (화면별 로그인 게이팅(TutorialOverlay enabled prop)은 리뷰 모드에서도 유효 —
+ *   로그인/비로그인 상태별로 검수할 수 있어야 하기 때문)
+ * - false: v3.211 first-run 정책 완전 복귀 — 완전 최초 설치('fresh')만 + 화면·상태별 1회.
+ *   "가입 후 최초 사용" 요건은 로그인 게이팅과 first-run의 결합으로 자연 충족된다
+ *   (로그인 전엔 enabled=false라 seen 미소모 → 가입 후 첫 진입에 노출).
+ * 전환 방법: 검수 완료 후 아래 값을 false로 바꾸는 1줄이 전부다(다른 코드 수정 불필요).
+ */
+export const TUTORIAL_REVIEW_MODE = true;
+
 export const FIRST_RUN_KEY = 'maidol_first_run_v1';
 export const TUTORIAL_SEEN_KEY_PREFIX = 'maidol_tutorial_seen_v1:';
 // TutorialOverlay를 쓰는 전 화면 screenKey — 기존 유저 마이그레이션 시 일괄 seen 처리 대상
-const TUTORIAL_SCREEN_KEYS = ['player', 'chart', 'feed', 'playlist', 'search', 'map'] as const;
+// v3.213: 'playlist' 제거(플레이리스트 튜토리얼 폐지)·'topbar' 추가(차트 화면 상단바 오버레이 2호)
+const TUTORIAL_SCREEN_KEYS = ['player', 'chart', 'feed', 'search', 'map', 'topbar'] as const;
 
 export type FirstRunStatus = 'fresh' | 'existing';
 

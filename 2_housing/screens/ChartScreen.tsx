@@ -1,6 +1,6 @@
 // [ChartScreen] Wave 0 리스킨 — 공용 컴포넌트(ui/) + 디자인 토큰만 사용. 기능/데이터 흐름 불변.
 // 디자인: Spotify식 가로 칩 필터 + Material 3 리스트/카드 + PANN 황혼 토큰.
-import { useState, useCallback, useLayoutEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, FlatList, TouchableOpacity, Image, ActivityIndicator,
@@ -20,15 +20,27 @@ import TrackRow, { trackRowStyles } from '../components/TrackRow';
 import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
+// v3.213: 차트 탭 스트립(chipBar) anchor — 스트립 컨테이너 영역 단위 등록
+import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 // v3.96(A-20): 홈(차트) 최신 앨범 가로 섹션 — GET /albums/latest, 탭 시 앨범 상세로
 import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
 
-// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (렌더마다 새 배열 생성 방지 — 모듈 상수)
-// v3.207 ②: 신곡 포커스 문구 + ①: '곡 담기' 스텝에 ⋮ 스포트라이트 anchor(첫 행 — 미등록 시 카드 fallback)
+// v3.204 ⑥ → v3.213: 사용자 확정 문안 2스텝 — 비로그인 시에만 노출(enabled=!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '신곡부터 만나기', desc: '차트는 신곡 탭으로 시작해요. MAIDOL 아티스트들의 최신 곡과 앨범을 가장 먼저 만나보세요.' },
-  { title: '탭해서 재생', desc: '곡을 탭하면 바로 재생이 시작돼요.' },
-  { title: '곡 담기', desc: '곡의 더보기(⋮) 버튼으로 재생목록이나 내 플레이리스트에 담을 수 있어요.', anchorKey: 'chart-row-more' },
+  { title: '신곡·차트 탭', desc: '최신 발매된 곡이나 인기곡을 탭하여 확인해보세요.', anchorKey: 'chart-tabs' },
+  { title: '곡 더보기', desc: '클릭하여 재생목록에 추가하거나 플레이리스트에 담아보세요.', anchorKey: 'chart-row-more' },
+];
+
+// v3.213: 상단바 튜토리얼 6스텝 — 차트 화면 호스트, 로그인 시에만(enabled=!!user).
+// anchor는 차트 탭 헤더의 HomeHeaderActions(registerTutorialAnchors)가 등록.
+// 문안 = 사용자 원문(맞춤법 교정 2건 반영: "확인할"/"연락할" 띄어쓰기·"메시지").
+const TOPBAR_TUTORIAL_STEPS: TutorialStep[] = [
+  { title: '스타', desc: '클릭하여 잔여 스타와 스타 받는 방법을 확인할 수 있어요.', anchorKey: 'topbar-star' },
+  { title: '출석체크', desc: '클릭하여 출석체크하고 스타를 받아보세요.', anchorKey: 'topbar-attendance' },
+  { title: '추천', desc: '클릭하여 친구에게 초대링크를 보내고 스타를 받아보세요.', anchorKey: 'topbar-invite' },
+  { title: '알림', desc: '클릭하여 새 피드나 공지를 확인해보세요.', anchorKey: 'topbar-noti' },
+  { title: 'DM', desc: '클릭하여 나에게 온 메시지나 요청을 확인하고 다른 사용자 또는 관리자에게 연락할 수 있어요.', anchorKey: 'topbar-dm' },
+  { title: '마이페이지', desc: '내 기획사를 관리할 수 있는 페이지로 이동할 수 있어요.', anchorKey: 'topbar-mypage' },
 ];
 
 // v3.207 ②: 신곡 탭 발매일 footer — created_at 상대 표기(서버 무수정, 필드 없으면 미표기)
@@ -102,6 +114,9 @@ export default function ChartScreen() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchSubmitted, setSearchSubmitted] = useState(false);
   const playerStore = usePlayerStore();
+  // v3.213: 차트 탭 스트립 anchor — chipBar 컨테이너 전체 영역(가로 스크롤 무관)
+  const chipBarRef = useRef<View>(null);
+  useEffect(() => () => unregisterAnchor('chart-tabs'), []);
 
   const fetchChart = useCallback(async (tab: ChartTab) => {
     // '내 재생목록' 탭은 로컬 큐(playerStore)를 그대로 노출 — API 호출 없음
@@ -264,8 +279,13 @@ export default function ChartScreen() {
 
   return (
     <ScreenLayout>
-      {/* Spotify식 가로 칩 필터 */}
-      <View style={styles.chipBar}>
+      {/* Spotify식 가로 칩 필터 — v3.213: 탭 스트립 전체가 튜토리얼 anchor */}
+      <View
+        ref={chipBarRef}
+        collapsable={false}
+        onLayout={() => measureAndRegister('chart-tabs', chipBarRef.current)}
+        style={styles.chipBar}
+      >
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
           {TABS.map((tab) => (
             <Tag key={tab.key} label={tab.label} selected={activeTab === tab.key} onPress={() => handleTabPress(tab.key)} />
@@ -408,8 +428,10 @@ export default function ChartScreen() {
           : t))}
       />
 
-      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
-      <TutorialOverlay screenKey="chart" steps={TUTORIAL_STEPS} />
+      {/* v3.204 ⑥ → v3.213: 차트 튜토리얼(비로그인) + 상단바 튜토리얼(로그인) —
+          게이트가 상호 배타라 한 화면에서 두 오버레이가 동시에 뜨는 경우는 없다 */}
+      <TutorialOverlay screenKey="chart" steps={TUTORIAL_STEPS} enabled={!user} />
+      <TutorialOverlay screenKey="topbar" steps={TOPBAR_TUTORIAL_STEPS} enabled={!!user} />
     </ScreenLayout>
   );
 }

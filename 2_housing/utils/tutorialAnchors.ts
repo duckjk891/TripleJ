@@ -6,10 +6,25 @@
 
 export type TutorialAnchorKey =
   | 'chart-row-more' // 차트 첫 행 더보기(⋮)
+  | 'chart-tabs' // v3.213: 차트 탭 스트립(신곡~내 재생목록 chipBar 전체 영역)
   | 'search-input' // 검색 입력바
-  | 'search-row-more' // 검색 결과 첫 행 더보기(⋮)
+  | 'search-row-more' // 검색 결과 첫 행 더보기(⋮) — v3.213 스텝 철회로 미사용(키 존치 무해)
   | 'player-add' // 플레이어 담기 버튼
-  | 'feed-compose'; // 피드 글쓰기 Fab
+  | 'feed-compose' // 피드 글쓰기 Fab
+  // v3.213: 작업실 6스텝 — 디렉터 5종(맵 좌표 140×140 박스) + 생성 이력 고정 버튼
+  | 'map-artist'
+  | 'map-lyricist'
+  | 'map-composer'
+  | 'map-image'
+  | 'map-video'
+  | 'map-history'
+  // v3.213: 상단바 6스텝 — HomeHeaderActions 아이콘(차트 탭 헤더 인스턴스만 등록)
+  | 'topbar-star'
+  | 'topbar-attendance'
+  | 'topbar-invite'
+  | 'topbar-noti'
+  | 'topbar-dm'
+  | 'topbar-mypage';
 
 export interface AnchorRect {
   x: number;

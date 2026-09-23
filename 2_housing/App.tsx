@@ -274,13 +274,14 @@ const BackIcon = ({ navigation }: any) => (
 );
 
 // 홈(차트) 헤더: 좌 로고 + 우 (출석체크·추천하기·마이페이지)
+// v3.213: 상단바 튜토리얼 anchor는 차트 탭 헤더 인스턴스만 등록(다중 마운트 stale 좌표 방지)
 const homeHeader = (navigation: any) => ({
   headerShown: true,
   headerTitle: () => <LogoTitle />,
   headerTitleAlign: 'left' as const,
   headerStyle: { backgroundColor: colors.bg.deepest },
   headerTintColor: colors.text.primary,
-  headerRight: () => <HomeHeaderActions navigation={navigation} />,
+  headerRight: () => <HomeHeaderActions navigation={navigation} registerTutorialAnchors />,
 });
 
 // v3.75: 탭 헤더 = 좌측 페이지명 텍스트 + 우측은 차트와 동일한 액션(HomeHeaderActions).

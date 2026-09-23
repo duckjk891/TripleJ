@@ -4332,3 +4332,119 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 4. (참고) Play 내부 테스트 링크는 테스터 등록 계정만 접근 가능 — 비테스터 수신자는 웹 버튼 경로가 실질 진입로임을 전제로 iOS 외 안내문구도 중립 유지.
 
 ---
+
+## v3.213 (2026-09-23) — 튜토리얼 전면 재설계: 사용자 확정 문안 6영역·반투명 하이라이트 비주얼·리뷰 모드(상시 노출→검수 후 first-run 복귀)
+
+> 작성: planner(팀 리드, maidol-dev). 사용자가 6개 화면 스펙을 직접 확정 — 문안은 원문 그대로 사용(명백 오탈자만 별도 교정 제안). 핵심 3요청: ① 영역 표시를 테두리 박스가 아닌 **세련된 반투명 박스**로 ② 이번 빌드는 **계속 노출**(사용자 검수용) ③ 검수 후 사용자 지시 시 "최초 접속·가입 후 최초 사용"만 노출로 복귀.
+> 전제: v3.211까지 구축된 인프라(TutorialOverlay 스포트라이트·tutorialAnchors registry·tutorialGate first-run) 재사용·확장. 서버 무관(프론트 전용).
+
+### Plan verification findings (파일:라인 실측)
+
+**F1. 기존 인프라 재검증 — 전부 생존, 확장 지점 확정**
+- `components/TutorialOverlay.tsx`(345줄): 4분할 딤(rgba 0,0,0,0.6 :53,:205-210) + 구멍 테두리(`holeBorder` :286-291, borderWidth 2 + accent 보라 — 사용자가 지적한 "테두리 박스" 스타일) + Feather 화살표(:220-233) + 근접 카드(:234-245), anchor 미등록 시 하단 카드 fallback(:248-256). 자동 노출 = 마운트 1회 useEffect(:77-97)에서 `initTutorialGate()==='fresh'` && seen 미기록. **enabled(로그인 게이팅) prop·스텝 변경 콜백·포커스 재노출 없음** — 이번에 추가.
+- `utils/tutorialAnchors.ts`: 키 5종 union(:7-12 — chart-row-more/search-input/search-row-more/player-add/feed-compose), `measureAndRegister` 헬퍼(:65-76), 늦은 등록 구독 지원. 키 확장만으로 재사용 가능.
+- `utils/tutorialGate.ts`: `maidol_first_run_v1` 마커 + getAllKeys 판별(:27-71), `TUTORIAL_SCREEN_KEYS = ['player','chart','feed','playlist','search','map']`(:19). 플래그 스위치를 이 파일에 두면 오버레이·게이트 단일 출처 유지.
+- 현행 오버레이 사용처 6곳: Chart :412 / Feed :420 / Search :314 / Playlist :321 / Map :735 / Player :1490. **현행은 전부 로그인 여부 무관 노출** — 이번에 화면별 게이팅 도입.
+
+**F2. 차트 (screens/ChartScreen.tsx)**
+- 탭 스트립: `TABS` 6종(:70-78, 신곡→TOP 100→일간→주간→월간→내 재생목록) → chipBar View(:268) 내부 가로 ScrollView + Tag 칩. **"신곡~내 재생목록" 전체 영역 = chipBar View에 ref+onLayout로 anchor 등록**(가로 스크롤 무관 — 스트립 컨테이너 자체가 대상, 스텝 문안도 영역 단위).
+- ⋮ anchor: TrackRow `moreAnchorKey={index===0 ? 'chart-row-more' : undefined}`(:260) 기구축 — 그대로 재사용. 첫 행이 리스트 로딩 후 등록되는 늦은 등록도 구독으로 처리됨(기검증).
+- 기존 스텝 3종(:28-32)은 v3.207 산물 — 사용자 문안 2스텝으로 교체.
+
+**F3. 피드·검색 (FeedScreen/SearchScreen)**
+- 피드 Fab anchor 'feed-compose' 기구축(:113-135 — Fab 내부 아이콘 측정→지름 56 확장, 비로그인·미니플레이어 시 해제). 사용자 스텝 1종으로 교체(:27-31). 피드=로그인 시 표시는 anchor 해제 조건과 정합(비로그인이면 어차피 오버레이 자체를 게이팅).
+- 검색바 anchor 'search-input' 기구축(:226 onLayout). 사용자 스텝 1종으로 축소 — 2스텝(search-row-more, :28·:191) 사용 철회.
+
+**F4. 작업실 (screens/MapScreen.tsx) — 이번 사이클 최대 신규 공정**
+- 디렉터 5종 위치 = `DIRECTORS`(:92-98, 맵 좌표 x:208 고정·y:340/660/980/1300/1620) → ScrollView(:506) 내 `mapScale = screenW/704`(:208) 스케일 렌더. 캐릭터 주변 박스 근거: isNext 펄스가 `(d.x±70, d.y±70)*mapScale` 140×140 박스 사용(:536-543) — anchor 박스도 동일 좌표계로 산출 가능.
+- **스크롤 문제**: displayHeight ≈ 2208×scale(폭 390 기준 ≈1224px)로 이미지(₄)·영상(₅) 디렉터는 첫 화면 밖(y스케일 ≈720·898) → measureInWindow가 화면 밖 rect를 반환하면 validAnchor 검사(:142-151)에서 탈락해 카드 fallback으로 강등. **해결: 스텝 전환 시 MapScreen이 해당 디렉터로 자동 스크롤 후 재측정** — TutorialOverlay에 `onStepChange(index)` 콜백 prop 신설, MapScreen이 scrollRef.scrollTo({y: 대상y*scale − 화면높이*0.45, animated:true}) 후 ~350ms 뒤 anchor 재등록(맵 좌표 기지라 measure 대신 스크롤오프셋 기반 직접 계산도 가능 — 구현 시 단순한 쪽 선택, 계산식: winY = 대상맵y*scale − scrollY + ScrollView 화면 오프셋).
+- 생성 이력 = 맵 우상단 **고정 오버레이 버튼**(:618-628, styles :749-760, position absolute top:10 right:12, 로그인 시만 렌더) — 스크롤 무관, ref+onLayout 등록.
+- 기존 4스텝(:56-62, "빛나는 디렉터…" 등)은 전량 교체. 작업실은 비로그인 시 guestTouchOverlay(:634)로 잠김 — 로그인 게이팅과 정합.
+
+**F5. 상단바 (components/HomeHeaderActions.tsx + App.tsx)**
+- 아이콘 6종 전부 실존·순서도 사용자 스펙과 일치: 스타 배지(:63-74)→출석체크(:75-77)→추천/친구초대(:78-80)→알림(:82-92)→DM(:94-104)→마이페이지(:107-109). 앞 5종은 `user` 조건부(:60), 마이페이지는 상시.
+- **호스트 화면 문제**: HomeHeaderActions는 네비 헤더 headerRight로 **여러 탭 헤더에 다중 마운트**(App.tsx chartHeader :283, titleHeader :294 등) — 동일 anchor 키를 여러 인스턴스가 등록하면 비활성 탭 헤더의 stale 좌표가 이길 수 있음. **해결: `registerTutorialAnchors?: boolean` prop을 추가하고 차트 탭 헤더(chartHeader :283)에서만 true 전달** — 상단바 튜토리얼은 차트 화면에서만 노출하므로 충분. 아이콘에 ref+onLayout만 부착(스타일 무변경 → 헤더 레이아웃 무영향).
+- 상단바 튜토리얼 호스트 = ChartScreen에 **두 번째 TutorialOverlay**(screenKey 'topbar', enabled=로그인) 추가. 헤더 아이콘은 화면 최상단 → placement 자동 'below'(:196-197)로 카드가 아래 배치, 화살표 arrow-up — 기존 로직 그대로 동작. Modal statusBarTranslucent(:264)라 measureInWindow 창 좌표와 일치(v3.207 기검증).
+
+**F6. 노출 게이트 현행과 격차**
+- 현행: first-run 'fresh' 판정 시 화면별 1회, 로그인 여부 무관. 목표(검수 후): 화면별 1회 + **로그인 상태 게이팅**(차트=비로그인, 피드·검색·작업실·상단바=로그인). 이번 빌드: **게이트·seen 무시하고 화면 포커스마다 노출**(로그인 게이팅은 리뷰 모드에서도 적용 — 사용자가 상태별로 검수 가능해야 함).
+- "화면 진입마다"의 구현: 탭 화면은 언마운트되지 않으므로 마운트 1회 useEffect로는 재진입 미노출 → TutorialOverlay에 `useIsFocused()`(@react-navigation/native — 이미 의존) 도입, 리뷰 모드일 때 포커스 획득마다 show().
+
+### 확정 스펙 — 화면별 스텝 표 (문안 = 사용자 원문 그대로)
+
+| # | 화면(screenKey) | 노출 조건 | 스텝 | 타이틀(제안) | 문안(원문 그대로) | anchor 키 | 타겟 (파일:라인) |
+|---|---|---|---|---|---|---|---|
+| 1 | 차트(chart) | **비로그인** | 1/2 | 신곡·차트 탭 | 최신 발매된 곡이나 인기곡을 탭하여 확인해보세요. | `chart-tabs`(신규) | ChartScreen.tsx:268 chipBar |
+| | | | 2/2 | 곡 더보기 | 클릭하여 재생목록에 추가하거나 플레이리스트에 담아보세요. | `chart-row-more`(기존) | TrackRow ⋮ (ChartScreen.tsx:260) |
+| 2 | 플레이리스트 | — | **튜토리얼 없음** — 오버레이·스텝 제거 | | | | PlaylistScreen.tsx:29,:321 삭제 |
+| 3 | 피드(feed) | 로그인 | 1/1 | 피드 작성 | 클릭하여 피드를 작성하거나 다른 사용자의 피드 및 공지사항을 확인할 수 있어요. | `feed-compose`(기존) | FeedScreen.tsx:113-135 Fab |
+| 4 | 검색(search) | 로그인 | 1/1 | 곡 검색 | 검색하여 나에게 딱 맞는 곡을 찾아보세요. | `search-input`(기존) | SearchScreen.tsx:226 검색바 |
+| 5 | 작업실(map) | 로그인 | 1/6 | 아티스트 디렉터 | 클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요. | `map-artist`(신규) | MapScreen.tsx:92 (y=340) |
+| | | | 2/6 | 작사 디렉터 | 클릭하여 가사를 작사할 수 있어요. | `map-lyricist`(신규) | :93 (y=660) |
+| | | | 3/6 | 작곡 디렉터 | 클릭하여 나만의 음악을 만들어요. | `map-composer`(신규) | :94 (y=980) |
+| | | | 4/6 | 이미지 디렉터 | 클릭하여 내 곡의 커버 이미지를 만들어요. | `map-image`(신규) | :95 (y=1300, 자동 스크롤) |
+| | | | 5/6 | 영상 디렉터 | 클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요. | `map-video`(신규) | :96 (y=1620, 자동 스크롤) |
+| | | | 6/6 | 생성이력 | 작업실에서 작업했던 과정을 확인할 수 있어요. | `map-history`(신규) | MapScreen.tsx:618-628 버튼 |
+| 6 | 상단바(topbar) | 로그인 (차트 화면 호스트) | 1/6 | 스타 | 클릭하여 잔여 스타와 스타 받는 방법을 확인 할 수 있어요. | `topbar-star`(신규) | HomeHeaderActions.tsx:63-74 |
+| | | | 2/6 | 출석체크 | 클릭하여 출석체크하고 스타를 받아보세요. | `topbar-attendance`(신규) | :75-77 |
+| | | | 3/6 | 추천 | 클릭하여 친구에게 초대링크를 보내고 스타를 받아보세요. | `topbar-invite`(신규) | :78-80 |
+| | | | 4/6 | 알림 | 클릭하여 새 피드나 공지를 확인해보세요. | `topbar-noti`(신규) | :82-92 |
+| | | | 5/6 | DM | 클릭하여 나에게 온 메세지나 요청을 확인하고 다른 사용자 또는 관리자에게 연락 할 수 있어요. | `topbar-dm`(신규) | :94-104 |
+| | | | 6/6 | 마이페이지 | 내 기획사를 관리할 수 있는 페이지로 이동할 수 있어요. | `topbar-mypage`(신규) | :107-109 |
+
+- 캐러셀 전환 UX: **기존 관행 유지** — 도트 인디케이터 + [건너뛰기]/[다음(마지막 스텝은 시작하기)] 버튼(TutorialOverlay :162-180). 스와이프 미도입(기존에도 없음 — 6스텝도 동일 패턴, 과설계 배제).
+- 오탈자 교정 제안(원문과 별도 — 사용자 승인 시에만 반영): ① "확인 할 수 있어요" → "확인할 수 있어요"(상단바 스타·DM 2건, 띄어쓰기) ② "메세지" → "메시지"(DM). "Youtube" 표기는 원문 유지(고유명사 관용). 그 외 문안 일체 무수정.
+
+### 해석 확정 (스펙 모호 지점 — PLAN 명시)
+1. **차트 "비로그인 시 표시"**: 차트 튜토리얼은 `enabled = !user`. 로그인 사용자가 차트 진입 시 차트 튜토리얼은 미노출하고 대신 **상단바 튜토리얼(로그인 시)**이 차트 화면에서 노출 — 한 화면에서 두 오버레이가 동시에 뜨는 경우는 구조적으로 없음(게이트가 상호 배타). 최종(first-run) 모드 시나리오: 신규 설치 → 비로그인 차트 진입(차트 튜토리얼) → 가입 → 차트 복귀 시 상단바 튜토리얼(seen 키가 chart/topbar로 분리라 자연 성립). 비로그인에게 보이는 유일한 튜토리얼 = 차트.
+2. **플레이어(player) 튜토리얼**: 사용자 스펙 6영역에 미포함(플레이리스트처럼 "없음"으로 명시되지도 않음) → **기존 3스텝 존치**(무변경, 리뷰 모드 플래그만 공통 적용). 제거 원하시면 지시 1줄로 처리 — 사용자 결정 사안 ②.
+3. 피드 문안이 Fab 1개 스텝에 "작성+확인"을 함께 설명 — 스텝 분리 없이 원문 그대로 1스텝(사용자 구성 존중).
+
+### 반투명 하이라이트 비주얼 스펙 (테두리 박스 → 반투명 박스)
+현행 구멍(4분할 딤) 구조는 유지하되(대상이 원본 밝기로 보이는 장점), **구멍 위에 보라 틴트 반투명 박스를 얹고 테두리를 최소화**한다. `holeBorder` 스타일 대체 — 구체 수치(theme 토큰 기반):
+- 딤: `rgba(13, 8, 32, 0.68)` — 순흑 0.6 대신 `colors.bg.deepest`(#0d0820) 틴트로 브랜드 톤 정렬 (`DIM_COLOR` :53 교체).
+- 하이라이트 박스(구멍 rect 위, pointerEvents none): `backgroundColor: 'rgba(168, 85, 247, 0.16)'`(= `colors.accent.primary` #a855f7 @16%), `borderRadius: radius.lg`(12), `borderWidth: StyleSheet.hairlineWidth`, `borderColor: 'rgba(192, 132, 252, 0.45)'`(= `colors.accent.primaryGlow` @45% — "테두리 최소화": 2px 실선 → 헤어라인 글로우 톤).
+- 소프트 글로우: `shadowColor: colors.accent.primary, shadowOpacity: 0.9, shadowRadius: 16, shadowOffset: {0,0}` (iOS/웹). **Android 한계**: elevation은 글로우 표현 불가 → 틴트+헤어라인만으로 성립하는 디자인(글로우는 enhancement). 웹(Expo Web) boxShadow 정상.
+- `HOLE_PAD` 8 유지, 화살표(accent.primary)·근접 카드 유지 — 상단바 18px 아이콘처럼 작은 대상은 패드 포함 ≈34px 박스라 화살표 지시가 여전히 유효.
+- 참고 선례: MapScreen isNext 펄스(:544-551)가 이미 `rgba(168,85,247,0.28)`+글로우 — 동일 계열로 앱 내 시각 언어 통일.
+
+### 리뷰 모드 플래그 설계 (전환 = 1줄)
+- `utils/tutorialGate.ts`에 `export const TUTORIAL_REVIEW_MODE = true;` 신설(파일 상단, 주석으로 복귀 절차 명기). **이 상수 한 곳이 유일한 스위치.**
+- TutorialOverlay 동작 분기: REVIEW_MODE=true → initTutorialGate·seen 키 검사 생략, `useIsFocused` 포커스 획득마다 show() (enabled=false면 리뷰 모드에서도 미노출 — 로그인 게이팅은 항상 유효). seen 키 기록은 유지(무해·복귀 후 상태 오염 없음… 단 검수 중 기록된 seen이 복귀 후 노출을 막으므로 **복귀 시점에 사용자 기기는 이미 'existing' 판정이라 어차피 미노출 — 오염 아님**, 신규 설치엔 무영향).
+- REVIEW_MODE=false → v3.211 정책 완전 복귀: 'fresh'(신규 설치)만 + 화면·상태별 1회. **가입 후 최초 사용 요건은 로그인 게이팅과 first-run의 결합으로 자연 충족**(로그인 전엔 enabled=false라 seen 미소모 → 가입 후 첫 진입에 노출).
+- `TUTORIAL_SCREEN_KEYS`(tutorialGate :19) 갱신: 'playlist' 제거, **'topbar' 추가** → 기존 유저 마이그레이션 선기록이 새 키까지 차단.
+
+### 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| components/TutorialOverlay.tsx | 반투명 하이라이트 스타일 교체(딤·박스·글로우), `enabled?`·`onStepChange?` prop, 리뷰 모드 분기+useIsFocused 재노출 | app-dev | `[TutorialOverlay]` |
+| utils/tutorialGate.ts | `TUTORIAL_REVIEW_MODE` 플래그, SCREEN_KEYS 갱신(playlist→topbar) | app-dev | `[TutorialGate]` |
+| utils/tutorialAnchors.ts | anchor 키 +13종(chart-tabs, map-* 6, topbar-* 6) — search-row-more는 미사용화(키 존치 무해, 정리 가능) | app-dev | `[Tutorial]` |
+| screens/ChartScreen.tsx | 스텝 2종 교체, chipBar anchor 등록, enabled=!user, **topbar 오버레이 2호 추가**(enabled=!!user) | app-dev | `[ChartScreen]` |
+| components/HomeHeaderActions.tsx | `registerTutorialAnchors` prop + 아이콘 6종 ref/onLayout 등록(스타일 무변경) | app-dev | `[HomeHeaderActions]` |
+| App.tsx | chartHeader(:283)의 HomeHeaderActions에만 registerTutorialAnchors 전달 | app-dev | — |
+| screens/FeedScreen.tsx | 스텝 1종 교체(3→1), enabled=!!user | app-dev | `[FeedScreen]` |
+| screens/SearchScreen.tsx | 스텝 1종 교체(2→1, search-row-more 사용 철회 :191), enabled=!!user | app-dev | `[SearchScreen]` |
+| screens/PlaylistScreen.tsx | 튜토리얼 완전 제거(:29 스텝·:321 오버레이·import) | app-dev | `[PlaylistScreen]` |
+| screens/MapScreen.tsx | 6스텝 교체, 디렉터 anchor 5종(140×140·mapScale 박스)+생성이력 anchor, scrollRef+onStepChange 자동 스크롤·재측정, enabled=!!user | app-dev | `[MapScreen]` |
+| screens/PlayerScreen.tsx | 무변경(스펙 범위 밖 — 결정 사안 ②) | — | — |
+
+### 40% 룰 판정
+10파일이나 전부 튜토리얼 오버레이 계층 한정 — 화면 비즈니스 로직·API·store 무변경, 신규 공정은 MapScreen 자동 스크롤 연동 1건. v3.207(동일 계층 개편+12항목)보다 좁은 범위 — **초과 아님(가결)**. 이월 후보: 오탈자 교정(사용자 승인 대기), search-row-more/player 스텝 정리(결정 사안).
+
+### test-designer 테스트 항목
+1. [unit] tutorialGate: REVIEW_MODE=true 분기(게이트·seen 무시), false 시 v3.211 동작 회귀(fresh/existing/미확정 3분기), SCREEN_KEYS에 topbar 포함·playlist 부재.
+2. [unit] tutorialAnchors: 신규 13키 등록/해제/구독, 0-rect 무시 회귀.
+3. [e2e(web)] 비로그인: 차트 진입 → 차트 2스텝(탭 스트립 하이라이트 → 첫 행 ⋮), 플레이리스트·피드·검색 진입 시 튜토리얼 **없음**(피드·검색은 로그인 게이트, 플레이리스트는 제거), 작업실은 게스트 잠금+튜토리얼 없음.
+4. [e2e(web)] 로그인: 차트 진입 → **차트 튜토리얼 미노출·상단바 6스텝 노출**(아이콘별 하이라이트 이동), 피드 1스텝(Fab), 검색 1스텝(검색바), 작업실 6스텝 — 4·5스텝에서 **자동 스크롤로 이미지·영상 디렉터가 스포트라이트**(카드 fallback 아님을 rect로 검증), 6스텝 생성이력 버튼.
+5. [e2e(web)] 리뷰 모드 상시성: 동일 화면 이탈→재진입 시 매번 재노출(탭 왕복), 건너뛰기 후에도 재진입 시 노출.
+6. [e2e(web)] 비주얼: 하이라이트가 반투명 보라 틴트+헤어라인(2px 실선 테두리 부재), 딤 색 rgba(13,8,32,0.68), 문안이 사용자 원문과 바이트 일치(오탈자 포함).
+7. [회귀] 헤더 레이아웃 무변화(아이콘 위치·배지), 차트 탭 전환·재생·⋮ 시트, 피드 Fab 동작, 맵 디렉터 탭·생성이력 진입, 플레이리스트 화면 정상(제거 후 잔존 참조 0), 플레이어 기존 3스텝 존치.
+8. [회귀] REVIEW_MODE=false로 뒤집은 빌드에서: 기존 유저(스토리지 有) 전 화면 미노출, 클린 스토리지 신규 설치 시 화면·상태별 1회.
+
+### 사용자 결정 필요 사안
+1. **오탈자 교정 2건 수용 여부** — "확인 할"→"확인할"(2곳), "메세지"→"메시지". 미승인 시 원문 그대로 유지(기본값).
+2. **플레이어(지금 재생 화면) 튜토리얼** — 스펙 6영역 밖이라 기존 3스텝 존치가 기본안. 제거/재작성 원하시면 지시 필요.
+3. (예고된 후속) 검수 완료 후 "최초 접속·가입 후 최초 사용만" 복귀는 `TUTORIAL_REVIEW_MODE=false` 1줄 — 사용자 지시 시 즉시 처리.
+
+---

@@ -1,5 +1,8 @@
 // [HomeHeaderActions] 홈(차트) 상단 우측 — 로그인 시 별 배지·출석체크·친구초대·DM(봉투+미읽음), 항상 마이페이지.
-import { useEffect, useState } from 'react';
+// v3.213: registerTutorialAnchors prop — 차트 탭 헤더 인스턴스만 상단바 튜토리얼 anchor 6종을
+// 등록한다(여러 탭 헤더에 다중 마운트되므로 비활성 인스턴스의 stale 좌표 등록을 차단).
+// 아이콘에는 ref+onLayout만 부착 — 스타일·레이아웃 무변경.
+import { useEffect, useRef, useState } from 'react';
 import { View, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../stores/authStore';
@@ -10,8 +13,21 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import api from '../services/api';
 import { dmSocketConnect, dmSocketDisconnect, dmSocketSubscribe } from '../services/dmSocket';
+import { TutorialAnchorKey, measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 
-export default function HomeHeaderActions({ navigation }: { navigation: any }) {
+// v3.213: 상단바 튜토리얼 anchor 키 — 마이페이지 외 5종은 로그인 시에만 마운트
+const TOPBAR_ANCHOR_KEYS: TutorialAnchorKey[] = [
+  'topbar-star', 'topbar-attendance', 'topbar-invite', 'topbar-noti', 'topbar-dm', 'topbar-mypage',
+];
+
+export default function HomeHeaderActions({
+  navigation,
+  registerTutorialAnchors,
+}: {
+  navigation: any;
+  /** v3.213: 상단바 튜토리얼 anchor 등록 — 차트 탭 헤더에서만 true */
+  registerTutorialAnchors?: boolean;
+}) {
   const { user } = useAuthStore();
   const openAttendance = useUiStore((s) => s.openAttendance);
   const openInvite = useUiStore((s) => s.openInvite);
@@ -55,12 +71,33 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
     return () => { alive = false; clearInterval(t); unsub(); if (!useAuthStore.getState().user) dmSocketDisconnect(); };
   }, [user]);
 
+  // v3.213: 상단바 튜토리얼 anchor — 차트 탭 헤더 인스턴스만 등록(ref+onLayout, 스타일 무변경)
+  const anchorNodes = useRef<Partial<Record<TutorialAnchorKey, any>>>({});
+  const anchorRef = (key: TutorialAnchorKey) => (node: any) => {
+    anchorNodes.current[key] = node;
+  };
+  const anchorLayout = (key: TutorialAnchorKey) => () => {
+    if (registerTutorialAnchors) measureAndRegister(key, anchorNodes.current[key]);
+  };
+  // 언마운트 시 전체 해제 — 다른 화면에서 stale 좌표가 남지 않게
+  useEffect(() => {
+    if (!registerTutorialAnchors) return;
+    return () => TOPBAR_ANCHOR_KEYS.forEach(unregisterAnchor);
+  }, [registerTutorialAnchors]);
+  // 로그아웃 시 로그인 전용 아이콘 5종 anchor 해제(마이페이지는 상시 마운트)
+  useEffect(() => {
+    if (registerTutorialAnchors && !user)
+      TOPBAR_ANCHOR_KEYS.filter((k) => k !== 'topbar-mypage').forEach(unregisterAnchor);
+  }, [registerTutorialAnchors, user]);
+
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
       {user ? (
         <>
           {/* 별 배지 — 클릭 시 별 안내(모으는/쓰는 법) 팝업 */}
           <TouchableOpacity
+            ref={anchorRef('topbar-star')}
+            onLayout={anchorLayout('topbar-star')}
             onPress={openStarGuide}
             accessibilityLabel="스타 안내"
             style={{
@@ -72,14 +109,14 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
             <AppText variant="footnote">⭐</AppText>
             <AppText variant="footnote" tone="accent">{balance ?? 0}</AppText>
           </TouchableOpacity>
-          <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크">
+          <TouchableOpacity ref={anchorRef('topbar-attendance')} onLayout={anchorLayout('topbar-attendance')} onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크">
             <Feather name="calendar" size={18} color={colors.text.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대">
+          <TouchableOpacity ref={anchorRef('topbar-invite')} onLayout={anchorLayout('topbar-invite')} onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대">
             <Feather name="share" size={18} color={colors.text.primary} />
           </TouchableOpacity>
           {/* 알림(벨) — v192 인앱 알림함 */}
-          <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={{ paddingHorizontal: 6 }} accessibilityLabel="알림">
+          <TouchableOpacity ref={anchorRef('topbar-noti')} onLayout={anchorLayout('topbar-noti')} onPress={() => navigation.navigate('Notifications')} style={{ paddingHorizontal: 6 }} accessibilityLabel="알림">
             <Feather name="bell" size={18} color={colors.text.primary} />
             {notiUnread > 0 ? (
               <View style={{
@@ -91,7 +128,7 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
             ) : null}
           </TouchableOpacity>
           {/* DM(메시지) — MAIDOL 봉투 아이콘 위치 대응 */}
-          <TouchableOpacity onPress={() => navigation.navigate('DmInbox')} style={{ paddingHorizontal: 6 }} accessibilityLabel="메시지">
+          <TouchableOpacity ref={anchorRef('topbar-dm')} onLayout={anchorLayout('topbar-dm')} onPress={() => navigation.navigate('DmInbox')} style={{ paddingHorizontal: 6 }} accessibilityLabel="메시지">
             <Feather name="mail" size={18} color={colors.text.primary} />
             {dmUnread > 0 ? (
               <View style={{
@@ -104,7 +141,7 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
           </TouchableOpacity>
         </>
       ) : null}
-      <TouchableOpacity onPress={() => navigation.navigate('MyMusic')} style={{ paddingHorizontal: 6 }} accessibilityLabel="마이페이지">
+      <TouchableOpacity ref={anchorRef('topbar-mypage')} onLayout={anchorLayout('topbar-mypage')} onPress={() => navigation.navigate('MyMusic')} style={{ paddingHorizontal: 6 }} accessibilityLabel="마이페이지">
         <Feather name="user" size={20} color={colors.text.primary} />
       </TouchableOpacity>
     </View>

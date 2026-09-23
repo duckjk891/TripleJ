@@ -21,11 +21,10 @@ import { useLikesStore } from '../stores/likesStore';
 // v3.207 ①: 코치마크 anchor — 검색바 스포트라이트(결과 ⋮는 TrackRow prop 경유)
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 
-// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-// v3.207 ①: 스텝별 anchor — 1스텝 검색바(상시 존재), 2스텝 결과 첫 행 ⋮(검색 전엔 미등록 → 카드 fallback)
+// v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(검색바) — 로그인 시에만 노출(enabled=!!user).
+// search-row-more 스텝은 v3.213에서 사용 철회.
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '곡 찾기', desc: '제목·아티스트·태그로 검색하거나, 느낌 칩을 골라 어울리는 곡을 찾아보세요.', anchorKey: 'search-input', placement: 'below' },
-  { title: '탭해서 재생', desc: '검색 결과를 탭하면 바로 재생돼요. 더보기(⋮)로 담을 수도 있어요.', anchorKey: 'search-row-more' },
+  { title: '곡 검색', desc: '검색하여 나에게 딱 맞는 곡을 찾아보세요.', anchorKey: 'search-input', placement: 'below' },
 ];
 
 interface Track {
@@ -181,14 +180,13 @@ export default function SearchScreen() {
   };
 
   // 행 디자인은 차트와 동일한 공용 TrackRow — 순위 개념이 없어 좌측 순번은 비운다
-  const renderTrack = ({ item, index }: { item: Track; index: number }) => (
+  // (v3.213: search-row-more anchor 등록 철회 — 해당 스텝 폐지)
+  const renderTrack = ({ item }: { item: Track }) => (
     <TrackRow
       track={item}
       liked={!!likedMap[item.id]}
       onPress={() => handlePress(item)}
       onMore={() => setActionTrack(item)}
-      // v3.207 ①: 튜토리얼 '더보기(⋮)' 스포트라이트 — 결과 첫 행만 anchor 등록
-      moreAnchorKey={index === 0 ? 'search-row-more' : undefined}
     />
   );
 
@@ -310,8 +308,8 @@ export default function SearchScreen() {
           : t))}
       />
 
-      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
-      <TutorialOverlay screenKey="search" steps={TUTORIAL_STEPS} />
+      {/* v3.204 ⑥ → v3.213: 검색 튜토리얼 — 로그인 시에만(검색이 로그인 게이트라 정합) */}
+      <TutorialOverlay screenKey="search" steps={TUTORIAL_STEPS} enabled={!!user} />
     </ScreenLayout>
   );
 }

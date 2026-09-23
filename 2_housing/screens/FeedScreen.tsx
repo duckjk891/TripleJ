@@ -22,12 +22,9 @@ import { useLikesStore } from '../stores/likesStore';
 // v3.207 ①: 코치마크 anchor — 글쓰기 Fab 스포트라이트(비로그인·Fab 숨김 시 미등록 → 카드 fallback)
 import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 
-// v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-// v3.207 ①: '내 곡 공유' 스텝에 글쓰기 Fab anchor
+// v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '소식 둘러보기', desc: '피드에서 다른 기획사와 아티스트의 새 소식을 볼 수 있어요.' },
-  { title: '내 곡 공유', desc: '오른쪽 아래 버튼으로 내 곡과 소식을 피드에 올려보세요.', anchorKey: 'feed-compose' },
-  { title: '반응하기', desc: '마음에 드는 소식에는 좋아요와 댓글로 반응할 수 있어요.' },
+  { title: '피드 작성', desc: '클릭하여 피드를 작성하거나 다른 사용자의 피드 및 공지사항을 확인할 수 있어요.', anchorKey: 'feed-compose' },
 ];
 
 // Fab(components/Fab.tsx)의 고정 지름 — anchor rect를 아이콘 중심에서 버튼 크기로 확장할 때 사용
@@ -416,8 +413,8 @@ export default function FeedScreen() {
         </TouchableOpacity>
       ) : null}
 
-      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
-      <TutorialOverlay screenKey="feed" steps={TUTORIAL_STEPS} />
+      {/* v3.204 ⑥ → v3.213: 피드 튜토리얼 — 로그인 시에만(Fab 렌더 조건과 정합) */}
+      <TutorialOverlay screenKey="feed" steps={TUTORIAL_STEPS} enabled={!!user} />
     </ScreenLayout>
   );
 }

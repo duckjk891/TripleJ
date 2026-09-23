@@ -2890,3 +2890,86 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1(옵션 2개·신규 멘트·신규 OG 카드)·E-2(Android/iOS 권장 버튼 분기)가 사용자 요청 직결 완료 조건.
 - **핵심 FAIL 게이트**: ① **S-2 ②/E-1 ③**(OG 이미지 AIDOL 잔존) ② **S-1 ⑤/A-3 ①**(보상·JSON API 회귀) ③ **U-1/E-1 ①**(공유 옵션 2개 초과 잔존) ④ **U-4 ②/E-3 ①②**(직전 사이클 회귀 — diff 격리·피드 탭·백그라운드 재생) — 추가: U-2(멘트 확정본 불일치·AIDOL 노출)·A-1 ③(구 Play 플레이스홀더 잔존). 1건이라도 FAIL이면 해당 트랙 커밋·배포·출고 금지.
 - 사용자 안내 이관 항목(판정 대상 아님): 카카오 OG 캐시 수동 초기화(기 공유 URL), Play 내부테스트 링크는 테스터 등록 계정 한정, 카카오 SDK 카드 템플릿·beta-event-og.png 정리는 이월.
+
+## v3.213 (2026-09-23) — 튜토리얼 전면 재설계: 6영역 확정 문안·플레이리스트 제거·반투명 하이라이트·TUTORIAL_REVIEW_MODE·anchor 13종·작업실 자동 스크롤·상단바 오버레이 2호
+
+대상: `2_housing/components/TutorialOverlay.tsx`(반투명 하이라이트·enabled/onStepChange prop·리뷰 모드 분기) · `2_housing/utils/tutorialGate.ts`(TUTORIAL_REVIEW_MODE·SCREEN_KEYS) · `2_housing/utils/tutorialAnchors.ts`(anchor 키 +13종) · `2_housing/screens/ChartScreen.tsx`(2스텝 교체·chipBar anchor·topbar 오버레이 2호) · `2_housing/components/HomeHeaderActions.tsx`(registerTutorialAnchors prop) · `2_housing/App.tsx`(chartHeader 한정 전달) · `2_housing/screens/FeedScreen.tsx`·`SearchScreen.tsx`(각 1스텝 교체) · `2_housing/screens/PlaylistScreen.tsx`(튜토리얼 완전 제거) · `2_housing/screens/MapScreen.tsx`(6스텝·anchor 6종·자동 스크롤). 서버 무관(프론트 전용) — [api] 트랙 없음. PlayerScreen은 무변경(기존 3스텝 존치)이 스펙.
+
+**문안 대조 기준(확정본)**: 사용자 원문 스펙에 **교정 2건 반영** — ① 띄어쓰기 붙임("~ 할 수 있어요"→"~할 수 있어요": 상단바 스타·DM 2곳) ② "메세지"→"메시지"(DM). "Youtube" 표기는 원문 유지. 이하 U-1의 14개 문자열이 유일한 대조 기준이며, 원문 그대로(교정 미반영)도 확정본과 다르면 FAIL.
+
+### [unit] 정적 검증 (코드 판독·grep·tsc — 빌드 불요)
+
+**U-1. 6영역 문안 확정본 문자 일치 [unit] — FAIL 게이트**
+- Given: 확정본 14개 스텝 문안(교정 2건 반영). 타이틀은 PLAN 제안(신곡·차트 탭/곡 더보기/피드 작성/곡 검색/아티스트 디렉터/작사 디렉터/작곡 디렉터/이미지 디렉터/영상 디렉터/생성이력/스타/출석체크/추천/알림/DM/마이페이지) 기준, 본문은 아래와 **문자 단위 일치**:
+  - chart 1/2: `최신 발매된 곡이나 인기곡을 탭하여 확인해보세요.` / 2/2: `클릭하여 재생목록에 추가하거나 플레이리스트에 담아보세요.`
+  - feed 1/1: `클릭하여 피드를 작성하거나 다른 사용자의 피드 및 공지사항을 확인할 수 있어요.`
+  - search 1/1: `검색하여 나에게 딱 맞는 곡을 찾아보세요.`
+  - map 1~6: `클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.` / `클릭하여 가사를 작사할 수 있어요.` / `클릭하여 나만의 음악을 만들어요.` / `클릭하여 내 곡의 커버 이미지를 만들어요.` / `클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.` / `작업실에서 작업했던 과정을 확인할 수 있어요.`
+  - topbar 1~6: `클릭하여 잔여 스타와 스타 받는 방법을 확인할 수 있어요.` / `클릭하여 출석체크하고 스타를 받아보세요.` / `클릭하여 친구에게 초대링크를 보내고 스타를 받아보세요.` / `클릭하여 새 피드나 공지를 확인해보세요.` / `클릭하여 나에게 온 메시지나 요청을 확인하고 다른 사용자 또는 관리자에게 연락할 수 있어요.` / `내 기획사를 관리할 수 있는 페이지로 이동할 수 있어요.`
+- When: ① 각 화면 파일의 스텝 배열(desc/body 문자열)을 위 확정본과 diff 0으로 대조 — 줄바꿈·문장부호·"Youtube" 표기 포함. ② 스텝 수 실측: chart 2·feed 1·search 1·map 6·topbar 6(순서도 표와 일치 — map은 아티스트→작사→작곡→이미지→영상→생성이력, topbar는 스타→출석체크→추천→알림→DM→마이페이지). ③ 교정 전 원문 잔재("확인 할 수 있어요"·"연락 할 수 있어요"·"메세지") grep 0건. ④ 노출 문자열 `\bAIDOL\b` 0·이모지 0(브랜딩·팝업 관행). ⑤ v3.207 구 문안("빛나는 디렉터" 등 기존 스텝 텍스트) 잔재 0.
+- Then: ①~⑤ 전부 충족 — **①(확정본 불일치)·③(교정 전 원문 잔재) = FAIL 게이트**.
+
+**U-2. 플레이리스트 튜토리얼 잔재 0 [unit] — FAIL 게이트**
+- Given: PLAN 표 #2 — 플레이리스트는 "튜토리얼 없음", PlaylistScreen.tsx :29 스텝·:321 오버레이·import 전량 삭제.
+- When: ① PlaylistScreen.tsx에서 TutorialOverlay import·JSX·스텝 배열 grep 0건. ② `tutorialGate.ts`의 `TUTORIAL_SCREEN_KEYS`에 `'playlist'` 부재·`'topbar'` 존재 실측(기존 유저 마이그레이션 선기록이 topbar까지 커버하는 구조 확인). ③ `2_housing/` 전체 grep: screenKey `'playlist'`로 TutorialOverlay를 마운트하는 코드 0건, playlist용 seen 키 신규 기록 경로 0건(마이그레이션·과거 키 정리 코드의 문자열 잔존은 판정 제외 — 신규 기록 경로만 검사). ④ 플레이리스트 화면 본기능(목록·재생) 코드에 이번 사이클 hunk가 튜토리얼 제거 외 0.
+- Then: ①~④ 전부 충족 — **①~③(플레이리스트 잔재) = FAIL 게이트**.
+
+**U-3. 게이팅 조건식 — 로그인 상태 상호 배타 [unit] — FAIL 게이트**
+- Given: PLAN 해석 확정 ① — 차트=`enabled = !user`(비로그인 전용), 상단바(차트 화면 호스트 2호 오버레이)·피드·검색·작업실=`enabled = !!user`(로그인 전용). 한 화면에서 두 오버레이 동시 노출은 구조적으로 불가.
+- When: ① ChartScreen: TutorialOverlay 2개 마운트 실측 — 1호(screenKey 'chart') enabled=!user, 2호(screenKey 'topbar') enabled=!!user — **동일 user 상태에서 둘 다 true가 되는 식 불가**(문자 추적). ② FeedScreen·SearchScreen·MapScreen 각 enabled=!!user(또는 등가식) 확인. ③ TutorialOverlay 내부: enabled=false면 리뷰 모드 여부와 무관하게 show 경로 도달 불가(조기 return/조건 가드 문자 추적). ④ 작업실 비로그인 = guestTouchOverlay 잠금과 게이팅 정합(비로그인 시 튜토리얼·잠금 화면 중 잠금만). ⑤ Map anchor(feed-compose 선례처럼) 비로그인 시 topbar/map 신규 anchor가 stale 등록으로 남지 않는지 — 등록 조건 또는 해제 경로 확인.
+- Then: ①~⑤ 전부 충족 — **①·②(게이팅 역전 — 비로그인에 로그인용 노출식 또는 그 역) = FAIL 게이트**.
+
+**U-4. TUTORIAL_REVIEW_MODE 양 경로 — true(상시)·false(v3.211 완전 복귀) [unit] — FAIL 게이트**
+- Given: `tutorialGate.ts` 상단 `export const TUTORIAL_REVIEW_MODE = true;`가 **유일한 스위치**(복귀 절차 주석 포함). 이번 출고 형상은 true.
+- When: ① 플래그 선언 위치·현재값 true·복귀 주석 실측 + `2_housing/` 전체에서 리뷰 모드 판정을 이 상수 외 다른 곳에서 하드코딩한 분기 0건(단일 출처). ② **true 경로**: TutorialOverlay가 initTutorialGate 'fresh' 판정·seen 키 검사를 생략하고 `useIsFocused()` 포커스 획득마다 show() — 문자 추적(마운트 1회 useEffect 의존이 아님을 확인). seen 키 기록은 유지(무해 — PLAN 명기)여도 무방하되 기록이 true 경로의 노출을 막지 않는 구조 확인. ③ **false 경로(1줄 전환 검증)**: 상수만 false로 뒤집은 로컬 형상에서 코드 경로 추적 — initTutorialGate()==='fresh' && seen 미기록 시 1회 노출·seen 기록·재노출 차단, 'existing' 판정 시 전 화면 미노출 — v3.211 동작과 등가(포커스 재노출 경로가 false에서 도달 불가함을 문자 추적). 검증 후 **true로 원복 필수**(출고 형상 = true — 원복 확인을 결과에 기록). ④ false 경로에서도 enabled 게이팅은 동일 적용(로그인 전 enabled=false로 seen 미소모 → 가입 후 첫 진입 노출 — "가입 후 최초 사용" 요건 성립 구조 확인). ⑤ 가능하면 tutorialGate 로직을 node로 격리 실행(AsyncStorage mock)해 fresh/existing/미확정 3분기 + REVIEW_MODE 분기 스모크.
+- Then: ①~⑤ 전부 충족 — **③(false 전환 시 first-run 미복귀 — 1줄 전환이 성립하지 않음) = FAIL 게이트**.
+
+**U-5. anchor 13종 — 등록·해제 쌍·fallback [unit]**
+- Given: 신규 13키 = `chart-tabs` + `map-artist/lyricist/composer/image/video/history`(6) + `topbar-star/attendance/invite/noti/dm/mypage`(6). 기존 재사용 = chart-row-more·feed-compose·search-input. search-row-more는 미사용화(키 존치 무해).
+- When: ① `tutorialAnchors.ts` 키 union에 신규 13종 전부 존재(오타 0 — 스텝 배열의 anchor 키 참조와 문자 일치 교차 대조). ② 등록/해제 쌍: 각 등록 지점(ChartScreen chipBar onLayout, HomeHeaderActions 6종 ref/onLayout, MapScreen 디렉터 5종+생성이력)에 대응하는 해제(unmount cleanup 또는 조건 이탈 시 해제) 경로 존재 — 특히 로그인 상태 변화·화면 언마운트 시 stale 좌표 잔존 여부. ③ HomeHeaderActions 다중 마운트 대책: `registerTutorialAnchors` prop이 App.tsx **chartHeader(:283) 1곳에서만 true** — 전체 grep으로 타 헤더(titleHeader 등) 전달 0건 실측(stale 좌표 경합 차단). ④ anchor 미등록·0-rect 시 하단 카드 fallback 동작 회귀(기존 :248-256 경로 존치). ⑤ MapScreen 디렉터 anchor 박스가 `(d.x±70, d.y±70)*mapScale` 좌표계(isNext 펄스와 동일)로 산출됨 — 계산식 문자 추적. ⑥ HomeHeaderActions 아이콘 6종에 ref/onLayout만 부착·스타일 hunk 0(헤더 레이아웃 무영향).
+- Then: ①~⑥ 전부 충족 — ③(다중 마운트 stale 경합)이 판정 중심.
+
+**U-6. 반투명 하이라이트 스타일 수치 대조 — 구 테두리 박스 잔재 0 [unit] — FAIL 게이트**
+- Given: PLAN 비주얼 스펙 — 4분할 딤 구멍 구조는 유지하되 구 `holeBorder`(borderWidth 2 실선)를 반투명 박스로 대체.
+- When: ① 딤 색 = `rgba(13, 8, 32, 0.68)`(구 `rgba(0,0,0,0.6)` 잔재 0 — DIM_COLOR 교체 실측). ② 하이라이트 박스 수치 대조: backgroundColor `rgba(168, 85, 247, 0.16)` · borderRadius 12(radius.lg) · borderWidth `StyleSheet.hairlineWidth` · borderColor `rgba(192, 132, 252, 0.45)` · pointerEvents none. ③ 글로우: shadowColor accent(#a855f7)·shadowOpacity 0.9·shadowRadius 16·offset {0,0} — Android는 틴트+헤어라인만으로 성립(elevation 글로우 미강제) 확인. ④ **구 컷아웃 테두리 잔재 0**: borderWidth 2(또는 상수 2px) 실선 holeBorder 스타일 grep 0건 — 신 스타일과 병존 시 FAIL. ⑤ HOLE_PAD 8·화살표·근접 카드·placement 자동('below' 포함) 로직 hunk 0(유지). ⑥ 도트 인디케이터+[건너뛰기]/[다음(마지막 시작하기)] 버튼 관행 유지·스와이프 미도입 확인.
+- Then: ①~⑥ 전부 충족 — **②·④(수치 불일치 또는 2px 실선 테두리 잔재 = 사용자 지적 "테두리 박스" 미해소) = FAIL 게이트**.
+
+**U-7. onStepChange 자동 스크롤 배선 (MapScreen) [unit]**
+- Given: PLAN F4 — 이미지(4/6, y=1300)·영상(5/6, y=1620) 디렉터는 첫 화면 밖 → 스텝 전환 시 자동 스크롤 후 anchor 재산출 없이는 카드 fallback으로 강등.
+- When: ① TutorialOverlay에 `onStepChange?(index)` prop 신설·스텝 전환 시 호출 실측(첫 스텝 표시 시점 포함 여부 확인 — 1스텝도 화면 밖일 수 있는 방어). ② MapScreen이 onStepChange에서 대상 디렉터 y 기반 `scrollRef.scrollTo({y: 대상y*scale − 화면높이*0.45, animated:true})` 상당 호출 + 스크롤 후 재측정(~350ms 지연) 또는 스크롤오프셋 기반 직접 계산으로 anchor 갱신 — 두 방식 중 어느 쪽이든 갱신 경로 존재를 문자 추적. ③ 생성이력(6/6)은 고정 오버레이 버튼(스크롤 무관) — 스크롤 로직 미적용 확인. ④ onStepChange 미전달 화면(차트·피드·검색·상단바)에서 undefined 호출 안전(옵셔널 체이닝).
+- Then: ①~④ 전부 충족.
+
+**U-8. tsc exit 0 + diff 격리 [unit] — FAIL 게이트(직전 사이클 회귀)**
+- Given: frontend 자동 push 관례 — 머지 게이트. 변경 매트릭스 = 10파일(TutorialOverlay·tutorialGate·tutorialAnchors·ChartScreen·HomeHeaderActions·App.tsx·FeedScreen·SearchScreen·PlaylistScreen·MapScreen).
+- When: ① `2_housing/`에서 `npx tsc --noEmit` exit 0(기존 에러 존재 시 기준선 대조 증분 0). ② `git diff --stat` 실측: 이번 사이클 hunk가 위 10파일에 한정 — **PlayerScreen.tsx hunk 0**(스펙 범위 밖 — 존치 결정), v3.212 파일군(AppShareModal·AuthPanel)·v3.211 파일군(expo-audio 검증 화면)·v3.210 파일군(피드 탭)에 이번 사이클發 hunk 0, `1_MV_wedding/`·`0_platform_music/` 기존 dirty 무접촉. ③ App.tsx 변경 = chartHeader의 registerTutorialAnchors 전달 1건뿐(타 헤더·네비 옵션 hunk 0). ④ HomeHeaderActions 진입 핸들러(openInvite 등)·배지 로직 hunk 0 — ref/onLayout·prop 추가만.
+- Then: ①~④ 전부 충족 — **②(diff 격리 위반 = 직전 사이클 회귀 유입) = FAIL 게이트**.
+
+### [e2e] 실기기/실빌드 (새 빌드 + TUTORIAL_REVIEW_MODE=true 상태 — 웹 세션은 Playwright 병용 허용, 육안 판정은 스크린샷 채증)
+
+**E-1. 비로그인 차트 — 진입마다 2스텝·반투명 하이라이트 [e2e] — 완료 조건 직결**
+- Given: 새 빌드, 비로그인(로그아웃) 상태. REVIEW_MODE=true이므로 seen 여부 무관.
+- When: ① 차트 진입 → 튜토리얼 1/2: **탭 스트립 전체 영역**(신곡~내 재생목록 chipBar)에 반투명 보라 박스, 문안 U-1 확정본. ② [다음] → 2/2: 첫 행 ⋮에 하이라이트, 문안 일치 → [시작하기] 종료. ③ 다른 탭 갔다가 차트 재진입 → **매번 재노출**(리뷰 모드 상시성) + [건너뛰기] 후 재진입 시에도 노출. ④ 비로그인 상태에서 상단바 6스텝 **미노출**(게이팅 — 차트 화면에서 차트 튜토리얼만). ⑤ 피드·검색 진입 시 튜토리얼 무노출(로그인 게이트), 작업실 = 게스트 잠금 + 튜토리얼 무노출.
+- Then: ①~⑤ 전부 충족 — **④·⑤(게이팅 역전 — 비로그인에 로그인용 노출) = FAIL 게이트**.
+
+**E-2. 로그인 — 상단바 6스텝·피드 1·검색 1·작업실 6(자동 스크롤) [e2e] — 완료 조건 직결**
+- Given: 로그인 상태(테스트 계정 — 실값 산출물 기록 금지).
+- When: ① 차트 진입 → **차트 2스텝 미노출**, 대신 상단바 6스텝 캐러셀: 스타→출석체크→추천→알림→DM→마이페이지 순으로 하이라이트가 헤더 아이콘 위를 이동(작은 아이콘도 화살표+카드 below 배치 정상), 문안 각 확정본 일치. ② 피드 진입 → 1스텝(Fab 하이라이트). ③ 검색 진입 → 1스텝(검색바). ④ 작업실 진입 → 6스텝: 1~3(아티스트·작사·작곡) 첫 화면 내 하이라이트 → **4(이미지)·5(영상) 스텝 전환 시 맵이 자동 스크롤되어 해당 디렉터가 반투명 박스로 스포트라이트**(하단 카드 fallback으로 강등되면 FAIL — 하이라이트 박스가 디렉터 위에 있음을 육안+스크린샷) → 6(생성이력) 우상단 고정 버튼. ⑤ 각 화면 이탈→재진입 시 매번 재노출(리뷰 모드 — 상단바 포함). ⑥ 진행 중 백버튼(Android)·[건너뛰기]로 즉시 닫힘·화면 조작 복귀, 닫은 뒤 앱 크래시·터치 먹통 0.
+- Then: ①~⑥ 전부 충족 — **①(로그인에 차트 튜토리얼 노출 = 게이팅 역전)·④(자동 스크롤 실패로 fallback 강등) = FAIL 게이트**.
+
+**E-3. 플레이리스트 무노출·플레이어 3스텝 회귀 [e2e]**
+- When: ① 플레이리스트 화면 진입(로그인·비로그인 각 1회) → 튜토리얼 **무노출**·화면 본기능(목록·재생) 정상. ② 플레이어(지금 재생) 진입 → **기존 3스텝 존치**·리뷰 모드 상시 재노출 동작(공통 플래그 적용) — 문안·동작 v3.211 형상 그대로. ③ 상단바 튜토리얼 종료 후 헤더 아이콘 6종 실탭 스모크(스타 배지·출석·초대 모달·알림·DM·마이페이지 진입) — anchor 부착으로 인한 터치 간섭 0.
+- Then: ①~③ 전부 충족 — ①(플레이리스트 잔재 노출) = FAIL 게이트.
+
+**E-4. 하이라이트 비주얼 육안 판정 [e2e] — 완료 조건 직결(사용자 요청 ①)**
+- When: ① 임의 3화면(차트 탭 스트립·작업실 디렉터·상단바 아이콘)에서 하이라이트가 **실제 요소 위 세련된 반투명 보라 틴트 박스**로 보임 — 구 스타일(선명한 2px 실선 테두리 박스)이 아님을 육안+스크린샷 채증. ② 딤이 순흑이 아닌 딥퍼플 톤, 대상 영역은 원본 밝기로 식별 가능. ③ Android 실기기에서 글로우 부재여도 틴트+헤어라인만으로 하이라이트 식별 성립. ④ 텍스트 카드·화살표·도트가 하이라이트와 겹쳐 가독 저해 0.
+- Then: ①~④ 전부 충족 — **①(테두리 박스로 보임 = 사용자 지적 미해소) = FAIL 게이트**.
+
+**E-5. 회귀 스모크 — 직전 사이클 [e2e] — FAIL 게이트**
+- When/Then: ① 헤더 레이아웃 무변화(아이콘 위치·간격·배지 카운트 — v3.212 이전 스크린샷 대비 육안). ② 차트 탭 전환·곡 재생·⋮ 시트 열기 정상. ③ v3.212 추천하기 모달(옵션 2개·멘트) 1회 스모크. ④ v3.211 백그라운드 재생 검증 화면 진입 스모크(크래시 0). ⑤ v3.210 피드 탭 3종 전환 스모크. ⑥ 맵 디렉터 실탭·생성이력 진입·guestTouchOverlay(비로그인 잠금) 정상. — **①~⑤(직전 사이클 회귀) = FAIL 게이트**.
+
+### 게이트 요약
+
+- **트랙 구조**: 머지 게이트 = U-1~U-8 전부 PASS(frontend 자동 push 관례 — FAIL 1건이라도 있으면 커밋 금지). E2E 게이트 = 새 빌드(REVIEW_MODE=true) 후 E-1~E-5. U-4 ③의 false 전환 검증은 로컬 1줄 전환→추적→**true 원복**으로 수행하며 출고 형상은 반드시 true(원복 확인 기록 필수).
+- **완료 조건**: E-1(비로그인 차트 진입마다 2스텝)·E-2(로그인 4영역 전부 진입마다 + 작업실 자동 스크롤)·E-4(반투명 박스 육안)가 사용자 3요청(①반투명 ②상시 노출 ③문안 교체) 직결.
+- **핵심 FAIL 게이트**: ① **U-4 ③**(REVIEW_MODE=false 전환 시 v3.211 first-run 미복귀 — 1줄 복귀 약속 불성립) ② **U-2/E-3 ①**(플레이리스트 튜토리얼 잔재) ③ **U-3/E-1 ④⑤/E-2 ①**(게이팅 역전 — 비로그인↔로그인 노출 교차) ④ **U-8 ②/E-5**(직전 사이클 회귀 — diff 격리·v3.210~212 스모크) — 추가: U-1(문안 확정본 불일치)·U-6(반투명 수치 불일치·2px 테두리 잔재)·E-2 ④(자동 스크롤 실패). 1건이라도 FAIL이면 커밋·출고 금지.
+- 판정 대상 아님(기록만): 오탈자 교정은 확정본에 기 반영(U-1 기준) — 원문 고수로 재변경 시 사용자 지시 필요. 플레이어 튜토리얼 제거/재작성·search-row-more 키 정리는 사용자 결정 대기(이월). 검수 완료 후 first-run 복귀는 별도 사이클(TUTORIAL_REVIEW_MODE=false 1줄 + U-4 ③ 재실행).

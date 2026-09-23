@@ -1,18 +1,23 @@
-// [TutorialOverlay] v3.204 ⑥ 카드형 → v3.207 ① 코치마크(스포트라이트+화살표) 확장.
+// [TutorialOverlay] v3.204 ⑥ 카드형 → v3.207 ① 코치마크(스포트라이트+화살표) → v3.213 재설계.
 // - 스텝에 anchorKey가 있고 해당 anchor가 registry(utils/tutorialAnchors)에 등록돼 있으면:
 //   4분할 딤으로 대상 rect만 밝게 뚫고(스포트라이트) Feather 화살표 + 근접 카드로 지시한다.
 //   카드 위치는 anchor 상/하 자동(placement로 강제 가능).
+// - v3.213 비주얼: 구멍 테두리(2px 실선) → 보라 틴트 반투명 박스(@16% + 헤어라인 글로우 톤).
+//   딤도 순흑 대신 colors.bg.deepest(#0d0820) 틴트로 브랜드 톤 정렬.
 // - anchor 미등록/측정 실패/화면 밖 rect → 기존 전체 딤 + 하단 카드로 graceful fallback
 //   (리스트 로딩 전 노출 타이밍 대비). 늦은 등록은 registry 구독으로 반영.
-// - v3.207 ⑪: 자동 노출은 tutorialGate 'fresh'(완전 최초 설치) 판정일 때만 — 기존 유저는
-//   getAllKeys 마이그레이션으로 차단. 판별 미확정 시 미노출(보수 기본값 계승).
-// - 노출 조건: AsyncStorage `maidol_tutorial_seen_v1:<screenKey>` 미열람이면 화면별 1회.
+// - v3.213 노출 정책 분기(tutorialGate.TUTORIAL_REVIEW_MODE 단일 스위치):
+//   · 리뷰 모드(true): 게이트·seen 무시, useIsFocused 포커스 획득마다 재노출(검수용).
+//   · false: v3.211 정책 — 'fresh'(완전 최초 설치) 판정 + seen 미열람이면 화면별 1회.
+// - v3.213 enabled prop: 화면별 노출 게이트(로그인 상태 등) — false면 어떤 모드에서도 미노출.
+// - v3.213 onStepChange prop: 스텝 전환 콜백(노출 시 0부터) — 화면 밖 anchor 자동 스크롤용(MapScreen).
 // - ref.show()는 명령형 재노출용으로 존치(작업실 ⓘ는 v3.207 ⑫로 제거 — 재보기 소멸은 의도).
 // - Modal은 화면 루트의 safe-area 패딩을 상속하지 않으므로(v3.201~202 교훈) 인셋을 직접 보강한다.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Modal, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -23,7 +28,11 @@ import {
   getAnchor,
   subscribeAnchor,
 } from '../utils/tutorialAnchors';
-import { TUTORIAL_SEEN_KEY_PREFIX, initTutorialGate } from '../utils/tutorialGate';
+import {
+  TUTORIAL_REVIEW_MODE,
+  TUTORIAL_SEEN_KEY_PREFIX,
+  initTutorialGate,
+} from '../utils/tutorialGate';
 
 export interface TutorialStep {
   title: string;
@@ -43,6 +52,13 @@ interface TutorialOverlayProps {
   /** 스토리지 키 구분자 — 화면당 고유해야 한다 */
   screenKey: string;
   steps: TutorialStep[];
+  /**
+   * v3.213: 화면별 노출 게이트(로그인 상태 등). false면 자동·명령형 노출 모두 차단하고
+   * 노출 중이던 오버레이도 닫는다. 리뷰 모드에서도 유효(상태별 검수 가능). 기본 true.
+   */
+  enabled?: boolean;
+  /** v3.213: 스텝 전환 콜백(노출 시 0부터) — 화면 밖 anchor 자동 스크롤용(MapScreen) */
+  onStepChange?: (index: number) => void;
 }
 
 const SEEN_KEY_PREFIX = TUTORIAL_SEEN_KEY_PREFIX; // 'maidol_tutorial_seen_v1:' — tutorialGate와 단일 출처
@@ -50,31 +66,57 @@ const HOLE_PAD = 8; // 스포트라이트 구멍 여유
 const ARROW_SIZE = 28;
 const ARROW_GAP = 4; // 구멍 ↔ 화살표 간격
 const CARD_GAP = 8; // 화살표 ↔ 카드 간격
-const DIM_COLOR = 'rgba(0, 0, 0, 0.6)';
+// v3.213: 순흑 0.6 → colors.bg.deepest(#0d0820) 틴트 딤 — 브랜드 톤 정렬
+const DIM_COLOR = 'rgba(13, 8, 32, 0.68)';
 
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
-  ({ screenKey, steps }, ref) => {
+  ({ screenKey, steps, enabled = true, onStepChange }, ref) => {
     const insets = useSafeAreaInsets();
     const { width: winW, height: winH } = useWindowDimensions();
+    const isFocused = useIsFocused();
     const [visible, setVisible] = useState(false);
     const [step, setStep] = useState(0);
     // 닫힘 로그에 현재 스텝을 담기 위한 미러 (setState 클로저 지연 회피)
     const stepRef = useRef(0);
     // 현재 스텝 anchor의 창 좌표 — 등록/해제 구독으로 갱신 (null = fallback 카드형)
     const [anchorRect, setAnchorRect] = useState<AnchorRect | null>(null);
+    // onStepChange는 ref로 미러 — 콜백 identity 변화로 스텝 이펙트가 중복 발화하지 않게
+    const onStepChangeRef = useRef(onStepChange);
+    onStepChangeRef.current = onStepChange;
 
     const show = useCallback(() => {
+      if (!enabled) {
+        if (__DEV__) console.info('[Tutorial] enabled=false — 노출 차단', { screenKey });
+        return;
+      }
       stepRef.current = 0;
       setStep(0);
       setVisible(true);
-      console.info('[Tutorial] shown', { screenKey });
-    }, [screenKey]);
+      if (__DEV__) console.info('[Tutorial] shown', { screenKey });
+    }, [screenKey, enabled]);
 
     useImperativeHandle(ref, () => ({ show }), [show]);
 
-    // 마운트 시 1회: firstRun 'fresh'(완전 최초 설치) + 미열람이면 자동 노출.
+    // v3.213: 게이트 해제(로그아웃 등) 시 노출 중이던 오버레이도 닫는다
+    useEffect(() => {
+      if (!enabled) setVisible(false);
+    }, [enabled]);
+
+    // v3.213 리뷰 모드: 게이트·seen 무시 — 화면 포커스 획득마다 재노출(검수용).
+    // 블러 시 닫기 — Modal은 앱 전역이라 다른 탭 위에 잔존하는 것을 방지.
+    useEffect(() => {
+      if (!TUTORIAL_REVIEW_MODE) return;
+      if (isFocused && enabled) show();
+      else setVisible(false);
+    }, [isFocused, enabled, show]);
+
+    // first-run 모드(리뷰 모드 off): firstRun 'fresh'(완전 최초 설치) + 미열람이면 자동 노출.
+    // enabled가 뒤늦게 true가 되는 화면(가입 후 최초 사용)을 위해 enabled 전환 시 재평가 —
+    // 닫으면 seen이 기록되므로 화면·상태별 1회 정책은 유지된다.
     // (스토리지 접근은 프로젝트 관행대로 실패 시 미노출 — 오탐 노출보다 안전)
     useEffect(() => {
+      if (TUTORIAL_REVIEW_MODE) return; // 리뷰 모드는 위 포커스 이펙트가 전담
+      if (!enabled) return;
       let cancelled = false;
       (async () => {
         try {
@@ -94,7 +136,12 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
       return () => {
         cancelled = true;
       };
-    }, [screenKey, show]);
+    }, [screenKey, show, enabled]);
+
+    // v3.213: 스텝 전환 통지 — 노출 시 0부터. MapScreen이 대상 디렉터로 자동 스크롤 후 재측정
+    useEffect(() => {
+      if (visible) onStepChangeRef.current?.(step);
+    }, [visible, step]);
 
     // 현재 스텝의 anchor 좌표 구독 — 리스트 로딩 후 늦게 등록돼도 스포트라이트로 승격
     const currentAnchorKey = steps[Math.min(step, Math.max(steps.length - 1, 0))]?.anchorKey;
@@ -112,10 +159,11 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     const close = useCallback(
       (reason: 'done' | 'skip') => {
         setVisible(false);
-        console.info(reason === 'done' ? '[Tutorial] done' : '[Tutorial] skip', {
-          screenKey,
-          step: stepRef.current,
-        });
+        if (__DEV__)
+          console.info(reason === 'done' ? '[Tutorial] done' : '[Tutorial] skip', {
+            screenKey,
+            step: stepRef.current,
+          });
         AsyncStorage.setItem(SEEN_KEY_PREFIX + screenKey, '1').catch(() => {
           console.error('[Tutorial] storage write failed', { screenKey });
         });
@@ -208,11 +256,11 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
             style={[styles.dimPart, { top: hole.y, height: hole.h, left: hole.x + hole.w, right: 0 }]}
           />
           <View style={[styles.dimPart, { top: hole.y + hole.h, left: 0, right: 0, bottom: 0 }]} />
-          {/* 구멍 테두리 하이라이트 */}
+          {/* v3.213: 구멍 위 보라 틴트 반투명 하이라이트 박스 (테두리 최소화 — 헤어라인 글로우 톤) */}
           <View
             pointerEvents="none"
             style={[
-              styles.holeBorder,
+              styles.highlightBox,
               { left: hole.x, top: hole.y, width: hole.w, height: hole.h },
             ]}
           />
@@ -283,11 +331,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: DIM_COLOR,
   },
-  holeBorder: {
+  // v3.213: 테두리 박스(2px 실선) → 세련된 반투명 하이라이트 박스.
+  // MapScreen isNext 펄스(rgba(168,85,247,0.28)+글로우)와 동일 계열 — 앱 내 시각 언어 통일.
+  highlightBox: {
     position: 'absolute',
-    borderWidth: 2,
-    borderColor: colors.accent.primary,
-    borderRadius: radius.md,
+    backgroundColor: 'rgba(168, 85, 247, 0.16)', // colors.accent.primary(#a855f7) @16% 보라 틴트
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(192, 132, 252, 0.45)', // colors.accent.primaryGlow(#c084fc) @45% 헤어라인
+    // 소프트 글로우 — iOS/웹 전용 enhancement. Android elevation은 글로우 표현 불가 →
+    // 틴트+헤어라인만으로 성립하는 디자인(간소화, elevation 미지정).
+    shadowColor: colors.accent.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 16,
   },
   card: {
     backgroundColor: colors.bg.surface1,
