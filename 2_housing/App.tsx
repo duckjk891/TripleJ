@@ -23,7 +23,7 @@ import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
 import { NavigationContainer, LinkingOptions } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import { navigationRef } from './services/navigationRef';
+import { navigationRef, resetToChartTab } from './services/navigationRef';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -38,7 +38,11 @@ import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore, restoreSession } from './stores/authStore';
 // v3.207 ⑪: 튜토리얼 first-run 게이트 — 부팅 1회 판별(신규 설치 vs 기존 유저)
-import { initTutorialGate } from './utils/tutorialGate';
+import {
+  clearServerTutorialSeen,
+  initTutorialGate,
+  syncTutorialSeenFromServer,
+} from './utils/tutorialGate';
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
@@ -458,6 +462,11 @@ function GlobalModals() {
 //       꺼내 세션을 연다(해시라 서버로그/Referer에 남지 않음).
 //   네이티브: `aidol://oauth/callback#token=JWT` 딥링크(콜드 스타트 + 실행 중) 수신 시 세션을 연다.
 //       버튼 측 openAuthSessionAsync(SocialLoginButtons)와 중복 수신될 수 있어 같은 토큰은 1회만 처리.
+// v3.216 ①: 웹 해시 토큰 감지 시 restoreSession 경쟁 방어 — 저장돼 있던 구토큰 복원(loginWithToken)이
+//   새 콜백 토큰 세션을 되돌리는 롤백 차단. 감지되면 App 부팅 restoreSession을 스킵하고,
+//   콜백 토큰 처리가 실패했을 때만 후행 복원한다. (효과 실행 순서: useOAuthCallback이 App 훅 선두라
+//   이 플래그는 restoreSession 효과보다 먼저 확정된다.)
+let webOAuthTokenPending = false;
 function useOAuthCallback() {
   const handledTokenRef = useRef<string | null>(null);
   useEffect(() => {
@@ -466,11 +475,21 @@ function useOAuthCallback() {
         const hash = (globalThis as any)?.location?.hash || '';
         const m = hash.match(/[#&]token=([^&]+)/);
         if (!m) return;
+        webOAuthTokenPending = true;
         const token = decodeURIComponent(m[1]);
         // URL에서 토큰 즉시 제거(히스토리 노출 방지)
         try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
         if (__DEV__) console.info('[SocialLogin] OAuth 콜백 토큰 수신(웹) — 세션 열기');
-        useAuthStore.getState().loginWithToken(token);
+        useAuthStore.getState().loginWithToken(token).then((ok) => {
+          if (!ok) {
+            // 콜백 토큰이 무효(만료 등)일 때만 저장 토큰 복원으로 후퇴
+            console.error('[SocialLogin] OAuth 콜백 토큰 세션 실패 — 저장 세션 복원 시도');
+            restoreSession();
+            return;
+          }
+          // v3.216b F1: 로그인 성공 = 항상 차트 탭 착지 (Splash 중이면 내부 no-op — 자동 착지)
+          resetToChartTab();
+        });
       } catch (err: any) {
         console.error('[SocialLogin] OAuth 콜백 처리 실패(웹)', { message: err?.message });
       }
@@ -486,7 +505,10 @@ function useOAuthCallback() {
         const token = decodeURIComponent(m[1]);
         if (handledTokenRef.current === token) return; // openAuthSessionAsync 경로와 중복 방지
         handledTokenRef.current = token;
-        useAuthStore.getState().loginWithToken(token);
+        // v3.216b F1: 로그인 성공 = 항상 차트 탭 착지 (콜드 스타트 Splash 중이면 내부 no-op)
+        useAuthStore.getState().loginWithToken(token).then((ok) => {
+          if (ok) resetToChartTab();
+        });
       } catch (err: any) {
         console.error('[SocialLogin] OAuth 딥링크 처리 실패', { message: err?.message });
       }
@@ -524,7 +546,15 @@ export default function App() {
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   // v3.207 ⑪: 튜토리얼 first-run 게이트를 restoreSession보다 먼저 — 완전 신규 설치(스토리지 empty)
   // 판별이 다른 부팅 쓰기(persist 등)에 오염되기 전에 마커를 확정한다(멱등 — 오버레이도 재호출).
-  useEffect(() => { initTutorialGate(); restoreSession(); }, []);
+  // v3.216 ①: 웹 OAuth 콜백 토큰이 감지된 부팅은 restoreSession 스킵(useOAuthCallback이 실패 시에만 후행 복원)
+  useEffect(() => { initTutorialGate(); if (!webOAuthTokenPending) restoreSession(); }, []);
+  // v3.216b F9: 로그인 계정 확정 시 서버 튜토리얼 seen 동기화(계정 기준 1회 노출),
+  // 로그아웃 시 캐시 폐기 — 이메일·소셜·토큰 복원 전 경로가 user 전환으로 수렴한다.
+  const authUserId = useAuthStore((s) => s.user?.id);
+  useEffect(() => {
+    if (authUserId) syncTutorialSeenFromServer();
+    else clearServerTutorialSeen();
+  }, [authUserId]);
   // v3.208: AdMob MobileAds 초기화 + 테스트 기기 등록 1회 — Expo Go/web 은 내부에서 안전 no-op
   useEffect(() => { initRewardedAds(); }, []);
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)

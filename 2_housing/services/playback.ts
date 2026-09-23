@@ -15,11 +15,91 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore } from '../stores/playerStore';
 import api, { BACKEND_BASE_URL } from './api';
-import { applyPlaybackAudioMode } from './audioMode';
+import {
+  applyPlaybackAudioMode,
+  setMediaSessionPlaybackState,
+  setMediaSessionPositionState,
+  updateMediaSession,
+} from './audioMode';
 
 // v3.70: 로드 세대 토큰 — 로딩 도중 사용자가 플레이어를 닫거나 다른 곡으로 전환하면
 // 늦게 완료된 createAsync 결과(유령 사운드)를 즉시 폐기한다.
 let loadGen = 0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v3.216b F10: 웹 미디어 세션 단일 지점 — 안드로이드 크롬 상단 미디어 알림 위젯.
+// 원인 실측: metadata는 PlayerScreen 경로에서만 설정됐고 playbackState는 앱 어디서도
+// 설정하지 않아 'none' 고정 → 위젯 미노출. 여기(공용 재생 서비스)로 이관해
+// 차트 바로재생·큐 전환·미니플레이어 등 전 재생 경로에서 메타/핸들러/상태가 선다.
+// 참고(스펙 4): v3.205 blob/로컬 프리다운로드는 네이티브 한정(maybePreloadNext가 웹 조기
+// return) — 웹 재생 소스는 항상 원격 URL(stream-proxy/presigned)이라 blob: 원인 아님.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 곡 로드/전환 시 호출 — 메타데이터 + play/pause/next/prev 핸들러 등록(웹 외 no-op) */
+export function syncMediaSessionForTrack(track: any): void {
+  if (Platform.OS !== 'web') return;
+  const img = track?.cover_image || track?.cover_image_url;
+  updateMediaSession(
+    {
+      title: track?.title || 'MAIDOL',
+      artist: track?.artist_name || track?.uploader_nickname,
+      artworkUrl: img
+        ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`
+        : null,
+    },
+    {
+      play: () => {
+        usePlayerStore.getState().sound?.playAsync().catch(() => {});
+      },
+      pause: () => {
+        usePlayerStore.getState().sound?.pauseAsync().catch(() => {});
+      },
+      next: () => {
+        const s = usePlayerStore.getState();
+        const idx = s.getNextIndex();
+        if (idx >= 0 && s.queue[idx]) {
+          s.playTrackAtIndex(idx);
+          loadAndPlayTrack(s.queue[idx]);
+        }
+      },
+      prev: () => {
+        const s = usePlayerStore.getState();
+        const idx = s.getPrevIndex();
+        if (idx >= 0 && s.queue[idx]) {
+          s.playTrackAtIndex(idx);
+          loadAndPlayTrack(s.queue[idx]);
+        }
+      },
+    }
+  );
+}
+
+// playbackState/positionState — 재생 경로가 여럿(playback.ts·PlayerScreen 자체 로더)이라
+// store 구독 단일 지점에서 동기화한다(양쪽 모두 isPlaying/position/duration을 store에 쓴다).
+// positionState는 과도 호출 금지: 상태 변화·duration 변경·시크(예상 위치와 3s+ 점프)·5s 주기만.
+if (Platform.OS === 'web') {
+  const msLast = { playing: null as boolean | null, duration: 0, position: 0, at: 0 };
+  usePlayerStore.subscribe((s: any) => {
+    const playing = !!s.isPlaying;
+    const stateChanged = playing !== msLast.playing;
+    if (stateChanged) {
+      msLast.playing = playing;
+      setMediaSessionPlaybackState(playing ? 'playing' : 'paused');
+      if (__DEV__) console.info('[playback] mediaSession playbackState', { playing });
+    }
+    const dur = s.duration || 0;
+    const pos = s.position || 0;
+    const now = Date.now();
+    const expected = msLast.position + (msLast.playing ? now - msLast.at : 0);
+    const seeked = Math.abs(pos - expected) > 3000;
+    if (dur > 0 && (stateChanged || dur !== msLast.duration || seeked || now - msLast.at >= 5000)) {
+      msLast.duration = dur;
+      msLast.position = pos;
+      msLast.at = now;
+      setMediaSessionPositionState(pos, dur);
+    }
+  });
+}
 
 /** 진행 중인 로드를 무효화(닫기·정지 시 호출) — 이후 완료되는 로드는 재생되지 않고 폐기됨 */
 export function invalidatePlayback(): void {
@@ -478,6 +558,8 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
     }
     usePlayerStore.getState().setSound(newSound);
     usePlayerStore.getState().setIsPlaying(true);
+    // v3.216b F10: 전 재생 경로 공통 — 웹 미디어 알림 위젯 메타/핸들러 갱신(웹 외 no-op)
+    syncMediaSessionForTrack(newTrack);
     // v3.202(A-lite): 현재 곡 로드 성공 직후 다음 곡 프리로드 조기 트리거(이중 트리거 1차).
     // 기존 20s/85% 창은 Android Doze(네트워크 차단) 진입보다 늦는 실측 — 화면/네트워크가
     // 살아있는 지금 확보한다. 실패 시 백오프(곡당 3회·10s)가 폭주를 막는다.

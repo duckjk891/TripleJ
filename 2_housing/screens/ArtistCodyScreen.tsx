@@ -313,8 +313,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
   };
 
-  // v3.206: 악세서리 피커 — 서버가 ?category=모자|가방을 400으로 거부하므로(ALLOWED_AD_CATEGORIES)
-  // category 파라미터 없이 전체 조회 후 클라이언트에서 모자/가방만 보관(wishlistStore 관행).
+  // v3.216 ④: 악세서리 피커 — category=모자 + category=가방 2호출 합산.
+  // (구주석 "서버가 모자/가방 400 거부"는 구정보 — v3.206부터 business.py ALLOWED에 모자·가방 허용.)
+  // 무필터 전량 조회는 서버 $sample 500 캡 때문에 대량 시드 후 모자·가방이 표본 일부만 랜덤 노출되던
+  // 문제가 있어 카테고리별 호출로 각각 500 표본을 확보한다.
   // 서브카테고리 실데이터 0건은 렌더 시 SAMPLE 폴백(sourceItems 파생).
   const openAccessoryPicker = async () => {
     setAccessoryMode(true);
@@ -324,17 +326,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     setGenderFilterOn(true);
     setPickerLoading(true);
     try {
-      const res = await api.get('/business/ads/active');
-      const items: AdItem[] = (res.data?.items || []).filter(
-        (i: AdItem) => i.category === '모자' || i.category === '가방',
-      );
-      if (__DEV__) console.info('[ArtistCody] 악세서리 전체 조회', { hatBag: items.length });
+      const [hatRes, bagRes] = await Promise.all([
+        api.get('/business/ads/active', { params: { category: '모자' } }),
+        api.get('/business/ads/active', { params: { category: '가방' } }),
+      ]);
+      const items: AdItem[] = [...(hatRes.data?.items || []), ...(bagRes.data?.items || [])];
+      if (__DEV__) console.info('[ArtistCody] 악세서리 카테고리 조회', { hatBag: items.length });
       setPickerItems(items);
       if (isLoggedIn && items.length > 0) {
         useWishlistStore.getState().sync(items.map((i) => i.id));
       }
     } catch (err: any) {
-      console.error('[ArtistCody] 카테고리 조회 실패', { category: '악세서리(전체 조회)', status: err?.response?.status });
+      console.error('[ArtistCody] 카테고리 조회 실패', { category: '악세서리(모자+가방)', status: err?.response?.status });
       setPickerItems([]); // 0건 → 서브탭별 SAMPLE 폴백
     } finally {
       setPickerLoading(false);

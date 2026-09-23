@@ -11,7 +11,6 @@ import {
   TouchableOpacity,
   Animated,
   Easing,
-  InteractionManager,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -62,13 +61,14 @@ const MAP_HEIGHT = 2208;
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 6스텝 — 디렉터 5(맵 좌표 anchor·자동 스크롤) + 생성 이력.
 // 스텝 0~4는 DIRECTORS 배열 순서와 1:1 (onStepChange 자동 스크롤이 이 정렬에 의존).
-// v3.214 ①: 디렉터 5스텝은 pill 하이라이트(isNext 원형 펄스와 동일 시각 언어), 생성이력은 rect 유지.
+// v3.216b F7: v3.214 ①의 pill(원형) 하이라이트 철회 — 사용자 지시 "원을 좀 없애줘.
+// 원 넣기 전이 더 나은것 같아" → 전 스텝 기본 rect(모서리 둥근 사각 구멍, radius 12) 복귀.
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '아티스트 디렉터', desc: '클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.', anchorKey: 'map-artist', shape: 'pill' },
-  { title: '작사 디렉터', desc: '클릭하여 가사를 작사할 수 있어요.', anchorKey: 'map-lyricist', shape: 'pill' },
-  { title: '작곡 디렉터', desc: '클릭하여 나만의 음악을 만들어요.', anchorKey: 'map-composer', shape: 'pill' },
-  { title: '이미지 디렉터', desc: '클릭하여 내 곡의 커버 이미지를 만들어요.', anchorKey: 'map-image', shape: 'pill' },
-  { title: '영상 디렉터', desc: '클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.', anchorKey: 'map-video', shape: 'pill' },
+  { title: '아티스트 디렉터', desc: '클릭하여 나만의 아티스트를 만들고 의상을 입힐 수 있어요.', anchorKey: 'map-artist' },
+  { title: '작사 디렉터', desc: '클릭하여 가사를 작사할 수 있어요.', anchorKey: 'map-lyricist' },
+  { title: '작곡 디렉터', desc: '클릭하여 나만의 음악을 만들어요.', anchorKey: 'map-composer' },
+  { title: '이미지 디렉터', desc: '클릭하여 내 곡의 커버 이미지를 만들어요.', anchorKey: 'map-image' },
+  { title: '영상 디렉터', desc: '클릭하여 SNS, Youtube, 카카오톡에 게시할 영상을 만들어요.', anchorKey: 'map-video' },
   { title: '생성이력', desc: '작업실에서 작업했던 과정을 확인할 수 있어요.', anchorKey: 'map-history' },
 ];
 
@@ -293,9 +293,11 @@ export default function MapScreen({ navigation }: Props) {
   // 스텝 0~4 = DIRECTORS[0~4], 스텝 5 = 생성 이력(고정 오버레이 버튼 — 스크롤 무관 재측정만).
   // v3.215 ②: 고정 450ms 타이머 → 스크롤 정착 폴링으로 교체 — Android는 programmatic
   // scrollTo에 onMomentumScrollEnd가 발화하지 않는 관행이라 장거리 스크롤(영상 y=1620)은
-  // 450ms 시점의 미완 상태를 스냅샷해 어긋난 rect가 고착됐다(P1). 폴링(120ms 간격, 연속
-  // 2회 |Δ|<0.5 → 정착, 최대 12회=1.44s 타임아웃) + InteractionManager.runAfterInteractions
-  // 재측정(화면 전환 애니메이션 중 measureInWindow 오염 차단)으로 정착 후에만 표시한다.
+  // 450ms 시점의 미완 상태를 스냅샷해 어긋난 rect가 고착됐다(P1).
+  // v3.216b F8(사용자 "너무 느리게 잡혀"): ① 대상이 이미 현재 스크롤 위치면(진입 시 스텝 0 등)
+  // 스크롤·정착 대기 전부 생략하고 즉시 표시 ② 폴링 120ms→60ms(시작 지연 포함), 연속 2회
+  // 안정 유지, 최대 24회=1.44s 타임아웃 동일 ③ 정착 확인 후 재측정 즉시 수행 —
+  // runAfterInteractions 경유 제거(폴링이 이미 스크롤 정착을 확인했으므로 추가 대기 불요).
   const handleTutorialStepChange = useCallback(
     (index: number) => {
       const token = ++tutorialSettleTokenRef.current;
@@ -306,25 +308,30 @@ export default function MapScreen({ navigation }: Props) {
         setTutorialSettling(false);
         return;
       }
-      setTutorialSettling(true);
       const targetY = Math.max(
         0,
         Math.min(d.y * mapScale - winHeight * 0.45, displayHeight - 1)
       );
+      // F8 ①: 스크롤 불필요(오차 2px 미만) — settling 없이 즉시 재측정·표시.
+      // 스텝 0(아티스트, 초기 스크롤 0 부근)이 대표 케이스이나 일반 규칙으로 처리.
+      if (Math.abs(targetY - scrollYRef.current) < 2) {
+        if (__DEV__) console.info('[MapScreen] 튜토리얼 스텝 — 스크롤 불필요, 즉시 표시', { index });
+        registerDirectorAnchors();
+        setTutorialSettling(false);
+        return;
+      }
+      setTutorialSettling(true);
       if (__DEV__) console.info('[MapScreen] 튜토리얼 스텝 자동 스크롤', { index, targetY });
       scrollRef.current?.scrollTo({ y: targetY, animated: true });
       const finish = (reason: 'settled' | 'timeout', polls: number) => {
-        // 전환 애니메이션(내비/스크롤) 종료 후 재측정 — 이동 중 measureInWindow 오염 차단
-        InteractionManager.runAfterInteractions(() => {
-          if (token !== tutorialSettleTokenRef.current) return; // 새 스텝으로 대체됨 — 폐기
-          registerDirectorAnchors();
-          setTutorialSettling(false);
-          if (__DEV__) {
-            console.info('[MapScreen] 튜토리얼 정착 재측정', {
-              index, reason, polls, scrollY: scrollYRef.current,
-            });
-          }
-        });
+        if (token !== tutorialSettleTokenRef.current) return; // 새 스텝으로 대체됨 — 폐기
+        registerDirectorAnchors();
+        setTutorialSettling(false);
+        if (__DEV__) {
+          console.info('[MapScreen] 튜토리얼 정착 재측정', {
+            index, reason, polls, scrollY: scrollYRef.current,
+          });
+        }
       };
       let lastY = scrollYRef.current;
       let stableCount = 0;
@@ -339,17 +346,31 @@ export default function MapScreen({ navigation }: Props) {
           finish('settled', polls);
           return;
         }
-        if (polls >= 12) {
-          // 안전 타임아웃 — settling 고착 금지: 현재 오프셋 기준으로라도 재측정·해제
+        if (polls >= 24) {
+          // 안전 타임아웃(1.44s 동일) — settling 고착 금지: 현재 오프셋 기준으로라도 재측정·해제
           finish('timeout', polls);
           return;
         }
-        setTimeout(poll, 120);
+        setTimeout(poll, 60);
       };
-      setTimeout(poll, 120);
+      setTimeout(poll, 60);
     },
     [mapScale, winHeight, displayHeight, registerDirectorAnchors]
   );
+
+  // v3.216b F3: settling 고착 안전망 — true 진입 후 3초 내 해제되지 않으면 무조건 false 복귀.
+  // 폴링·토큰 어느 단계가 환경(웹 등)에 따라 미발화해도 오버레이가
+  // suspended 전체 딤(터치 흡수)에 영구 고착되는 것을 차단하는 최후 방어선.
+  useEffect(() => {
+    if (!tutorialSettling) return;
+    const timer = setTimeout(() => {
+      console.warn('[MapScreen] tutorialSettling 3s 하드 타임아웃 — 강제 해제(입력 차단 방지)');
+      tutorialSettleTokenRef.current += 1; // 잔존 폴링·재측정 폐기
+      registerDirectorAnchors(); // 현재 오프셋 기준으로라도 anchor 재측정 후 표시
+      setTutorialSettling(false);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [tutorialSettling, registerDirectorAnchors]);
 
   // 언마운트 시 작업실 anchor 전체 해제 + 로그아웃 시 생성 이력 버튼 anchor 해제(버튼 언마운트)
   useEffect(() => () => MAP_ANCHOR_KEYS.forEach(unregisterAnchor), []);

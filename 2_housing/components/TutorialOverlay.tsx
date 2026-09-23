@@ -21,6 +21,8 @@ import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { useDialogStore } from '../stores/dialogStore';
+import { useUiStore } from '../stores/uiStore';
 import { AppText, Button } from './ui';
 import {
   AnchorRect,
@@ -28,10 +30,16 @@ import {
   getAnchor,
   subscribeAnchor,
 } from '../utils/tutorialAnchors';
+import { useAuthStore } from '../stores/authStore';
 import {
   TUTORIAL_REVIEW_MODE,
   TUTORIAL_SEEN_KEY_PREFIX,
+  getServerSeenSyncState,
   initTutorialGate,
+  isSeenOnServer,
+  recordTutorialSeen,
+  subscribeTutorialSeenSync,
+  syncTutorialSeenFromServer,
 } from '../utils/tutorialGate';
 
 export interface TutorialStep {
@@ -83,11 +91,30 @@ const DIM_COLOR = 'rgba(13, 8, 32, 0.68)';
 // 구멍보다 큰 View 에 두꺼운 DIM_COLOR border(+borderRadius r+B)를 둘러 모서리 잔존을 덮는다.
 const CORNER_MASK_B = 40;
 
+// v3.216b F5: 전역 팝업 우선 — 팝업(출석체크·초대·별 안내 모달, showAlert 다이얼로그 큐)이
+// 떠 있는 동안 튜토리얼 노출을 지연한다(사용자 원문 "앞에 팝업이 있으면 튜토리얼이 뜨면 안되지").
+// 단일 판정 지점: 새 전역 팝업이 생기면 이 훅에만 신호를 추가한다. seen은 소모하지 않으므로
+// 팝업이 닫히면(신호 false 전환) first-run 이펙트가 재평가해 그때 노출된다.
+function useGlobalPopupBlocked(): boolean {
+  const dialogOpen = useDialogStore((s) => s.queue.length > 0); // showAlert 전역 큐
+  const attendanceOpen = useUiStore((s) => s.attendanceOpen); // 출석체크(차트 진입 자동 오픈 포함)
+  const inviteOpen = useUiStore((s) => s.inviteOpen); // 추천/친구초대
+  const starGuideOpen = useUiStore((s) => s.starGuideOpen); // 별 안내
+  return dialogOpen || attendanceOpen || inviteOpen || starGuideOpen;
+}
+
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
   ({ screenKey, steps, enabled = true, onStepChange, suspended = false }, ref) => {
     const insets = useSafeAreaInsets();
     const { width: winW, height: winH } = useWindowDimensions();
     const isFocused = useIsFocused();
+    // v3.216b F5: 전역 팝업 표시 중이면 노출 지연 + 노출분도 일시 숨김(seen 미소모)
+    const popupBlocked = useGlobalPopupBlocked();
+    // v3.216b F9: 계정 기반 seen — 로그인 사용자는 서버 동기화 결과로 노출을 판정한다.
+    const authed = useAuthStore((s) => !!s.user);
+    // 서버 동기화 상태 전환 시 first-run 이펙트 재평가용 틱
+    const [seenSyncTick, setSeenSyncTick] = useState(0);
+    useEffect(() => subscribeTutorialSeenSync(() => setSeenSyncTick((v) => v + 1)), []);
     const [visible, setVisible] = useState(false);
     const [step, setStep] = useState(0);
     // 닫힘 로그에 현재 스텝을 담기 위한 미러 (setState 클로저 지연 회피)
@@ -103,11 +130,22 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
         if (__DEV__) console.info('[Tutorial] enabled=false — 노출 차단', { screenKey });
         return;
       }
+      // v3.216b F2: 미포커스 화면에서 노출 금지 — Modal은 앱 전역이라 소유 화면이 백그라운드
+      // 탭이어도 현재 화면 위에 뜬다(로그인 직후 topbar 오버레이가 마이페이지·작업실을 덮던 버그).
+      if (!isFocused) {
+        if (__DEV__) console.info('[Tutorial] isFocused=false — 노출 차단', { screenKey });
+        return;
+      }
+      // v3.216b F5: 팝업 우선 — 팝업이 닫히면 first-run/리뷰 이펙트가 재평가해 지연 노출한다
+      if (popupBlocked) {
+        if (__DEV__) console.info('[Tutorial] 전역 팝업 표시 중 — 노출 지연', { screenKey });
+        return;
+      }
       stepRef.current = 0;
       setStep(0);
       setVisible(true);
       if (__DEV__) console.info('[Tutorial] shown', { screenKey });
-    }, [screenKey, enabled]);
+    }, [screenKey, enabled, isFocused, popupBlocked]);
 
     useImperativeHandle(ref, () => ({ show }), [show]);
 
@@ -115,6 +153,12 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     useEffect(() => {
       if (!enabled) setVisible(false);
     }, [enabled]);
+
+    // v3.216b F2: 소유 화면이 포커스를 잃으면(탭 전환·상위 스택 push) 노출 중이던 오버레이를
+    // 닫는다 — seen 미기록이므로 다음 포커스 획득 시 first-run 이펙트가 의도 화면에서 재노출.
+    useEffect(() => {
+      if (!isFocused) setVisible(false);
+    }, [isFocused]);
 
     // v3.213 리뷰 모드: 게이트·seen 무시 — 화면 포커스 획득마다 재노출(검수용).
     // 블러 시 닫기 — Modal은 앱 전역이라 다른 탭 위에 잔존하는 것을 방지.
@@ -131,9 +175,35 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     useEffect(() => {
       if (TUTORIAL_REVIEW_MODE) return; // 리뷰 모드는 위 포커스 이펙트가 전담
       if (!enabled) return;
+      // v3.216b F2: 포커스 화면에서만 자동 노출 — enabled가 다른 탭 체류 중 true로 전환돼도
+      // (로그인 등) 즉시 띄우지 않고, 의도 화면 포커스 획득 시 이 이펙트가 재평가해 노출한다.
+      if (!isFocused) return;
+      // v3.216b F5: 팝업 표시 중이면 자동 노출 보류 — 닫히면(popupBlocked false) 재평가해 노출
+      if (popupBlocked) return;
       let cancelled = false;
       (async () => {
         try {
+          // v3.216b F9: 로그인 사용자는 계정 기준(서버 seen)으로 판정 — 기기 fresh/existing
+          // 게이트를 우회한다(새 브라우저/기기에서 재노출 방지 + 기존 기기의 신규 가입자 노출).
+          if (authed) {
+            const syncState = getServerSeenSyncState();
+            if (syncState === 'idle') {
+              // App.tsx 로그인 이펙트가 못 돌린 엣지 안전망 — 완료 시 구독 틱으로 재평가
+              syncTutorialSeenFromServer();
+              return;
+            }
+            if (syncState === 'pending') return; // 동기화 완료(틱) 시 재평가
+            if (syncState === 'synced') {
+              if (isSeenOnServer(screenKey)) {
+                if (__DEV__)
+                  console.info('[Tutorial] 계정 기준 열람 완료 — 미노출', { screenKey });
+                return;
+              }
+              if (!cancelled) show(); // 계정 최초 — 기기 seen(기존 유저 선기록 포함) 무시
+              return;
+            }
+            // 'failed' → 아래 기기 기준 폴백(보수적 — 현행 동작)
+          }
           const firstRun = await initTutorialGate(); // 멱등 — App.tsx 부팅 호출과 promise 공유
           if (firstRun !== 'fresh') {
             if (__DEV__)
@@ -150,7 +220,7 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
       return () => {
         cancelled = true;
       };
-    }, [screenKey, show, enabled]);
+    }, [screenKey, show, enabled, isFocused, popupBlocked, authed, seenSyncTick]);
 
     // v3.213: 스텝 전환 통지 — 노출 시 0부터. MapScreen이 대상 디렉터로 자동 스크롤 후 재측정
     useEffect(() => {
@@ -178,9 +248,8 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
             screenKey,
             step: stepRef.current,
           });
-        AsyncStorage.setItem(SEEN_KEY_PREFIX + screenKey, '1').catch(() => {
-          console.error('[Tutorial] storage write failed', { screenKey });
-        });
+        // v3.216b F9: 로컬 + (로그인 시) 서버 계정 기록 — tutorialGate 단일 지점
+        recordTutorialSeen(screenKey);
       },
       [screenKey]
     );
@@ -341,7 +410,9 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
 
     return (
       <Modal
-        visible={visible}
+        // v3.216b F5: 노출 중 팝업이 열리면(출석체크 자동 오픈 등) 일시 숨김 — visible state는
+        // 유지되므로 seen 미소모, 팝업이 닫히면 같은 스텝에서 재표시된다.
+        visible={visible && !popupBlocked}
         transparent
         animationType="fade"
         statusBarTranslucent

@@ -11,7 +11,13 @@
 // - 읽기/쓰기 실패 → status null(미확정) = 자동 노출 금지 (현행 보수 기본값 계승).
 // App.tsx 부팅 시 1회 호출(가능한 이른 시점 — persist 키 생성 전)하고, TutorialOverlay도
 // 자체적으로 재호출한다(멱등 — 결과 promise 메모이즈라 레이스 없음).
+// v3.216b F9 — 계정 기반 seen: 로그인 사용자는 서버(GET/POST /api/tutorial/seen)에 열람을
+// 저장·동기화한다. 기기 localStorage 기준이라 웹은 브라우저/기기가 바뀔 때마다 "다시 최초"가
+// 되던 문제의 해소(사용자 요구 "최초 앱 실행했을때, 최초 가입했을때만").
+// 비로그인은 현행 기기 기준 유지. 서버 미배포/실패 시 기기 기준으로 자동 폴백한다.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from '../services/api';
+import { useAuthStore } from '../stores/authStore';
 
 /**
  * [TutorialGate] v3.213 리뷰 모드 스위치 — 이 상수 한 곳이 유일한 전환 지점.
@@ -87,4 +93,103 @@ export function initTutorialGate(): Promise<FirstRunStatus | null> {
 /** 판별 완료 전엔 null (동기 조회용 — 오버레이는 promise 기반 initTutorialGate를 쓴다) */
 export function getFirstRunStatus(): FirstRunStatus | null {
   return status;
+}
+
+// ── v3.216b F9: 계정 기반 seen (서버 동기화) ─────────────────────────────────
+// 상태 머신: idle(비로그인/미시작) → pending(GET 중) → synced(성공) | failed(실패 — 기기 폴백).
+// TutorialOverlay가 구독(subscribeTutorialSeenSync)해 전환 시 노출 판정을 재평가한다.
+export type ServerSeenSyncState = 'idle' | 'pending' | 'synced' | 'failed';
+
+let serverSeenState: ServerSeenSyncState = 'idle';
+let serverSeen = new Set<string>();
+let serverSyncPromise: Promise<void> | null = null;
+const syncListeners = new Set<() => void>();
+
+function notifySeenSync() {
+  syncListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {}
+  });
+}
+
+/** 동기화 상태 전환 구독 — 해제 함수 반환 */
+export function subscribeTutorialSeenSync(fn: () => void): () => void {
+  syncListeners.add(fn);
+  return () => {
+    syncListeners.delete(fn);
+  };
+}
+
+export function getServerSeenSyncState(): ServerSeenSyncState {
+  return serverSeenState;
+}
+
+/** 계정 기준 열람 여부 — synced 상태에서만 의미 있다 */
+export function isSeenOnServer(screenKey: string): boolean {
+  return serverSeen.has(screenKey);
+}
+
+/**
+ * 로그인 시 호출(App.tsx user 전환 이펙트 + 오버레이 안전망) — 서버 seen을 받아 메모리
+ * 캐시 + 로컬 seen 키에 반영(서버 우선). 진행 중 재호출은 같은 promise를 공유(단일 비행).
+ * 엔드포인트 부재(404)·네트워크 실패 → 'failed' = 기기 기준 폴백(오버레이가 처리).
+ */
+export function syncTutorialSeenFromServer(): Promise<void> {
+  if (serverSyncPromise) return serverSyncPromise;
+  serverSeenState = 'pending';
+  notifySeenSync();
+  serverSyncPromise = (async () => {
+    try {
+      const res = await api.get('/tutorial/seen');
+      const list: string[] = Array.isArray(res.data?.seen)
+        ? res.data.seen.filter((s: unknown): s is string => typeof s === 'string')
+        : [];
+      serverSeen = new Set(list);
+      serverSeenState = 'synced';
+      // 서버 seen → 로컬 반영: 오프라인 재부팅·비로그인 화면(chart)에도 일관 차단
+      if (list.length) {
+        AsyncStorage.multiSet(
+          list.map((k) => [TUTORIAL_SEEN_KEY_PREFIX + k, '1'] as [string, string])
+        ).catch(() => {
+          console.error('[TutorialGate] 서버 seen 로컬 반영 실패');
+        });
+      }
+      if (__DEV__) console.info('[TutorialGate] 서버 seen 동기화', { count: list.length });
+    } catch (err: any) {
+      serverSeenState = 'failed';
+      console.error('[TutorialGate] 서버 seen 동기화 실패 — 기기 기준 폴백', {
+        status: err?.response?.status,
+      });
+    } finally {
+      serverSyncPromise = null;
+      notifySeenSync();
+    }
+  })();
+  return serverSyncPromise;
+}
+
+/** 로그아웃 시 호출 — 계정 캐시 폐기(다음 로그인 계정과 섞임 방지) */
+export function clearServerTutorialSeen(): void {
+  serverSeen = new Set();
+  serverSeenState = 'idle';
+  notifySeenSync();
+}
+
+/**
+ * 튜토리얼 닫힘(done/skip) 기록 — 로컬 + (로그인 시) 서버 양쪽. 서버 반영은 낙관
+ * (메모리 선반영 → POST 실패해도 세션 내 재노출 없음, 다음 동기화에서 최종 일관).
+ */
+export function recordTutorialSeen(screenKey: string): void {
+  AsyncStorage.setItem(TUTORIAL_SEEN_KEY_PREFIX + screenKey, '1').catch(() => {
+    console.error('[TutorialGate] seen 로컬 기록 실패', { screenKey });
+  });
+  if (!useAuthStore.getState().user) return;
+  serverSeen.add(screenKey);
+  api.post('/tutorial/seen', { screen: screenKey }).catch((err: any) => {
+    console.error('[TutorialGate] seen 서버 기록 실패', {
+      screenKey,
+      status: err?.response?.status,
+    });
+  });
 }

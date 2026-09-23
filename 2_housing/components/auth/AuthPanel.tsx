@@ -35,7 +35,9 @@ const normalizeCompany = (v: string) => {
   return t.endsWith('엔터테인먼트') ? t : `${t} 엔터테인먼트`;
 };
 
-const REFERRAL_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+// v3.216 ⑦: 커스텀 초대코드(예: SSUGSIS) 허용 — 서버 referral_service 해석 확장과 동일 규격(4~12자 A-Z/0-9).
+// 자동 발급 코드는 여전히 4자 charset(0/O/1/I/L 제외)이나, 입력 검증은 확장 규격을 따른다.
+const REFERRAL_RE = /^[A-Z0-9]{4,12}$/;
 
 // v3.212: 웹 한정 — 초대 랜딩의 `?ref={code}` 쿼리를 가입 폼 추천코드로 프리필. 네이티브 동작 무변경.
 const initialReferralCode = (() => {
@@ -303,7 +305,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     }
     const ref = referralCode.trim().toUpperCase();
     if (ref && !REFERRAL_RE.test(ref)) {
-      setLocalError('추천코드는 4자리 영문 대문자/숫자입니다. 다시 확인해주세요.'); return;
+      setLocalError('추천코드는 4~12자 영문 대문자/숫자입니다. 다시 확인해주세요.'); return;
     }
     const bd = birthDate();
     const consentsBody: Record<string, any> = { version: CONSENT_VERSION };
@@ -571,8 +573,8 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
       {!isMinor ? (
         <>
           <Label>추천코드 (선택)</Label>
-          <TextInput style={styles.input} placeholder="친구에게 받은 4자리 코드" placeholderTextColor={colors.text.muted}
-            maxLength={4} autoCapitalize="characters" value={referralCode}
+          <TextInput style={styles.input} placeholder="친구에게 받은 코드 (4~12자)" placeholderTextColor={colors.text.muted}
+            maxLength={12} autoCapitalize="characters" value={referralCode}
             onChangeText={(v) => setReferralCode(v.toUpperCase())} />
         </>
       ) : null}

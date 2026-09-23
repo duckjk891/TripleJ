@@ -423,9 +423,11 @@ export default function DmChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.216 ②: 자체 헤더 네이티브 상단바 규격 — 높이 56 고정(컨테이너 insets.top + 56, 고정 paddingTop 금지),
+  // 타이틀이 상단바 위치에 정렬된다(header-consistency 규칙, DmInbox 시트 헤더와 동일 규격).
   header: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
+    height: 56, paddingHorizontal: spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   menu: {

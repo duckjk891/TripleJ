@@ -6,10 +6,11 @@
 //   백엔드가 client=app 리다이렉트를 지원하기 전에는 콜백이 안 와도 취소/닫힘으로 조용히 복귀(크래시·무한 busy 없음).
 //   백엔드 요청 문서: 2_housing/백엔드_요청_소셜로그인_앱복귀.md
 import { useState } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Linking, Platform } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { showAlert } from '../../utils/appAlert';
 import { BACKEND_BASE_URL } from '../../services/api';
+import { resetToChartTab } from '../../services/navigationRef';
 import { useAuthStore } from '../../stores/authStore';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
@@ -41,11 +42,15 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
     const loginUrl = `${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`;
     try {
       if (Platform.OS === 'web') {
-        // 웹 — 전체 페이지 이동. 콜백(#token=)은 App.tsx useOAuthCallback(웹 해시)이 처리.
-        await Linking.openURL(loginUrl).catch((e) => {
+        // v3.216 ①: 같은 탭 전체 페이지 이동(location.assign). Linking.openURL은 react-native-web에서
+        // `_blank` 새 탭을 열어 원 탭이 비로그인으로 잔류하고 탭 간 토큰 전달 장치가 없었다.
+        // 콜백(#token=)은 App.tsx useOAuthCallback(웹 해시)이 처리.
+        try {
+          (globalThis as any).window.location.assign(loginUrl);
+        } catch (e: any) {
           console.error(`[${logPrefix}] 소셜 로그인 이동 실패`, { provider, message: e?.message });
           showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
-        });
+        }
         return;
       }
 
@@ -61,6 +66,9 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
           if (!ok) {
             console.error(`[${logPrefix}] 콜백 토큰 세션 열기 실패`, { provider });
             showAlert('알림', GENERIC_FAIL_MSG);
+          } else {
+            // v3.216b F1: 로그인 성공 = 항상 차트 탭 착지 (App.tsx 딥링크 경로와 중복 호출돼도 멱등)
+            resetToChartTab();
           }
         } else {
           // 콜백은 왔지만 토큰이 없음 — 서버 error 파라미터는 검증 후에만 노출.

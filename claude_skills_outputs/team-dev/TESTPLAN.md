@@ -3215,3 +3215,38 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건 직결**: D-1(anchor 정착·어긋남 해소)·A-2(Inst -14±1 LUFS)·A-3(composer 쿨다운 429·사다리 합산)·D-3(Inst 커버)·D-2(nowplaying 1스텝)·A-1(elapsed<300s·기하 불변)이 사용자 요구 6건 직결. **D-4는 "미검증 항목" 명시가 완료 조건**(빌드 종속 — 허위 PASS 금지).
 - **핵심 FAIL 게이트**: ① **A-5 ①**(기존 v7 영상 URL 파손 — 최상위·S-3 ④ 정적 선차단) ② **S-3 ②/A-1 ③**(사전 합성 기하 이탈 — 자막·록업 좌표) ③ **S-1 ①②/A-3 ②**(쿨다운 중 과금·클레임) ④ **A-2 (a)**(캐시 히트 과금 — v3.214 승계) ⑤ **S-2 ②**(loudnorm 실패의 파이프라인 전이) ⑥ **U-1 ③④**(settling 고착·세대 오염) ⑦ **U-2 ③④/D-5 ①**(튜토리얼 기존 화면·수치 회귀) ⑧ **U-5 ④**(Inst 기존 오류 분기 회귀) ⑨ **D-1 ②**(anchor 어긋남 잔존) ⑩ **U-7 ②**(diff 격리 위반). 1건이라도 FAIL이면 커밋·출고 금지.
 - **판정 대상 아님(기록만)**: 분리 아티팩트 음질 자체(sunoapi.org mp3 전용·WAV/품질 옵션 부재 — 공식 문서+record-info 실조회 확정, 개선분은 음량 7.3LU까지). v7→v8 승격으로 기존 생성분 다음 요청 시 1회 재과금(기본안 수용). A-1 ① elapsed 300s 목표 미달 = 수치 보고 후 재계획(즉시 FAIL 아님 — 단 동반된 기하·과금 게이트는 별개 적용). P2 상태바 오프셋 보정 = 실기기 로그 확정 시 후속(선반영 금지). 기존 설치 기기 튜토리얼 미노출 = 정상(최종 검수는 신규 설치만 가능). 이월 후보: loudnorm 2패스·split_stem 재합성·RNGMA 17·Inst 별도 사다리.
+
+## v3.216 (2026-09-23) — 1차 게이트(유닛·정적): 웹 소셜로그인 복구·DM 헤더 규격·official 기본 노출·패션브랜드 시드·SSUGSIS 초대 — 정독 검증 + 판정
+
+전제: 서버 미배포 상태 — 프로덕션 쓰기·배포·원격 변경 없음(로컬 정독 + tsc/py_compile + CSV dry-parse 실측만). [api]/[e2e] 항목은 배포 후 2차 게이트로 이월.
+
+### G1. 앱 (2_housing, 7파일) — 전부 PASS
+| # | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|
+| G1-1 | SocialLoginButtons 웹 분기 | 웹 = `window.location.assign(loginUrl)` 같은 탭 이동(try/catch+showAlert 폴백), `Linking` import 제거. 네이티브 경로(openAuthSessionAsync~딥링크) hunk 무접촉 | PASS |
+| G1-2 | App.tsx 경쟁조건 방어 | `webOAuthTokenPending` 모듈 플래그 — hash `#token=` 감지 시 set → 부팅 effect(:540) restoreSession 스킵. `loginWithToken` Promise<boolean>(:44) 실패(!ok) 시에만 후행 restoreSession(:483). 효과 순서 보장: useOAuthCallback() 호출(:534)이 restoreSession effect(:540)보다 선행 선언 → 플래그 선확정. **diff 격리**: App.tsx 미커밋 diff = 이번 2 hunk 뿐(웹탭바 등 타 hunk 무접촉) | PASS |
+| G1-3 | remoteLogger 해시 제거 | `_currentUrl` 웹 분기 `window.location.href.split('#')[0]` — `#token=` 로그 유출 차단, 네이티브 분기 무변경 | PASS |
+| G1-4 | DmInbox 새 메시지 시트화 + official 고정 행 | 전체화면 Modal 폐지 → `transparent`+`statusBarTranslucent` 시트, top=`useHeaderHeight()` 측정(0이면 insets.top+56 폴백), height=winH−topLimit−spacing.md(flex-end) — 네이티브 헤더 상시 노출. 빈 검색어 = official 1행(`fetchOfficial` 캐시, 실패 시 null→빈 목록 폴백·60s 스로틀) + '공식' 배지, 탭=기존 startConversation(official_id). 검색어 입력 시 검색 결과만(고정 행 미노출 = 중복 구조적 배제). 검색 debounce·startConversation·미인증 게이트 무변경 | PASS |
+| G1-5 | DmChat 헤더 규격 | header `height: 56` 고정 + paddingBottom 제거, 컨테이너 `paddingTop: insets.top`(동적)만 — 고정 paddingTop 없음(header-consistency 규칙 준수) | PASS |
+| G1-6 | ArtistCody 악세서리 2호출 | `Promise.all([category=모자, category=가방])` 합산, 구주석("서버 400 거부") 삭제·정정. catch→`setPickerItems([])`=SAMPLE 폴백 유지, `wishlistStore.sync(items)` 유지 | PASS |
+| G1-7 | AuthPanel 추천코드 확장 | `REFERRAL_RE=/^[A-Z0-9]{4,12}$/`·maxLength 12·문구 "4~12자". `?ref=SSUGSIS` 프리필: URLSearchParams→toUpperCase→RE.test 통과(slice 없음). 기존 4자 코드 회귀 통과(A-Z0-9 상위집합) | PASS |
+| G1-8 | `npx tsc --noEmit` | exit 0, 오류 0 | PASS |
+
+### G2. 서버 스테이징 (server_staging_v3216, 5파일) — 전부 PASS
+| # | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|
+| G2-1 | referral_service resolve 확장 | `REFERRAL_CODE_RE=^[A-Z0-9]{4,12}$`(SSUGSIS 7자 통과, 3자/13자/특수문자 거부), `REFERRAL_CHARSET`·`REFERRAL_CODE_LEN=4`(발급) 불변. _orig 대비 diff = 정규식+주석+로그 truncat [:8]→[:12] 만 — 최소성 충족 | PASS |
+| G2-2 | referral.py 랜딩 개편 | CTA 웹앱 primary 단일(`app.maidol.ai.kr?ref={code}`), Play 버튼 제거→install-note 블록(maidol_official DM + `mailto:kimpearl@lotusai.co.kr`), 워드마크 `M<span class=wordmark-ai>AI</span>DOL` AI 그라데이션 존치. 유효(code_block+?ref 부착)/무효(code=None→일반 문구+CTA 유지, 404 HTML) 양쪽 렌더 유지. is_android·OG·HEAD 대응·open-app 링크 존치 | PASS |
+| G2-3 | wishlist.py | `ALLOWED_AD_CATEGORIES`에 모자·가방 추가 1줄(+주석)만 — business.py 세트와 정합 | PASS |
+| G2-4 | set_referral_ssugsis.py | dry-run 기본(--apply 필수), UUID(d988bcfd-…)+이메일 교차검증, 현행 코드=5JJY 가드, SSUGSIS 선점 조회 가드, 멱등 no-op(이미 SSUGSIS), UPDATE에 `AND referral_code=$3` 동시변경 가드 | PASS |
+| G2-5 | seed_fashion_brands.py | dry-run 기본(쓰기 0 — 읽기 조회만), SEED_TAG='fashion_brands_csv' 멱등(clear_previous: S3 remove_object → delete_many = replace, 타 시드 무접촉), 판매중 기본(--include-soldout 옵션), gender/category 매핑·'대표(…)'→'기본'·실패 행 skip 리포트. **CSV dry-parse 실측(정본 CSV)**: total 4,857 → valid 4,219 / soldout 638 / skipped 0(이미지 결측 0) / 카테고리 상의1,344·하의1,276·모자629·가방623·신발347 — DEPLOY.md 기대값과 전수 일치 | PASS |
+| G2-6 | py_compile 5파일 | 전부 통과 | PASS |
+| G2-7 | _orig/MD5SUMS.txt·DEPLOY.md | _orig 5파일 md5 = MD5SUMS.txt 전수 일치, 배포본 md5 = DEPLOY.md 표 일치(5/5). DEPLOY.md 완결: env 교정(§1, `--env-file`은 재생성 필요 명기 §0)·백업(§2)·배포 직전 라이브 md5 재대조(§3, drift 시 중단)·build+컨테이너 재생성(§4)·검증 curl(§5)·SQL 순서 고정(코드 배포 후, §0/§6)·시드 절차(§7)·Pages 승인 배포(§8)·롤백(코드/env/SQL/시드, §9) 전부 포함 | PASS |
+
+### G3. 웹 래퍼 (homepage/maidol/app-shell/index.html) — PASS
+| # | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|
+| G3-1 | search+hash 보존 | 모바일(<768) `location.replace('/app'+location.search+location.hash)`, PC iframe `src='/app'+location.search+location.hash`(스크립트 설정) — `#token=`·`?ref=` 양 경로 보존. v3.216 표시 변경은 이 2곳뿐, 랜딩 디자인·링크 등 타 부분 오염 없음(단, 디렉터리가 git 미관리라 diff 불가 — 정독 확인) | PASS |
+
+### 판정
+**v3.216 1차 게이트 통과** — 13항목 전부 PASS, FAIL 0. 이월(2차 게이트, 배포 후): /invite/SSUGSIS 실측·구글/카카오 실로그인 완주·래퍼 hash 보존 e2e·시드 반영 건수·악세서리 피커 실표시(test-designer 6~9). 비고(판정 대상 아님): (a) (brand,category,name,color) 중복 — 판매중 기준 256건(PLAN의 244건은 전량 기준·색상 정규화 전 수치로 추정, 문서 단위 삽입이라 무해 동일) (b) REFERRAL_CODE_RE 확장이 dm_service 배틀태그 검색에 파급되는 점은 DEPLOY.md §0에 의도된 부수효과로 명기됨 (c) 시드 소스가 세션 scratchpad 경로 — DEPLOY.md §7 경고 존재하나 조기 rsync/영구 복사 권장.

@@ -3,10 +3,12 @@
 // 게이트: 본인인증(is_verified) 회원만 — 미인증은 안내 화면.
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet } from 'react-native';
+import { useHeaderHeight } from '@react-navigation/elements';
+import { View, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { fetchOfficial, type OfficialContact } from '../services/officialService';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
 import { colors } from '../theme/colors';
@@ -40,6 +42,12 @@ const fmtTime = (iso?: string | null): string => {
 export default function DmInboxScreen() {
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
+  // v3.216 ②: 새 메시지 시트 상단 = 네이티브 헤더 하단 — Modal은 별도 창이라 화면에서 측정해 반영.
+  // 훅 실패/0(헤더 미측정)이면 insets.top + 56 폴백(DialogueScreen v3.214 관행).
+  const headerHeight = useHeaderHeight();
+  const { height: winH } = useWindowDimensions();
+  const composeTopLimit = headerHeight > 0 ? headerHeight : insets.top + 56;
+  const composeSheetHeight = Math.max(0, winH - composeTopLimit - spacing.md);
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
   const [eligible, setEligible] = useState<boolean | null>(null);
@@ -56,6 +64,8 @@ export default function DmInboxScreen() {
   const [searching, setSearching] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
   const [myCode, setMyCode] = useState<string | null>(null);
+  // v3.216 ③: 빈 검색어 기본 노출용 official 계정(officialService 프로세스 캐시, 실패 시 null → 빈 목록 폴백)
+  const [official, setOfficial] = useState<OfficialContact | null>(null);
   const debounceRef = useRef<any>(null);
 
   const load = useCallback(async () => {
@@ -82,6 +92,10 @@ export default function DmInboxScreen() {
 
   const openCompose = async () => {
     setComposeOpen(true);
+    // v3.216 ③: official 계정 해석(캐시 공유, reject 없음) — 성공 시 빈 검색어 고정 행으로 노출
+    if (!official) {
+      fetchOfficial().then((o) => { if (o) setOfficial(o); });
+    }
     if (!myCode) {
       try {
         const res = await api.get('/referral/my-code');
@@ -91,6 +105,8 @@ export default function DmInboxScreen() {
       }
     }
   };
+
+  const closeCompose = () => setComposeOpen(false);
 
   // v3.71: 새 메시지 버튼을 네이티브 헤더 우측에 배치(본문 헤더는 제거됨)
   useLayoutEffect(() => {
@@ -204,54 +220,77 @@ export default function DmInboxScreen() {
         <FlatList data={data} keyExtractor={(it) => it.conversation_id} renderItem={renderConv} />
       )}
 
-      {/* 새 메시지 모달 */}
-      <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-          <View style={styles.header}>
-            <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
-            <TouchableOpacity onPress={() => setComposeOpen(false)} accessibilityLabel="닫기" style={{ padding: 4 }}>
-              <Feather name="x" size={22} color={colors.text.muted} />
-            </TouchableOpacity>
-          </View>
-          <AppText variant="caption" tone="secondary" style={styles.composeHint}>
-            닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요. 닉네임#태그 또는 #태그로 정확히 찾을 수 있어요.
-          </AppText>
-          <View style={styles.searchBox}>
-            <Feather name="search" size={16} color={colors.text.muted} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="닉네임 또는 #태그 검색"
-              placeholderTextColor={colors.text.muted}
-              value={query}
-              onChangeText={onQueryChange}
-              autoFocus
-            />
-          </View>
-          {searching ? (
-            <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 중...</AppText>
-          ) : searchFailed ? (
-            <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색에 실패했습니다.</AppText>
-          ) : query.trim() && !results.length ? (
-            <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 결과가 없어요.</AppText>
-          ) : (
-            <FlatList
-              data={results}
-              keyExtractor={(it) => it.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.convRow} onPress={() => startConversation(item.id)}>
-                  <Avatar name={item.nickname || '?'} uri={profileUri(item.profile_image)} size={40} />
-                  <AppText variant="body" style={{ marginLeft: spacing.md }}>
-                    {item.nickname}
-                    {item.code ? <AppText variant="footnote" tone="muted">  #{item.code}</AppText> : null}
-                  </AppText>
-                </TouchableOpacity>
+      {/* v3.216 ②: 새 메시지 — 전체화면 Modal 폐지, 헤더 하단 시트(PolicySheet 'sheet' v3.214 선례).
+          transparent+statusBarTranslucent — 네이티브 헤더('메시지'·뒤로가기·edit)가 항상 보인다. */}
+      <Modal visible={composeOpen} transparent statusBarTranslucent animationType="slide" onRequestClose={closeCompose}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeCompose} accessibilityLabel="닫기 배경">
+          <TouchableOpacity
+            style={[styles.sheet, { height: composeSheetHeight, paddingBottom: insets.bottom }]}
+            activeOpacity={1}
+            onPress={() => {}}
+          >
+            <View style={styles.header}>
+              <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
+              <TouchableOpacity onPress={closeCompose} accessibilityLabel="닫기" style={{ padding: 4 }}>
+                <Feather name="x" size={22} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+            <AppText variant="caption" tone="secondary" style={styles.composeHint}>
+              닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요. 닉네임#태그 또는 #태그로 정확히 찾을 수 있어요.
+            </AppText>
+            <View style={styles.searchBox}>
+              <Feather name="search" size={16} color={colors.text.muted} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="닉네임 또는 #태그 검색"
+                placeholderTextColor={colors.text.muted}
+                value={query}
+                onChangeText={onQueryChange}
+                autoFocus
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              {searching ? (
+                <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 중...</AppText>
+              ) : searchFailed ? (
+                <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색에 실패했습니다.</AppText>
+              ) : !query.trim() ? (
+                // v3.216 ③: 빈 검색어 — maidol_official 고정 행(조회 실패 시 현행 빈 목록 폴백).
+                // 검색어 입력 시엔 검색 결과만 노출되므로 고정 행과의 중복은 구조적으로 없다.
+                official ? (
+                  <TouchableOpacity style={styles.convRow} onPress={() => startConversation(official.official_id)}>
+                    <Avatar name={official.nickname || 'maidol_official'} size={40} />
+                    <AppText variant="body" style={{ marginLeft: spacing.md }}>
+                      {official.nickname || 'maidol_official'}
+                    </AppText>
+                    <View style={styles.officialBadge}>
+                      <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
+                    </View>
+                  </TouchableOpacity>
+                ) : null
+              ) : !results.length ? (
+                <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 결과가 없어요.</AppText>
+              ) : (
+                <FlatList
+                  data={results}
+                  keyExtractor={(it) => it.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.convRow} onPress={() => startConversation(item.id)}>
+                      <Avatar name={item.nickname || '?'} uri={profileUri(item.profile_image)} size={40} />
+                      <AppText variant="body" style={{ marginLeft: spacing.md }}>
+                        {item.nickname}
+                        {item.code ? <AppText variant="footnote" tone="muted">  #{item.code}</AppText> : null}
+                      </AppText>
+                    </TouchableOpacity>
+                  )}
+                />
               )}
-            />
-          )}
-          {myCode ? (
-            <AppText variant="caption" tone="muted" style={styles.myTag}>내 태그: #{myCode}</AppText>
-          ) : null}
-        </View>
+            </View>
+            {myCode ? (
+              <AppText variant="caption" tone="muted" style={styles.myTag}>내 태그: #{myCode}</AppText>
+            ) : null}
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -259,9 +298,15 @@ export default function DmInboxScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
-  // 새 메시지 모달(네이티브 헤더 없는 풀스크린)만 상단 여백 유지
-  modalContainer: { flex: 1, backgroundColor: colors.bg.deepest },
-  // v3.73: (새 메시지 모달 전용) 네이티브 상단바와 동일 규격 — 높이 56, 최상단 배치
+  // v3.216 ②: 새 메시지 시트 — PolicySheet 'sheet'/TrackActionSheet 관행(backdrop 0.6 + flex-end + 상단 radius)
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.bg.deepest,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    overflow: 'hidden',
+  },
+  // v3.73: (새 메시지 시트 헤더) 네이티브 상단바와 동일 규격 — 높이 56, 최상단 배치
   header: {
     flexDirection: 'row', alignItems: 'center',
     height: 56, paddingHorizontal: spacing.lg,
@@ -290,5 +335,11 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, color: colors.text.primary, padding: 0 },
   searchStatus: { paddingHorizontal: spacing.lg },
+  // v3.216 ③: official 고정 행 '공식' 배지
+  officialBadge: {
+    marginLeft: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: 2,
+    borderRadius: radius.pill, backgroundColor: colors.accent.primary,
+  },
+  officialBadgeText: { color: '#fff', fontSize: 11 },
   myTag: { padding: spacing.lg, textAlign: 'center' },
 });

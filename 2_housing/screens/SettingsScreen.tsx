@@ -19,6 +19,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import api from '../services/api';
+import { resetToChartTab } from '../services/navigationRef';
 import { fetchOfficial } from '../services/officialService';
 import {
   getMe,
@@ -925,8 +926,9 @@ export default function SettingsScreen({ navigation }: any) {
       {TitleRow}
       <View style={styles.formContainer}>
         {/* 로그인/회원가입 — MAIDOL 구성(연령 게이트·약관 동의·소셜 로그인 포함) 공용 패널 */}
+        {/* v3.216b F1: 로그인/가입 성공 = goBack(직전 화면 복귀) 대신 항상 차트 탭으로 리셋 착지 */}
         <AuthPanel
-          onSuccess={() => navigation.goBack()}
+          onSuccess={() => resetToChartTab()}
           onModeChange={(m) =>
             setAuthTitle(m === 'login' ? '로그인' : m === 'forgot' ? '비밀번호 재설정' : '회원가입')
           }

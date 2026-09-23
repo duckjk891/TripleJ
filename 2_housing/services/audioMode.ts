@@ -60,3 +60,37 @@ export function updateMediaSession(meta: MediaSessionMeta, handlers?: MediaSessi
     console.error('[audioMode] mediaSession 실패', { message: err?.message });
   }
 }
+
+// v3.216b F10: 안드로이드 크롬 상단 미디어 알림은 metadata만으로는 뜨지 않는다 —
+// mediaSession.playbackState('playing')가 함께 서야 위젯이 노출된다(실측: 'none' 고정이 원인).
+/** 웹 전용 — 미디어 세션 재생 상태. 실패 무해(no-op). */
+export function setMediaSessionPlaybackState(state: 'none' | 'paused' | 'playing'): void {
+  if (Platform.OS !== 'web') return;
+  try {
+    const ms: any = (navigator as any)?.mediaSession;
+    if (!ms) return;
+    ms.playbackState = state;
+  } catch (err: any) {
+    console.error('[audioMode] playbackState 실패', { message: err?.message });
+  }
+}
+
+/** 웹 전용 — 위젯 진행바(position/duration ms 단위 입력). duration 무효 시 no-op, 실패 무해. */
+export function setMediaSessionPositionState(
+  positionMs: number,
+  durationMs: number,
+  playbackRate = 1
+): void {
+  if (Platform.OS !== 'web') return;
+  try {
+    const ms: any = (navigator as any)?.mediaSession;
+    if (!ms?.setPositionState) return;
+    const duration = durationMs / 1000;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const position = Math.min(Math.max(positionMs / 1000, 0), duration);
+    ms.setPositionState({ duration, position, playbackRate });
+  } catch (err: any) {
+    // setPositionState는 position>duration 등에 TypeError를 던진다 — 위젯 없는 환경 포함 무해 처리
+    if (__DEV__) console.info('[audioMode] positionState 실패(무시)', { message: err?.message });
+  }
+}

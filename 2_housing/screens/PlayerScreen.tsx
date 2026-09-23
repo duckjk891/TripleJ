@@ -26,7 +26,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
-import { applyPlaybackAudioMode, updateMediaSession } from '../services/audioMode';
+import { applyPlaybackAudioMode } from '../services/audioMode';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 // v3.157(대표): 비트뷰 토글 제거 — components/BeatTrackView·beatsService는 보존(재도입 대비, 미사용)
@@ -36,7 +36,7 @@ import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
 // v3.197: 프리로드 공용 모듈(consume/trigger/discard) — BT/화면꺼짐 전환 실패 완화
-import { autoContinueWithRelated, consumePreloaded, discardPreloaded, maybePreloadNext } from '../services/playback';
+import { autoContinueWithRelated, consumePreloaded, discardPreloaded, maybePreloadNext, syncMediaSessionForTrack } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -599,19 +599,9 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setIsPlaying(true);
       setIsPlaying(true);
       setPosition(0);
-      // v3.57: 웹 미디어 세션 — 브라우저/OS 미디어 컨트롤에 곡 정보·재생 버튼 노출
-      const img = target?.cover_image || target?.cover_image_url;
-      updateMediaSession(
-        {
-          title: target?.title || 'MAIDOL',
-          artist: target?.artist_name || target?.uploader_nickname,
-          artworkUrl: img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null,
-        },
-        {
-          play: () => { usePlayerStore.getState().sound?.playAsync().catch(() => {}); },
-          pause: () => { usePlayerStore.getState().sound?.pauseAsync().catch(() => {}); },
-        },
-      );
+      // v3.57 → v3.216b F10: 웹 미디어 세션은 playback.ts 단일 지점에 위임 —
+      // 메타/커버 + play/pause/next/prev 핸들러, playbackState/positionState는 store 구독이 동기화.
+      syncMediaSessionForTrack(target);
     } catch (err: any) {
       // v3.197: 실패 시 참조/상태 정리 + 원격 계측 — 재생버튼 1탭 복구가 받아준다
       console.warn('[BTDebug] load fail', { src: 'Player', trackId: target?.id, message: err?.message, appState: AppState.currentState });

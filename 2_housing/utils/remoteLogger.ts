@@ -114,7 +114,8 @@ function _serializeArgs(args: any[]): { message: string; context: Record<string,
 function _currentUrl(): string {
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      return window.location.href;
+      // v3.216 ①: OAuth 콜백 `#token=` 등 해시는 로그에 싣지 않는다(토큰 유출 방어)
+      return window.location.href.split('#')[0];
     }
     return navigationRef?.getCurrentRoute?.()?.name || '';
   } catch {

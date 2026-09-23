@@ -4693,3 +4693,132 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 5. **⑦ 트리거**: 코드 변경 불요 확인(F5) — 기존 설치 기기는 미노출이므로 최종 검수는 신규 설치(스토리지 완전 초기화)로만 가능함을 유의.
 
 규칙: 민감 정보 플레이스홀더(<SSH_HOST>, API 키 로그 금지), 서버 수정은 server_staging_v3215에서만(프로덕션 scp pull 후 작업·_orig 보존), git 커밋은 오케스트레이터 승인 후.
+
+
+# v3.216 — 웹 소셜로그인 복구·DM 헤더 규격·official 기본 노출·패션브랜드 4,857건 시드·SSUGSIS 초대페이지 (+튜토리얼/Inst 상태 기재)
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (RN/Expo SDK 54, 1.1.5). 서버 변경은 **server_staging_v3216 신설** — 원본은 **반드시 라이브 EC2(`maidol-ec2` /home/ubuntu/maidol/backend_9004)에서 pull**(scp/rsync) 후 `_orig` 보존·md5 대조. **재발 방지(v3.215 사고)**: v3.215 배포 시 로컬 구사본을 베이스로 빌드해 inst_service.py 짧은URL 픽스(v3.210)가 유실됐다 — 이번부터 (1) 스테이징 파일은 라이브 pull 원본에만 패치, (2) 배포 직전 라이브 현재본 md5 재대조(원본 drift 검출), (3) v3.215 Inst 픽스가 **배포 완료된 후의 라이브본**을 pull(미배포 상태면 pull 대기). 웹앱·홈페이지 소스 = **/Users/pearl/homepage/maidol** (Cloudflare Pages 2프로젝트: `maidol`(www/)=maidol.ai.kr, `maidol-app`(app/ = expo export 산출+app-shell 래퍼)=app.maidol.ai.kr, deploy.sh — Pages 배포는 프로덕션이므로 사용자 승인 후). 관리자 = api.maidol.ai.kr/admin (서버 app/admin_static 정적 mount, main.py:878 — 이번 사이클 무관여). 실측 = EC2 읽기 전용(ssh) + PG/Mongo 읽기 조회.
+
+계획 제외(오케스트레이터 선처리 — 상태만 기재):
+- **⑥ Inst 재실패**: 원인 확정 — v3.215 배포가 짧은 토큰 URL 픽스(v3.210) 없는 구베이스로 빌드됨. server_staging_v3215/inst_service.py 에 픽스 복원 완료(import secrets + _PUBLIC_API_BASE + audio-url ready 블록, py_compile 통과, md5 d6c95351). 배포 커맨드 사용자 전달 완료 — **사용자 실행 대기 중**. 실패분 ⭐5 자동 환불 확인. 본 계획은 검증 시나리오만 담당.
+- **⑤ 튜토리얼 최초 기준 전환**: TUTORIAL_REVIEW_MODE=false 1.1.5 반영 완료(커밋 dd884f2, tutorialGate.ts:27 + 배포 웹번들 `u=!1` 실측). 본 계획은 재노출 검증 findings + tester 시나리오만.
+
+## 0단계 findings / Plan verification (파일:라인 — 서버는 프로덕션 EC2 실측, 로컬 미러 아님)
+
+**F1. ① 웹 소셜로그인 백지 — 이중 결함 확정 (서버 로그 + 배포 래퍼 실측)**
+- 서버측은 **전 단계 성공**: 최근 로그에서 google·kakao 모두 `step=token 200 → step=userinfo 200 → action=login → 302` 완주(호출자 user_id d988bcfd = 김진주 계정 — 사용자 본인의 재현 시도로 판단). 즉 콜백 도달·계정 해석까지 정상.
+- **주원인(확정)**: 성공 리다이렉트 = `{frontend_url}/oauth/callback#token=` (oauth.py:60-67, 콜백 말미 RedirectResponse) 인데 프로덕션 `.env` **FRONTEND_URL=http://localhost:8081** — 브라우저가 localhost로 302 = 백지. config.py:166 기본값도 localhost 계열.
+- **2차 결함(FRONTEND_URL 교정 후에도 막힘)**: app.maidol.ai.kr 배포 구조 — 루트는 래퍼(homepage/maidol/app-shell/index.html), 앱 본체는 `/app`(expo index.html 개명). `_redirects`/`404.html` 부재로 **모든 미지 경로가 래퍼로 폴백**(실서버 GET: `/`, `/oauth/callback`, `/?ref=SSUGSIS` 전부 래퍼 5390B, `/app`만 앱 1215B). 래퍼 :8 `location.replace('/app')`(모바일)과 :95 `<iframe src="/app">`(PC)가 **hash·query를 폐기** → `#token=`·`?ref=` 유실.
+- 클라 보조 결함: SocialLoginButtons.tsx:41-49 웹 분기가 `Linking.openURL(...)` — react-native-web은 `_blank` 새 탭(원 탭은 비로그인 잔류, 탭 간 토큰 전달 장치 없음). 콜백 파서 = App.tsx:461-478(useOAuthCallback, hash `token=`만 파싱, 파싱 후 replaceState). 경쟁조건 후보: App.tsx:522(OAuth)·:527(restoreSession) 동시 실행 시 authStore.ts:95-96·:169가 새 토큰 세션을 되돌릴 수 있음. 보안: utils/remoteLogger.ts:114-117이 `location.href` 로깅 — hash 제거 전 에러 로그에 `#token=` 유출 가능.
+- APK는 별도 경로(openAuthSessionAsync + `aidol://oauth/callback` 딥링크, SocialLoginButtons.tsx:24,54-76 / 서버 client=app 분기 oauth.py 기존재) — **웹 전용 증상 맞음**.
+
+**F2. ② DM 창이 상단바를 가림 (DmInboxScreen.tsx:208-215, App.tsx:555-558)**
+- DmInbox 자체는 네이티브 헤더 스크린(App.tsx:555 stackHeader '메시지') — 정상. **주원인 = "새 메시지"(수신자 선택) 창이 전체화면 RN `<Modal>`**(DmInboxScreen.tsx:208 `animationType="slide"`, transparent/statusBarTranslucent 없음)이라 네이티브 헤더를 통째로 덮음. `paddingTop: insets.top`(:209)은 상태바만 비우고 헤더(≈56)는 미반영.
+- 부원인: DmChat은 headerShown:false(App.tsx:558)에 자체 헤더(DmChatScreen.tsx:296 `paddingTop: insets.top`, 헤더 스타일 :426-430에 높이 56 규격 없음) — 상단바 규격 불일치.
+- 선례(v3.214 ②): PolicySheet `variant='sheet'` — `transparent`+`statusBarTranslucent` Modal + `maxHeight = winH - topLimit`(components/PolicySheet.tsx:32-57), 호출측이 useHeaderHeight() 측정(DialogueScreen.tsx:95-96). 웹/네이티브 분기 없음(웹 insets.top=0).
+
+**F3. ③ maidol_official 기본 팔로우 — 서버는 기완비, 앱 작성창이 검색 전용 (프로덕션 실측)**
+- 자동 맞팔 **기존재**: 이메일 가입 auth.py(ensure_mutual_follow, provider="local"), 소셜 가입 oauth.py `action=="signup"` 분기(ensure_mutual_follow — 프로덕션 원본 실독), + **startup 전 유저 백필**(official.py 모듈 docstring·main.py). official 계정 실존(users 56fea014, nickname maidol_official). → 팔로우 상태 요건은 이미 충족.
+- 실결함 = **DM 작성창이 검색 전용**: DmInboxScreen.tsx:110 빈 검색어면 결과 강제 [](목록 소스는 `GET /dm/users/search` 뿐, :115), 서버 dm_service.py도 `if not q: return []` — 팔로우 목록을 쓰는 코드가 앱·서버 어디에도 없음. official 해석 API `GET /api/dm/official`(dm.py:115-128)와 앱 캐시(services/officialService.ts:21-42) 기존재 — 재사용 가능.
+- 유의: 이메일 미인증 유저는 compose가 게이트에 막힘(DmInboxScreen.tsx:166-179, edit 버튼은 살아 있어 무반응 — :96-104 vs :208). official 상대는 서버 DM 게이트 면제(dm_service.py:228-237).
+
+**F4. ④ 패션브랜드 대량 반영 (CSV·이미지 전수 실측 + 서버 임포트 경로 분석)**
+- 소스: scratchpad/fashion/MAIDOL_패션브랜드_모음/ — **전체_제품정보.csv 4,857행/85브랜드가 정본**(브랜드별 CSV는 동일 데이터 + 말미 수집메모 행·헤더 중복으로 행수만 부풀음 — 골드퍼센트 대조 실측). 미수집 7브랜드(미수집_브랜드_목록.csv, 사유 기록). 총 4,944파일 1.1GB.
+- 스키마: `브랜드,성별,부위,부위내순위,제품명,색상,판매가(원),판매상태,상세페이지URL,이미지파일,이미지유형,이미지원본URL`. 부위 = 상의1,524/하의1,450/모자749/가방734/신발400. 성별 = 여성2,202/공용1,682/남성973. 판매상태 = 판매중4,219/품절638. **이미지 로컬 경로({브랜드}/{이미지파일}) 4,857행 전수 실존·결측 0**. 얼굴 노출 이미지 없음(제품컷 4,133 + 얼굴없는 모델컷 724). (브랜드,부위,제품명,색상) 중복 244건 — 색상 옵션 중복, 문서 단위 삽입이라 무해(비고만).
+- 반영 대상 스토어: Mongo `ad_items`(카테고리 ALLOWED = {상의,하의,신발,모자,가방,장소} — business.py:30 v3.206), 이미지 = MinIO 클라이언트로 **AWS S3**(MINIO_HOST=s3.ap-northeast-2.amazonaws.com, settings.minio_bucket_images) `ads/{owner_uid}/{uuid}.ext`. 현황: ad_items 총 455건(상의155/신발153/하의147) — **모자·가방 0건, v3.206 카테고리 개방 후 최초 공급**.
+- 기존 admin CSV 임포트(admin_items.py POST /import, dry_run 지원)는 **이번 건에 부적합**: (a) `구분` 플랫폼 6종(무신사/29cm/…) 필수(:48-64, :133) — 브랜드 직납 스키마 아님, (b) 이미지URL **원격 다운로드** 강제(:141-146, :405 httpx) — 원본 쇼핑몰 핫링크 4,857건은 차단·유실 리스크, 로컬 이미지 활용 불가. 선례 = seed_item_store.py(1회성 시드, SEED_TAG='item_images_csv' 멱등, 449건 실적).
+- 후속 리스크(반영 후): 공개 조회 `GET /business/ads/active`가 **`$sample 500` 랜덤 캡**(business.py:427-431). 총 ~5.3k가 되면 ArtistCody 악세서리 피커의 **무필터 전량 조회→클라 필터**(ArtistCodyScreen.tsx:327-331) 방식으론 모자·가방이 표본의 ~28%(~140건)만 랜덤 노출. 앱 주석 :316 "서버가 category=모자 400 거부"는 **구정보** — business.py:30에 모자·가방 이미 허용. 단 wishlist.py:25는 자체 구세트 `{상의,하의,신발,장소}` 잔존(모자·가방 미포함) — 위시리스트 카테고리 경로 400 리스크.
+- EC2 디스크 여유 120G(145G 중 25G 사용) — 1.2GB rsync 무리 없음.
+
+**F5. ⑤ 튜토리얼 최초 기준 — 검증 findings (tutorialGate.ts 정독)**
+- fresh/existing 판정: 마커 `maidol_first_run_v1` 우선(:45-50) → 마커 없고 비튜토리얼 키 존재 시 existing 확정 + **6화면 seen 선기록 마이그레이션**(:59-64) → 완전 빈 스토리지만 fresh(:69-71), 판정 실패 시 미노출(:75-80). 화면 seen 키 6종과 마이그레이션 목록(:33) 전수 일치 실측(player/feed/chart/topbar/map/search). 로그아웃·AsyncStorage.clear 경로 없음 → **기존 설치 기기·기가입 기기 재노출 없음 = 요건 충족**.
+- 한계(명기): 판정이 **기기(스토리지) 기준**이라 기가입 계정도 새 기기·새 브라우저·시크릿 창·사이트데이터 삭제·iOS ITP(7일)에선 fresh → 재노출. 계정 서버 동기화는 이월. 또 검수모드 시절 fresh 마커가 찍힌 테스터 기기는 seen 미기록 화면(TutorialOverlay.tsx:124)이 1회 더 뜰 수 있음(정상 종료 조건).
+- 웹도 동일 코드(AsyncStorage→localStorage, iframe 동일 origin 공유).
+
+**F6. ⑦ SSUGSIS 초대페이지 (referral 3중 검증 지점 + DB 실측)**
+- 코드 체계: 발급 4자(charset 31종 — 0/O/1/I/L 제외, referral_service.py:20-22), 해석 `REFERRAL_CODE_RE=^[charset]{4}$`(:23) — resolve(:99-116)가 형식+active 검증. 가입 소비 = auth.py 이메일 가입 선검증(무효면 가입 거부)→보상 ⭐50×2(referral_inviter/joiner). 앱 입력 = AuthPanel.tsx:38 `REFERRAL_RE`(동일 4자)+:570-578 maxLength=4, 웹 프리필 `?ref=` 대문자화(:41-47, 모듈 로드 1회). 소셜 가입은 ref 미전달(SocialLoginButtons.tsx:41).
+- **SSUGSIS(7자, 'I' 포함)는 서버 resolve·가입 검증·앱 입력 3곳 모두 불통과** — 코드 확장 없인 불가.
+- 김진주 = users **d988bcfd**(kimpearl@lotusai.co.kr, 기존 코드 5JJY, active, 2026-09-18 가입) — PG 실측. 홈페이지 하단 메일 = **kimpearl@lotusai.co.kr**(homepage/maidol/www/index.html:353·361 mailto 실측, 라이브는 Cloudflare 이메일 난독화로만 노출).
+- 랜딩 기존재: `GET /invite/{code}`(referral.py v3.212 HTML, 라우트 가드 `^[A-Za-z0-9]{4,12}$` — SSUGSIS 형식은 통과하나 resolve에서 사망) — CTA 2원화(웹앱 `app.maidol.ai.kr?ref={code}` + Play), UA 분기. **?ref= 자체가 F1 래퍼에서 유실 중**이라 현행 랜딩→웹앱 프리필 체인도 끊겨 있음(래퍼 수정으로 동시 복구).
+- `/app?ref=7VFU` 직진입 시 앱 로드 실측(1215B) — 래퍼만 고치면 프리필 체인 성립.
+
+## 확정 스펙
+
+### ① 웹 소셜로그인 복구 [운영 env(사용자 실행) + homepage 래퍼 + app 웹분기]
+- **(사용자 실행) EC2 .env `FRONTEND_URL=https://app.maidol.ai.kr` + 컨테이너 재기동** — 배포 커맨드로 전달(프로덕션 변경 승인 관행). 서버 코드 무변경.
+- **래퍼**(homepage/maidol/app-shell/index.html): :8 → `location.replace('/app' + location.search + location.hash)`, :95 iframe `src`도 진입 시 search+hash 부착(스크립트로 설정). 앱은 `/app`에서 hash 파싱(App.tsx:466) 기존 로직 그대로 동작. (`_redirects` `/oauth/callback` 302는 옵션 — 래퍼 수정만으로 충족되므로 미채택.)
+- **앱 웹분기**(SocialLoginButtons.tsx:43-49): `Linking.openURL` → `window.location.assign(loginUrl)` (같은 탭 이동 — `_blank` 새 탭·비로그인 원탭 잔류 제거). 네이티브 경로(:54-76) 무변경.
+- **경쟁조건 방어**(App.tsx:461-478, :522-527): useOAuthCallback이 hash 토큰을 감지하면 restoreSession 스킵(또는 토큰 처리 완료 후 실행) — authStore.ts:95-96·:169의 새 토큰 세션 롤백 차단.
+- **토큰 유출 방어**(utils/remoteLogger.ts:114-117): 로깅 href에서 hash strip 1줄(`split('#')[0]`).
+- 배포: expo web export + `deploy.sh app`(Cloudflare Pages) — **사용자 승인 후** 오케스트레이터 절차.
+
+### ② DM 상단바 규격 [app]
+- **새 메시지 창**: DmInboxScreen 내 전체화면 Modal(:208) 폐지 → **PolicySheet 'sheet' 선례**로 교체: `transparent`+`statusBarTranslucent` Modal + 컨테이너 `top = 헤더 하단`(`useHeaderHeight()` 측정값, 폴백 insets.top+56 — DialogueScreen:95-96 관행) + 하단 시트형 컨테이너. 네이티브 헤더('메시지'·뒤로가기·edit)가 항상 보임 = "상단바 하단으로 창" 요구 직해. (RootStack 스크린 승격 대안은 검색 상태 이관 비용으로 미채택.)
+- **DmChat 자체 헤더 규격화**(DmChatScreen.tsx:296-314, :426-430): 높이 56 고정 + 타이틀 상단바 위치 정렬(header-consistency 규칙 — paddingTop 고정값 금지, insets.top+56 규격). 네이티브 헤더 전환은 우측 커스텀 요소 유지 위해 미채택.
+
+### ③ DM 작성창 official 기본 노출 [app — 서버 무변경]
+- DmInboxScreen 작성 Modal: **빈 검색어일 때 maidol_official 1행 고정 노출**(현행 빈 배열 :110 대체) — `fetchOfficial()`(officialService 캐시, GET /dm/official) 성공 시 `{id, nickname: 'maidol_official'}` 행 + '공식' 배지, 탭 시 기존 상대 선택 흐름(:132) 그대로. 조회 실패 시 현행(빈 목록+안내 문구) 폴백.
+- 팔로우 자동화는 서버 기완비(F3) — 추가 구현 없음. 검색어 입력 시엔 현행 검색 결과만(official이 검색에도 걸리면 중복 제거).
+- 미인증 게이트(:166-179)는 현행 유지 — official 행도 게이트 통과자(작성창 진입자)에게만 노출(정책 변경은 결정사안 4).
+
+### ④ 패션브랜드 4,857건 시드 [server_staging_v3216 신규 스크립트 + app 피커 보강 + wishlist 정합]
+- **시드 스크립트 신설** `seed_fashion_brands.py`(seed_item_store.py 관행 이식, server_staging_v3216): 입력 = 전체_제품정보.csv + 브랜드 폴더 로컬 이미지(EC2로 rsync ~1.2GB, 디스크 여유 실측 120G). 행별: gender 남성→남성용/여성→여성용/공용→공용, category=부위 그대로(5종 전부 ALLOWED), name=제품명(+색상 suffix — admin_items:434 관행, '대표(…)' 색상은 '기본' 취급), product_url=상세페이지URL, source_rank=부위내순위, 이미지 = **로컬 파일 직업로드**(S3 put_object `ads/{owner_uid}/{uuid}.ext` — 원격 핫링크 다운로드 배제). `SEED_TAG='fashion_brands_csv'` 멱등(재실행 시 태그 문서+S3 오브젝트 제거 후 재삽입 = replace).
+- **안전장치**: `--dry-run`(파싱·카테고리/브랜드/성별 집계·이미지 실존 검사만, 쓰기 0 — 이미 로컬 전수검사 결측 0이나 EC2 전송 후 재검), 기본 **판매중 4,219건만**(품절 제외 — 결정사안 2), 업로드 실패 행 skip 목록 리포트, 동시 업로드 8·진행 로그 100건 단위(예상 10~25분). 실행은 배포 절차(DEPLOY.md)에 포함 — **프로덕션 쓰기이므로 사용자 승인 후**.
+- **소유 계정**: 신규 1계정 시드(예: fashionbrands@maidol.co.kr / 닉네임 '브랜드샵') — seed_item_store의 플랫폼 계정 upsert 관행. 브랜드 표기는 `brand` 필드(앱 카드가 브랜드명 표시). (결정사안 1)
+- **앱 악세서리 피커 전환**(ArtistCodyScreen.tsx:316-331): 무필터 전량 조회 → `?category=모자` + `?category=가방` 2회 호출 합산(서버 이미 허용 — 구주석 :316 삭제). $sample 500 캡과 무관하게 모자 749·가방 734 각각 500 표본 확보. 상의/하의 탭은 기존 카테고리 필터 호출(:301)이라 카테고리당 500 랜덤 = 전시 로테이션으로 수용(캡 상향은 이월).
+- **wishlist.py:25 세트 정합**(서버 1줄): `{상의,하의,신발,장소}` → business.py:30과 동일 세트(모자·가방 추가) — 악세서리 위시리스트 400 방지.
+
+### ⑤ 튜토리얼 — 코드 무변경, 검증만
+- F5로 요건(최초 접속·최초 로그인, 기존 기기 재노출 없음) 충족 확인 — 변경 없음. tester 시나리오: (a) 기존 설치 기기 업데이트 → 전 화면 미노출, (b) 신규 설치(웹 시크릿) → 로그인 게이트 화면은 최초 로그인 후 1회만, (c) 재로그인·재방문 미재노출. 한계(새 기기 = 기기 기준 재노출)는 REPORT에 정책 한계로 명기.
+
+### ⑥ Inst — 상태 기재 + 검증만
+- 스테이징 픽스 복원 완료·사용자 배포 대기(계획 제외 참조). tester: 배포 후 Inst 생성 E2E(성공·짧은 audio-url 로그 확인·⭐5 과금/실패 환불 회귀). **v3.216 서버 스테이징 pull은 이 배포 완료 후 수행**(전제 참조).
+
+### ⑦ SSUGSIS 초대페이지 [server_staging_v3216: referral 2파일 + 1회성 SQL + app 입력 확장 (+F1 래퍼 연동)]
+- **커스텀 코드 해석 확장**(referral_service.py): `REFERRAL_CODE_RE` → `^[A-Z0-9]{4,12}$`(normalize 기존 대문자화 유지). 자동 발급(generate_code)은 4자 charset 불변 — 커스텀 코드는 수동 부여 전용. auth.py 가입 검증·/invite 랜딩은 resolve 재사용이라 자동 커버.
+- **SSUGSIS 발급**(1회성 SQL, 배포 절차 포함·사용자 승인): `UPDATE users SET referral_code='SSUGSIS' WHERE id='d988bcfd-…'`(김진주). 기존 5JJY는 대체되어 무효화됨을 명기(결정사안 3). referral_code 부분 유니크 인덱스로 충돌 시 실패 = 안전.
+- **앱 입력 확장**(AuthPanel.tsx:38, :570-578): `REFERRAL_RE` → `^[A-Z0-9]{4,12}$`, maxLength 12. 프리필(:41-47)은 F1 래퍼 수정으로 `?ref=` 전달 복구 시 그대로 동작.
+- **초대 랜딩 카피 개편**(referral.py `_render_invite_html` — 전 코드 공통, 결정사안 5): CTA를 **웹앱 primary 단일화**("웹에서 바로 시작하기" — UA 무관), Play CTA 제거하고 안내 블록으로 대체: "모바일(Google Play) 설치를 원하시면 **구글 계정을 maidol_official DM** 또는 **kimpearl@lotusai.co.kr**(maidol.ai.kr 하단 문의 메일)로 보내주세요 — 테스터 등록 후 설치 안내"(mailto 링크 포함). UA 분기(is_android)·OG는 유지, "이미 설치했다면 열기" 존치.
+- 테스트 진입 URL: `https://api.maidol.ai.kr/invite/SSUGSIS`(랜딩) → `https://app.maidol.ai.kr?ref=SSUGSIS`(웹앱 프리필). 소셜 가입 ref 전달(oauth state 경유)은 **이월**(40% 룰).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| (운영 env) backend .env FRONTEND_URL | https://app.maidol.ai.kr + 재기동 — 커맨드 전달, 사용자 실행 | backend-dev(지시서) | `[oauth]` |
+| homepage/maidol/app-shell/index.html | replace/iframe에 search+hash 전달 | frontend-dev | `[app-shell]` |
+| components/auth/SocialLoginButtons.tsx | 웹 분기 location.assign 전환 | frontend-dev | `[SocialLogin]` |
+| App.tsx | useOAuthCallback↔restoreSession 경쟁 방어 | frontend-dev | `[OAuthCb]` |
+| utils/remoteLogger.ts | href hash strip(토큰 유출 방어) | frontend-dev | `[remoteLogger]` |
+| screens/DmInboxScreen.tsx | 작성 Modal sheet화(헤더 하단) + 빈검색 official 고정 행 | frontend-dev | `[DmInbox]` |
+| screens/DmChatScreen.tsx | 자체 헤더 56 규격 정렬 | frontend-dev | `[DmChat]` |
+| screens/ArtistCodyScreen.tsx | 악세서리 피커 category=모자/가방 2호출 전환·구주석 정리 | frontend-dev | `[ArtistCody]` |
+| components/auth/AuthPanel.tsx | REFERRAL_RE 4-12자·maxLength 12 | frontend-dev | `[AuthPanel]` |
+| (서버) services/referral_service.py | 해석 정규식 4-12자 확장 | backend-dev | `[referral]` |
+| (서버) routes/referral.py | 랜딩 CTA/안내 카피 개편 | backend-dev | `[invite]` |
+| (서버) routes/wishlist.py | ALLOWED 세트 모자·가방 정합 1줄 | backend-dev | `[wishlist]` |
+| (서버) seed_fashion_brands.py 신설 | CSV+로컬이미지 → S3+ad_items 시드(dry-run·멱등) | backend-dev | `[fashion-seed]` |
+| (데이터) 1회성 SQL | 김진주 referral_code='SSUGSIS' | backend-dev(DEPLOY.md) | `[referral-sql]` |
+
+## 40% 룰 판정
+앱 8파일(전부 국소 — 신규 화면·스토어 0, 최대 공정 = DmInbox sheet화)+홈페이지 래퍼 1+서버 3파일+시드 스크립트 1+운영 env/SQL 2건(지시서). v3.214(앱 8·서버 3)와 동급 체급이나 건별 변경폭이 작음 — **초과 아님(가결)**. 이월: 소셜 가입 ref 전달(oauth state), $sample 캡 상향/페이지네이션, 튜토리얼 seen 계정 동기화, admin 임포트의 브랜드 직납·로컬 이미지 모드 지원, 품절 638건 취급 재론.
+
+## test-designer 항목
+1. [unit/app] SocialLoginButtons 웹: location.assign 호출(새 탭 미사용)·네이티브 경로 회귀. useOAuthCallback: hash 토큰 시 restoreSession 미실행(또는 후행)·토큰 처리 후 hash 제거. remoteLogger href에 '#' 미포함.
+2. [unit/app] DmInbox 작성창: 컨테이너 top=헤더 하단(측정값/폴백 insets.top+56)·statusBarTranslucent·빈검색 시 official 1행(fetch 실패 폴백 빈목록)·검색 시 중복 제거. DmChat 헤더 56 규격.
+3. [unit/app] ArtistCody 악세서리: category=모자·가방 2호출 합산·서브탭 필터 회귀. AuthPanel: 4~12자 코드 통과(SSUGSIS)·프리필 대문자화·기존 4자 회귀.
+4. [unit/server] referral_service: SSUGSIS resolve 성공(active만)·4자 기존 코드 회귀·발급은 여전히 4자. wishlist 세트에 모자·가방.
+5. [unit/server] seed_fashion_brands: dry-run 쓰기 0·집계 일치(판매중 4,219), gender/category 매핑, 색상 '대표(…)'→기본, 재실행 멱등(replace), 실패 행 skip 리포트.
+6. [api/스테이징] /invite/SSUGSIS 200 + 랜딩에 웹앱 CTA·DM/메일 안내(카피 실측)·무효코드 404 HTML 회귀. /business/ads/active?category=모자 200.
+7. [e2e(web)] 래퍼: app.maidol.ai.kr/oauth/callback#token=t → /app#token=t 보존(모바일 replace·PC iframe 양쪽), ?ref=SSUGSIS → 가입 폼 프리필. 구글/카카오 실로그인 완주(FRONTEND_URL 교정 배포 후) — 백지 재현 소멸 확인.
+8. [e2e(web)] DM: 상단바 노출 상태로 작성창·채팅 진입, official 행 탭→DM 전송. 튜토리얼: 시크릿 신규 = 최초 1회만, 기존 스토리지 = 미노출(F5 시나리오 a~c).
+9. [통합/프로덕션 반영 후] 패션 시드: ad_items 카테고리별 건수(모자 749↓·가방 734↓ 판매중 기준)·S3 오브젝트 임의 10건 200·앱 악세서리 피커 실표시·기존 455건 무손상. Inst E2E(⑥ 배포 후) + v3.215 회귀(loudnorm·composer 쿨다운·커버).
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **④ 소유 계정**: 기본안 = 신규 1계정('브랜드샵') 일괄 소유, 브랜드는 brand 필드 표기. 85브랜드 개별 계정은 과잉으로 미채택.
+2. **④ 품절 취급**: 기본안 = 판매중 4,219건만 시드(품절 638 제외 — product_url이 품절 페이지로 이어지는 UX 방지). 전량 원하면 지시 1줄.
+3. **⑦ 5JJY 대체**: 기본안 = 김진주 코드를 SSUGSIS로 교체(기존 5JJY 링크 무효화). 5JJY 병행 유지 원하면 별도 설계 필요(코드 2개 체계 — 이월급).
+4. **③ 미인증 게이트**: 기본안 = 현행 유지(official 행은 작성창 진입 가능자에게만). "가입 직후 누구나"로 완화하려면 게이트 정책 변경 지시 필요.
+5. **⑦ 랜딩 카피 적용 범위**: 기본안 = 전 초대코드 공통(베타 설치 정책이 동일하므로). SSUGSIS 전용 분기 원하면 지시.
+6. **① 배포 순서**: FRONTEND_URL 교정(env+재기동)과 Pages 재배포(래퍼+앱 번들) 모두 사용자 실행/승인 — ⑥ Inst 배포와 묶어 1회 승인으로 처리 제안.
+
+규칙: 민감 정보 플레이스홀더(<SSH_HOST>=maidol-ec2 별칭만 기재, OAuth 키·DB 크리덴셜 로그/문서 기재 금지 — 이번 실측도 키 이름만 확인), 서버 수정은 server_staging_v3216에서만(**라이브 pull 원본** + _orig 보존 + 배포 직전 md5 재대조), 프로덕션 쓰기(env·SQL·시드·Pages 배포)는 전부 사용자 승인 후, git 커밋은 오케스트레이터 승인 후.
