@@ -35,6 +35,9 @@ import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
 import { listArtists, artistSheetUrl, ServerArtist } from '../services/characterService';
 // v3.210 ③: AI 곡 Inst. 버전 생성 — trackService 계약(backend 조 병렬, PLAN v3.210)
 import { requestInstrumental, getInstrumentalStatus, INSTRUMENTAL_STAR_COST } from '../services/trackService';
+// v3.215 ④: Inst = 작곡(composer) 디렉터 영역 — 생성 전 쿨다운 게이트 (MusicGeneration 관행)
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 // v3.114: 내 채널(피드·커뮤니티) — MAIDOL 내 채널 구성 반영. FeedCard·이미지 블록(v3.111) 재사용
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
@@ -345,8 +348,34 @@ export default function MyMusicScreen({ navigation }: any) {
     showAlert('안내', 'Inst. 생성이 오래 걸리고 있어요. 잠시 후 내 곡 목록을 새로고침해 확인해주세요.');
   };
 
+  // v3.215 ④: Inst = 작곡(composer) 디렉터 영역 — 생성 진입 전 쿨다운 게이트.
+  // cooldown_remaining_sec>0면 확인 다이얼로그 미진입 + 공용 쿨다운 다이얼로그(12곳 관행).
+  // 조회 실패는 게이트 오픈 — 서버 429(과금 전)가 최종 방어(MusicGeneration 관행).
+  const handleCreateInstrumental = async (track: Track) => {
+    try {
+      const status = await getFatigueStatus('composer');
+      const remain = Math.max(0, Math.floor(status?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        if (__DEV__) console.info('[MyMusic] [fatigue:composer] Inst 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status,
+          remainingSec: remain,
+          director: 'composer',
+          onCleared: () => confirmCreateInstrumental(track), // 해제 시 재진입 — 확인 다이얼로그 재개
+        });
+        return;
+      }
+    } catch (err: any) {
+      // 조회 실패 = 게이트 오픈 (서버 429가 최종 방어)
+      console.warn('[MyMusic] [fatigue:composer] 상태 조회 실패 — 게이트 오픈', {
+        status: err?.response?.status,
+      });
+    }
+    confirmCreateInstrumental(track);
+  };
+
   // v3.210 ③: ⋮ 메뉴 [Inst. 버전 만들기] — 확인 다이얼로그(⭐ 비용 안내) → 생성 요청 → 폴링
-  const handleCreateInstrumental = (track: Track) => {
+  const confirmCreateInstrumental = (track: Track) => {
     const trackId = String(track.id);
     showAlert(
       'Inst. 버전 만들기',
@@ -368,7 +397,20 @@ export default function MyMusicScreen({ navigation }: any) {
               const status = err?.response?.status;
               console.error('[Inst] 생성 요청 실패', { trackId, status });
               setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-              if (status === 402) {
+              if (status === 429 || err?.response?.data?.error === 'director_fatigue') {
+                // v3.215 ④: 서버 composer 게이트 429(과금 전 무비용 — 게이트→과금 순서) —
+                // 선게이트와의 레이스는 동일 쿨다운 다이얼로그로 대응 (VideoDirector 관행)
+                const remain = Math.max(
+                  0,
+                  Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0)
+                );
+                showFatigueCooldownDialog({
+                  status: null, // 게이트 통과 직후라 최신 status 미보유 — 다이얼로그가 계약 폴백 표기
+                  remainingSec: remain > 0 ? remain : 1,
+                  director: 'composer',
+                  onCleared: () => confirmCreateInstrumental(track),
+                });
+              } else if (status === 402) {
                 showAlert('알림', '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
               } else if (status === 409) {
                 // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)

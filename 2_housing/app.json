@@ -3,7 +3,7 @@
     "name": "MAIDOL",
     "slug": "triplej-studio",
     "scheme": "aidol",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -42,7 +42,7 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-1425041551318467~9961638197",
+          "androidAppId": "ca-app-pub-1425041551318467~8636830033",
           "iosAppId": "ca-app-pub-1425041551318467~5404280238"
         }
       ],

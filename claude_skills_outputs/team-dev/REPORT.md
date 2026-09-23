@@ -2796,3 +2796,45 @@ U-1~U-7 + S-1~S-6: FAIL 1(U-5④)·경계 1(S-1④) 즉시 픽스 후 tsc·py_co
 - **Inst E2E 성공**: 3차 시도 전 구간 로그 실증 — 접수(taskId)→리다이렉트 fetch→SUCCESS(90초)→3.65MB 이관→**"냥냥냥 (Inst.)" 트랙 공개 발매 확인**(차트 API 실측). 실패 2회분 ⭐5 전액 자동 환불.
 - **v3.214 서버 배포**(오케스트레이터 실행): 3파일 + **스테이징 충돌 처치** — v3214 tracks.py가 Inst 짧은 URL 라우트 이전 스냅샷이라 재빌드 전 라우트 이식 후 배포(Inst 회귀 0 확인). 검증: health 200·inst-audio 라우트 보존·share_video ⭐5 노출·traceback 0.
 - 잔여: A-1~A-4 실측(v7 신규 생성·캐시 무과금·429/402 — 실기기 E와 병행), 카카오 캐시 초기화(사용자).
+
+## v3.215 (2026-09-23) — 최종 배포 전 사이클: 영상 성능·작업실 anchor 정착·Inst 품질/쿨다운/커버·nowplaying 튜토리얼 교체 + 광고 버튼 진단 편입
+
+**요청**: ①영상 생성 안 됨 ②작업실 아티스트 디렉터 영역표시 위치 이상·스크롤 중 표시 금지(포커싱 완료 후 표시) ③Inst 음질 개선 ④Inst=작곡 디렉터 휴식시간 ⑤Inst 커버=원곡 이미지(미니플레이어 미표시) ⑥nowplaying 튜토리얼 = 하단 토글 1스텝 교체 ⑦적용 후 최초 앱 접속·최초 로그인 트리거로 전환 ⑧apk/aab 배포 (+최우선 편입: 쿨다운 「광고 보고 단축」 버튼 실기기 미노출).
+
+### 수행 결과
+
+- **[최우선] 광고 버튼(오케스트레이터)**: 1.1.4 APK 해부로 JS 번들·네이티브(GMA dex·RNGMA TurboModule 8종) 정상 포함 확정 — 원인은 런타임 `require('react-native-google-mobile-ads')` throw 추정(catch가 console.log라 무증상). 픽스: useRewardedSkipAd.ts **진단 warn 승격+admobLoadError 보존+init 1회 로그**(릴리즈 원격 로그 수집), 별건 확정 결함 **app.json AdMob 앱 ID 교정**(~9961638197→~8636830033, 사용자 콘솔·유닛 6051029293 확인). RNGMA 16.3.2 유지(17.0.0은 출시 5일 메이저 — 보류). 새 빌드 원격 로그로 최종 확정 예정.
+- **[A] ① 영상 생성(오케스트레이터 핫픽스+성능)**: 1차 핫픽스(타임아웃 300→600s·동시 1 직렬화) 후 근본 개선 — ffmpeg 3중 루프(-loop PNG 매 프레임 재디코드) 제거·PIL 사전 합성, 캐시 **share/v7→v8 승격**. 실사고 조합(sns/center/scroll 92세그) 프로덕션 컨테이너 재생성 **249초 완주**(600s 내), share/v8 적재(12.3MB·201.2s·1080×1920 20fps)·프레임 육안 검증(커버·단색배경·mid 자막·워터마크 스트립 v3.214 기하 동일). 벤치: 순수 x264 60s→24.5s vs -loop 47.5s. 사용자 재시도는 캐시 무과금.
+- **앱(② MapScreen+TutorialOverlay)**: 고정 450ms 타이머 → **스크롤 정착 폴링**(120ms 간격·연속 2회 |Δ|<0.5·최대 12회 타임아웃, token 가드로 스텝 경합 폐기) + `InteractionManager.runAfterInteractions` 재측정(진입 전환 중 measureInWindow 오염 차단 — P1 봉합). TutorialOverlay `suspended` prop — 정착 전 **전체 딤만**(구멍·화살표·카드 숨김). P2(상태바 오프셋)는 실기기 로그 판정 대기.
+- **앱(⑤ playback.ts)**: 서버 데이터·API·컴포넌트 전 경로 정상 실측(커버 백필 불요 — Inst 파생 1건뿐·커버 보유) → `maybeHydrateCover` 공통 방어: cover 결손 track 재생 시 GET /tracks/{id} 백그라운드 보강·store track/queue 병합(실패 무해).
+- **앱(⑥ PlayerScreen)**: 튜토리얼 3스텝 → **1스텝** — anchor `player-detail-toggle`(하단 [가사·제작 노트·스타일링·댓글] 토글, placement above), 문안 사용자 원문 그대로("토글을 열어서 가사와 제작노트 그리고 아티스트의 스타일링을 확인해보세요"). player-add 등록 제거(키 존치).
+- **앱(④ MyMusicScreen)**: Inst 요청 전 `getFatigueStatus('composer')` 게이트(확인 다이얼로그 전 차단·조회 실패는 게이트 오픈) + POST 429/'director_fatigue' 분기 → showFatigueCooldownDialog(composer). 맵 휴식 티켓은 composer 기대상이라 자동 정합.
+- **서버(server_staging_v3215, 3파일+백필 1건)**: ④ tracks.py /instrumental — `_existing` 409 직후·클레임/⭐차감 **이전** `fatigue_gate_response(director="composer")` 429(게이트→과금 순서), inst_service 성공 경로에 `on_generation_completed(uploader_id, db=mongo_db, director="composer")` best-effort 훅. ③ inst_service — **loudnorm 정규화**(`I=-14:TP=-1.5:LRA=11`+48kHz/320k, best-effort — ffmpeg 부재/실패 시 원본 저장, applied/skipped 로그). 근거 실측: 원곡 -13.9 LUFS vs Inst -21.2 LUFS(**7.3LU 격차** = 체감 저하 주원인, 비트레이트는 179kbps 동일·무가공 저장 확인). sunoapi.org는 mp3 전용·품질 옵션/WAV 부재(공식 문서+record-info 실조회 확정) — 분리 아티팩트 자체는 API 한계 명시.
+- **⑦ 트리거**: tutorialGate 실측 — 코드 변경 불요 확인 후 `TUTORIAL_REVIEW_MODE=false` 1줄 전환(사용자 지시) = 완전 최초 설치 + 로그인 게이트 화면은 가입 후 최초 진입 1회. 기존 설치 기기는 'existing' 판정·미노출(검수는 신규 설치로만 가능).
+- **마무리**: app.json version 1.1.4→**1.1.5** — 이후 오케스트레이터 커밋+EAS APK/AAB 빌드.
+
+### 서버 배포 (오케스트레이터 실행 완료 — DEPLOY.md 실측 md5)
+
+| 파일 | 배포 경로 | 수정 전(_orig) md5 | 배포본 md5 |
+|------|-----------|--------------------|------------|
+| share_video.py | app/services/share_video.py | `d1d4c86785bc83933200e386f9a59bc7` (v3.214+600s 핫픽스) | `3b0036a43c64920e1da0d7a21db9da86` |
+| tracks.py | app/routes/tracks.py | `983d1e902234cf08c87fea2226e7f3aa` (v3.214 배포본) | `811381c087da9db43dc592fc7ac174e5` |
+| inst_service.py | app/services/inst_service.py | `c9a3377d6c23d6545f515eadbc01f455` (v3.210 배포본) | `93b41b0efd4e2ba8dc349f0385fc74b4` |
+| backfill_inst_loudnorm_v3215.py | (배포 안 함 — docker cp 1회 실행) | — | `c33c55e61caeab53dc0ad3c61d4224f8` |
+
+- 3파일 md5 일치·docker 재빌드 확인. EC2 측 `.bak_pre_v3215` 백업 선행(롤백 절차 DEPLOY.md).
+- **③ 백필 실행 완료**: dry-run 후 --apply — "냥냥냥 (Inst.)" **-21.17→-13.98 LUFS, TP -1.50, 320k/48kHz**, duration 162 유지, tracks.audio_sha256 `dfe6715f…`→`4ae58e94…` 갱신. **롤백 포인트**: MinIO 원본 백업 object `<audio object>.bak_pre_v3215` + 원 sha `dfe6715f…`.
+
+### 검증
+
+- **tester 1차 게이트**: 유닛 11개 시나리오(U-1~U-7·S-1~S-4) **전항 PASS** — tsc 0에러·diff 격리·⑥ 문안 바이트 일치. 서버 정적 S-1(게이트→과금 순서·완료 훅) PASS.
+- **planner 최종 정합 확인(코드 재독)**: PLAN v3.215 확정 스펙 11개 변경점 전부 구현 일치 — suspended 딤 전용 분기·정착 폴링 token 가드·안전 타임아웃, player-detail-toggle 등록/해제 대칭, composer 게이트 삽입점(클레임/차감 이전)·훅 위치(성공 경로 한정·실패 raise 선행), loudnorm best-effort(파이프라인 실패 사유 금지)·sha 최종본 기준, 하이드레이션 track+queue 병합·실패 무해, REVIEW_MODE=false·1.1.5·AdMob ID 교정 확인. **이상 없음**.
+- **미검증(새 APK 빌드 후 사용자/실기기 확인 — 완료 조건에 명시)**:
+  - D-1~D-5: 작업실 anchor 정위치(P2 오프셋 로그 회수 포함)·정착 후 표시, nowplaying 1스텝, Inst 미니플레이어 커버, composer 쿨다운 다이얼로그, first-run 트리거(신규 설치 검수).
+  - C 런타임 429: 쿨다운 상태 필요 — 실사용 확인으로 이월.
+  - 광고 버튼: 새 APK에서 쿨다운 팝업 버튼 유무 + frontend.log `[AdReward] init` 라인 회수로 원인 최종 확정.
+- 절차: 빌드 후 쿨다운 팝업 열기 → 버튼 유무 확인 + 원격 로그 회수(위 라인) — 사용자 확인 안내 예정.
+
+### 이월
+
+loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증) · P2 상태바 오프셋 보정(실기기 확정 시 1줄) · RNGMA 17 업그레이드(진단 로그 확정 후) · routes/fatigue.py 안내 문구 5종 목록화(v3.214 이월분).

@@ -64,6 +64,12 @@ interface TutorialOverlayProps {
   enabled?: boolean;
   /** v3.213: 스텝 전환 콜백(노출 시 0부터) — 화면 밖 anchor 자동 스크롤용(MapScreen) */
   onStepChange?: (index: number) => void;
+  /**
+   * v3.215 ②: 이동(스크롤 정착) 중 서스펜드 — true면 전체 딤만 렌더하고
+   * 구멍(스포트라이트)·화살표·카드를 숨긴다. 정착 후 false 복귀 시 현행 로직 그대로.
+   * 스크롤 애니메이션 중 구좌표 하이라이트가 떠 있는 현상 방지(사용자 지시 "이동 중에는 딤만").
+   */
+  suspended?: boolean;
 }
 
 const SEEN_KEY_PREFIX = TUTORIAL_SEEN_KEY_PREFIX; // 'maidol_tutorial_seen_v1:' — tutorialGate와 단일 출처
@@ -78,7 +84,7 @@ const DIM_COLOR = 'rgba(13, 8, 32, 0.68)';
 const CORNER_MASK_B = 40;
 
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
-  ({ screenKey, steps, enabled = true, onStepChange }, ref) => {
+  ({ screenKey, steps, enabled = true, onStepChange, suspended = false }, ref) => {
     const insets = useSafeAreaInsets();
     const { width: winW, height: winH } = useWindowDimensions();
     const isFocused = useIsFocused();
@@ -238,7 +244,10 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     );
 
     let content;
-    if (validAnchor) {
+    if (suspended) {
+      // v3.215 ②: 스크롤 정착 대기 중 — 전체 딤만(구멍·화살표·카드 숨김). 터치도 딤이 흡수.
+      content = <View style={styles.dim} />;
+    } else if (validAnchor) {
       // ── 스포트라이트 모드: 4분할 딤 + 구멍 테두리 + 화살표 + 근접 카드 ──
       const hole = {
         x: Math.max(0, validAnchor.x - HOLE_PAD),

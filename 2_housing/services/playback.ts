@@ -490,6 +490,37 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
   }
 }
 
+/**
+ * v3.215 ⑤: 커버 필드 하이드레이션 방어 — 축약 스냅샷(피드 트랙 블록 등)으로 재생이 시작돼
+ * track에 cover_image/cover_image_url이 모두 결손이면 GET /tracks/{id}로 백그라운드 보강하고
+ * store의 track/queue 항목에 병합한다(실패 무시). 미니플레이어는 store 구독이라 자동 반영.
+ * 필드명 확인: MiniPlayer(:93)·TrackRow·PlayerScreen 전부 `cover_image || cover_image_url` 셈법.
+ */
+function maybeHydrateCover(track: any): void {
+  if (!track?.id) return;
+  if (track.cover_image || track.cover_image_url) return;
+  const id = String(track.id);
+  (async () => {
+    try {
+      const res = await api.get(`/tracks/${id}`);
+      const cover = res.data?.cover_image || res.data?.cover_image_url;
+      if (!cover) return; // 서버에도 커버 없음 — 플레이스홀더 유지가 정답
+      const s = usePlayerStore.getState();
+      const lacksCover = (t: any) =>
+        !!t && String(t.id) === id && !t.cover_image && !t.cover_image_url;
+      if (lacksCover(s.track)) s.setTrack({ ...s.track, cover_image: cover });
+      if (s.queue.some(lacksCover)) {
+        s.setQueue(s.queue.map((t: any) => (lacksCover(t) ? { ...t, cover_image: cover } : t)));
+      }
+      if (__DEV__) console.info('[playback] cover hydrate', { id });
+    } catch (err: any) {
+      // 보강 실패는 무해(기존 플레이스홀더 유지) — 재생 흐름에 영향 금지
+      if (__DEV__)
+        console.info('[playback] cover hydrate 실패(무시)', { id, status: err?.response?.status });
+    }
+  })();
+}
+
 /** 화면 이동 없이 즉시 재생 — 큐를 세팅하고 해당 곡부터 재생(미니플레이어 등장). */
 export async function playTrackNow(track: any, queue?: any[]): Promise<void> {
   const store = usePlayerStore.getState();
@@ -498,6 +529,7 @@ export async function playTrackNow(track: any, queue?: any[]): Promise<void> {
   const idx = Math.max(0, q.findIndex((t: any) => t.id === track.id));
   store.playTrackAtIndex(idx);
   if (__DEV__) console.info('[playback] playTrackNow', { id: track.id, queue: q.length });
+  maybeHydrateCover(q[idx] || track); // v3.215 ⑤: 커버 결손 스냅샷 방어(백그라운드 — 재생과 병행)
   await loadAndPlayTrack(q[idx] || track);
 }
 

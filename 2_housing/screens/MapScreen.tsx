@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Animated,
   Easing,
+  InteractionManager,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -249,10 +250,29 @@ export default function MapScreen({ navigation }: Props) {
   const containerRef = useRef<View>(null);
   const historyBtnRef = useRef<any>(null);
   const scrollYRef = useRef(0);
+  // v3.215 ②: 스텝 전환 중(스크롤 정착 대기) — 오버레이는 전체 딤만 렌더(suspended)
+  const [tutorialSettling, setTutorialSettling] = useState(false);
+  // 정착 폴링 세대 토큰 — 빠른 스텝 연타 시 이전 폴링/재측정을 폐기
+  const tutorialSettleTokenRef = useRef(0);
+  // v3.215 ② P2 검증: 릴리즈 1회 warn 가드(측정 기준 rect vs window 크기 — 상태바 오프셋 판별)
+  const anchorMeasureWarnedRef = useRef(false);
 
   const registerDirectorAnchors = useCallback(() => {
     const node = containerRef.current as any;
-    node?.measureInWindow?.((sx: number, sy: number) => {
+    node?.measureInWindow?.((sx: number, sy: number, sw: number, sh: number) => {
+      // v3.215 ② P2 검증 로그 — Android statusBarTranslucent Modal과 measureInWindow 창 기준
+      // 불일치(기기별 상태바 높이 상수 오프셋) 확인용. 실기기 로그로 확정 시 보정 1줄 후속.
+      if (__DEV__) {
+        console.info('[MapScreen] anchor 측정 기준', {
+          sx, sy, sw, sh, winW: screenWidth, winH: winHeight, scrollY: scrollYRef.current,
+        });
+      }
+      if (!anchorMeasureWarnedRef.current) {
+        anchorMeasureWarnedRef.current = true;
+        console.warn('[MapScreen] anchor container measure', JSON.stringify({
+          sx, sy, sw, sh, winW: screenWidth, winH: winHeight,
+        }));
+      }
       DIRECTORS.forEach((d) => {
         const key = DIRECTOR_ANCHOR_BY_TYPE[d.type];
         if (!key) return;
@@ -267,25 +287,66 @@ export default function MapScreen({ navigation }: Props) {
         });
       });
     });
-  }, [mapScale]);
+  }, [mapScale, screenWidth, winHeight]);
 
   // 스텝 전환 시 대상 디렉터로 자동 스크롤 → 정착 후 새 오프셋으로 anchor 재계산.
   // 스텝 0~4 = DIRECTORS[0~4], 스텝 5 = 생성 이력(고정 오버레이 버튼 — 스크롤 무관 재측정만).
+  // v3.215 ②: 고정 450ms 타이머 → 스크롤 정착 폴링으로 교체 — Android는 programmatic
+  // scrollTo에 onMomentumScrollEnd가 발화하지 않는 관행이라 장거리 스크롤(영상 y=1620)은
+  // 450ms 시점의 미완 상태를 스냅샷해 어긋난 rect가 고착됐다(P1). 폴링(120ms 간격, 연속
+  // 2회 |Δ|<0.5 → 정착, 최대 12회=1.44s 타임아웃) + InteractionManager.runAfterInteractions
+  // 재측정(화면 전환 애니메이션 중 measureInWindow 오염 차단)으로 정착 후에만 표시한다.
   const handleTutorialStepChange = useCallback(
     (index: number) => {
+      const token = ++tutorialSettleTokenRef.current;
       const d = DIRECTORS[index];
       if (!d) {
+        // 스텝 5(생성 이력): 고정 오버레이 버튼 — 스크롤 무관, 재측정 후 즉시 해제
         if (historyBtnRef.current) measureAndRegister('map-history', historyBtnRef.current);
+        setTutorialSettling(false);
         return;
       }
+      setTutorialSettling(true);
       const targetY = Math.max(
         0,
         Math.min(d.y * mapScale - winHeight * 0.45, displayHeight - 1)
       );
-      if (__DEV__) console.info('[Tutorial] map 스텝 자동 스크롤', { index, targetY });
+      if (__DEV__) console.info('[MapScreen] 튜토리얼 스텝 자동 스크롤', { index, targetY });
       scrollRef.current?.scrollTo({ y: targetY, animated: true });
-      // 애니메이션 정착 대기 후 재등록(onMomentumScrollEnd 미발화 플랫폼 폴백 겸용)
-      setTimeout(registerDirectorAnchors, 450);
+      const finish = (reason: 'settled' | 'timeout', polls: number) => {
+        // 전환 애니메이션(내비/스크롤) 종료 후 재측정 — 이동 중 measureInWindow 오염 차단
+        InteractionManager.runAfterInteractions(() => {
+          if (token !== tutorialSettleTokenRef.current) return; // 새 스텝으로 대체됨 — 폐기
+          registerDirectorAnchors();
+          setTutorialSettling(false);
+          if (__DEV__) {
+            console.info('[MapScreen] 튜토리얼 정착 재측정', {
+              index, reason, polls, scrollY: scrollYRef.current,
+            });
+          }
+        });
+      };
+      let lastY = scrollYRef.current;
+      let stableCount = 0;
+      let polls = 0;
+      const poll = () => {
+        if (token !== tutorialSettleTokenRef.current) return; // 새 스텝 전환 — 이 폴링 폐기
+        polls += 1;
+        const y = scrollYRef.current;
+        stableCount = Math.abs(y - lastY) < 0.5 ? stableCount + 1 : 0;
+        lastY = y;
+        if (stableCount >= 2) {
+          finish('settled', polls);
+          return;
+        }
+        if (polls >= 12) {
+          // 안전 타임아웃 — settling 고착 금지: 현재 오프셋 기준으로라도 재측정·해제
+          finish('timeout', polls);
+          return;
+        }
+        setTimeout(poll, 120);
+      };
+      setTimeout(poll, 120);
     },
     [mapScale, winHeight, displayHeight, registerDirectorAnchors]
   );
@@ -823,12 +884,14 @@ export default function MapScreen({ navigation }: Props) {
       </Modal>
 
       {/* v3.213: 작업실 튜토리얼 6스텝 — 로그인 시에만(게스트는 guestTouchOverlay 잠금과 정합).
-          onStepChange: 화면 밖 디렉터(이미지·영상) 스텝에서 자동 스크롤 후 anchor 재계산 */}
+          onStepChange: 화면 밖 디렉터(이미지·영상) 스텝에서 자동 스크롤 후 anchor 재계산.
+          v3.215 ②: suspended — 스크롤 정착 전에는 전체 딤만(하이라이트/카드 숨김) */}
       <TutorialOverlay
         screenKey="map"
         steps={TUTORIAL_STEPS}
         enabled={!!user}
         onStepChange={handleTutorialStepChange}
+        suspended={tutorialSettling}
       />
     </View>
   );

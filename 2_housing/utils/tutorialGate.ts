@@ -24,7 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  *   (로그인 전엔 enabled=false라 seen 미소모 → 가입 후 첫 진입에 노출).
  * 전환 방법: 검수 완료 후 아래 값을 false로 바꾸는 1줄이 전부다(다른 코드 수정 불필요).
  */
-export const TUTORIAL_REVIEW_MODE = true;
+export const TUTORIAL_REVIEW_MODE = false; // v3.215: 검수 완료 — first-run 정책 복귀(최초 설치+가입 후 최초만)
 
 export const FIRST_RUN_KEY = 'maidol_first_run_v1';
 export const TUTORIAL_SEEN_KEY_PREFIX = 'maidol_tutorial_seen_v1:';

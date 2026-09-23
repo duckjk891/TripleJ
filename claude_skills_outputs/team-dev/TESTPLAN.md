@@ -3102,3 +3102,116 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **완료 조건**: E-1(pill)·E-2(시트 헤더 제한)·E-3(제목 마퀴)·E-4(4버튼·⭐5)·E-5(공유 시트)·E-6(자막 겹침 0)·E-7(칩+록업)·E-8(⭐·쿨다운)이 사용자 피드백 10건 직결.
 - **핵심 FAIL 게이트**: ① **A-4**(기존 v6 영상 URL 파손 — 최상위·S-3 ③ 정적 선차단) ② **S-5 ③/A-2/E-8 ④**(캐시 히트 과금) ③ **S-1 ④/E-6 ①**(자막-커버 겹침 잔존) ④ **U-7 ②/E-9**(직전 사이클 회귀 — v3.213 튜토리얼 포함) — 추가: U-1 ⑥(v3.213 하이라이트 회귀)·U-2(PolicySheet page 소비처 회귀)·U-4(공유 3후보 미봉합)·U-5 ③(기존 디렉터 피로도 회귀)·S-3 ②(신규 경로 v6 잔존)·S-5 ②(게이트-spend 순서 역전)·E-1 ①(코너 사각 잔존)·E-5 ①(공유 시트 미표시). 1건이라도 FAIL이면 커밋·출고 금지.
 - 판정 대상 아님(기록만): v6→v7 승격으로 기존 생성분 다음 요청 시 1회 재과금(사용자 결정 ② 기본안 수용). kakao 카드형 3단 클램프·wide 0.42H 구도 = 스펙 확정(사용자 결정 ④ 미세 조정 여지). 브리핑 "쿨다운 409"는 스킵 409(쿨다운 없음) 관행으로 정정 — 게이트 스펙 = 429. 카카오 SDK 직공유·kakao center 밴드 재설계·Inst 마킹 필드 정식화 = 이월 후보.
+
+## v3.215 (2026-09-23) — 최종 배포 전 사이클: 작업실 anchor 정착·Inst 품질/쿨다운/커버·nowplaying 튜토리얼 교체 (+광고 버튼 편입·영상 인코딩 성능)
+
+대상: 앱 = `2_housing/` 6파일(TutorialOverlay·MapScreen·PlayerScreen·tutorialAnchors·MyMusicScreen·playback.ts) + 완료분 2파일(useRewardedSkipAd·app.json — 오케스트레이터 적용 완료, **재수정 금지·정적 확인만**). 서버 = **server_staging_v3215/** (routes/tracks.py·services/inst_service.py·services/share_video.py + 백필 스크립트 1건) — 프로덕션 9004 직접 수정 금지·9005 미러링 금지, [unit/서버]는 스테이징 정적 검증만, [api]는 사용자 승인 배포 후. 민감값 플레이스홀더(<SSH_HOST>·<TEST_ACCOUNT>). **모바일 앱 프로젝트 — [e2e]는 전부 "실기기 검증(빌드 후 사용자 확인)" 절차([실기기] D-군)로 치환 표기**(아이스크림콘 금지 — 유닛·정적으로 판정 가능한 항목은 실기기로 승격하지 않음). 피로도 상태코드 관행: 생성 **429**(director_fatigue) / 스킵 402(별 부족) / 스킵 409(활성 쿨다운 없음·무과금) — v3.214 정정 확정치 승계.
+
+### [unit] 앱 정적 검증 (코드 판독·grep·tsc — 빌드 불요, 머지 게이트)
+
+**U-1. MapScreen 정착 폴링 — 안정 판정·타임아웃 강제 해제·세대 토큰 [unit] — FAIL 게이트**
+- Given: handleTutorialStepChange(index) 신규 시퀀스 = ① setSettling(true) ② 대상 scrollTo(현행) ③ scrollYRef 안정 폴링(120ms 간격, 연속 2회 |Δ|<0.5 → 정착, 최대 12회=1.44s 타임아웃) ④ 정착 후 `InteractionManager.runAfterInteractions`로 registerDirectorAnchors() ⑤ setSettling(false). 고정 450ms 타이머 대체(Android momentum 미발화·장거리 스크롤 y=1620 대응 — P1 봉합).
+- When: ① 시퀀스 ①~⑤ 순서 문자 추적 — 재등록이 정착 **후**·runAfterInteractions 경유(전환 애니메이션 중 measureInWindow 오염 차단). ② 안정 판정식 실측: 연속 2회 |Δ|<0.5에서만 정착, 1회 안정 후 재이동 시 카운터 리셋. ③ **타임아웃 12회 도달 시 강제 정착 처리** — settling=true 영구 고착 경로 0(모든 분기에서 setSettling(false) 도달 — 조기 return·예외 경로 포함 추적). ④ **세대 토큰**: 폴링 진행 중 다음 스텝 전환(빠른 다음 연타) 시 구세대 폴링이 신세대 settling/재등록을 오염시키지 않음(토큰 비교 후 무시 — 타이머 정리 포함). ⑤ 스크롤 불요 스텝(artist: targetY = 340*mapScale − winH*0.45 ≤ 0)도 동일 경로로 재등록 1회 경유(스크롤 0이면 폴링 즉시 안정 → 정상 종료). ⑥ 스텝 5(생성 이력)는 measureAndRegister 후 즉시 해제. ⑦ onLayout 초기 등록 존치(폴백). ⑧ P2 검증 로그: registerDirectorAnchors에 __DEV__ 로그 + 릴리즈 1회 warn(측정 rect vs window 크기) — StatusBar.currentHeight 보정은 **선반영 금지**(코드 부재 확인 — 실기기 확정 후 후속).
+- Then: ①~⑧ 전부 충족 — **③(settling 고착)·④(세대 오염) = FAIL 게이트**(고착 시 튜토리얼 전체가 딤에 갇힘 — 최악 UX).
+
+**U-2. TutorialOverlay `suspended` — 딤만 렌더·기존 소비처 회귀 0 [unit] — FAIL 게이트**
+- Given: `suspended?: boolean` prop 신설(기본 false).
+- When: ① visible && suspended → **전체 딤만** 렌더(구멍·코너 마스크·화살표·카드 전부 미렌더 — 조건 분기 문자 추적). ② suspended=false 복귀 시 현행 스포트라이트/pill/폴백 로직 그대로(분기 밖 코드 hunk 0). ③ prop 미전달 소비처(작업실 외 화면: 차트·피드·검색·상단바·nowplaying) = 기본 false — 렌더 경로 무변경. ④ v3.214 U-1 확정 수치(pill radius·코너 마스크 B=40·DIM_COLOR·틴트·HOLE_PAD 8) hunk 0.
+- Then: ①~④ 전부 충족 — **③·④(v3.213/214 튜토리얼 회귀) = FAIL 게이트**.
+
+**U-3. PlayerScreen 1스텝 교체 + anchor 키 [unit]**
+- Given: 기존 3스텝(재생 위치/가사·제작 노트/담기와 공유, player-add) 전부 제거 → 1스텝.
+- When: ① TUTORIAL_STEPS 길이 = **1**, `anchorKey: 'player-detail-toggle'`, `placement: 'above'`, title '가사·제작 노트·스타일링'(기본안), desc **원문 문자 일치**: "토글을 열어서 가사와 제작노트 그리고 아티스트의 스타일링을 확인해보세요"(바이트 대조 — 임의 윤문 금지). ② tutorialAnchors.ts에 'player-detail-toggle' 키 추가, PlayerScreen swipeUpButton(:1192 상당)에 ref + onLayout measureAndRegister, unmount 해제. ③ 기존 player-add 등록(:1155)·해제(:205) 제거 — **앱 전체 grep으로 player-add 참조 잔재 0**(registry 주석 존치는 허용 — search-row-more 관행). ④ 트리거 코드 변경 0(F5 — 리뷰 모드 off는 ⑦ 오케스트레이터 소관·본 diff에 TUTORIAL_REVIEW_MODE hunk 없음 확인).
+- Then: ①~④ 충족.
+
+**U-4. playback 커버 하이드레이션 — 결손 시에만·실패 무해 [unit]**
+- Given: playTrackNow(services/playback.ts)에 maybeHydrateCover — `cover_image`/`cover_image_url` **모두** 결손 시 `GET /tracks/{id}` 백그라운드 → store track/queue 항목 병합.
+- When: ① 발동 조건: 둘 중 하나라도 존재하면 호출 0(불필요 트래픽 금지 — 조건식 문자 대조). ② 병합: store의 현재 track + queue 내 동일 id 항목 양쪽 갱신(구독 자동 반영 — setState 경로 추적), 병합 시 기존 필드 덮어쓰기 아닌 결손 보강. ③ **실패 무시**: catch에서 재생 차단·오류 다이얼로그·재시도 루프 0(fire-and-forget). ④ 재생 시작을 await로 지연시키지 않음(비동기 분리 — 재생 지연 회귀 0). ⑤ __DEV__ 로그 `[playback] cover hydrate`.
+- Then: ①~⑤ 충족.
+
+**U-5. MyMusicScreen composer 게이트 + 429 분기 [unit] — FAIL 게이트**
+- Given: handleCreateInstrumental(:348-386 상당)에 MusicGenerationScreen 패턴 이식.
+- When: ① 확인 다이얼로그 **전** `getFatigueStatus('composer')` — cooldown_remaining_sec>0면 `showFatigueCooldownDialog({…, director:'composer', onCleared: 재진입 안내})` 후 중단(confirm 미진입 — 순서 문자 추적). ② 상태 조회 실패 시 **게이트 오픈**(진행 허용 — 서버 429 최종 방어, MusicGeneration 관행 동일). ③ POST catch에 429/'director_fatigue' 분기 → 동일 다이얼로그(앱 다이얼로그 관행 — 시스템 Alert 금지). ④ 기존 분기 무변경: 402(별 부족)·409(existing)·404("Inst. 만들기 준비 중이에요…" v3.214 U-6)·generic — hunk 0. ⑤ ⭐ 문구 INSTRUMENTAL_STAR_COST 상수 참조 유지·`\bAIDOL\b` 0.
+- Then: ①~⑤ 전부 충족 — **④(기존 Inst 오류 분기 회귀) = FAIL 게이트**.
+
+**U-6. [편입] useRewardedSkipAd·app.json — 적용 완료분 정적 확인 (재수정 금지) [unit]**
+- Given: 오케스트레이터 완료분 — 검증은 **판독만**, 이 사이클 diff에 해당 파일 추가 hunk 발견 시 즉시 보고(수정 금지 위반).
+- When: ① require('react-native-google-mobile-ads') 실패 catch: **admobLoadError 보존**(에러 객체/메시지 저장) + **console.warn 승격**(console.log 잔재 0 — 릴리즈 원격 로그 도달 목적). ② initRewardedAds에 1회 가드된 `[AdReward] init — supported/loadError` warn(중복 발화 방지 플래그 확인). ③ app.json android AdMob appId 끝자리 **~8636830033**(구 ~9961638197 잔재 0). ④ RNGMA 버전 16.3.2 유지(package.json — 업그레이드 hunk 0).
+- Then: ①~④ 충족. **실기기 동작(버튼 노출·로그 회수)은 새 빌드 전까지 검증 불가 — D-4 "미검증 항목"으로 연계**(본 항목 PASS가 실기기 노출을 보증하지 않음을 REPORT에 명시).
+
+**U-7. tsc + diff 격리 [unit] — FAIL 게이트**
+- When: ① `2_housing/`에서 `npx tsc --noEmit` — 기존 에러 기준선 대비 증분 0. ② `git diff` 실측: 이번 사이클 앱 hunk = 변경 매트릭스 6파일(+완료분 2파일)에 한정 — v3.213/214 파일군(tutorialGate·ChartScreen·VideoDirectorScreen·TrackShareDownloadSheet 등)에 이번 사이클發 hunk 0, `1_MV_wedding/`·`0_platform_music/` 기존 dirty 무접촉. ③ 서버 변경이 앱 트리 유입 0.
+- Then: ①~③ 전부 충족 — **②(diff 격리 위반) = FAIL 게이트**.
+
+### [unit] 서버 스테이징 정적 검증 (`server_staging_v3215/`만 — 프로덕션 9004·9005 무접촉, 배포 전 수행)
+
+**S-1. tracks.py /instrumental composer 게이트 — 게이트→과금 순서·완료 훅 [unit] — FAIL 게이트**
+- Given: create_instrumental_version에 fatigue 게이트 삽입. 관행 = v3.214 S-5(게이트가 spend보다 앞).
+- When: ① 삽입 위치: `_existing` 409 검사 **통과 직후**·inst_jobs 클레임/spend **이전**에 `fatigue_gate_response(current_user["id"], director="composer")` → 429(+Retry-After) — 호출 순서 문자 추적(409 existing이 쿨다운보다 선행 = 동일 트랙 재요청은 쿨다운 중에도 409 무과금 반환). ② 429 경로에서 spend·inst_jobs 클레임·파이프라인 착수 전부 미발생(호출 그래프 추적). ③ 성공 경로: inst_service._run_pipeline 완료 마킹 후 `on_generation_completed(uploader_id, db=mongo_db, director="composer")` **best-effort**(예외가 완료 마킹을 뒤집지 않음 — try/except) + **루프-로컬 db 전달**(suno_generator:553 패턴 — 미전달 시 이벤트루프 충돌 결함). ④ 실패 경로: on_generation_completed 미호출 + 환불 현행 유지(v3.210 회귀 — hunk 0). ⑤ fatigue_service.py **hunk 0**(composer 기존재 — DIRECTORS·스킵비·사다리 수치 무변경).
+- Then: ①~⑤ 전부 충족 — **①/②(순서 역전 = 쿨다운 중 과금)·⑤(피로도 체계 회귀) = FAIL 게이트**.
+
+**S-2. inst_service.py loudnorm — best-effort·sha 정합 [unit] — FAIL 게이트**
+- Given: _run_pipeline 4단계(다운로드 후·MinIO put 전) 정규화 삽입.
+- When: ① ffmpeg 명령 문자 대조: `-af loudnorm=I=-14:TP=-1.5:LRA=11 -ar 48000 -b:a 320k`(1패스 — 2패스 정밀화는 이월 확정, 선반영 0). ② **best-effort**: ffmpeg 부재(FileNotFoundError)/비 0 exit/출력 0바이트 → **원본 그대로 저장·파이프라인 성공 유지**(실패 사유 전이 금지 — 분기 문자 추적). ③ 로그 2종 `[inst] loudnorm applied` / `[inst] loudnorm skipped`(사유 포함) — API 키·URL 원문 로그 금지. ④ audio_sha256·duration = **최종 저장본**(정규화본 또는 원본) 기준 산출(정규화 후 원본 sha 잔존 = 결함). ⑤ cover_image_url 원곡 상속 현행 hunk 0(F4 — 서버 커버 변경 불요 확정). ⑥ 임시 파일 정리(정규화 실패 시 잔여 파일 누수 0).
+- Then: ①~⑥ 전부 충족 — **②(loudnorm 실패가 Inst 생성 실패로 전이) = FAIL 게이트**(음질 개선이 가용성을 깨면 역행).
+
+**S-3. share_video.py 인코딩 성능 — PIL 사전 합성·기하 불변·캐시 v8 [unit] — FAIL 게이트**
+- Given: 정적 요소(커버+워터마크 록업) PIL 사전 합성 1장 → `-loop` 입력 1개화 + `-framerate` 정합, 캐시 v8 승격.
+- When: ① 필터그래프 입력 수 감소 문자 추적: 정적 레이어가 사전 합성 PNG 1장으로 통합·`-loop 1` 입력 1개, 동적 요소(자막 scroll/line·마퀴)만 필터 잔존 — 마퀴 frame_rate=20·스틸 -r 규칙(v3.214 S-2 ④) 유지. ② **좌표 대응표 작성·대조**: 사전 합성으로 이동한 각 요소(커버 위치/크기·AI 칩·MAIDOL 록업 x/y·kakao H−h−56 예외)의 최종 프레임 좌표 = v3.214 S-1 subpos 표·S-4 록업 배치와 **전항 동일**(fmt 3종 × full/center — 합성 캔버스 좌표계와 ffmpeg overlay 좌표계 환산 수식 명기). 자막 subpos 좌표(scroll cy·line MarginV)는 hunk 0(동적 레이어 무이동). ③ 캐시 **v8** 승격: share_object_name = `share/v8/` — 생성·조회 양쪽 일관·**전 생성물 적용**(포맷/레이아웃 조건부 v7 신규 생성 잔존 0). ④ **v7 객체 삭제·마이그레이션 코드 0**(기존 URL 잔존 보장 — 발견 시 FAIL). ⑤ 성능 근거 정적 확인: 사전 합성이 요청당 1회·PIL 처리(프레임 반복 없음), 캐시 히트 경로는 합성·인코딩 전체 미진입.
+- Then: ①~⑤ 전부 충족 — **②(기하 변화 = 자막·록업 좌표 이탈)·③(신규 경로 v7 잔존)·④(v7 파괴 코드) = FAIL 게이트**. 실측 elapsed는 A-1(정적으로 300s 판정 불가 — 목표는 배포 후 실측).
+
+**S-4. py_compile + 백필 스크립트 + 스테이징 격리 [unit]**
+- When: ① 변경 파일(tracks.py·inst_service.py·share_video.py·백필 스크립트) `python3 -m py_compile` exit 0. ② 스테이징 diff가 계획 파일에 한정 — 프로덕션 9004·9005·타 스테이징 사본(v3214 등) 무접촉, `_orig` 보존 확인. ③ 백필 스크립트: 대상 **"냥냥냥 (Inst.)"(6ab349505cd1241ab92b5e5f) 1건 한정**(전체 컬렉션 순회 금지 — id 하드 지정), S-2 ①과 동일 loudnorm 파라미터, MinIO 재업로드 + tracks.audio_sha256 갱신 포함, **DEPLOY.md에 1회성 절차 기재·실행은 사용자 승인 후**(스크립트 내 dry-run 또는 확인 프롬프트 존재). ④ 민감값: 스크립트·로그에 <SSH_HOST>·자격증명 원문 0.
+- Then: ①~④ 충족.
+
+### [api] 프로덕션 실측 (사용자 승인 배포 완료 후 — 전이면 "대기" 보고, 무승인 배포 = 최상위 FAIL. 검증용 쓰기는 <TEST_ACCOUNT> 한정)
+
+**A-1. 영상 인코딩 성능·기하 실측 [api] — FAIL 게이트(기하)**
+- Given: 배포 전 기존 v7 공유영상 공개 URL ≥1건 확보(A-5 ① 선행 — 값 플레이스홀더 관리).
+- When: <TEST_ACCOUNT> 토큰으로 신규 조합 POST /tracks/{id}/share-video **단독 실행**(동시 생성 없는 시점) → ① **elapsed < 300s**(서버 로그/폴링 완료 시각 실측 — 수치 기록, 목표 미달 시 초과분·병목 로그 첨부해 재계획 소재로 보고). ② 산출 URL `share/v8/`. ③ 프레임 캡처(ffmpeg): 자막 y·AI 칩·MAIDOL 록업 좌표가 v3.214 A-1/E-6/E-7 실측값과 동일(**기하 불변** — subpos 밴드 내·록업 배치 ±수 px 기록). ④ ⭐5 차감 1회(잔액 전후 대조).
+- Then: ①~④ — **③(기하 이탈) = FAIL 게이트**, ①은 미달 시 "목표 미달·수치 보고"(즉시 FAIL 아님 — 게이트 요약 참조).
+
+**A-2. 캐시 무과금 + Inst 음질 실측 [api] — FAIL 게이트(캐시 과금)**
+- When: (a) A-1과 **동일 조합** 재요청 → 동일 v8 URL 즉시 반환·잔액 변동 0·피로 스택 변동 0. (b) 신규 Inst 생성 → 저장본 다운로드 → `ffmpeg -af loudnorm=print_format=json` 실측: **I = -14±1 LUFS·TP ≤ -1.0dBTP**(원곡 -13.9와 정합 — 7.3LU 격차 해소 확인), ffprobe 320kbps/48kHz·duration 정상·선두 바이트 재생 가능, 서버 로그 `[inst] loudnorm applied`. (c) 백필 실행(사용자 승인 후) → "냥냥냥 (Inst.)" 동일 실측 -14±1·audio_sha256 갱신·cover-preview 200 유지 — 승인 전이면 "대기".
+- Then: (a)~(c) — **(a) 차감/스택 발생 = FAIL 게이트**(v3.214 A-2 회귀). (참고 기록: v7 시절 생성분은 v8 캐시 부재로 다음 요청 시 1회 재과금 — 기본안 수용, FAIL 아님.)
+
+**A-3. Inst composer 쿨다운 체인 [api] — FAIL 게이트**
+- When: <TEST_ACCOUNT>로 ① composer 쿨다운 없는 상태에서 Inst 생성 성공 → GET fatigue status 전후 대조: composer 스택 +1·쿨다운 개시(**일반 곡 생성과 사다리 합산** — Inst 1건 = 작곡 1곡 카운트 확인). ② 쿨다운 중 **다른 트랙** Inst 재요청 → **429** {"error":"director_fatigue"}+Retry-After(타 디렉터 스키마 동일), **잔액 변동 0·inst_jobs 신규 문서 0**(게이트→과금 순서 실측). ③ 쿨다운 중 **동일 트랙** 재요청 → 409(existing — 쿨다운보다 선행·무과금, S-1 ① 순서 실측). ④ 상태 폴링 GET은 쿨다운 무관 통과. ⑤ 스킵: 활성 쿨다운 중 200·⭐2 차감(composer 스킵비 현행) → 스킵 후 Inst 재시도 정상. ⑥ 실패 Inst(강제 유도 가능 시) → 환불 + on_generation_completed 미발화(스택 불변) — 유도 불가면 코드 추적(S-1 ④)으로 갈음 기록.
+- Then: ①~⑥ — **②(쿨다운 중 과금·클레임 발생) = FAIL 게이트**.
+
+**A-4. [편입] 원격 로깅 배선 재확인 [api]**
+- When: ① release 빌드의 console.warn → frontend.log 전송 배선(로거 훅 코드 + 서버 수신 엔드포인트) 판독 재확인 — 기존 타 warn 라인이 frontend.log에 실존하는지 표본 1건 확인(배선 생존 증거). ② `[AdReward]` 라인 자체는 **새 빌드 실기기 전까지 회수 불가** — "미검증(빌드 종속)" 기록·D-4 연계.
+- Then: ① 충족 + ② 미검증 명시(FAIL 아님).
+
+**A-5. 회귀 — 기존 v7 URL·Inst 기존 플로우 [api] — 최상위 FAIL 게이트**
+- When: ① **배포 전 확보한** 기존 v7 공유영상 공개 URL GET → 배포 후 **200**·Content-Type video/mp4·선두 바이트 정상(재생 가능). ② Inst 기존 플로우: 동일 트랙 409 분기·상태 폴링 스키마 무변경. ③ share-video 기존 디렉터(video 포함 5종) fatigue status 스키마·스킵 402/409 관행 무변경(스팟 1건).
+- Then: ①~③ — **①(v7 URL 404/파손) = 최상위 FAIL**(기존 사용자 공유 링크 파괴 — S-3 ④ 정적 선차단).
+
+### [실기기] 새 빌드 검증 ([e2e] 치환 — 앱 머지 + 서버 배포 + 새 APK 빌드 후 **사용자 확인 절차**, 육안 판정은 스크린샷/화면 녹화 채증. 빌드 전이면 전 항목 "대기" 보고)
+
+**D-1. 작업실 튜토리얼 anchor 정착 [실기기] — 완료 조건 직결(②)**
+- When: ① 작업실 6스텝 진행 — 스텝 전환(특히 장거리: 아티스트→영상 y=1620) **스크롤 이동 중 하이라이트·카드 미표시(전체 딤만)** → 정착 후에만 스포트라이트 표시(화면 녹화 채증). ② 아티스트 1스텝(스크롤 없음): pill 하이라이트가 캐릭터 정위치 — isNext 펄스 좌표와 시각 오차 판정(스프라이트+이름 배지 감쌈, v3.214 E-1 기준). ③ 6스텝 완주·어느 스텝에서도 딤 고착(타임아웃 미해제) 0. ④ P2 판정 로그 회수: 릴리즈 warn(rect vs window)에서 Android 상태바 상수 오프셋 유무 확인 — 확인 시 StatusBar.currentHeight 보정 1줄 후속 지시(이번 빌드 미반영이 정상).
+- Then: ①~④ — **②(하이라이트 어긋남 잔존 = 사용자 원보고 증상) = FAIL 게이트**.
+
+**D-2. nowplaying 튜토리얼 1스텝 [실기기] — 완료 조건 직결(⑥)**
+- When: ① 신규 설치 조건(스토리지 완전 초기화 — 기존 설치 기기는 'existing' 판정으로 미노출이 **정상**임을 검수자에게 사전 고지) 또는 리뷰 모드로 재생 화면 진입 → **1스텝만** 노출: 하단 토글(가사 · 제작 노트 · 스타일링 · 댓글) 영역 스포트라이트 + 카드 above. ② 문안 원문 표시: "토글을 열어서 가사와 제작노트 그리고 아티스트의 스타일링을 확인해보세요". ③ 구 3스텝(재생 위치/담기와 공유) 잔재 0.
+- Then: ①~③ 충족.
+
+**D-3. Inst 커버·음질 체감 [실기기]**
+- When: ① Inst 트랙("냥냥냥 (Inst.)" 등)을 **경로별**(내 곡·피드·재생목록) 재생 → 미니플레이어·PlayerScreen·상세토글 미니바 커버 표시. ② 미표시 재현 시 진입 경로 + __DEV__ `[playback] cover hydrate` 로그 채증·보고(F4 잔여 후보 확정 자료). ③ 정규화 배포 후 신규 Inst 청감: 원곡 대비 음량 정합(주관 판정 기록) — **분리 아티팩트 잔존은 sunoapi.org 한계로 개선 불가**임을 사용자 보고에 명시(오판정 방지).
+- Then: ①~③ 충족(②는 재현 시 기록 의무).
+
+**D-4. [편입·미검증 항목] 광고 「광고 보고 단축」 버튼 [실기기] — 새 APK에서만 검증 가능**
+- Given: U-6 정적 PASS는 실기기 노출을 보증하지 않음 — **본 항목이 이번 픽스의 유일한 실증**. AdMob 앱 ID 교정(~8636830033)이 반영된 새 빌드 전제.
+- When: ① 쿨다운 팝업에서 광고 보고 단축 버튼 **노출 여부** 확인. ② frontend.log에서 `[AdReward] init — supported/loadError` 라인 회수 — supported=false면 loadError 본문으로 원인 확정(require throw 여부 판정 — 진단 목적 달성). ③ 노출 시: 광고 시청 → 스킵 처리 1회(SSV 경유·무과금 스킵 확인).
+- Then: ①~③ — 빌드 전 상태에서는 **REPORT에 "미검증(새 빌드 필요·사용자 확인 절차)" 명시가 완료 조건**(노출 실패 자체는 이번 픽스 FAIL이 아니라 ②의 진단 로그 회수로 후속 판정).
+
+**D-5. 회귀 스모크 [실기기] — FAIL 게이트**
+- When/Then: ① 튜토리얼 타 화면 스텝(차트·피드·검색·상단바·map-history) rect·문안·게이팅 회귀 0 — suspended 신설·PlayerScreen 교체가 타 화면에 영향 0(v3.213/214 승계). ② 쿨다운 다이얼로그 기존 4 디렉터(composer·lyricist·image·artist) UI 회귀 0 — 작곡 일반 생성 1회 스모크(Inst 게이트 이식의 역영향 0). ③ 영상 생성 1건: center 자막 밴드·제목 마퀴·AI 칩+MAIDOL 록업·video 피로도 429(v3.214 E-6/E-7/E-8 스팟 — v8 재인코딩 경로 검증 겸용). ④ Inst 생성 진입 → 확인 팝업 ⭐5 문구 → 생성/폴링 정상(v3.210/214 승계). ⑤ 일반 곡 재생·헤더·⋮ 시트 기본 흐름. — **1건이라도 회귀 = FAIL**.
+
+### 게이트 요약
+
+- **트랙 구조**: 머지 게이트 = U-1~U-7 + S-1~S-4 전부 PASS(frontend 자동 push 관례 — FAIL 1건이라도 커밋 금지. 서버는 스테이징 정적까지 — 배포·백필은 사용자 승인 후). [api] = 배포 완료 확인 후 A-1~A-5(전이면 "대기" 보고 — 단 **A-5 ①의 v7 URL 확보는 배포 전 선행 필수**). [실기기] = 새 APK + 배포 후 D-1~D-5(사용자 확인 절차 — [e2e] 치환).
+- **완료 조건 직결**: D-1(anchor 정착·어긋남 해소)·A-2(Inst -14±1 LUFS)·A-3(composer 쿨다운 429·사다리 합산)·D-3(Inst 커버)·D-2(nowplaying 1스텝)·A-1(elapsed<300s·기하 불변)이 사용자 요구 6건 직결. **D-4는 "미검증 항목" 명시가 완료 조건**(빌드 종속 — 허위 PASS 금지).
+- **핵심 FAIL 게이트**: ① **A-5 ①**(기존 v7 영상 URL 파손 — 최상위·S-3 ④ 정적 선차단) ② **S-3 ②/A-1 ③**(사전 합성 기하 이탈 — 자막·록업 좌표) ③ **S-1 ①②/A-3 ②**(쿨다운 중 과금·클레임) ④ **A-2 (a)**(캐시 히트 과금 — v3.214 승계) ⑤ **S-2 ②**(loudnorm 실패의 파이프라인 전이) ⑥ **U-1 ③④**(settling 고착·세대 오염) ⑦ **U-2 ③④/D-5 ①**(튜토리얼 기존 화면·수치 회귀) ⑧ **U-5 ④**(Inst 기존 오류 분기 회귀) ⑨ **D-1 ②**(anchor 어긋남 잔존) ⑩ **U-7 ②**(diff 격리 위반). 1건이라도 FAIL이면 커밋·출고 금지.
+- **판정 대상 아님(기록만)**: 분리 아티팩트 음질 자체(sunoapi.org mp3 전용·WAV/품질 옵션 부재 — 공식 문서+record-info 실조회 확정, 개선분은 음량 7.3LU까지). v7→v8 승격으로 기존 생성분 다음 요청 시 1회 재과금(기본안 수용). A-1 ① elapsed 300s 목표 미달 = 수치 보고 후 재계획(즉시 FAIL 아님 — 단 동반된 기하·과금 게이트는 별개 적용). P2 상태바 오프셋 보정 = 실기기 로그 확정 시 후속(선반영 금지). 기존 설치 기기 튜토리얼 미노출 = 정상(최종 검수는 신규 설치만 가능). 이월 후보: loudnorm 2패스·split_stem 재합성·RNGMA 17·Inst 별도 사다리.

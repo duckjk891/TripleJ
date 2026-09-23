@@ -4590,3 +4590,106 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 4. **⑦ wide center 커버 상향(0.42H)**: 자막 밴드 확보를 위한 구도 변경 — 미세 톤 조정 가능.
 
 규칙: 민감 정보 플레이스홀더(<SSH_HOST>), 서버 수정은 server_staging_v3214에서만, git 커밋은 오케스트레이터 승인 후.
+
+# v3.215 — 최종 배포 전 사이클: 작업실 anchor 정착·Inst 품질/쿨다운/커버·nowplaying 튜토리얼 교체 (+광고 버튼 편입)
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend). 서버 변경은 **server_staging_v3215** 스테이징(운영 EC2 `maidol-ec2` `/home/ubuntu/maidol/backend_9004` scp pull 기반 — 직접 수정 금지, 배포는 사용자 승인). 실측 = EC2 읽기 전용 + 프로덕션 API/DB 읽기 조회.
+계획 제외(오케스트레이터 선처리): ① 영상 생성 실패(ffmpeg 600s+동시1 핫픽스 배포 완료 — 사용자 재시도 대기), ⑦ 리뷰 모드 off 1줄 전환(최종 빌드 직전), ⑧ 빌드/APK.
+
+## 0단계 findings (실측 요약)
+
+**F1. ② 작업실 anchor 위치·스크롤 중 표시 (MapScreen.tsx:246-291, TutorialOverlay.tsx)**
+- 산식 자체는 isNext 펄스와 동일 좌표계(`sy + (d.x±70,d.y−70~+94)*mapScale − scrollY`)로 정합. 아티스트(1스텝, y=340)는 `targetY = 340*mapScale − winH*0.45 ≤ 0` → **스크롤 없음** — 즉 진입 시점 측정값이 그대로 노출된다.
+- 어긋남 경로 확증(우선순위): **P1 측정 타이밍** — 초기 등록이 ScrollView onLayout(내비 전환 애니메이션 중 measureInWindow → sx/sy 오염) + 스텝 전환 재등록이 고정 450ms 타이머(Android는 programmatic scrollTo에 onMomentumScrollEnd 미발화 관행 → 장거리 스크롤(영상 y=1620)은 450ms에 **애니메이션 미완 상태를 스냅샷**해 어긋난 rect가 고착). **P2(조건부)** — Modal `statusBarTranslucent`와 measureInWindow 창 기준 불일치(Android 기기별 상태바 높이 상수 오프셋) 가능성: 실기기 로그로만 확정 가능.
+- 스크롤 중 표시: 오버레이는 anchor가 있으면 즉시 스포트라이트 렌더 — 이동 중 하이라이트가 구좌표에 떠 있는 현상은 설계상 필연. 사용자 요구 = **포커싱(스크롤 정착) 완료 후에만 영역 표시**.
+
+**F2. ③ Inst 음질 (inst_service.py — EC2 실측 + docs.sunoapi.org 조사 + record-info 실조회)**
+- 저장 경로: instrumentalUrl mp3를 **무가공 그대로** MinIO 이관(재인코딩 없음 — 저장본 크기 3,655,773B = Suno 산출물과 바이트 동일 실측). 우리 쪽 열화는 0.
+- sunoapi.org vocal-removal: **mp3 전용·음질 파라미터 없음**(공식 문서 + taskId `b77c8bbe…` record-info 실조회로 확정 — instrumentalUrl/vocalUrl mp3 2종뿐, WAV 필드 없음). `/api/v1/wav/generate`는 생성 트랙 전용(분리 결과 미지원 문서화). type=split_stem(50크레딧, 5배)은 12스템 분해로 instrumentalUrl 자체가 null — 재합성 미검증·고비용, 부적합.
+- 비트레이트: Inst 179.5kbps/48kHz = 원곡 179.4kbps와 동일 — 비트레이트 열화 아님.
+- **핵심 실측: 라우드니스 격차** — 원곡 -13.9 LUFS(TP -1.5dBTP) vs Inst **-21.2 LUFS**(TP -5.6dBTP) = **7.3LU 더 조용함**. "음질이 많이 떨어져 보임"의 주 원인은 음량(라우드니스)으로 판정 — 이건 **개선 가능**. 잔여 분리 아티팩트는 Suno 측 특성으로 개선 불가(정직 판정, 한계 명시).
+
+**F3. ④ Inst 쿨다운 (tracks.py:3042-3195 + fatigue 체계 실측)**
+- 작곡 디렉터 fatigue 키 = **"composer"**(DIRECTORS 튜플·앱 FatigueDirector 동일). 일반 곡 생성 훅 = suno_generator.py:553 `on_generation_completed(user_id, db=mongo_db)`(기본 composer, 루프-로컬 db).
+- /instrumental 라우트: 현재 게이트 없음. 관행 삽입점 = 기존 검증(409 existing) 통과 후·inst_jobs 클레임/spend **이전**(v3.214 share-video "게이트→과금" 순서). 앱 MyMusicScreen handleCreateInstrumental(:348-386)은 게이트 없음 — MusicGenerationScreen 패턴(getFatigueStatus + showFatigueCooldownDialog(director)) 이식 대상. 맵 휴식 티켓은 composer 이미 대상이라 Inst 쿨다운도 자동 표기(정합 무료).
+
+**F4. ⑤ Inst 커버 (전 경로 실측 — 버그 재현 실패, 데이터 정상)**
+- inst_service는 `cover_image_url` 원곡 상속 구현·동작 확인: "냥냥냥 (Inst.)"(6ab349505cd1241ab92b5e5f) DB에 커버 존재, cover-preview 프록시 200, 공개 API 직렬화 `cover_image` 정상 반환 — Inst 파생 트랙은 전 DB에 이 1건뿐이라 **커버 백필 불요**.
+- MiniPlayer(:93)·TrackRow(:25)·PlayerScreen(:372)·상세토글 미니바 전부 `cover_image||cover_image_url` 동일 셈법 — 코드 결함 미발견. 유력 잔여 후보 = **재생 store에 cover 필드 결손 스냅샷이 들어오는 경로**(피드 트랙 블록 등 축약 객체로 playTrackNow 호출) → 전 경로 공통 방어(하이드레이션)로 봉합하고 실기기 재현 절차를 tester에 위임.
+
+**F5. ⑥ nowplaying 튜토리얼 (PlayerScreen.tsx:56-60, 1490)**
+- 현행 3스텝(재생 위치 이동/가사·제작 노트/담기와 공유, anchor는 player-add 1개). 대상 토글 = swipeUpButton(:1192-1199, 하단 절대배치 "가사 · 제작 노트 · 스타일링 · 댓글") — anchor 등록 지점으로 적합(measureAndRegister 관행, showDetails=false 초기 상태에 항상 노출).
+- 튜토리얼 트리거: tutorialGate 실측 — `TUTORIAL_REVIEW_MODE=false` 1줄 전환만으로 "완전 최초 설치('fresh') + 화면·상태별 1회 + 로그인 게이트 화면(map 등)은 최초 로그인 후 첫 진입 노출" = **사용자 요구(최초 앱 접속·최초 로그인) 충족 확인** — 추가 코드 불요(⑦ 오케스트레이터 소관). 유의: 기존 설치 기기는 'existing' 판정·전 화면 seen 선기록이라 미노출 — 검수는 신규 설치로만 가능.
+
+**F6. [편입] 광고 「광고 보고 단축」 버튼 미노출 — 오케스트레이터 분석·픽스 완료분 기재**
+- 확정: JS 번들·네이티브 심볼 모두 정상 포함, 원인 후보 = 런타임 require('react-native-google-mobile-ads') throw(TurboModuleRegistry.getEnforcing) → admob=null → 버튼 숨김. catch가 console.log라 원격 로그 무증상. 별건 확정 결함: APK AdMob 앱 ID 불일치(~9961638197 → 콘솔 ~8636830033).
+- 적용된 픽스(재수정 불필요): useRewardedSkipAd.ts warn 승격·admobLoadError 보존·init 1회 진단 warn, app.json androidAppId 교정, RNGMA 16.3.2 유지 결정.
+
+## 확정 스펙
+
+### ② 작업실 anchor — 정착 후 표시 + 측정 견고화 [app]
+- **TutorialOverlay**: `suspended?: boolean` prop 신설 — visible & suspended면 **전체 딤만** 렌더(구멍·화살표·카드 숨김; 사용자 지시 "이동 중에는 딤만"). false 복귀 시 현행 스포트라이트/폴백 로직 그대로.
+- **MapScreen**: `tutorialSettling` state. handleTutorialStepChange(index): ① setSettling(true) ② 대상 스크롤(scrollTo 현행) ③ **정착 감지 = scrollYRef 안정 폴링**(120ms 간격, 연속 2회 |Δ|<0.5 → 정착; 최대 12회=1.44s 안전 타임아웃) — 고정 450ms 타이머 대체(Android momentum 미발화·장거리 스크롤 대응) ④ 정착 후 `InteractionManager.runAfterInteractions`로 registerDirectorAnchors()(진입 전환 애니메이션 오염 차단 — P1 봉합) ⑤ setSettling(false). 스텝 5(생성 이력)는 measureAndRegister 후 즉시 해제. onLayout 초기 등록은 존치(무해·폴백용).
+- **P2 검증 로그**: registerDirectorAnchors에 __DEV__ 로그 + 릴리즈 1회 warn(측정 rect vs window 크기) — tester 실기기에서 상수 오프셋 확인 시 Android `StatusBar.currentHeight` 보정 1줄 후속(이번 사이클 조건부 — 미확인 상태 선반영 금지, 이중 보정 리스크).
+
+### ③ Inst 음질 — 라우드니스 정규화 [server_staging_v3215: inst_service.py + 데이터 백필]
+- _run_pipeline 4단계(다운로드 후·MinIO put 전) ffmpeg 정규화 삽입:
+  `ffmpeg -i in.mp3 -af loudnorm=I=-14:TP=-1.5:LRA=11 -ar 48000 -b:a 320k out.mp3`
+  (목표 -14 LUFS = 스트리밍 표준 ≈ 원곡 실측 -13.9와 일치, TP -1.5 클립 방지, 320kbps 재인코딩 손실 최소화). **best-effort** — ffmpeg 부재/실패 시 원본 그대로 저장(파이프라인 실패 사유 금지), 로그 `[inst] loudnorm applied/skipped`. audio_sha256·duration은 최종 저장본 기준.
+- **백필**: 기존 "냥냥냥 (Inst.)" 저장 오디오 1건 동일 정규화 재업로드(+tracks.audio_sha256 갱신) — 배포 절차(DEPLOY.md)에 1회성 스크립트로 포함, 사용자 승인 후 실행.
+- **한계 명시(사용자 보고용)**: 분리 아티팩트 자체는 sunoapi.org 처리 특성 — mp3 179kbps 소스 고정, WAV/고음질 옵션·프롬프트 부재(공식 문서+record-info 실조회 확정). 개선분은 음량 정합(7.3LU)까지.
+
+### ④ Inst = 작곡(composer) 쿨다운 [server_staging_v3215: tracks.py + app]
+- 서버 tracks.py create_instrumental_version: `_existing` 409 검사 통과 직후·inst_jobs 클레임/spend 이전에 `fatigue_gate_response(current_user["id"], director="composer")` 429(+Retry-After) — 게이트→과금 순서(v3.214 share-video 관행). 성공 시 inst_service._run_pipeline 완료 마킹 후 `on_generation_completed(uploader_id, db=mongo_db, director="composer")` best-effort(suno_generator:553 패턴 — 루프-로컬 db 필수). fatigue_service.py 무변경(composer 기존재).
+- 앱 MyMusicScreen handleCreateInstrumental: 확인 다이얼로그 전 `getFatigueStatus('composer')` — cooldown_remaining_sec>0면 `showFatigueCooldownDialog({status, remainingSec, director:'composer', onCleared: 재진입 안내})` 후 중단(조회 실패는 게이트 오픈 — 서버 429 최종 방어, MusicGeneration 관행). POST catch에 429/'director_fatigue' 분기 추가 → 동일 다이얼로그. Inst 1건 = 작곡 사다리 1곡 카운트(일반 곡 생성과 사다리 공유 — 사용자 원문 "작곡 디렉터의 영역" 직해).
+
+### ⑤ Inst 커버/미니플레이어 [app 방어 + tester 재현]
+- 서버·데이터 정상 실측(F4) — 서버 변경·백필 불요. 앱 공통 방어: `playTrackNow`(services/playback.ts)에서 재생 대상 track에 `cover_image/cover_image_url` 모두 결손 시 `GET /tracks/{id}` 백그라운드 하이드레이션 → store track/queue 항목 병합(실패 무시) — 어떤 축약 스냅샷 경로로 재생돼도 미니플레이어 커버 보장(store 구독이라 자동 반영). __DEV__ 로그 `[playback] cover hydrate`.
+- tester: 실기기에서 Inst 트랙 재생 → 미니플레이어 커버 확인, 미표시 재현 시 진입 경로(내곡/피드/재생목록) 기록.
+
+### ⑥ nowplaying 튜토리얼 교체 [app]
+- PlayerScreen TUTORIAL_STEPS 3스텝 전부 제거 → **1스텝**: `{ title: '가사·제작 노트·스타일링', desc: '토글을 열어서 가사와 제작노트 그리고 아티스트의 스타일링을 확인해보세요', anchorKey: 'player-detail-toggle', placement: 'above' }` (문안 사용자 원문 그대로, 제목은 합리 제안 — 하단 토글 라벨과 동일 계열).
+- tutorialAnchors: `'player-detail-toggle'` 키 추가. PlayerScreen: swipeUpButton(:1192)에 ref + onLayout `measureAndRegister('player-detail-toggle', …)`, unmount 해제. 기존 player-add 등록(:1155)·해제(:205) 제거(키는 registry에 주석 존치 — search-row-more 관행).
+- 트리거(F5): 리뷰 모드 off 1줄로 요구 충족 — 본 계획 코드 변경 없음(⑦ 오케스트레이터).
+
+### [편입] 광고 버튼 — 적용 완료분 (재분석·재수정 금지, 기재만)
+- useRewardedSkipAd.ts(경고 승격·진단 로그)·app.json(AdMob 앱 ID 교정) — 오케스트레이터 완료. RNGMA 16.3.2 유지. 실기기 검증은 새 빌드에서만 가능(TESTPLAN 미검증 항목 명시).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| components/TutorialOverlay.tsx | `suspended` prop — 정착 전 전체 딤만 | app-dev | `[TutorialOverlay]` |
+| screens/MapScreen.tsx | 정착 폴링(120ms×12)·runAfterInteractions 재등록·settling 연동·측정 로그 | app-dev | `[MapScreen]` |
+| screens/PlayerScreen.tsx | 튜토리얼 1스텝 교체·player-detail-toggle 등록/해제 | app-dev | `[PlayerScreen]` |
+| utils/tutorialAnchors.ts | 키 'player-detail-toggle' 추가 | app-dev | `[TutorialAnchors]` |
+| screens/MyMusicScreen.tsx | Inst 요청 전 composer 게이트 + 429 다이얼로그 | app-dev | `[MyMusicScreen]` |
+| services/playback.ts | playTrackNow 커버 하이드레이션 | app-dev | `[playback]` |
+| hooks/useRewardedSkipAd.ts | (완료분) warn 승격·진단 로그 | 오케스트레이터 완료 | `[AdReward]` |
+| app.json | (완료분) AdMob 앱 ID 교정 | 오케스트레이터 완료 | `[AdReward]` |
+| (서버) routes/tracks.py | /instrumental composer 게이트 429 | backend-dev | `[tracks]` |
+| (서버) services/inst_service.py | loudnorm 정규화·완료 훅 on_generation_completed('composer') | backend-dev | `[inst]` |
+| (데이터) 백필 스크립트 | 냥냥냥 (Inst.) 오디오 정규화 재업로드 1건 | backend-dev | `[inst-backfill]` |
+
+## 40% 룰 판정
+앱 6파일(전부 국소 — 신규 화면·스토어 0, 최대 공정 = MapScreen 정착 폴링)+서버 2파일+백필 1건, 완료분 2파일은 기재만. v3.214(앱 8·서버 3)보다 작은 체급 — **초과 아님(가결)**. 이월 후보: loudnorm 2패스 정밀화, split_stem 재합성 실험, P2 상태바 오프셋 보정(실기기 확정 시), RNGMA 17 업그레이드.
+
+## test-designer 항목
+1. [unit/app] MapScreen 정착 폴링: 안정 2회 감지 시 재등록 1회·settling 해제, 12회 타임아웃 시 강제 해제(고착 금지), 스크롤 불요 스텝(artist)도 재등록 경유.
+2. [unit/app] TutorialOverlay suspended=true → 구멍·카드 미렌더(전체 딤), false 복귀 시 스포트라이트. 기존 rect/pill·폴백 회귀(v3.214 ① 회귀).
+3. [unit/app] PlayerScreen 스텝 1개·anchorKey player-detail-toggle·문안 일치, player-add 미참조. playback 하이드레이션: cover 결손 시에만 GET /tracks/{id}·store 병합, 실패 무해.
+4. [unit/app] MyMusicScreen: cooldown>0면 confirm 미진입+다이얼로그, POST 429 분기 다이얼로그, 조회 실패 게이트 오픈. useRewardedSkipAd require 실패 경로 admobLoadError 보존+warn 호출(편입).
+5. [unit/server] /instrumental: 쿨다운 중 429(+Retry-After)·spend/inst_jobs 미발생(게이트→과금 순서), 성공 파이프라인 완료 시 on_generation_completed(composer) 호출, 실패 시 미호출+환불 현행.
+6. [unit/server] loudnorm: ffmpeg 성공 시 320k 재인코딩본 저장+sha 갱신, ffmpeg 실패 시 원본 저장(파이프라인 성공 유지) — 로그 2종.
+7. [api] 원격 로깅: release console.warn → frontend.log 전송 배선 확인(편입, 재확인 수준).
+8. [e2e(web)] 작업실 튜토리얼: 스텝 전환 중 하이라이트 미표시(딤만)→정착 후 표시(스크린샷), 아티스트 1스텝 pill이 캐릭터 정위치(isNext 펄스 좌표 대비 오차 검증), 6스텝 완주. nowplaying 1스텝: 토글 영역 스포트라이트+카드 above.
+9. [통합/스테이징] Inst 생성 E2E: 신규 Inst 라우드니스 실측 -14±1 LUFS·TP≤-1, 커버 상속, composer 쿨다운 발생(사다리 카운트)·429 재요청, 실패 환불 회귀(v3.210). 백필 후 냥냥냥 (Inst.) -14±1 LUFS.
+10. [실기기/tester] 새 APK: 미니플레이어 Inst 커버 표시, 쿨다운 팝업 광고 버튼 유무+frontend.log '[AdReward] init' 라인 회수(미검증 항목 — 빌드 후 사용자 확인 절차 REPORT 기재), 작업실 anchor 오프셋 로그 회수(P2 판정). v3.214 회귀: 영상 center 자막·제목 마퀴·video 피로도 429.
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **③ 음질 개선 방식**: 기본안 = 라우드니스 정규화 -14 LUFS/320k(실측 7.3LU 격차 해소 — 요청 "방법이 있다면 적용" 직행). 분리 아티팩트는 API 한계로 개선 불가(WAV·품질 옵션 부재 확정). 무가공 유지 원하면 지시 1줄.
+2. **③ 백필**: 기본안 = 기존 냥냥냥 (Inst.) 1건 정규화 재업로드(프로덕션 데이터 변경 — 승인 후 실행).
+3. **④ 사다리 공유**: 기본안 = Inst = 작곡 사다리 공동 카운트(그날 일반 곡 + Inst 합산). Inst 별도 사다리 원하면 지시.
+4. **⑥ 제목**: 기본안 = '가사·제작 노트·스타일링'. 본문은 사용자 원문 고정.
+5. **⑦ 트리거**: 코드 변경 불요 확인(F5) — 기존 설치 기기는 미노출이므로 최종 검수는 신규 설치(스토리지 완전 초기화)로만 가능함을 유의.
+
+규칙: 민감 정보 플레이스홀더(<SSH_HOST>, API 키 로그 금지), 서버 수정은 server_staging_v3215에서만(프로덕션 scp pull 후 작업·_orig 보존), git 커밋은 오케스트레이터 승인 후.

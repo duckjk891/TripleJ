@@ -20,12 +20,19 @@ import { useAuthStore } from '../stores/authStore';
 import { ADMOB_REWARDED_AD_UNIT_ANDROID, ADMOB_TEST_DEVICE_IDS } from '../constants/ads';
 
 // try-require 게이트 — web 은 metro 에서 빈 모듈, Expo Go 는 require 실패
+// v3.215: 실기기(1.1.4)에서 광고 버튼 미노출 진단 — 실패 사유를 warn 으로 승격(릴리즈 원격 로그 수집 대상).
 let admob: any = null;
+let admobLoadError: string | null = null;
 if (Platform.OS !== 'web') {
   try {
     admob = require('react-native-google-mobile-ads');
-  } catch {
-    console.log('[AdReward] react-native-google-mobile-ads 미탑재(Expo Go) — 광고 배선 비활성');
+    if (!admob?.RewardedAd) {
+      admobLoadError = `RewardedAd 미존재 (keys: ${Object.keys(admob ?? {}).slice(0, 20).join(',')})`;
+      console.warn('[AdReward] 광고 모듈 로드됨 but', admobLoadError);
+    }
+  } catch (e) {
+    admobLoadError = String(e);
+    console.warn('[AdReward] 광고 모듈 로드 실패(광고 버튼 숨김):', admobLoadError);
   }
 }
 
@@ -187,6 +194,11 @@ let mobileAdsInitialized = false;
  * 미지원 런타임(Expo Go/web)에서는 no-op. 실패해도 앱 흐름에 영향 없음(광고 버튼만 미동작).
  */
 export async function initRewardedAds(): Promise<void> {
+  // v3.215 진단: 앱 시작 시 지원 여부를 원격 로그로 1회 보고 (버튼 미노출 원인 실기기 추적용)
+  console.warn(
+    '[AdReward] init — supported:', isRewardedAdSupported(),
+    'loadError:', admobLoadError ?? 'none'
+  );
   if (!admob?.MobileAds || mobileAdsInitialized) return;
   mobileAdsInitialized = true;
   try {

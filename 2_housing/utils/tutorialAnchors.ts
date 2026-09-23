@@ -9,7 +9,8 @@ export type TutorialAnchorKey =
   | 'chart-tabs' // v3.213: 차트 탭 스트립(신곡~내 재생목록 chipBar 전체 영역)
   | 'search-input' // 검색 입력바
   | 'search-row-more' // 검색 결과 첫 행 더보기(⋮) — v3.213 스텝 철회로 미사용(키 존치 무해)
-  | 'player-add' // 플레이어 담기 버튼
+  | 'player-add' // 플레이어 담기 버튼 — v3.215 ⑥ 스텝 교체로 미사용(키 존치 무해 — search-row-more 관행)
+  | 'player-detail-toggle' // v3.215 ⑥: 플레이어 하단 [가사·제작 노트·스타일링·댓글] 토글
   | 'feed-compose' // 피드 글쓰기 Fab
   // v3.213: 작업실 6스텝 — 디렉터 5종(맵 좌표 140×140 박스) + 생성 이력 고정 버튼
   | 'map-artist'

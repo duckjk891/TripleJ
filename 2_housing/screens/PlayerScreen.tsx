@@ -52,11 +52,15 @@ import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // v3.204 ⑥: 첫 방문 튜토리얼 스텝 (모듈 상수)
-// v3.207 ①: '담기와 공유' 스텝에 담기 버튼 anchor (측정 실패 시 카드 fallback)
+// v3.215 ⑥: 3스텝 → 1스텝 교체 — 하단 상세 토글(swipeUpButton) 스포트라이트,
+// 문안은 사용자 원문 고정. placement above(토글이 하단 절대배치라 카드는 위).
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '재생 위치 이동', desc: '재생바를 드래그해서 원하는 구간으로 이동할 수 있어요.' },
-  { title: '가사·제작 노트', desc: '하단 바를 탭하면 가사와 제작 노트, 댓글을 볼 수 있어요.' },
-  { title: '담기와 공유', desc: '지금 듣는 곡을 플레이리스트에 담거나 밖으로 공유해보세요.', anchorKey: 'player-add' },
+  {
+    title: '가사·제작 노트·스타일링',
+    desc: '토글을 열어서 가사와 제작노트 그리고 아티스트의 스타일링을 확인해보세요',
+    anchorKey: 'player-detail-toggle',
+    placement: 'above',
+  },
 ];
 
 interface AdItem {
@@ -200,9 +204,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
   const durationWarnedRef = useRef<string | null>(null); // v3.192: duration 괴리 경고 1회 가드(트랙당)
-  // v3.207 ①: 담기 버튼 튜토리얼 anchor ref — onLayout 시 등록, unmount 시 해제
-  const addBtnRef = useRef<View>(null);
-  useEffect(() => () => unregisterAnchor('player-add'), []);
+  // v3.215 ⑥: 하단 상세 토글 튜토리얼 anchor ref — onLayout 시 등록, unmount 시 해제
+  // (v3.207 ① player-add 등록은 스텝 교체로 제거 — 키는 registry에 주석 존치)
+  const detailToggleRef = useRef<View>(null);
+  useEffect(() => () => unregisterAnchor('player-detail-toggle'), []);
   const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -1149,10 +1154,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
 
         {/* v3.193: 담기 = 플레이리스트 담기(회원) / 비회원은 기존 안내 팝업 → 큐 폴백 */}
-        {/* v3.207 ①: 튜토리얼 '담기와 공유' 스포트라이트 anchor */}
         <TouchableOpacity
-          ref={addBtnRef as any}
-          onLayout={() => measureAndRegister('player-add', addBtnRef.current)}
           style={styles.actionBtn}
           onPress={handleAddToPlaylist}
           accessibilityLabel="담기"
@@ -1189,7 +1191,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       <View style={{ flex: 1 }} />
 
       {/* Bottom swipe-up indicator (가사·상세정보 토글) — 하단 절대배치로 기기·오버플로 무관 항상 노출 */}
+      {/* v3.215 ⑥: 튜토리얼 1스텝 스포트라이트 anchor (showDetails=false 초기 상태에 항상 노출) */}
       <TouchableOpacity
+        ref={detailToggleRef as any}
+        onLayout={() => measureAndRegister('player-detail-toggle', detailToggleRef.current)}
         style={styles.swipeUpButton}
         onPress={() => setShowDetails(true)}
         accessibilityLabel="가사 제작 노트 스타일링 댓글"
