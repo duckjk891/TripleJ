@@ -2838,3 +2838,47 @@ U-1~U-7 + S-1~S-6: FAIL 1(U-5④)·경계 1(S-1④) 즉시 픽스 후 tsc·py_co
 ### 이월
 
 loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증) · P2 상태바 오프셋 보정(실기기 확정 시 1줄) · RNGMA 17 업그레이드(진단 로그 확정 후) · routes/fatigue.py 안내 문구 5종 목록화(v3.214 이월분).
+
+## v3.216 (2026-09-23) — 웹 소셜로그인 복구·DM 시트·official 고정 행·패션브랜드 4,219건 시드·SSUGSIS/LOTUS 초대 + v3.216b 긴급 10건(계정 기반 튜토리얼·미디어세션) + [중대] APK 런치 크래시 픽스(1.1.6)
+
+**요청(7건)**: ①웹 구글/카카오 로그인 — 계정 선택 후 백지 ②DM 창이 상단바를 가림(상단바 하단으로) ③가입 시 DM 작성 버튼에 maidol_official 팔로우 상태 노출 ④패션브랜드 모음 zip → 상의/하의/악세서리(모자·가방) 반영 ⑤튜토리얼 최초 기준 전환(그 외 재노출 금지) ⑥Inst. 만들기 재실패 ⑦app.maidol.ai.kr?ref=SSUGSIS 초대페이지(초대자 김진주, 웹앱 권장 + 설치 희망 시 구글 계정을 official DM/홈페이지 하단 메일로). (+v3.216b: 사용자 긴급 지시 10건 F1~F10, +편입: 1.1.2~1.1.5 APK 전면 런치 크래시)
+
+### 수행 결과
+
+- **① 웹 소셜로그인(2중 원인 — 프로덕션 실측으로 확정·복구)**: 서버 OAuth는 전 단계 성공(로그 실측: token/userinfo 200→302)인데 (a) 프로덕션 `.env FRONTEND_URL=http://localhost:8081` — 성공 리다이렉트가 localhost로 감, (b) app.maidol.ai.kr 래퍼(homepage/maidol/app-shell)가 `/app` 이동 시 hash·query 폐기 → `#token=`·`?ref=` 유실. 픽스: **env 교정(사용자 실행)** + 래퍼 :9/:100 search+hash 보존 전달 + SocialLoginButtons 웹 분기 `location.assign`(같은 탭 — `_blank` 새 탭·비로그인 원탭 잔류 제거) + App.tsx `webOAuthTokenPending` 플래그로 restoreSession 경쟁 방어(:465-468, :549-550 — 구토큰 롤백 차단) + remoteLogger href hash strip(:118, `#token=` 원격 로그 유출 방어). OAuth 302·같은 탭 구글 이동 실측 확인(실계정 완주는 사용자만 가능 — 이월).
+- **② DM 상단바(DmInboxScreen)**: 새 메시지 전체화면 Modal → `transparent`+`statusBarTranslucent` 시트(:225), top = `useHeaderHeight()` 폴백 `insets.top+56`(:47-49, PolicySheet v3.214 선례) — 네이티브 헤더('메시지'·뒤로가기·edit) 상시 노출. DmChatScreen 자체 헤더 56 규격 정렬.
+- **③ official 고정 행**: 가입 자동 맞팔은 서버 기완비 실측(이메일·소셜 가입 훅 + startup 백필 — 추가 구현 없음). 실결함 = 작성창이 검색 전용 → 빈 검색어 시 `fetchOfficial()` 캐시로 **maidol_official 고정 행 + '공식' 배지**(:258-266, 실패 시 현행 빈 목록 폴백), 탭 시 기존 대화 시작 흐름 재사용.
+- **④ 패션브랜드 시드**: 전체_제품정보.csv 4,857행/85브랜드(이미지 4,857개 로컬 전수 실존·결측 0) → 신규 `seed_fashion_brands.py`(SEED_TAG='fashion_brands_csv' 멱등 replace·dry-run 기본·로컬 이미지 S3 직업로드 — admin 임포트의 플랫폼 6종 강제/원격 다운로드 제약 회피). **프로덕션 실행: 판매중 4,219건 inserted=4219 / failed=0** — 모자 629·가방 623 **최초 공급**(기존 0건), API 실노출 확인. 앱 악세서리 피커는 `?category=모자`+`?category=가방` 2호출 합산 전환(ArtistCodyScreen:330-331 — `$sample 500` 캡 희석 방지, 구주석 '서버 400' 정정), wishlist.py ALLOWED 세트 모자·가방 정합 1줄.
+- **⑤ 튜토리얼**: v3.215에서 REVIEW_MODE=false 완료 — 본 사이클 검증 + **v3.216b F9로 계정 기반 승격**(아래).
+- **⑥ Inst 재실패**: v3.215 배포가 짧은URL 픽스(v3.210) 없는 구베이스로 빌드된 사고 — inst_service.py 픽스 복원본(md5 d6c95351) 사용자 배포 완료. **재발 방지 절차 확립**: 스테이징은 라이브 pull 원본에만 패치 + `_orig` 보존 + 배포 직전 라이브 md5 재대조(DEPLOY.md §3 상설).
+- **⑦ SSUGSIS/LOTUS 초대**: referral_service 해석 정규식 4자 charset → `^[A-Z0-9]{4,12}$`(발급은 4자 불변), 앱 REFERRAL_RE 동일 확장 + 입력 maxLength 12. 1회성 스크립트(dry-run 기본·선점 충돌 시 실패=안전)로 **SSUGSIS=김진주(구 5JJY 무효화)**, **LOTUS=maidol_official(구 FNV6 무효화, 랜딩 표시명 "LOTUS AI" 오버라이드 — referral.py:28)** 적용·랜딩 실측. 랜딩 카피 개편: 웹앱 CTA primary 단일화 + Play 버튼 제거 + "모바일 설치 희망 시 구글 계정을 maidol_official DM 또는 kimpearl@lotusai.co.kr(홈페이지 하단 문의 메일)로" 안내 블록. ?ref= 프리필 체인은 ① 래퍼 수정으로 동시 복구.
+- **v3.216b 긴급 10건(F1~F10)**: F1 로그인 성공 시 차트 탭 리셋 착지(navigationRef.resetToChartTab — 이메일·소셜·토큰 콜백 공용), F2 튜토리얼 `useIsFocused` 노출 가드, F3 settling 고착 3초 안전망(MapScreen:361-371), F5 전역 팝업(출석 등) 표시 중 튜토리얼 보류→닫힘 후 재평가(seen 미소모), F6 문안 전수 감사 — 임의 스텝 0건·전부 사용자 정본 일치(맞춤법 3곳만 '확인 필요' 존치), F7 pill(원형) 하이라이트 철회 → 둥근 사각(radius 12) 복귀(사용자 지시), F8 아티스트 디렉터 즉시 표시 + 정착 폴링 120ms→60ms, **F9 계정 기반 최초 1회** — 서버 `GET/POST /api/tutorial/seen`(tutorial_seen.py 신설, unknown key 400, Mongo user_id 유니크) + 앱 tutorialGate 서버 동기화(단일 비행·서버 우선·실패 시 기기 기준 폴백) — **저장소 전체 삭제 후 재로그인 시 재노출 없음 실측**, F10 웹 미디어세션 — audioMode.ts 단일 지점(updateMediaSession/playbackState/positionState/prev·next 핸들러) + playback.ts 이관, 재생 시 playbackState 'playing' 실측('none' 고정이 위젯 미노출 원인). 웹 2회 재배포 완료.
+- **[중대] APK 런치 크래시(1.1.2~1.1.5 전멸) 전말**: 원인 = expo-audio@1.1.1 peerDep `expo-asset:"*"` → npm이 SDK 58계열 expo-asset@57.0.18을 최상위 호이스팅 → expo-modules-core 3.0.30 비호환(AnyTypeCache NoClassDefFound) → 당일 빌드 전부 시작 즉시 사망(어제까지 구빌드는 정상). 신규 에뮬레이터 환경(~/android-debug, AVD crashtest)으로 재현·이분탐색 확정. 픽스 = package.json `overrides {"expo-asset":"~12.0.13"}` + 락파일 커밋. 로컬 릴리즈·EAS **1.1.6** 빌드 모두 에뮬레이터 기동 검증. 광고 모듈 `[AdReward] init — supported: true` 실측(v3.215 잔여 의문 해소 — 버튼 표시 조건 충족, 실기기 확인만 잔여). AdMob 앱 ID는 이분탐색 중 구값 롤백이 1.1.6 1차 빌드에 혼입 → `~8636830033` 복원(커밋 6321ade) 후 재빌드.
+- 커밋: **acae3fe**(v3.216 전체 + v3.216b + 크래시 픽스 + 1.1.6, 앱 18파일), **6321ade**(AdMob 앱 ID 복원).
+
+### 서버 배포 (사용자 실행 완료 — DEPLOY.md 실측 md5·라이브 pull 원본 기반)
+
+| 파일 | 배포 경로 | 수정 전(_orig, 라이브 pull) md5 | 배포본 md5 |
+|------|-----------|--------------------------------|------------|
+| referral_service.py | app/services/referral_service.py | `4aee608c1a6f025aceb705a4bfadf44d` | `16e14976c558a8e057240548eb2269cd` |
+| referral.py | app/routes/referral.py | `db68a9a6e849ea160b2b9af5c551ee85` | `02748345b2583e87bab63005db816329` |
+| wishlist.py | app/routes/wishlist.py | `696ed76b64d262221e992e02cfd6ef22` | `425c773c3e824a26543a0169dca7f96e` |
+| tutorial_seen.py (신설) + main.py 2줄 | app/routes/ (v3.216b §10) | main.py.bak_pre_v3216b 백업 | 라우터 등록 실측 |
+| inst_service.py (v3.215 픽스 복원) | app/services/ | 구베이스(사고분) | `d6c95351…` |
+| set_referral_ssugsis.py / set_referral_lotus.py / seed_fashion_brands.py | 배포 안 함 — docker cp 1회 실행 | — | `b0bde132…` / (LOTUS는 DEPLOY.md 표 미기재 — 스크립트 실존·실행 완료) / `e50c3b1e…` |
+
+- `.env FRONTEND_URL=https://app.maidol.ai.kr` 교정(`.env.bak_pre_v3216` 백업). oauth.py 점검 결과 서버 코드 무변경으로 충분(localhost 하드코딩 없음 — env 폴백뿐). 배포 순서 고정(코드 → SQL → 시드 — SSUGSIS는 정규식 배포 전 resolve 불통과이므로 선행 금지) 준수.
+
+### 검증
+
+- **planner 최종 코드 재독(본 기록 전 수행)**: 결과 소재 전항 코드 실증 일치 — overrides expo-asset ~12.0.13·app.json 1.1.6·AdMob `~8636830033`(6321ade 반영), 래퍼 :9/:100 hash·query 보존, location.assign·webOAuthTokenPending·remoteLogger strip, DM 시트(transparent+statusBarTranslucent+composeTopLimit)·official 고정 행·악세서리 2호출·REFERRAL_RE 4-12+maxLength 12, staging_v3216 7파일(정규식·LOTUS 오버라이드·tutorial_seen 400 검증·main.py 라우터 등록·시드 dry-run/멱등·wishlist 세트), v3.216b F1/F2/F3/F5/F7/F8/F9/F10 전부 해당 라인 확인. **이상 없음**.
+- 프로덕션 실측(오케스트레이터·사용자): OAuth 302 체인·같은 탭 이동, 시드 4,219/0 실패·API 실노출, /invite/SSUGSIS·/invite/LOTUS 랜딩(웹앱 CTA·DM/메일 안내), tutorial_seen GET/POST·저장소 삭제 후 재로그인 미재노출, 미디어세션 playing, 에뮬레이터 1.1.6 기동 + `[AdReward] init — supported: true`.
+- 정적: py_compile 5파일 통과, 랜딩 렌더 단위검증, 정규식 경계(3자·13자·특수문자 거부), 시드 dry-parse(4,857→판매중 4,219·결측 0) — DEPLOY.md 기록.
+- 비고: v3.216b는 사용자 긴급 지시 직행분이라 PLAN 별도 섹션 없음(본 기록이 정본). set_referral_lotus.py는 DEPLOY.md md5 표에 행 누락(스크립트·실행은 확인) — 차기 배포 문서에 보강.
+
+### 미검증 이월 (완료 조건 명시)
+
+- **실기기 D군(1.1.6 재빌드 APK)**: 광고 버튼 실노출(에뮬레이터는 supported=true까지 확인), 작업실 앵커 정위치(P2 오프셋 로그 회수), DM 시트·official 행, 웹 미디어세션 위젯(모바일 브라우저), first-run 신규 설치 검수.
+- **소셜로그인 실계정 완주**: 구글·카카오 로그인→차트 착지까지 — 사용자만 가능(실계정).
+- **C 런타임 429**(composer 쿨다운 — v3.215 이월분): 쿨다운 상태 필요, 실사용 확인.
+- 기능 이월: 소셜 가입 ref 전달(oauth state), `$sample 500` 캡 상향/페이지네이션, 품절 638건 취급 재론, admin 임포트 브랜드 직납·로컬 이미지 모드, F6 맞춤법 3곳 사용자 확정, AdMob 앱 ID 재빌드 산출물 검수(1.1.6 2차).
