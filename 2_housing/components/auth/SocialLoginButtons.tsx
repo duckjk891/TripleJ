@@ -46,7 +46,18 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
         // `_blank` 새 탭을 열어 원 탭이 비로그인으로 잔류하고 탭 간 토큰 전달 장치가 없었다.
         // 콜백(#token=)은 App.tsx useOAuthCallback(웹 해시)이 처리.
         try {
-          (globalThis as any).window.location.assign(loginUrl);
+          // v3.224: PC 래퍼(app-shell)는 앱을 iframe 으로 띄운다 — 프레임 안에서 이동하면 구글·카카오가
+          // 프레이밍을 거부(403/X-Frame-Options)한다. 최상위 창(동일 출처라 접근 가능)을 이동시키고,
+          // 콜백(/oauth/callback#token=)은 래퍼가 다시 iframe 으로 토큰을 넘긴다.
+          const w = (globalThis as any).window;
+          let target = w;
+          try {
+            if (w.top && w.top !== w.self) target = w.top;
+          } catch {
+            target = w; // 교차 출처 top 접근 불가 시 현행 동작
+          }
+          if (__DEV__) console.info(`[${logPrefix}] 웹 로그인 이동`, { inFrame: target !== w });
+          target.location.assign(loginUrl);
         } catch (e: any) {
           console.error(`[${logPrefix}] 소셜 로그인 이동 실패`, { provider, message: e?.message });
           showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
