@@ -656,7 +656,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
                   ? '아티스트가 완성됐어요. 저장을 다시 시도해주세요.'
                   : tracked.lastStatus === 'done'
                     ? '아티스트가 완성됐어요. 저장하고 있어요...'
-                    : `${elapsedMin >= 5 ? '아직 만드는 중이에요' : `아티스트 디렉터가 ${meta.taskName} 만드는 중이에요`} · 경과 ${elapsedMin}분\n나가도 계속 만들어져요. 완성되면 작업실에서 알려드릴게요.`}
+                    : `${elapsedMin >= 5 ? '아직 만드는 중이에요' : `아티스트 디렉터가 ${meta.taskName} 만드는 중이에요`} · 경과 ${elapsedMin}분\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
               </AppText>
             </View>
             {saveFailed && (
@@ -669,22 +669,11 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
                 <AppText style={styles.primaryBtnText}>다시 저장하기</AppText>
               </TouchableOpacity>
             )}
-            {(tracked.lastStatus === 'processing' || saveFailed) && (
-              <TouchableOpacity
-                style={styles.leaveBtn}
-                onPress={() => {
-                  console.info('[ArtistLoading] 나가서 다른 작업 하기', { jobId });
-                  navigation.popTo('Map');
-                }}
-              >
-                <AppText style={styles.leaveBtnText}>나가서 다른 작업 하기</AppText>
-              </TouchableOpacity>
-            )}
           </>
         ) : (
           <View style={styles.noteContainer}>
             <AppText style={styles.noteText}>
-              아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}잠시만 기다려주세요...
+              아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}작업이 끝날 때까지 이 화면을 벗어나지 마세요.
             </AppText>
           </View>
         )}
@@ -743,9 +732,4 @@ const styles = StyleSheet.create({
     paddingVertical: 13, alignItems: 'center',
   },
   primaryBtnText: { color: colors.text.primary, fontWeight: '700', fontSize: 14 },
-  leaveBtn: {
-    marginTop: 12, alignSelf: 'stretch', borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
-    paddingVertical: 12, alignItems: 'center',
-  },
-  leaveBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
 });

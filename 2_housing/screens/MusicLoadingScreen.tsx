@@ -323,7 +323,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         messageIndex={messageIndex}
         progress={progress}
         portrait={portrait}
-        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n1~3분 정도 소요될 수 있어요.`}
+        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n1~3분 정도 소요될 수 있어요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
       />
     </AppScreenLayout>
   );

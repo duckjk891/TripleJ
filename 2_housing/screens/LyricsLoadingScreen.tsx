@@ -213,7 +213,7 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
 
         <View style={styles.noteContainer}>
           <AppText style={styles.noteText}>
-            작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}잠시만 기다려주세요...
+            작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}작업이 끝날 때까지 이 화면을 벗어나지 마세요.
           </AppText>
         </View>
       </View>

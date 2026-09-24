@@ -535,7 +535,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       });
       if (!ok) { rollbackToSubPos(); return; }
     }
-    pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 잠시만 기다려주세요.');
+    pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
     setStep('making');
     const params = styleParams(lyricsMode, subpos);
     console.info('[VideoDirector] share-video 생성', { trackId: selected.id, ...params });
