@@ -3015,3 +3015,54 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 서버 배포(사용자 실행): auth.py 931890e1 / oauth.py 43f8d62e (md5 일치, health 200). 웹 3회 배포.
 
 **이월**: 실계정 소셜 가입 1건으로 추천 보상 지급 로그 확인([referral] oauth reward), 카카오 웹 로그인 완주(최근 성공 기록 없음), 과거 소셜 가입자 추천 누락분은 사용자 지정 시 수동 지급.
+
+## v3.227 (2026-09-24) — 아티스트 생성 중 자유 이탈·사진 소실 회귀·꾸미기 피커 통합·원본 얼굴사진 보호
+
+> **버전 번호 중복 안내**: 본 섹션은 아티스트·꾸미기·원본 보호 사이클이다. 같은 날 다른 세션이 커밋한 `03b1d2d "v3.227 화면 사용 분석 수집"`(분석 수집)은 **다른 세션 작업**이며 이 섹션 범위에 포함되지 않는다. PLAN 정본 = PLAN.md `# v3.227` 섹션 + `## A-보완`.
+
+**요청**: ① 생성 중 브라우저·화면을 옮기면 작업이 끊기나 — 계속 만들어지게(→ 생성 중 자유 이탈로 격상) ② 원격 로거 폭주 ③ 위시리스트 조회 실패 ④ 상의·하의·모자·가방·신발 피커에서 초기 데이터(무신사·지그재그 등)와 브랜드샵을 "브랜드 모아보기/펼쳐보기"로 통합 + 대분류·필터 ⑤ 피커 상단에 고른 아이템 표시 ⑥ 비밀번호 찾기 메일 AWS SES 전환 검토 ⑦ 웹 배포 명령. (+추가) ⑧ 얼굴 사진으로 만들었는데 '만들 때 사용한 사진'·얼굴 인증이 안 뜸 ⑨ 원본 얼굴사진 무인증 공개 노출.
+
+**원인(실측)**
+- ⑧ **v3.219 [ArtistDraft] 회귀**: draft는 대화만 영속하고 사진은 메모리 전용이었다. 복원 시 사진 단계를 지난 상태로 되살아나고, 질문을 마치면 `setInput({photoUri:null})`이 저장된 사진까지 덮어썼다 → 텍스트 전용으로 ⭐10 과금·얼굴 인증 미발동·original_photo_object_name 공란. 아티스트 "샘플" = 2차 job 6ab4c22b(텍스트 전용) 결과(시트 바이트 크기 일치). 어디에도 연결되지 않은 건은 1차 6ab4c16e(사진·얼굴 인증 통과) 1건.
+- ① 서버는 끝까지 생성했지만, 앱 폴링이 "연속 오류 3회"에서 포기하고 job을 기록하지 않아 결과가 temp에 고아로 남았다. 포기 문구의 "자동 환불"도 잘못된 안내였다.
+- ② 만료 토큰 403을 재시도 대상으로 처리 + 동시 flush 가드 부재로 자기 증식. ③ 최대 1,252개 ID를 쿼리스트링으로 전송.
+- ④ 서버 `/ads/active`는 `$sample 500` 랜덤이라 상의·하의는 열 때마다 약 1/3만 노출됐고, 첫 단계 '플랫폼'이 판매자 계정명이라 브랜드샵이 따로 보였다. 프롬프트 브랜드도 판매자 계정명이었다.
+- ⑨ preview 프록시가 original_*을 인증 없이 반환했고, upload.py에도 우회 경로 3곳이 있었다.
+- ⑥ SES 발송 코드는 v3.207부터 존재하지만 운영에서 비활성(mail_enabled=False, .env 키 없음) → **현재 비밀번호 재설정 메일이 발송되지 않음**(코드는 서버 로그 dev 폴백). IAM 역할 maidol-ec2에 SES 권한이 없고, DNS SPF·DMARC·MX도 없음.
+
+**수행(커밋 — 모두 origin/frontend 푸시)**
+- `0045d1e` 꾸미기 피커를 컴포넌트로 분리(동작 무변경 — 40% 룰 대응 추출 커밋).
+- `6e48197` **W0 사진 소실 회귀 수정**: draft `photoIntent` 영속, 사진 없이 복원되면 사진 단계로 되돌려 재업로드 요구(확약 다이얼로그 재표시), setInput null 덮어쓰기 금지, 생성 직전 가드(과금 전 차단). **W0 웹 선배포**(사용자 실행 `deploy_w0.sh` — 깨끗한 worktree `/Users/pearl/TripleJ-webdeploy` 기준, 운영 번들 photoIntent 포함 확인).
+- `cb340a4` **W1**: 전역 생성 추적기(generationJobStore 영속 + generationTracker — 화면과 분리, 포그라운드 복귀 1.5초 재조회, 네트워크 오류는 실패 아님, 서버 failed일 때만 실패+환불 안내, 30분 서버 stale 기준 정합). ArtistLoading = 추적 뷰어 + [나가서 다른 작업 하기]. 작업실 아티스트 디렉터 말풍선(만드는 중 n분/완성), 내 아티스트·아티스트 만들기 카드(만드는 중·도착·실패), 완성 저장 단일 경로(사진 job은 서버 original_object_name 연결), 중복 생성 차단(앱 3곳 + 서버 409 generation_in_progress). 원격 로거 방어(401·403 drop·토큰 일시정지·inflight·백오프·서킷), 위시 sync를 `GET /wishlist/` 기반으로, 원본 사진 인증 로딩(authImage — 네이티브 헤더/웹 blob, URL 토큰 미사용).
+- `ecc3db9` **W2**: 피커 통합 — `/ads/catalog` 전량, [브랜드 모아보기 | 브랜드 펼쳐보기], 대분류 칩, 필터(성별·색상 13계열·가격·브랜드), 정렬, 선택 아이템 스트립(탭 시 카테고리 전환, 재진입 유지), 브랜드 표기 정정(프롬프트·카드 = brand 우선). v3.205 성별·v3.206 모자|가방·위시 탭·SAMPLE 폴백 보존.
+- `5d02faf` 앱 버전 1.1.9. W1 단독 스냅샷에서 tsc 0 확인 후 분리 커밋.
+- **서버**(server_staging_v3227 6파일: character·business·upload·item_taxonomy(신규)·character_generator·openai_image): recoverable·dismiss·save 소비 표시·409·stale lazy 정리, 원본 재사용 Form, preview 원본 게이트([PreviewGuard]) + upload.py 우회 3곳 차단, catalog(gzip·필드 12·대분류·색상 계열 — DB 쓰기 없음), gpt_image_2 참조 인덱스 맵·IDENTITY LOCK(input_fidelity는 gpt-image-2 미지원·400이라 미사용 — 공식 문서 근거). 배포 전 소수정 3건(save 재시도 멱등·catalog `_id` 타이브레이크·IDENTITY LOCK 헤어 규칙). main.py 무변경.
+- 서버 반영: 사용자 1줄 명령(md5 가드·`.bak_pre_v3227` 백업·6×OK) → 오케스트레이터 빌드(다른 세션의 08:36 main.py·admin_items·admin_stats·analytics 변경 포함) → 이미지 내 md5 6개 일치 → 진행 중 job 0 재확인 → 컨테이너 재생성(09:02Z) → health 200.
+
+**검증**
+- tester: W0 게이트 FAIL 0(로컬 웹 E2E, 가짜 API·과금 0). W1·W2 1차 게이트: 판정 가능 FAIL 게이트 12개 PASS, 가짜 API E2E ①~⑩ PASS, 하네스 로거 11/11·추적기 29/29·위시 8/8·카탈로그 22/22. 서버 단위 23/23·분류 골든 78/78.
+- 운영 스모크: 기존 API 200. 다른 세션 admin/stats·admin/items 401·analytics 405(등록 유지). 원본 3경로 무토큰 404, 일반 시트·커버 200. recoverable·presigned 무토큰 401. catalog 상의 1,501건·gzip 138KB·필드 12·대분류·색상 13, 잘못된 category 400. 재시작 후 traceback 0, [PreviewGuard]·[Catalog] 로그 동작.
+- planner 스팟체크(작업트리 정독): photoIntent 3파일, 추적기·카드·authImage·catalogService·codyCatalog·cody 컴포넌트 존재, 로거 403 drop, 위시 `/wishlist/` 사용, pollCharacterJob 삭제, 중복 가드 `guardArtistGeneration` 호출(ArtistCody :444·MyArtists·ArtistLoading), 프롬프트 브랜드 `brandNameOf`, app.json 1.1.9 — PLAN 대비 누락 없음.
+- 사용자 결정 준수: 전체 진행 / 오늘 2건 데이터 쓰기 없음 / H-3 즉시 차단 / 회수 기간 무제한. recoverable 노출 예상 = 6ab4c16e 1건(6ab4c22b는 '샘플' 저장본과 바이트 일치라 비노출).
+
+**SES 판정**: 전환 가능, 코드 변경 0. .env 3줄(MAIL_ENABLED·SES_REGION·MAIL_FROM) + 컨테이너 재생성 1회. 재설정 코드·세션은 별도 Redis(AOF)라 재생성에 영향 없음. 사용자 6단계: ① SES 도메인 DKIM(Cloudflare CNAME 3·프록시 OFF) ② (권장) MAIL FROM MX·SPF ③ (권장) DMARC ④ 프로덕션 액세스 요청 ⑤ maidol-ec2 역할에 ses:SendEmail·ses:GetAccount ⑥ .env 편집.
+
+**플랫폼 한계(사용자 안내)**: 모바일 웹·네이티브 모두 백그라운드·화면 꺼짐 중에는 JS가 멈춰 **완성 순간 알림은 불가하고, 돌아왔을 때 수령한다**(작업실 말풍선·카드·알림 1회). 푸시 알림은 백로그(expo-notifications 미설치·서버 푸시 필요).
+
+**이월·남은 절차**
+1. W1·W2 웹 배포 — 사용자 `cd /Users/pearl/homepage/maidol && ./deploy.sh app`. 서버가 먼저 반영돼 있어 **구웹에서는 '만들 때 사용한 사진'이 일시 미표시**(원본 인증 게이트).
+2. 실기기 확인(사용자, 본인 얼굴 인증 필요): 사진 업로드 → 이탈 → 재업로드 요구 → 생성 중 나가기 → 작업실 말풍선·내 아티스트 카드 → 도착 저장 → '만들 때 사용한 사진' 표시, 중복 생성 차단 팝업, 도착 카드(6ab4c16e) 저장/닫기.
+3. H-2 얼굴 동일성 A/B 3장(OpenAI 2·Gemini 1) — 사용자 승인 대기.
+4. 409 generation_in_progress 실서버 확인 — 실생성이 필요해 사용자 실사용 중 자연 검증.
+5. SES 6단계(사용자) 후 .env 3줄 + 재생성.
+6. 로그 볼륨 호스트 마운트 — 사용자 승인 대기(오늘 07:03·08:36·09:02 재생성마다 컨테이너 로그 소실 실측).
+7. APK 1.1.9 EAS 빌드 진행 중(링크는 오케스트레이터 보고). 1.1.8 사용자는 원본 사진 표시·실사 옷 입히기가 1.1.9 설치 전까지 제한된다(H-3 즉시 차단 결정).
+
+**백로그**
+- [보안] 커버·MV 생성의 `character_object_name`/`cover_object_name` 소유권 검사 부재(upload.py — 타인 원본을 생성 입력으로 사용 가능).
+- dismiss 진행 중 job: TESTPLAN 404 vs 서버 409(무해) — 계약 문서 정합.
+- 오디오 스트림·DM 웹소켓의 URL 쿼리 토큰(헤더 불가 구조) 잔존.
+- UX: 생성 차단 상태에서 ArtistInput 인사말 잔존, 튜토리얼 중 기존 말풍선 표시, 위시 탭 FlatList removeClippedSubviews.
+- 분류율 정의 차이(엄격 92.0% / 가방 BAG 포함 96.7%), 색상 없는 874건 이미지 기반 보강, 색상 옵션 중복 문서 표시 병합, 장소 사진 preview 보호, 생성 완료 푸시 알림, 추적기 어댑터로 커버·영상·Inst 이관.
+
+**특이**: 버전 번호가 다른 세션의 분석 수집 커밋(03b1d2d)과 겹침. 서버에 다른 세션이 main.py 등을 .bak 없이 수정·배포(07:03·08:36) → 이번 반영은 배포 직전 현재본 재수신 위에 패치·main.py 제외·디렉터리 통째 scp 금지로 충돌을 회피했다.
