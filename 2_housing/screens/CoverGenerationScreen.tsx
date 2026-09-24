@@ -34,6 +34,7 @@ import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
+import { Feather } from '@expo/vector-icons';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -1099,6 +1100,31 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setChatHistory((prev) => [...prev, { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로', step: 1.5 }]);
     goWardrobe(slot); // v3.150: 의상 확인 단계
   };
+
+  // v3.224: 작업실 이미지 디렉터 대화 중 상단 ← — 작사(LyricsInput)·영상(VideoDirector)과 동일하게
+  // focus 시 Studio 탭 헤더 headerLeft 주입(v3.201 불변식: 클리어는 Map focus 승계, blur cleanup 없음).
+  // RootStack 의 AlbumCoverGeneration(앨범 커버 모드)은 자체 헤더라 주입하지 않는다.
+  useFocusEffect(
+    useCallback(() => {
+      if (route.name !== 'CoverGeneration') return;
+      const parent = navigation.getParent();
+      parent?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => {
+              if (__DEV__) console.info('[CoverGeneration] ← 뒤로');
+              if (navigation.canGoBack()) navigation.goBack();
+              else (navigation as any).popTo('Map');
+            }}
+            style={{ marginLeft: 12 }}
+            accessibilityLabel="뒤로"
+          >
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+    }, [navigation, route.name])
+  );
 
   // v3.150: 꾸미기 다녀온 뒤 focus 복귀 — 의상(시트) 최신화 (step 1.7 대기 중일 때만)
   useFocusEffect(
