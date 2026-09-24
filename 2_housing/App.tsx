@@ -18,6 +18,9 @@ if (Platform.OS === 'android') {
 // v3.91: 콘솔/오류 이벤트를 백엔드 /_logs/frontend 로 배치 전송 (MAIDOL main.jsx 관행 — 모듈 초기화 시 1회)
 import { initRemoteLogger } from './utils/remoteLogger';
 initRemoteLogger();
+// 화면 사용 분석(관리자 대시보드 '사용 분석' — 화면별 체류시간·이탈률)
+import { initScreenAnalytics, trackScreen } from './utils/screenAnalytics';
+initScreenAnalytics();
 import { colors } from './theme/colors';
 import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
@@ -630,7 +633,11 @@ export default function App() {
   }, []);
   // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용
   const [currentRoute, setCurrentRoute] = useState<string | undefined>(undefined);
-  const syncRoute = () => setCurrentRoute(navigationRef.getCurrentRoute()?.name);
+  const syncRoute = () => {
+    const name = navigationRef.getCurrentRoute()?.name;
+    setCurrentRoute(name);
+    trackScreen(name);
+  };
   return (
     <SafeAreaProvider>
       {/* v3.207(⑤): KeyboardProvider — edge-to-edge는 라이브러리가 자동 감지(react-native-is-edge-to-edge) */}
