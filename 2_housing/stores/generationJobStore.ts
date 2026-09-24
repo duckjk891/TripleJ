@@ -10,9 +10,23 @@ import { useAuthStore } from './authStore';
 // - 텍스트만 저장(파일 URI 금지 — 2026-09-07 보존 정책). 사진 파일은 추적기 메모리 맵에만.
 // - ownerUserId가 현재 로그인 사용자와 다르면 숨김(로그아웃·계정 전환) → 재로그인 시 다시 보임.
 // - 30일 지난 레코드는 하이드레이션 시 정리.
-// - kind는 확장 지점('artist'만 구현 — 차기 cover/video/inst 어댑터 후보).
+// - kind는 확장 지점. v3.228 W0: 'artist' 외 6종(GenJobKind) 레코드 수용 — 어댑터는 services/genJobs/*.
+//   아티스트 선택자(listUserArtistJobs 등)는 kind==='artist' 필터 그대로(구버전 앱도 비아티스트 레코드 무시).
 
-export type TrackedJobKind = 'artist';
+/** v3.228: 비아티스트 생성 kind(작사·작곡·연주곡·커버·다듬기·영상) — services/genJobs/index.ts의 GenKind와 동일 */
+export type GenJobKind = 'lyrics' | 'music' | 'inst' | 'cover' | 'cover_refine' | 'video';
+export type TrackedJobKind = 'artist' | GenJobKind;
+/** 작업실 디렉터(말풍선 슬롯) — MapScreen DirectorType 부분집합 */
+export type GenJobDirector = 'lyricist' | 'composer' | 'image' | 'video';
+/** kind → 작업실 디렉터(작곡 디렉터는 music·inst 공용, 이미지 디렉터는 cover·cover_refine 공용) */
+export const GEN_KIND_DIRECTOR: Record<GenJobKind, GenJobDirector> = {
+  lyrics: 'lyricist',
+  music: 'composer',
+  inst: 'composer',
+  cover: 'image',
+  cover_refine: 'image',
+  video: 'video',
+};
 export type TrackedJobMode = 'sheet' | 'outfit';
 /** 서버 기준 상태. 'done' 레코드가 남아 있으면 = 아직 저장하지 않은 완성본(done-unsaved) */
 export type TrackedJobStatus = 'processing' | 'done' | 'failed' | 'unknown';
@@ -60,9 +74,45 @@ export interface TrackedJob {
   source: 'local' | 'recovered' | 'conflict';
   /** 뷰어 밖 done 앱 내 알림 1회 표시 시각 */
   notifiedAt?: number | null;
-  /** startedAt+30분 경과 시 recoverable 1회 호출(서버 lazy 정리) 시각 */
+  /** startedAt+30분 경과 시 recoverable 1회 호출(서버 lazy 정리) 시각 (v3.228: 비아티스트는 kind별 상한) */
   staleProbeAt?: number | null;
+  // ── v3.228 비아티스트 kind 전용(선택 필드 — 아티스트 레코드엔 없음, 마이그레이션 불필요) ──
+  /** 동기 kind 요청 헤더 X-Gen-Request-Id(32hex) — 응답 유실 시 GET /api/generate/jobs/req/{id}로 회수 */
+  requestId?: string | null;
+  /** 서버 job id(gen_jobs _id · generation_id · inst job_id) */
+  serverJobId?: string | null;
+  /** kind별 부가 정보(trackId·format·cover_session_id 등 — 텍스트만) */
+  meta?: Record<string, any> | null;
+  /** 비아티스트 완성 결과(서버 result 원문) — 아티스트 result(TrackedJobResult)와 분리 */
+  genResult?: any;
+  /** 서버가 미차감을 명시한 실패(not_charged) — 이때만 "차감되지 않았어요" 안내(X-K1) */
+  notCharged?: boolean | null;
+  /** 결과 확인(ack) 시각 — 이후 선택자에서 제외 */
+  ackedAt?: number | null;
+  /** 작업실 디렉터(말풍선 슬롯) */
+  director?: GenJobDirector | null;
 }
+
+/**
+ * v3.228: 비아티스트 레코드의 아티스트 전용 필수 필드 중립값(TrackedJob 형태 유지용 — 아티스트 경로는 kind 필터로 미사용).
+ * 아티스트 필드를 optional로 바꾸면 아티스트 화면 타입이 흔들리므로 형태를 유지한다.
+ */
+export const GEN_NEUTRAL_ARTIST_FIELDS: Pick<
+  TrackedJob,
+  | 'mode' | 'characterKind' | 'targetCharacterId' | 'legacyContract' | 'photoIntent'
+  | 'pendingName' | 'pendingGender' | 'pendingAge' | 'usedItems' | 'artStyleHint'
+> = {
+  mode: 'sheet',
+  characterKind: 'real',
+  targetCharacterId: null,
+  legacyContract: false,
+  photoIntent: null,
+  pendingName: null,
+  pendingGender: null,
+  pendingAge: null,
+  usedItems: [],
+  artStyleHint: null,
+};
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DISMISSED_KEEP = 50;
@@ -165,6 +215,50 @@ export function useActiveArtistJob(): TrackedJob | null {
  */
 export function useHasActiveArtistJob(): boolean {
   return useActiveArtistJob() !== null;
+}
+
+// ── v3.228 비아티스트 선택자 ─────────────────────────────────────────────
+
+/** 현재 사용자의 비아티스트 job(미확인만, 최신순). kinds 지정 시 그 kind만 */
+export function listUserGenJobs(
+  kinds?: GenJobKind[] | null,
+  jobs: Record<string, TrackedJob> = useGenerationJobStore.getState().jobs,
+  userId: string | null = currentUserId()
+): TrackedJob[] {
+  if (!userId) return [];
+  const allow = kinds && kinds.length ? new Set<TrackedJobKind>(kinds) : null;
+  return Object.values(jobs)
+    .filter(
+      (j) =>
+        j.kind !== 'artist' &&
+        (!allow || allow.has(j.kind)) &&
+        j.ownerUserId === userId &&
+        j.lastStatus !== 'unknown' &&
+        !j.ackedAt
+    )
+    .sort((a, b) => b.startedAt - a.startedAt);
+}
+
+/** 디렉터 슬롯 대표 job — processing → done(미확인) → failed(미확인) 순, 없으면 null */
+export function pickDirectorJob(list: TrackedJob[]): TrackedJob | null {
+  return (
+    list.find((j) => j.lastStatus === 'processing') ??
+    list.find((j) => j.lastStatus === 'done') ??
+    list.find((j) => j.lastStatus === 'failed') ??
+    null
+  );
+}
+
+/** 비반응형: 디렉터의 대표 job */
+export function getDirectorJob(director: GenJobDirector): TrackedJob | null {
+  return pickDirectorJob(listUserGenJobs().filter((j) => j.director === director));
+}
+
+/** 반응형: 디렉터의 대표 job(작업실 말풍선) */
+export function useDirectorJob(director: GenJobDirector): TrackedJob | null {
+  const jobs = useGenerationJobStore((s) => s.jobs);
+  const userId = useAuthStore((s) => (s.user?.id ? String(s.user.id) : null));
+  return pickDirectorJob(listUserGenJobs(null, jobs, userId).filter((j) => j.director === director));
 }
 
 /** 반응형: 단일 job 구독(추적 뷰어) */
