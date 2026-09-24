@@ -28,6 +28,17 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
 // v3.219 [VideoDraft]: 대화 draft(선곡·진행·대화) 미러링 + 스타일 sticky — musicStore 보존
 import { useMusicStore, type VideoDraft, type VideoStylePrefs } from '../stores/musicStore';
+// v3.228 W0-2 [GenJob:video]: 서버 원장(request_id) 연동 — 추적기 공개 API(1조) + video 어댑터(2조, import 시 registerKind)
+import {
+  newRequestId, registerGenJob, adoptGenJob, markGenJobDone, guardGeneration,
+  discardGenJob, endGenRequest, setViewerJob, releaseViewerJob, settleGenJob,
+} from '../services/generationTracker';
+import {
+  genRequestHeaders, parseGenInProgress, isRequestAlreadyFailed, genLedgerFields, ackGenJobOnServer,
+} from '../services/genJobsService';
+import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../services/genJobs';
+import { fetchVideoJob, VIDEO_CAP_MS } from '../services/genJobs/video';
+import { useGenerationJobStore } from '../stores/generationJobStore';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -99,6 +110,17 @@ const logDupBlock = (reason: string, extra?: Record<string, unknown>) => {
   console.warn('[VideoDirector] 중복 요청 차단', { reason, ...extra });
 };
 
+// v3.228 W0-2: 서버 상대 경로(/api/...) → 절대 URL
+const absVideoUrl = (p: string): string => (p.startsWith('http') ? p : `${BACKEND_BASE_URL}${p}`);
+const isVideoFormat = (f: unknown): f is 'sns' | 'wide' | 'kakao' => f === 'sns' || f === 'wide' || f === 'kakao';
+
+type VideoTrackOutcome =
+  | { kind: 'done'; videoUrl: string; format: string | null; serverJobId: string | null; result: any }
+  | { kind: 'failed'; error: string | null; refunded: boolean | null; notCharged: boolean | null }
+  | { kind: 'expired' }
+  | { kind: 'unmounted' };
+
+
 // 무과금 완성 확인 — 헤더(상태 코드)만 받고 즉시 중단(본문 다운로드 없음). 구 서버에도 있는 GET 엔드포인트.
 const probeShareVideoFile = (url: string): Promise<'ready' | 'missing' | 'unknown'> =>
   new Promise((resolve) => {
@@ -158,7 +180,10 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   // draft(선곡·step·대화)는 재진입 이어가기용(저장/공유 완료·'처음부터'에 클리어),
   // stylePrefs는 완주 후에도 유지(다음 영상에 이전 취향 승계 — creationMode sticky 관행).
   const initialStore = useRef(useMusicStore.getState()).current;
+  // v3.228 W0-2: 회수 진입(recoverJobId)은 draft 복원보다 우선 — 대화는 회수 결과로 구성
+  const recoverAtMount = !!route?.params?.recoverJobId;
   const resumeDraft: VideoDraft | null =
+    !recoverAtMount &&
     initialStore.videoDraft &&
     initialStore.videoDraft.chat.some((m) => m.type === 'user') &&
     initialStore.videoDraft.step !== 'making' &&
@@ -212,9 +237,19 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const busyRef = useRef(false);
   const proceedingRef = useRef(false);
   const mountedRef = useRef(true);
+  // v3.228 W0-2: 이 화면이 추적 뷰어로 보고 있는 job 키 · 회수 진입 곡(목록 로드 후 보강용)
+  const viewerKeyRef = useRef<string | null>(null);
+  const recoverTrackIdRef = useRef<string | null>(null);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (viewerKeyRef.current) {
+        // 화면 이탈 — 이후 도착은 전역 추적기가 작업실에서 알림(다른 화면의 뷰어는 건드리지 않음)
+        releaseViewerJob(viewerKeyRef.current);
+        viewerKeyRef.current = null;
+      }
+    };
   }, []);
   const releaseBusy = (why: string) => {
     if (__DEV__ && busyRef.current) console.info('[VideoDirector] 생성 가드 해제', { why });
@@ -310,6 +345,14 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           cover_image_url: t.cover_image_url, is_public: t.is_public !== false,
         }));
         setTracks(list);
+        // v3.228 W0-2: 회수 진입 — 곡 스냅샷만 보강(프리셋·draft 복원 생략, 대화·단계는 startRecovery 가 구성)
+        if (recoverTrackIdRef.current || route?.params?.recoverJobId) {
+          const rid = recoverTrackIdRef.current;
+          const full = rid ? list.find((t) => t.id === rid) : undefined;
+          if (full) setSelected(full);
+          setLoadingTracks(false);
+          return;
+        }
         // v3.221: 마이페이지 다운로드(영상) 진입 — initialTrackId 프리셋(명시 진입 의도가
         // draft 복원보다 우선). 목록에 있으면 해당 곡으로 선곡 단계 통과, 비공개면 안내 후 pick 유지.
         const presetId = route?.params?.initialTrackId ? String(route.params.initialTrackId) : null;
@@ -563,6 +606,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     // v3.228 W0-1: 카드 더블클릭/연타 — 첫 탭이 가드를 잡으면 이후 탭은 버블·요청 모두 0
     if (busyRef.current) { logDupBlock('tap-while-busy', { subpos }); return; }
     if (!selected) return;
+    // v3.228 W0-2: 추적 중인 영상 job(이 기기 요청·409 편입·회수)이 있으면 [닫기]/[진행 상황 보기] — 과금 게이트보다 먼저
+    if (guardGeneration('video', { navigation, where: 'VideoDirector' })) {
+      logDupBlock('tracked-job', { subpos });
+      return;
+    }
     busyRef.current = true;
     const label = subpos === 'near'
       ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽')
@@ -605,7 +653,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const startGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
     if (!selected) { releaseBusy('no-track'); return; }
     const sig = `${selected.id}:${JSON.stringify(styleParams(lyricsMode, subpos))}`;
-    // 진행 중/확인 중 작업 선확인(확인 중이면 무과금 파일 조회로 완성 여부 판정)
+    // 진행 중/확인 중 작업 선확인(확인 중이면 무과금 파일 조회로 완성 여부 판정) — 구서버 폴백
     if (await isVideoJobBlocking()) { blockForActiveJob('active-job'); return; }
     if (fatigueRemainSec > 0 && !succeededVideoSigs.has(sig)) {
       console.info('[VideoDirector] [fatigue] 게이트 — 남은', fatigueRemainSec, '초');
@@ -622,17 +670,110 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     proceedGeneration(lyricsMode, subpos);
   };
 
-  // v3.228 W0-1: 응답 없이 끝난 요청의 완성 확인 — 확인 기한까지 무과금 파일 조회 반복.
-  // 화면을 벗어나면 조회만 멈추고 모듈 기록(verifying)은 기한까지 유지 → 재진입 시에도 재요청 차단.
-  const verifyTimedOutJob = async (job: ActiveVideoJob): Promise<'ready' | 'expired' | 'unmounted'> => {
-    while (Date.now() <= job.verifyUntil) {
-      if (!mountedRef.current) return 'unmounted';
-      const r = await probeShareVideoFile(job.fileUrl);
-      if (__DEV__) console.info('[VideoDirector] 완성 확인 조회', { trackId: job.trackId, r });
-      if (r === 'ready') return 'ready';
+  // v3.228 W0-2: 추적 뷰어 표시(전역 추적기의 도착 알림은 이 화면이 보고 있는 job 에 대해 생략)
+  const viewGenJob = (key: string | null) => {
+    if (key) setViewerJob(key);
+    else releaseViewerJob(viewerKeyRef.current);
+    viewerKeyRef.current = key;
+  };
+
+  /**
+   * v3.228 W0-1·W0-2: 응답을 직접 받지 못한 영상 job 의 결과 확인 — POST 재전송 없음(무과금).
+   * 순서: ① 전역 추적기가 갱신한 레코드 ② 서버 원장(GET /generate/jobs/req/{rid} 또는 회수 목록)
+   * ③ 원장이 없으면(구서버·킬스위치) 캐시 파일 조회. 기한 = 구서버 11분, 원장이 진행 중이라 답하면 상한 25분.
+   * 화면을 벗어나면 조회만 멈춘다(레코드·모듈 기록 유지 → 추적기 도착 알림·재진입 차단).
+   */
+  const trackVideoJob = async (t: {
+    key: string; requestId?: string | null; serverJobId?: string | null;
+    fileUrl?: string | null; startedAt: number; moduleJob?: ActiveVideoJob | null;
+  }): Promise<VideoTrackOutcome> => {
+    let deadline = t.startedAt + (t.fileUrl ? VIDEO_VERIFY_WINDOW_MS : VIDEO_CAP_MS);
+    let ledgerSeen = false;
+    while (Date.now() <= deadline) {
+      if (!mountedRef.current) return { kind: 'unmounted' };
+      const rec = useGenerationJobStore.getState().jobs[t.key];
+      const recUrl = rec?.genResult?.video_url;
+      if (rec?.lastStatus === 'done' && typeof recUrl === 'string' && recUrl) {
+        return { kind: 'done', videoUrl: absVideoUrl(recUrl), format: rec.genResult?.format ?? null, serverJobId: rec.serverJobId ?? null, result: rec.genResult };
+      }
+      if (rec?.lastStatus === 'failed') {
+        return { kind: 'failed', error: rec.error ?? null, refunded: rec.refunded ?? null, notCharged: rec.notCharged ?? null };
+      }
+      let snap: GenJobSnapshot | null | undefined;
+      try {
+        snap = await fetchVideoJob({
+          requestId: t.requestId ?? rec?.requestId ?? null,
+          serverJobId: t.serverJobId ?? rec?.serverJobId ?? null,
+        });
+      } catch {
+        snap = undefined; // 네트워크·5xx — 실패로 단정하지 않고 다음 회차
+      }
+      const snapUrl = snap?.result?.video_url ?? snap?.meta?.video_url;
+      if (snap?.status === 'done' && typeof snapUrl === 'string' && snapUrl) {
+        return { kind: 'done', videoUrl: absVideoUrl(snapUrl), format: snap.result?.format ?? snap.meta?.format ?? null, serverJobId: snap.jobId, result: snap.result ?? { video_url: snapUrl } };
+      }
+      if (snap?.status === 'failed') {
+        return { kind: 'failed', error: snap.error ?? null, refunded: snap.refunded ?? null, notCharged: snap.notCharged ?? null };
+      }
+      if (snap?.status === 'processing') {
+        if (!ledgerSeen) {
+          ledgerSeen = true;
+          deadline = Math.max(deadline, t.startedAt + VIDEO_CAP_MS);
+          if (t.moduleJob) t.moduleJob.verifyUntil = deadline;
+          console.info('[GenJob:video] 서버 원장 진행 중 — 상한까지 추적', { jobId: t.key });
+        }
+      } else if (!snap && t.fileUrl) {
+        const r = await probeShareVideoFile(t.fileUrl);
+        if (__DEV__) console.info('[VideoDirector] 완성 확인 조회(파일)', { jobId: t.key, r });
+        if (r === 'ready') return { kind: 'done', videoUrl: t.fileUrl, format: null, serverJobId: null, result: null };
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, VIDEO_VERIFY_INTERVAL_MS));
     }
-    return 'expired';
+    return { kind: 'expired' };
+  };
+
+  const showVideoDone = (url: string, format: string | null | undefined) => {
+    setVideoUrl(url);
+    if (isVideoFormat(format)) setMadeFormat(format);
+    pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
+    setStep('done');
+  };
+
+  /** 추적 결과 반영 — done: 결과 화면 + ack(화면이 결과를 보여줌) / failed: 서버 문장 기준 안내 + ack / expired: 중립 안내 */
+  const settleTracked = (
+    key: string,
+    outcome: VideoTrackOutcome,
+    ctx: { sig?: string; fallbackFormat?: string | null; hasTrack: boolean }
+  ) => {
+    if (outcome.kind === 'unmounted') return;
+    if (viewerKeyRef.current === key) viewGenJob(null);
+    const shown = mountedRef.current;
+    if (outcome.kind === 'done') {
+      if (ctx.sig) succeededVideoSigs.add(ctx.sig);
+      const result = outcome.result ?? { video_url: outcome.videoUrl, format: outcome.format ?? ctx.fallbackFormat ?? null };
+      if (useGenerationJobStore.getState().jobs[key]) {
+        // 화면을 벗어난 뒤 도착했으면 ack 하지 않음 → 추적기가 작업실에서 도착 알림 1회
+        markGenJobDone(key, result, { acked: shown, serverJobId: outcome.serverJobId });
+      } else if (shown && outcome.serverJobId) {
+        void ackGenJobOnServer('video', outcome.serverJobId);
+      }
+      usePointsStore.getState().fetchBalance();
+      refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
+      if (shown) showVideoDone(outcome.videoUrl, outcome.format ?? ctx.fallbackFormat);
+      console.info('[GenJob:video] 결과 도착', { jobId: key, shown });
+      return;
+    }
+    usePointsStore.getState().fetchBalance();
+    if (!shown) return; // 화면 밖 — 추적기 알림이 안내
+    if (outcome.kind === 'failed') {
+      console.info('[GenJob:video] 서버 실패 확정', { jobId: key, refunded: outcome.refunded });
+      pushDirector(`영상을 끝내지 못했어요. ${failureBody(outcome.error, outcome.refunded, outcome.notCharged)}`);
+      settleGenJob('video', key, 'failed', { error: outcome.error, refunded: outcome.refunded });
+    } else {
+      console.error('[GenJob:video] 확인 기한 내 결과 확인 실패', { jobId: key });
+      pushDirector(`영상 완성을 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
+    }
+    setStep(ctx.hasTrack ? 'format' : 'pick');
   };
 
   // 호출 전제: busyRef.current === true (탭 경로·쿨다운 해제 onCleared·429 재다이얼로그 onCleared)
@@ -662,32 +803,66 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       }
       const params = styleParams(lyricsMode, subpos);
       const sig = `${track.id}:${JSON.stringify(params)}`;
-      const fileUrl = `${BACKEND_BASE_URL}/api/tracks/${encodeURIComponent(track.id)}/share-video/file?`
+      const filePath = `/api/tracks/${encodeURIComponent(track.id)}/share-video/file?`
         + Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+      const fileUrl = `${BACKEND_BASE_URL}${filePath}`;
       const startedAt = Date.now();
       const job: ActiveVideoJob = {
         sig, trackId: track.id, fileUrl, format: params.format, startedAt,
         phase: 'requesting', verifyUntil: startedAt + VIDEO_VERIFY_WINDOW_MS,
       };
       activeVideoJob = job;
+      // v3.228 W0-2: 서버 원장 요청 ID — POST 직전 발급·추적 등록(응답 유실·앱 재시작 후 /jobs/req/{rid} 로 회수)
+      const requestId = newRequestId();
+      const genKey = registerGenJob({
+        kind: 'video',
+        requestId,
+        meta: { track_id: track.id, title: track.title, format: params.format, style: params, video_url: filePath },
+      });
+      viewGenJob(genKey);
       pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
       setStep('making');
-      console.info('[VideoDirector] share-video 생성', { trackId: track.id, ...params });
+      console.info('[VideoDirector] share-video 생성', { trackId: track.id, rid: requestId.slice(0, 8), ...params });
       try {
-        const res = await api.post(`/tracks/${track.id}/share-video`, null, { params, timeout: 300000 });
+        const res = await api.post(`/tracks/${track.id}/share-video`, null, {
+          params, timeout: 300000, headers: genRequestHeaders(requestId),
+        });
         const path = res.data?.video_url;
         if (!path) throw new Error('video_url 없음');
-        succeededVideoSigs.add(sig);
         if (activeVideoJob === job) activeVideoJob = null;
-        setVideoUrl(path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`);
-        setMadeFormat(params.format);
-        pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
-        usePointsStore.getState().fetchBalance();
-        refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
-        setStep('done');
+        const ledger = genLedgerFields(res.data);
+        if (res.data?.joined || ledger.replayed) {
+          // 서버 합류(같은 조합 인코딩 중 → 완료 대기) · 같은 요청 재생 — 추가 과금 없음
+          console.info('[GenJob:video] 진행 중 영상에 합류', { jobId: genKey, joined: !!res.data?.joined, replayed: ledger.replayed });
+        }
+        const fmt = res.data?.format ?? params.format;
+        settleTracked(genKey, {
+          kind: 'done', videoUrl: absVideoUrl(String(path)), format: fmt,
+          serverJobId: ledger.genJobId,
+          result: { video_url: path, format: fmt, subtitles: res.data?.subtitles ?? null, track_id: track.id },
+        }, { sig, fallbackFormat: params.format, hasTrack: true });
       } catch (err: any) {
         const status = err?.response?.status;
         const data = err?.response?.data;
+        // v3.228 W0-2: 409 generation_in_progress — 이 요청은 원장 전 거절(무과금). 진행 중 job 을 편입해 그 결과를 추적
+        const inProgress = parseGenInProgress(err, 'video');
+        if (inProgress) {
+          if (activeVideoJob === job) activeVideoJob = null;
+          logDupBlock('server-409', { jobId: inProgress.jobId });
+          // 다른 요청의 job 이면 방금 등록한 레코드를 폐기하고 서버 job 편입, 같은 request_id 면 그 레코드 유지(1조 계약)
+          const adoptedKey = adoptGenJob(inProgress, { replaceKey: genKey });
+          if (!mountedRef.current) return;
+          viewGenJob(adoptedKey);
+          pushDirector('이미 만들고 있는 영상이 있어요. 그 영상이 완성되면 바로 보여드릴게요. 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+          const metaPath = inProgress.meta?.video_url;
+          const outcome = await trackVideoJob({
+            key: adoptedKey, requestId: inProgress.requestId ?? null, serverJobId: inProgress.jobId,
+            fileUrl: typeof metaPath === 'string' && metaPath ? absVideoUrl(metaPath) : null,
+            startedAt: inProgress.createdAtMs ?? Date.now(),
+          });
+          settleTracked(adoptedKey, outcome, { fallbackFormat: inProgress.meta?.format ?? null, hasTrack: true });
+          return;
+        }
         // 서버가 명시적으로 답한 결과(4xx 전부, 서버 JSON 502 = 실패·환불 완료)만 "확정". 응답 없음(앱 timeout·
         // 네트워크)·게이트웨이 오류(HTML 502/503/504 등)는 서버가 아직 인코딩 중일 수 있어 "확인 중"으로 둔다.
         const definitive = typeof status === 'number'
@@ -695,28 +870,29 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         console.error('[VideoDirector] share-video 실패', { trackId: track.id, status, definitive, code: err?.code });
         if (!definitive) {
           job.phase = 'verifying';
-          if (!mountedRef.current) return; // 기록은 기한까지 유지 — 재진입 시 isVideoJobBlocking 이 판정
-          pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
-          const v = await verifyTimedOutJob(job);
-          if (v === 'unmounted') return;
-          if (activeVideoJob === job) activeVideoJob = null;
-          if (v === 'ready') {
-            succeededVideoSigs.add(sig);
-            console.info('[VideoDirector] 확인 중 영상 완성 확인', { trackId: track.id });
-            setVideoUrl(fileUrl);
-            setMadeFormat(params.format);
-            pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
-            refreshFatigue();
-            setStep('done');
-          } else {
-            console.error('[VideoDirector] 확인 기한 내 완성 확인 실패', { trackId: track.id });
-            pushDirector('영상 완성을 확인하지 못했어요. 잠시 후 다시 시도해주세요.');
-            setStep('format');
+          if (!mountedRef.current) {
+            endGenRequest(genKey); // 화면 이탈 — 원장 추적(추적기 도착 알림)으로 전환, 모듈 기록은 기한까지 유지
+            return;
           }
-          usePointsStore.getState().fetchBalance();
+          pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+          // endGenRequest 는 화면 추적이 끝난 뒤 호출 — 구서버(원장 404)에서 추적기가 파일 확인 중인 레코드를
+          // 먼저 정리·안내하지 않게(신서버는 원장이 processing 을 답하므로 순서 무관). done 은 markGenJobDone 이 해제.
+          const outcome = await trackVideoJob({ key: genKey, requestId, fileUrl, startedAt, moduleJob: job });
+          if (outcome.kind !== 'done') endGenRequest(genKey);
+          if (outcome.kind !== 'unmounted' && activeVideoJob === job) activeVideoJob = null;
+          settleTracked(genKey, outcome, { sig, fallbackFormat: params.format, hasTrack: true });
           return;
         }
         if (activeVideoJob === job) activeVideoJob = null;
+        if (viewerKeyRef.current === genKey) viewGenJob(null);
+        if (status >= 500 && genLedgerFields(data).genJobId) {
+          // 서버 원장 실패 확정(서버가 환불 처리) — 화면이 실패를 안내하므로 도착 알림 중복 없이 확인 처리
+          // (응답 직후 레코드는 아직 processing — 추적기가 failed 반영하는 즉시 ack)
+          settleGenJob('video', genKey, 'failed', { error: data?.error ?? null });
+        } else {
+          // 400·402·403·404·429·409 request_already_failed · 원장 없는 502(구서버·킬스위치) — "만드는 중" 아님
+          discardGenJob(genKey, isRequestAlreadyFailed(err) ? 'video-request-already-failed' : `video-${status}`);
+        }
         // v3.214 ⑨: 서버 check_gate 429(과금 전 무비용) — 게이트와 동일 쿨다운 다이얼로그로 대응
         if (status === 429) {
           const remain = Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0));
@@ -747,6 +923,66 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       if (!handedOff) releaseBusy('proceed-end');
     }
   };
+
+  // v3.228 W0-2: 회수 진입(작업실 말풍선·도착 알림 [지금 보기]·가드 [진행 상황 보기]) — POST 없음.
+  // done → 결과 화면(캐시 URL, 무과금 재생) + ack / processing → 'making' 추적 / failed → 안내 + ack.
+  const startRecovery = (key: string) => {
+    const job = useGenerationJobStore.getState().jobs[key];
+    if (!job || job.kind !== 'video') {
+      console.warn('[GenJob:video] 회수 대상 없음', { jobId: key });
+      return;
+    }
+    if (busyRef.current) { logDupBlock('recover-while-busy', { jobId: key }); return; }
+    const trackId = job.meta?.track_id ?? job.meta?.trackId ?? job.genResult?.track_id ?? null;
+    recoverTrackIdRef.current = trackId ? String(trackId) : null;
+    const known = trackId ? tracks.find((t) => t.id === String(trackId)) : undefined;
+    const hasTrack = !!trackId;
+    setSelected(known ?? (trackId ? ({ id: String(trackId), title: String(job.meta?.title ?? '') } as MyTrack) : null));
+    setShowResumeNotice(false);
+    setVideoUrl(null);
+    const fmt = job.genResult?.format ?? job.meta?.format ?? null;
+    console.info('[GenJob:video] 회수 진입', { jobId: key, status: job.lastStatus, trackId });
+    const doneUrl = job.genResult?.video_url;
+    if (job.lastStatus === 'done' && typeof doneUrl === 'string' && doneUrl) {
+      setChat([INITIAL_VIDEO_GREETING]);
+      showVideoDone(absVideoUrl(doneUrl), fmt);
+      settleGenJob('video', key, 'done', { result: job.genResult }); // 사용자가 결과 화면을 연 순간 = 확인
+      return;
+    }
+    if (job.lastStatus === 'failed') {
+      setChat([INITIAL_VIDEO_GREETING, {
+        type: 'director', text: `영상을 끝내지 못했어요. ${failureBody(job.error, job.refunded, job.notCharged)}`,
+      }]);
+      settleGenJob('video', key, 'failed', { error: job.error ?? null, refunded: job.refunded ?? null });
+      setStep(hasTrack ? 'format' : 'pick');
+      return;
+    }
+    busyRef.current = true;
+    setChat([INITIAL_VIDEO_GREETING, {
+      type: 'director', text: '영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+    }]);
+    setStep('making');
+    viewGenJob(key);
+    const metaPath = job.meta?.video_url;
+    (async () => {
+      try {
+        const outcome = await trackVideoJob({
+          key, requestId: job.requestId ?? null, serverJobId: job.serverJobId ?? null,
+          fileUrl: typeof metaPath === 'string' && metaPath ? absVideoUrl(metaPath) : null,
+          startedAt: job.startedAt,
+        });
+        settleTracked(key, outcome, { fallbackFormat: fmt, hasTrack });
+      } finally {
+        releaseBusy('recover-end');
+      }
+    })();
+  };
+
+  const recoverJobParam: string | null = route?.params?.recoverJobId ? String(route.params.recoverJobId) : null;
+  useEffect(() => {
+    if (recoverJobParam) startRecovery(recoverJobParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recoverJobParam]);
 
   // v3.182: 기기 저장(사진 앨범) — 공유와 분리
   // v3.214 ⑥-a: 캐시 파일명 새니타이즈 강화 — 한글·공백·특수문자 연속을 _ 1개로, 40자 상한
