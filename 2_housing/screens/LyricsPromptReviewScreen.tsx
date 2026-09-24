@@ -33,6 +33,8 @@ import {
   DUET_OPTIONS,
   DURATION_OPTIONS,
 } from '../utils/lyricsPrompt';
+// v3.228 W3: 작사 중복 생성 가드(전역 추적기)
+import { guardGeneration } from '../services/generationTracker';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -75,6 +77,8 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
 
   // v3.118: 작사 디렉터 휴식(쿨다운) 게이트 — 생성 시작 전 사전 확인(429 무과금과 동일 다이얼로그)
   const handleGenerate = async () => {
+    // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
+    if (guardGeneration('lyrics', { navigation, where: 'LyricsPromptReview' })) return;
     if (fatigueCheckingRef.current) return;
     fatigueCheckingRef.current = true;
     try {

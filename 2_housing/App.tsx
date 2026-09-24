@@ -123,7 +123,8 @@ export type StudioStackParamList = {
   };
   LyricsInput: undefined;
   LyricsPromptReview: undefined;
-  LyricsLoading: undefined;
+  // v3.228 W3: jobId — 진행 중 작사 이어보기(POST 없이 추적 레코드 구독)
+  LyricsLoading: { jobId?: string } | undefined;
   LyricsResult: undefined;
   ComposerSelect: undefined;
   MusicGeneration: undefined;

@@ -25,6 +25,8 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 // v3.200: 창작 기록 계층 — 가사 버전 커밋(문서 §7.4: 진입 시 AI 초안, 에디터 닫기 시 수정본).
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 가사 편집·작곡 진행을 절대 막지 않는다.
 import { commitLyricsVersion } from '../services/creationLogService';
+// v3.228 W3: 작사 중복 생성 가드(전역 추적기)
+import { guardGeneration } from '../services/generationTracker';
 import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
@@ -121,6 +123,8 @@ export default function LyricsResultScreen({ navigation }: Props) {
 
   // v3.118: "다시 생성하기" — 작사 디렉터 휴식(쿨다운) 게이트 (대표 방침: 재생성 시 팝업)
   const handleRegenerate = async () => {
+    // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
+    if (guardGeneration('lyrics', { navigation, where: 'LyricsResult' })) return;
     if (fatigueCheckingRef.current) return;
     fatigueCheckingRef.current = true;
     try {

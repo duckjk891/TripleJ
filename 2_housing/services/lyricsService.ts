@@ -1,4 +1,6 @@
 import api from './api';
+// v3.228 W3: 작사 요청 추적 헤더(X-Gen-Request-Id)
+import { genRequestHeaders } from './genJobsService';
 
 // v3.110 — 백엔드 LyricsRequest(routes/generate.py) 계약과 1:1 매핑.
 // prompt = 곡 설명(주제·시점·구조 태그·키워드·추가요청), 나머지는 구조화 필드.
@@ -16,8 +18,10 @@ export const generateLyrics = async (params: {
   structure?: string;
   english_ratio?: number;
   has_rap?: boolean;
-}) => {
-  const response = await api.post('/generate/lyrics/', params);
+}, opts: { requestId?: string | null } = {}) => {
+  // v3.228 W3: opts.requestId → 헤더 X-Gen-Request-Id(서버 원장 — 응답 유실 시 /jobs/req/{rid}로 회수,
+  // 같은 id 재전송은 진행 중 409·완료 200 replayed 무과금). 구서버는 헤더를 무시.
+  const response = await api.post('/generate/lyrics/', params, { headers: genRequestHeaders(opts.requestId) });
   return response.data;
 };
 
