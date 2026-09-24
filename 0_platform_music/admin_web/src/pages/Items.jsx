@@ -7,7 +7,7 @@ import AuthImage from '../components/AuthImage';
 import { formatDate } from './Dashboard';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
-const CATEGORIES = ['상의', '하의', '신발', '장소'];
+const CATEGORIES = ['상의', '하의', '신발', '모자', '가방', '장소'];
 const GENDERS = ['남성용', '여성용', '공용'];
 
 function EditModal({ item, onClose, onSaved }) {
