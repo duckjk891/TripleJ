@@ -8,7 +8,7 @@ const DAYS_OPTS = [7, 14, 30];
 const SCREEN_LABELS = {
   MainTabs: '메인 탭', Studio: '작업실', Chart: '차트', Feed: '피드', MyMusic: '마이페이지',
   Search: '검색', Settings: '설정', Player: '플레이어', Playlist: '플레이리스트', AlbumDetail: '앨범 상세',
-  Map: '작업실 맵', Dialogue: '대화', LyricsInput: '가사 입력', LyricsPromptReview: '가사 프롬프트 확인',
+  Map: '작업실', Dialogue: '대화', LyricsInput: '가사 입력', LyricsPromptReview: '가사 프롬프트 확인',
   LyricsLoading: '가사 생성 중', LyricsResult: '가사 결과', ComposerSelect: '작곡가 선택',
   MusicGeneration: '곡 생성', MusicLoading: '곡 생성 중', InstLoading: '반주 생성 중', MusicResult: '곡 결과',
   GenerationHistory: '생성 기록', CoverGeneration: '커버 촬영', CoverLibrary: '커버 보관함',
