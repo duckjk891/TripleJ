@@ -95,3 +95,7 @@ export const getImportJob = (id) => API.get(`/admin/items/import-jobs/${id}`);
 
 // ---- logs ----
 export const getAdminLogs = (params) => API.get('/admin/logs', { params });
+
+// ---- health (v3.217 [HealthCheck] 시스템 탭) ----
+export const getExternalHealth = (force = false) =>
+  API.get('/admin/health/external', { params: force ? { force: true } : {} });

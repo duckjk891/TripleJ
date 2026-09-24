@@ -8,6 +8,7 @@ const MENU = [
   { to: '/users', label: '사용자 관리', icon: '👥' },
   { to: '/items', label: '착장 아이템', icon: '👕' },
   { to: '/brands', label: '브랜드/광고주', icon: '🏷️' },
+  { to: '/health', label: '시스템', icon: '🩺' },
 ];
 
 export default function Layout({ children }) {
