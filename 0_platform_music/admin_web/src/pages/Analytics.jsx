@@ -5,9 +5,9 @@ const DAYS_OPTS = [7, 14, 30];
 
 // 앱 라우트명 → 화면 이름 (없으면 라우트명 그대로)
 const SCREEN_LABELS = {
-  MainTabs: '메인 탭', Studio: '스튜디오', Chart: '차트', Feed: '피드', MyMusic: '내 음악',
+  MainTabs: '메인 탭', Studio: '작업실', Chart: '차트', Feed: '피드', MyMusic: '마이페이지',
   Search: '검색', Settings: '설정', Player: '플레이어', Playlist: '플레이리스트', AlbumDetail: '앨범 상세',
-  Map: '스튜디오 맵', Dialogue: '대화', LyricsInput: '가사 입력', LyricsPromptReview: '가사 프롬프트 확인',
+  Map: '작업실 맵', Dialogue: '대화', LyricsInput: '가사 입력', LyricsPromptReview: '가사 프롬프트 확인',
   LyricsLoading: '가사 생성 중', LyricsResult: '가사 결과', ComposerSelect: '작곡가 선택',
   MusicGeneration: '곡 생성', MusicLoading: '곡 생성 중', InstLoading: '반주 생성 중', MusicResult: '곡 결과',
   GenerationHistory: '생성 기록', CoverGeneration: '커버 촬영', CoverLibrary: '커버 보관함',
@@ -15,9 +15,9 @@ const SCREEN_LABELS = {
   ArtistLoading: '아티스트 생성 중', ArtistResult: '아티스트 결과', FaceVerify: '얼굴 인증',
   MyArtists: '내 아티스트', ArtistCody: '착장(코디)', ArtistDetail: '아티스트 상세',
   VoiceManage: '내 목소리 관리', VoiceCloneWizard: '내 목소리 만들기', LyricsBook: '가사집',
-  ComposeLyricsPick: '가사 선택', DmInbox: '메시지함', DmChat: '메시지 대화', Notifications: '알림',
-  MyReports: '내 신고', FeedCompose: '피드 작성', FeedDetail: '피드 상세', TrackUpload: '음원 올리기',
-  UserChannel: '사용자 채널', AgencyProfile: '소속사 프로필', DirectorLineup: '디렉터 라인업',
+  ComposeLyricsPick: '가사 선택', DmInbox: '메시지', DmChat: '메시지 대화', Notifications: '알림',
+  MyReports: '내 신고', FeedCompose: '피드 작성', FeedDetail: '피드 상세', TrackUpload: '음원 파일 올리기',
+  UserChannel: '채널', AgencyProfile: '소속사 프로필', DirectorLineup: '디렉터 라인업',
 };
 const label = (s) => SCREEN_LABELS[s] ? `${SCREEN_LABELS[s]}` : s;
 
@@ -78,9 +78,9 @@ export default function AnalyticsPage() {
         ) : (
           <>
             <div className="stats-grid">
-              <div className="stat-card"><span className="stat-label">세션</span><span className="stat-value">{ss.sessions.toLocaleString()}</span><span className="cell-sub">기기 {ss.devices} · 로그인 {ss.logged_in_sessions}</span></div>
-              <div className="stat-card"><span className="stat-label">평균 세션 시간</span><span className="stat-value">{fmtSec(ss.avg_session_sec)}</span></div>
-              <div className="stat-card"><span className="stat-label">세션당 화면 수</span><span className="stat-value">{ss.avg_screens}</span></div>
+              <div className="stat-card"><span className="stat-label">세션</span><span className="stat-value">{ss.sessions.toLocaleString()}</span><span className="cell-sub">앱을 연 횟수 (30분 넘게 떠났다 오면 새 세션) · 기기 {ss.devices} · 로그인 {ss.logged_in_sessions}</span></div>
+              <div className="stat-card"><span className="stat-label">평균 세션 시간</span><span className="stat-value">{fmtSec(ss.avg_session_sec)}</span><span className="cell-sub">한 번 열었을 때 평균 사용 시간</span></div>
+              <div className="stat-card"><span className="stat-label">세션당 화면 수</span><span className="stat-value">{ss.avg_screens}</span><span className="cell-sub">한 번 열었을 때 평균 몇 화면을 보는지</span></div>
               <div className="stat-card"><span className="stat-label">이탈률 (바운스)</span><span className={`stat-value ${ss.bounce_rate >= 50 ? 'warn' : ''}`}>{ss.bounce_rate}%</span><span className="cell-sub">화면 1개만 보거나 10초 안에 종료</span></div>
             </div>
             <div className="table-wrap">
