@@ -349,3 +349,146 @@ async def acquisition(days: int = 30, current_admin=Depends(get_admin_user), con
         "platforms": [{"platform": k, "count": v} for k, v in sorted(platforms.items(), key=lambda x: -x[1])],
         "daily": sorted(daily.values(), key=lambda x: x["date"], reverse=True),
     }
+
+
+# ---------------------------------------------------------------------------
+# 단계별 이탈(퍼널) · 이동 경로 — analytics_events 세션별 화면 순서 기준
+# ---------------------------------------------------------------------------
+# 각 단계는 화면 목록(그중 하나를 보면 도달). 세션 안에서 순서대로 도달해야 다음 단계로 인정.
+FUNNELS = [
+    {"key": "song", "label": "곡 만들기", "steps": [
+        ("가사 입력", ["LyricsInput"]),
+        ("가사 결과", ["LyricsResult"]),
+        ("곡 생성 설정", ["MusicGeneration"]),
+        ("곡 생성 중", ["MusicLoading"]),
+        ("곡 결과", ["MusicResult"]),
+    ]},
+    {"key": "artist", "label": "아티스트 만들기", "steps": [
+        ("아티스트 입력", ["ArtistInput"]),
+        ("코디(착장)", ["ArtistCody"]),
+        ("생성 중", ["ArtistLoading"]),
+        ("결과", ["ArtistResult"]),
+    ]},
+    {"key": "create_entry", "label": "창작 시작", "steps": [
+        ("차트(첫 화면)", ["Chart"]),
+        ("작업실", ["Map", "Studio"]),
+        ("대화", ["Dialogue"]),
+        ("창작 화면 진입", ["LyricsInput", "ArtistInput", "CoverGeneration", "VideoDirector", "VoiceCloneWizard"]),
+    ]},
+    {"key": "listen", "label": "음악 듣기", "steps": [
+        ("차트(첫 화면)", ["Chart"]),
+        ("플레이어(재생)", ["Player"]),
+    ]},
+]
+APP_CLOSED = "__closed__"
+
+
+async def _session_paths(days: int) -> list:
+    coll = get_mongo().analytics_events
+    since = _since_utc_naive(days)
+    return await coll.aggregate([
+        {"$match": {"type": "screen", "started_at": {"$gte": since}}},
+        {"$sort": {"started_at": 1, "seq": 1}},
+        {"$group": {
+            "_id": "$session_id",
+            "screens": {"$push": "$screen"},
+            "durations": {"$push": "$duration_ms"},
+            "started_at": {"$first": "$started_at"},
+            "device": {"$first": "$device_id"},
+            "platform": {"$first": "$platform"},
+            "user": {"$max": "$user_id"},
+        }},
+        {"$sort": {"started_at": -1}},
+    ]).to_list(length=None)
+
+
+def _dedupe(screens: list) -> list:
+    out = []
+    for s in screens:
+        if not out or out[-1] != s:
+            out.append(s)
+    return out
+
+
+@router.get("/funnels")
+async def funnels(days: int = 7, current_admin=Depends(get_admin_user)):
+    if days < 1 or days > MAX_DAYS:
+        return JSONResponse(status_code=400, content={"error": f"기간은 1~{MAX_DAYS}일이어야 합니다."})
+    sessions = await _session_paths(days)
+    result = []
+    for f in FUNNELS:
+        steps = f["steps"]
+        reached = [0] * len(steps)
+        devices = [set() for _ in steps]
+        leak: list = [dict() for _ in steps]  # 단계 k 에서 멈춘 세션이 다음에 간 곳
+        for s in sessions:
+            path = _dedupe(s["screens"])
+            k, last_pos = 0, -1
+            for i, scr in enumerate(path):
+                if k < len(steps) and scr in steps[k][1]:
+                    reached[k] += 1
+                    devices[k].add(s["device"])
+                    k += 1
+                    last_pos = i
+            if 0 < k < len(steps):
+                nxt = path[last_pos + 1] if last_pos + 1 < len(path) else APP_CLOSED
+                leak[k - 1][nxt] = leak[k - 1].get(nxt, 0) + 1
+        rows = []
+        for i, (name, screens) in enumerate(steps):
+            prev = reached[i - 1] if i else reached[0]
+            dropped = reached[i] - (reached[i + 1] if i + 1 < len(steps) else reached[i])
+            rows.append({
+                "step": name,
+                "screens": screens,
+                "sessions": reached[i],
+                "devices": len(devices[i]),
+                "from_prev_rate": round(reached[i] / prev * 100, 1) if (i and prev) else (100.0 if reached[i] else None),
+                "from_start_rate": round(reached[i] / reached[0] * 100, 1) if reached[0] else None,
+                "dropped": dropped if i + 1 < len(steps) else 0,
+                "dropped_to": [
+                    {"screen": scr, "count": c}
+                    for scr, c in sorted(leak[i].items(), key=lambda x: -x[1])[:4]
+                ],
+            })
+        result.append({"key": f["key"], "label": f["label"], "steps": rows})
+    return {"days": days, "sessions": len(sessions), "funnels": result, "closed_key": APP_CLOSED}
+
+
+@router.get("/paths")
+async def paths(days: int = 7, limit: int = 30, current_admin=Depends(get_admin_user), conn=Depends(get_pg)):
+    if days < 1 or days > MAX_DAYS:
+        return JSONResponse(status_code=400, content={"error": f"기간은 1~{MAX_DAYS}일이어야 합니다."})
+    limit = max(1, min(limit, 100))
+    sessions = await _session_paths(days)
+
+    # 자주 일어나는 이동 (A → B), 세션 종료는 '앱 종료'로
+    edges: dict = {}
+    for s in sessions:
+        path = _dedupe(s["screens"]) + [APP_CLOSED]
+        for a, b in zip(path, path[1:]):
+            edges[(a, b)] = edges.get((a, b), 0) + 1
+    top_edges = [
+        {"from": a, "to": b, "count": c}
+        for (a, b), c in sorted(edges.items(), key=lambda x: -x[1])[:20]
+    ]
+
+    recent = sessions[:limit]
+    uids = {s["user"] for s in recent if s.get("user")}
+    names = {}
+    if uids:
+        rows = await conn.fetch("SELECT id::text AS id, nickname FROM users WHERE id::text = ANY($1::text[])", list(uids))
+        names = {r["id"]: r["nickname"] for r in rows}
+    items = []
+    for s in recent:
+        started = s["started_at"]
+        items.append({
+            "session_id": s["_id"],
+            "started_at": started.replace(tzinfo=timezone.utc).isoformat() if isinstance(started, datetime) else started,
+            "platform": s.get("platform"),
+            "device": (s.get("device") or "")[-6:],
+            "user": names.get(s.get("user")) if s.get("user") else None,
+            "duration_sec": round(sum(d or 0 for d in s["durations"]) / 1000),
+            "screen_count": len(s["screens"]),
+            "path": _dedupe(s["screens"]),
+        })
+    return {"days": days, "sessions": len(sessions), "top_transitions": top_edges, "recent": items, "closed_key": APP_CLOSED}

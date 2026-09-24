@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getFeatureUsage, getRetention, getScreenAnalytics } from '../api';
+import Journeys from './Journeys';
 
 const DAYS_OPTS = [7, 14, 30];
 
@@ -19,7 +20,8 @@ const SCREEN_LABELS = {
   MyReports: '내 신고', FeedCompose: '피드 작성', FeedDetail: '피드 상세', TrackUpload: '음원 파일 올리기',
   UserChannel: '채널', AgencyProfile: '소속사 프로필', DirectorLineup: '디렉터 라인업',
 };
-const label = (s) => SCREEN_LABELS[s] ? `${SCREEN_LABELS[s]}` : s;
+export const screenLabel = (s) => SCREEN_LABELS[s] || s;
+const label = screenLabel;
 
 function fmtSec(sec) {
   if (sec == null) return '-';
@@ -109,6 +111,8 @@ export default function AnalyticsPage() {
           </>
         )}
       </div>
+
+      <Journeys days={days} />
 
       {/* ---------- 기능 사용량 ---------- */}
       <div className="card">

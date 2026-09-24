@@ -53,6 +53,8 @@ export const getFeatureUsage = (days = 7) => API.get('/admin/stats/features', { 
 export const getRetention = (days = 30) => API.get('/admin/stats/retention', { params: { days } });
 export const getScreenAnalytics = (days = 7) => API.get('/admin/stats/screens', { params: { days } });
 export const getAcquisition = (days = 30) => API.get('/admin/stats/acquisition', { params: { days } });
+export const getFunnels = (days = 7) => API.get('/admin/stats/funnels', { params: { days } });
+export const getPaths = (days = 7, limit = 30) => API.get('/admin/stats/paths', { params: { days, limit } });
 
 // ---- users ----
 export const getUsers = (params) => API.get('/admin/users', { params });
