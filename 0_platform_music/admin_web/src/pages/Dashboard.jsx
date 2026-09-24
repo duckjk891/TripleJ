@@ -2,11 +2,22 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard, getReports, getItems, getActiveUsers } from '../api';
 
+const KST_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+// Mongo 에서 온 시각은 시간대 표기 없이 UTC 로 직렬화된다("2026-09-24T16:41:07") —
+// 그대로 new Date() 하면 브라우저 로컬시간으로 오해석되므로 UTC 로 고정해 읽고, 표시는 항상 KST.
 export function formatDate(dateStr) {
   if (!dateStr) return '-';
-  const d = new Date(dateStr);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const s = String(dateStr);
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(s);
+  const d = new Date(hasZone || !s.includes('T') ? s : `${s}Z`);
+  if (Number.isNaN(d.getTime())) return '-';
+  const parts = Object.fromEntries(KST_PARTS.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 export default function DashboardPage() {
