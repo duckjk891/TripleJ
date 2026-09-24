@@ -97,7 +97,7 @@ import FeedComposeScreen from './screens/FeedComposeScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import FeedDetailScreen from './screens/FeedDetailScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
-import AlbumDetailScreen from './screens/AlbumDetailScreen';
+import AlbumDetailScreen, { exitAlbum } from './screens/AlbumDetailScreen';
 // v3.100(A-10): 직접 음원 파일 업로드
 import TrackUploadScreen from './screens/TrackUploadScreen';
 // v3.104(B-5): 커버 보관함 — 열람/삭제 + 선택 모드({ select: true })로 커버 재사용
@@ -164,8 +164,8 @@ export type RootStackParamList = {
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
   FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };
-  // v3.96(A-2): 앨범 상세 — 열람(전체) + 내 앨범이면 관리(수정/삭제/트랙/커버)
-  AlbumDetail: { albumId: string };
+  // v3.220 ①: AlbumDetail은 RootStack → MainTabs 숨김 탭으로 이동(하단 탭바 유지 — MyMusic 관행).
+  // params: { albumId, from?: 'Chart'|'MyMusic'|'UserChannel', fromParams?: UserChannel 재push 파라미터 }
   // v3.120: 앨범 AI 커버 — 작업실 자켓 커버와 동일한 이미지 디렉터 대화 화면(CoverGenerationScreen 앨범 모드).
   // 확정 시 PATCH /albums/{id}/cover(objectName) 후 goBack → AlbumDetail이 focus에서 재조회.
   AlbumCoverGeneration: { albumMode: { albumId: string; albumTitle: string; trackTitles?: string[] } };
@@ -426,6 +426,31 @@ function MainTabs() {
           ),
         })}
       />
+      {/* v3.220 ①: 앨범 상세 — RootStack에서 이 숨김 탭으로 이동(하단 탭바 유지, MyMusic 관행).
+          ← 는 goBack이 firstRoute(차트)로 떨어지므로 from 파라미터 기반 exitAlbum으로 origin 복귀.
+          진입: 차트 2곳·마이페이지 2곳(탭 형제 navigate)·채널(MainTabs 중첩 navigate). */}
+      <Tab.Screen
+        name="AlbumDetail"
+        component={AlbumDetailScreen}
+        options={({ navigation, route }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          headerTitle: () => <AppText variant="subtitle">앨범</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={() => exitAlbum(navigation, (route as any).params)}
+              style={{ marginLeft: 12 }}
+              accessibilityLabel="뒤로"
+            >
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
+            </TouchableOpacity>
+          ),
+        })}
+      />
     </Tab.Navigator>
   );
 }
@@ -530,7 +555,8 @@ function useOAuthCallback() {
 // playerStore 전역 소유라 UI를 숨겨도 재생은 계속된다.
 // v3.211: AudioSpike — 진입 시 기존 재생을 정지하므로 미니는 어차피 소멸하지만,
 // 화면 체류 중 다른 경로로 재생이 시작돼 겹치는 엣지 방어(스파이크 기간 한정)
-const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike'];
+// v3.220 ②: 알림·메시지(목록·채팅방)도 설정처럼 미니플레이어 렌더만 숨김(재생은 유지)
+const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat'];
 
 // v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
 // FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.
@@ -621,8 +647,7 @@ export default function App() {
             {/* v3.95(A-21): 피드 단건 착지 — 공유/딥링크(aidol://feed/{id}) 목적지 */}
             <RootStack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '피드')} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
-            {/* v3.96(A-2): 앨범 상세/관리 — 홈 최신앨범·채널·마이페이지에서 진입 */}
-            <RootStack.Screen name="AlbumDetail" component={AlbumDetailScreen} options={({ navigation }) => stackHeader(navigation, '앨범')} />
+            {/* v3.96(A-2)→v3.220 ①: 앨범 상세/관리는 MainTabs 숨김 탭으로 이동(하단 탭바 유지) — MainTabs 정의 참조 */}
             {/* v3.120: 앨범 AI 커버 — 이미지 디렉터 대화(작업실 CoverGeneration과 동일 화면·헤더 없음, 앨범 모드).
                 Props가 StudioStack 기준(NativeStackScreenProps<any,'CoverGeneration'>)이라 캐스팅 필요 */}
             <RootStack.Screen name="AlbumCoverGeneration" component={CoverGenerationScreen as any} />

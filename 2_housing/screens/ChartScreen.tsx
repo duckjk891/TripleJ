@@ -35,9 +35,9 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 // anchor는 차트 탭 헤더의 HomeHeaderActions(registerTutorialAnchors)가 등록.
 // 문안 = 사용자 원문(맞춤법 교정 2건 반영: "확인할"/"연락할" 띄어쓰기·"메시지").
 const TOPBAR_TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '스타', desc: '클릭하여 잔여 스타와 스타 받는 방법을 확인할 수 있어요.', anchorKey: 'topbar-star' },
-  { title: '출석체크', desc: '클릭하여 출석체크하고 스타를 받아보세요.', anchorKey: 'topbar-attendance' },
-  { title: '추천', desc: '클릭하여 친구에게 초대링크를 보내고 스타를 받아보세요.', anchorKey: 'topbar-invite' },
+  { title: '⭐ 스타', desc: '클릭하여 잔여 스타(⭐)와 스타 받는 방법을 확인할 수 있어요.', anchorKey: 'topbar-star' },
+  { title: '출석체크', desc: '클릭하여 출석체크하고 스타(⭐)를 받아보세요.', anchorKey: 'topbar-attendance' },
+  { title: '추천', desc: '클릭하여 친구에게 초대링크를 보내고 스타(⭐)를 받아보세요.', anchorKey: 'topbar-invite' },
   { title: '알림', desc: '클릭하여 새 피드나 공지를 확인해보세요.', anchorKey: 'topbar-noti' },
   { title: 'DM', desc: '클릭하여 나에게 온 메시지나 요청을 확인하고 다른 사용자 또는 관리자에게 연락할 수 있어요.', anchorKey: 'topbar-dm' },
   { title: '마이페이지', desc: '내 기획사를 관리할 수 있는 페이지로 이동할 수 있어요.', anchorKey: 'topbar-mypage' },
@@ -210,8 +210,9 @@ export default function ChartScreen() {
     //   GET /api/albums/ 에 track_id 조회 파라미터도 없어 트랙→앨범 역참조가 불가능하다.
     //   백엔드가 트랙 응답에 album_id(또는 GET /albums?track_id=)를 추가하면 아래 분기가 활성화된다.
     if (track.album_id) {
-      if (__DEV__) console.info('[ChartScreen] 앨범 소속 곡 탭 → AlbumDetail', { trackId: track.id, albumId: track.album_id });
-      navigation.navigate('AlbumDetail', { albumId: String(track.album_id) });
+      if (__DEV__) console.info('[ChartScreen] [AlbumNav] 앨범 소속 곡 탭 → AlbumDetail', { trackId: track.id, albumId: track.album_id });
+      // v3.220 ①: AlbumDetail = 탭 형제(숨김 탭) — from 명시로 origin 복귀(매 진입 전체 파라미터 전달)
+      navigation.navigate('AlbumDetail', { albumId: String(track.album_id), from: 'Chart' });
       return;
     }
     // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
@@ -309,8 +310,9 @@ export default function ChartScreen() {
                 <TouchableOpacity
                   key={a.id} style={styles.albumCard} activeOpacity={0.75}
                   onPress={() => {
-                    if (__DEV__) console.info('[ChartScreen] 최신 앨범 탭 → AlbumDetail', { albumId: a.id });
-                    navigation.navigate('AlbumDetail', { albumId: String(a.id) });
+                    if (__DEV__) console.info('[ChartScreen] [AlbumNav] 최신 앨범 탭 → AlbumDetail', { albumId: a.id });
+                    // v3.220 ①: 탭 형제 navigate — from 명시로 ← 복귀 지점 고정
+                    navigation.navigate('AlbumDetail', { albumId: String(a.id), from: 'Chart' });
                   }}
                   accessibilityLabel={`앨범 ${a.title}`}
                 >

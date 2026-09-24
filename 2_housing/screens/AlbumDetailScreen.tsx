@@ -32,6 +32,20 @@ import api from '../services/api';
 const COVER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const COVER_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
+// v3.220 ①: AlbumDetail이 MainTabs 숨김 탭으로 이동(하단 탭바 유지) — 탭 소속이라 goBack이
+// firstRoute(차트)로 떨어지므로 진입 시 전달된 from 파라미터로 origin 복귀를 명시한다.
+// from='UserChannel'은 RootStack 화면이라 fromParams로 재push(채널 문맥 복귀). 그 외 from ?? 'Chart'.
+// App.tsx 헤더 ← 와 화면 내부 이탈(조회 실패·앨범 삭제·마지막 트랙 제거)이 공유하는 단일 헬퍼.
+export function exitAlbum(navigation: any, params?: { from?: string; fromParams?: any }) {
+  const from = params?.from;
+  if (__DEV__) console.info('[AlbumNav] exitAlbum', { from });
+  if (from === 'UserChannel' && params?.fromParams) {
+    navigation.navigate('UserChannel', params.fromParams);
+    return;
+  }
+  navigation.navigate(from === 'MyMusic' ? 'MyMusic' : 'Chart');
+}
+
 function formatDate(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -74,6 +88,14 @@ export default function AlbumDetailScreen() {
   const isOwner = !!user && !!album && String(album.owner_id) === String(user.id);
   const tracks = album?.tracks || [];
 
+  // v3.220 ①: 탭 스크린은 언마운트되지 않고 상주 — albumId가 바뀌면 이전 앨범 잔상이 보이므로
+  // 표시 상태를 리셋한다(재조회는 기존 useFocusEffect가 수행 — AI 커버 확정 복귀 재조회 경로 보존).
+  useEffect(() => {
+    setAlbum(null);
+    setLoading(true);
+    setManageMode(false);
+  }, [albumId]);
+
   // v3.119: AI 커버 ⭐ 비용 — /points/costs의 cover 실값 (기존 화면별 직조회 관행, 실패 시 5 폴백)
   const [coverCost, setCoverCost] = useState(5);
   useEffect(() => {
@@ -96,7 +118,7 @@ export default function AlbumDetailScreen() {
     } catch (err: any) {
       console.error('[AlbumDetail] 앨범 조회 실패', { albumId, status: err?.response?.status });
       showAlert('오류', err?.response?.data?.error || '앨범을 불러오지 못했어요.', [
-        { text: '확인', onPress: () => navigation.goBack() },
+        { text: '확인', onPress: () => exitAlbum(navigation, route.params) },
       ]);
     } finally {
       setLoading(false);
@@ -154,7 +176,7 @@ export default function AlbumDetailScreen() {
           try {
             await deleteAlbum(album.id);
             console.info('[AlbumDetail] 앨범 삭제 완료', { albumId: album.id });
-            navigation.goBack();
+            exitAlbum(navigation, route.params);
           } catch (err: any) {
             console.error('[AlbumDetail] 앨범 삭제 실패', { albumId: album.id, status: err?.response?.status });
             showAlert('오류', err?.response?.data?.error || '삭제에 실패했어요.');
@@ -225,7 +247,7 @@ export default function AlbumDetailScreen() {
               if (res.albumDeleted) {
                 console.info('[AlbumDetail] 마지막 트랙 제거 → 앨범 삭제', { albumId: album.id });
                 showAlert('안내', '마지막 트랙이 제거되어 앨범이 삭제되었어요.', [
-                  { text: '확인', onPress: () => navigation.goBack() },
+                  { text: '확인', onPress: () => exitAlbum(navigation, route.params) },
                 ]);
               } else if (res.album) {
                 setAlbum(res.album);

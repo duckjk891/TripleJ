@@ -137,9 +137,14 @@ export default function UserChannelScreen() {
   };
 
   // v3.96(A-2): 앨범 → 앨범 상세 화면(열람 + 내 앨범이면 관리)
+  // v3.220 ①: AlbumDetail이 MainTabs 숨김 탭으로 이동 — 중첩 navigate로 진입하고,
+  // ← 복귀는 fromParams로 UserChannel 재push(채널 자체가 RootStack이라 goBack 부존재 문맥)
   const openAlbum = (album: any) => {
-    if (__DEV__) console.info('[UserChannel] 앨범 열기 → AlbumDetail', { albumId: album.id });
-    navigation.navigate('AlbumDetail', { albumId: String(album.id) });
+    if (__DEV__) console.info('[UserChannel] [AlbumNav] 앨범 열기 → AlbumDetail', { albumId: album.id });
+    navigation.navigate('MainTabs', {
+      screen: 'AlbumDetail',
+      params: { albumId: String(album.id), from: 'UserChannel', fromParams: { authorId, name } },
+    });
   };
 
   // 앨범 cover_image는 '/api/...' 풀경로로 옴 — 절대 URL로 보정

@@ -255,7 +255,7 @@ export default function MyArtistsScreen({ navigation }: any) {
     if (balance != null && balance < characterCost) {
       if (__DEV__) console.info('[MyArtists] 별 부족 사전 안내', { balance, characterCost });
       showAlert(
-        '스타가 부족해요',
+        '스타(⭐)가 부족해요',
         `아티스트 생성에는 ⭐${characterCost}가 필요해요. (현재 보유: ⭐${balance})\n출석체크·앱 추천으로 스타를 모아보세요.`
       );
       return true;
@@ -332,7 +332,7 @@ export default function MyArtistsScreen({ navigation }: any) {
       const status = err?.response?.status;
       console.error('[MyArtists] extra_slot 과금 실패', { status, message: err?.message });
       if (status === 402) {
-        showAlert('스타가 부족해요', `아티스트 슬롯 확장에는 ⭐${extraSlotCost}가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.`);
+        showAlert('스타(⭐)가 부족해요', `아티스트 슬롯 확장에는 ⭐${extraSlotCost}가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.`);
       } else {
         showAlert('오류', err?.response?.data?.error || '슬롯 확장에 실패했어요. 잠시 후 다시 시도해주세요.');
       }

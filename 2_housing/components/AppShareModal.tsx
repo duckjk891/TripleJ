@@ -1,5 +1,5 @@
 // [AppShareModal] 앱 추천(초대) — MAIDOL AppShareModal 이식.
-// v3.212: 공유 옵션 2개로 축소(카카오톡으로 공유·링크 복사만 유지),
+// v3.212: 공유 옵션 2개로 축소(카카오톡·링크 복사만 유지 — v3.220 ③: 라벨 '카카오톡'으로 단축),
 //         공유 멘트를 랜딩(maidol.ai.kr) 카피 톤으로 교체. 카카오는 네이티브 공유 시트 위임 유지(SDK 미도입 확정).
 // 백엔드 계약: GET /referral/my-code → {referral_code, invite_url:"/invite/{code}"}
 import { useState, useEffect } from 'react';
@@ -14,7 +14,7 @@ import { AppText, Button } from './ui';
 
 // 공유 타깃 라벨 — v3.212: 카카오톡 1종만(네이티브 공유 시트 위임). 링크 복사는 별도 버튼.
 const SHARE_BUTTONS: { key: string; label: string }[] = [
-  { key: 'kakao', label: '카카오톡으로 공유' },
+  { key: 'kakao', label: '카카오톡' },
 ];
 
 export default function AppShareModal() {
@@ -88,7 +88,7 @@ export default function AppShareModal() {
           ) : (
             <>
               <AppText variant="footnote" tone="secondary" center style={styles.desc}>
-                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 스타 50을 받아요!{'\n'}베타 테스트 기간엔 가입만 해도 스타 50 추가 증정!
+                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 ⭐50을 받아요!{'\n'}베타 테스트 기간엔 가입만 해도 ⭐50 추가 증정!
               </AppText>
 
               <View style={styles.codeBox}>

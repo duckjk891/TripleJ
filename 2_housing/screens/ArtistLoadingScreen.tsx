@@ -531,7 +531,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
                     showAlert('확장 완료', '슬롯이 추가됐어요. 아티스트 만들기에서 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
                   } catch (spendErr: any) {
                     if (spendErr?.response?.status === 402) {
-                      showAlert('스타가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');
+                      showAlert('스타(⭐)가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');
                     } else {
                       showAlert('오류', spendErr?.response?.data?.error || '슬롯 확장에 실패했어요. 잠시 후 다시 시도해주세요.');
                     }

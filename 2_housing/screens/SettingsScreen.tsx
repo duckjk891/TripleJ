@@ -185,7 +185,7 @@ export default function SettingsScreen({ navigation }: any) {
       setShowProfileEdit(false);
       // v3.190: 프로필 완성 보상 — 생년월일·성별·지역 3종 완성 시 1회 ⭐10
       if (starGranted) {
-        showAlert('⭐10 지급 완료!', '프로필을 완성해주셔서 감사합니다. 스타 10개를 드렸어요.');
+        showAlert('⭐10 지급 완료!', '프로필을 완성해주셔서 감사합니다. ⭐10을 드렸어요.');
       } else {
         showAlert('완료', '프로필이 업데이트되었습니다.');
       }

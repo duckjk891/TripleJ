@@ -388,7 +388,7 @@ export default function MyMusicScreen({ navigation }: any) {
         }
         if (st === 'failed' || st === 'error') {
           setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-          showAlert('실패', data?.error || 'Inst. 생성에 실패했어요. 차감된 스타는 환불됩니다.');
+          showAlert('실패', data?.error || 'Inst. 생성에 실패했어요. 차감된 스타(⭐)는 환불됩니다.');
           return;
         }
       } catch (err: any) {
@@ -463,7 +463,7 @@ export default function MyMusicScreen({ navigation }: any) {
                   onCleared: () => confirmCreateInstrumental(track),
                 });
               } else if (status === 402) {
-                showAlert('알림', '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
+                showAlert('알림', '스타(⭐)가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
               } else if (status === 409) {
                 // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)
                 if (err?.response?.data?.existing_track_id) {
@@ -489,7 +489,7 @@ export default function MyMusicScreen({ navigation }: any) {
     const link = `${BACKEND_BASE_URL}/track/${track.id}`;
     if (__DEV__) console.info('[MyMusic] share', { id: track.id });
     try {
-      await Share.share({ message: `MAIDOL에서 내가 만든 곡 "${track.title}" 들어보세요!\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n${link}` });
+      await Share.share({ message: `MAIDOL에서 내가 만든 곡 "${track.title}" 들어보세요!\n베타 테스트 기간 가입 시 ⭐50 추가 증정!\n${link}` });
     } catch (err: any) {
       console.error('[MyMusic] share 실패', { message: err?.message });
     }
@@ -848,7 +848,8 @@ export default function MyMusicScreen({ navigation }: any) {
             albums.map((a) => (
               <TouchableOpacity
                 key={a.id} style={styles.albumRow} activeOpacity={0.75}
-                onPress={() => navigation.getParent()?.navigate('AlbumDetail', { albumId: String(a.id) })}
+                // v3.220 ①: AlbumDetail이 MainTabs 숨김 탭이 되어 getParent 불필요 — 탭 형제 navigate + from
+                onPress={() => navigation.navigate('AlbumDetail', { albumId: String(a.id), from: 'MyMusic' })}
                 accessibilityLabel={`앨범 ${a.title}`}
               >
                 <View style={styles.albumRowCover}>
@@ -949,7 +950,8 @@ export default function MyMusicScreen({ navigation }: any) {
         onClose={() => setShowAlbumCreate(false)}
         onCreated={(album) => {
           fetchAlbums();
-          navigation.getParent()?.navigate('AlbumDetail', { albumId: String(album.id) });
+          // v3.220 ①: 탭 형제 navigate + from — 생성 직후 상세에서 ← 시 마이페이지 복귀
+          navigation.navigate('AlbumDetail', { albumId: String(album.id), from: 'MyMusic' });
         }}
       />
 

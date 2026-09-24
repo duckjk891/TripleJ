@@ -543,7 +543,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         return;
       }
       pushDirector(
-        status === 402 ? '스타가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
+        status === 402 ? '스타(⭐)가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
         : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
         : status === 400 ? '커버 이미지가 없어 영상을 만들 수 없었어요. 이미지 디렉터에게 커버를 먼저 부탁해보세요!'
         : '영상 생성에 실패했어요. 잠시 후 다시 시도해주세요.'
