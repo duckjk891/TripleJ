@@ -3001,3 +3001,17 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 **이월(2차 게이트·실기기)**: [api] generate stream Range 실측(로그인 토큰), [e2e] 다운로드→영상 헤더, Inst 진행 화면 실완주(⭐ 과금), A/B 시크 실측, 재생목록 보존(담기→곡 재생→재시작 복원), Android 하드웨어 back 시 이전 InstLoading 카드 노출 여부(O-7).
 
 **특이**: Fable 사용량 한도로 에이전트 3회 중단 → 사용자 지시로 크레딧 사용 후 Opus 5.5 로 전환해 완료. 백엔드 worktree(TripleJ-backend)가 라이브와 desync — 서버 작업은 라이브 pull 관행 유지.
+
+## v3.224 (2026-09-24)
+
+**요청**: 이미지 디렉터 상단 ← 부재 / 사파리(PC) 구글·카카오 로그인 403 / 초대 링크 소셜 가입 추천 보상 / 베타 가입 추가 ⭐50(~10/30, 기존 회원 소급).
+
+**수행·검증**
+- 이미지 디렉터: CoverGeneration focus 시 Studio 헤더 ← 주입(작사·영상 관행), AlbumCoverGeneration(RootStack) 제외. 로컬 실측(← 노출·Map 복귀).
+- PC 로그인 403: 원인 = PC 래퍼가 앱을 iframe 으로 띄우는데 로그인 이동이 iframe 안에서 일어나 구글·카카오가 프레이밍 거부. 최상위 창 이동으로 수정 + 래퍼가 iframe 전달 후 바깥 주소창 #token= 제거. 프로덕션 PC 폭 실측: 창 전체가 구글 로그인으로 이동. 사용자 가설(ref 원인)은 실측으로 기각(ref 유무 무관 앱 정상 실행, OAuth redirect_uri 고정).
+- 모바일 사파리 경로 점검: state 는 Redis(쿠키 무관), 콜백 /oauth/callback#token= → 래퍼 → /app 로그인·차트 착지·토큰 제거 재현.
+- 추천 보상(소셜): 앱이 ?ref= 를 로그인 URL 에 전달, 서버 oauth state 에 "provider|client|ref" 동봉 → signup 시 referred_by + ⭐50×2(auth.register 동일 규칙, 멱등). 프로덕션 실측: 초대 주소→구글 버튼 → 서버 로그 `login?ref=SSUGSIS` 수신.
+- 베타 가입 추가 ⭐50: auth.grant_beta_signup_bonus(액션 beta_signup_bonus, 1인 영구 1회) — 이메일·구글·카카오 가입 지급, 2026-10-30 23:59:59 KST 까지(경계 테스트). 기존 회원 소급: 실제 회원 12명 ⭐600 지급 완료(재실행 0건 — 멱등 확인). 제외: 탈퇴·관리자·브랜드·가짜 도메인 테스트·웹점검 4·팀 test1~4.
+- 서버 배포(사용자 실행): auth.py 931890e1 / oauth.py 43f8d62e (md5 일치, health 200). 웹 3회 배포.
+
+**이월**: 실계정 소셜 가입 1건으로 추천 보상 지급 로그 확인([referral] oauth reward), 카카오 웹 로그인 완주(최근 성공 기록 없음), 과거 소셜 가입자 추천 누락분은 사용자 지정 시 수동 지급.
