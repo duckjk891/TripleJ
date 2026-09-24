@@ -15,6 +15,7 @@ import {
   genJobKey,
   newRequestId,
   chargeNotice,
+  CHARGE_UNCONFIRMED_BODY,
   SYNC_GEN_KINDS,
   GEN_KIND_GROUP,
   type GenKind,
@@ -82,6 +83,30 @@ function store() {
   return useGenerationJobStore.getState();
 }
 
+// ── 살아 있는 요청(이 JS 세션에서 응답을 기다리는 화면 요청) ─────────────────────
+// 동기 kind 404가 유예를 넘겼을 때: 살아 있는 요청이 있으면 결과 판정을 화면에 맡기고(킬스위치·구서버 대비),
+// 없으면(= resume 뷰어·재시작 후) 레코드를 정리한다. 표식은 kind 상한이 지나면 무효(무한 대기 방지).
+const _liveRequests = new Map<string, number>(); // key → 요청 시작 시각
+
+function isLiveRequest(job: TrackedJob): boolean {
+  const at = _liveRequests.get(job.jobId);
+  if (at === undefined) return false;
+  const cap = getKindAdapter(job.kind)?.capMs ?? NOT_ARRIVED_GRACE_MS;
+  if (Date.now() - at >= cap) {
+    _liveRequests.delete(job.jobId);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 화면의 요청이 응답 없이 끝남(ERR_NETWORK·timeout·5xx·화면 이탈) → 이후 결과는 추적기가 원장으로 판정.
+ * (markGenJobDone·discardGenJob·ackGenJob은 자동으로 표식을 지운다)
+ */
+export function endGenRequest(key: string): void {
+  if (_liveRequests.delete(key)) console.info('[GenTracker] 화면 요청 종료 → 원장 추적', { jobId: key });
+}
+
 function currentUserId(): string | null {
   const id = useAuthStore.getState().user?.id;
   return id ? String(id) : null;
@@ -131,7 +156,10 @@ function wrapAdapter(gen: GenKindAdapter): TrackerKindAdapter {
     notify: (job, route) => {
       console.info('[GenTracker] 도착 알림 1회', { kind: gen.kind, jobId: job.jobId, status: job.lastStatus, route });
       if (job.lastStatus === 'failed') {
-        showAlert(gen.text.failTitle, chargeNotice(job.refunded, job.notCharged), [
+        // 서버가 쓴 과금 문장(재시작 정리 "…환불됐어요" 등)은 그대로, 아니면 chargeNotice(X-K1)
+        const e = (job.error || '').trim();
+        const body = e && /별|⭐|환불|차감/.test(e) ? e : chargeNotice(job.refunded, job.notCharged);
+        showAlert(gen.text.failTitle, body, [
           { text: '확인', onPress: () => { ackGenJob(job.jobId); } },
         ]);
         return;
@@ -168,20 +196,34 @@ export function applyGenSnapshot(key: string, snap: GenJobSnapshot | null): void
   const cur = store().jobs[key];
   if (!cur || cur.kind === 'artist') return;
   const now = Date.now();
-  if (!snap || snap.status === 'unknown') {
-    const isSync = SYNC_GEN_KINDS.has(cur.kind as GenKind);
+  if (snap && snap.status === 'unknown') {
+    // 알 수 없는 서버 상태 — 실패·삭제로 단정하지 않고 유지(상한 경과 시 서버 sweep이 확정)
+    console.warn('[GenTracker] 알 수 없는 서버 상태 — 유지', { kind: cur.kind, jobId: key });
+    store().patchJob(key, { lastCheckedAt: now });
+    return;
+  }
+  if (!snap) {
+    // 동기 kind, 또는 서버 id 없이 requestId로만 찾는 레코드(작곡 201 응답 유실 등) → 도착 유예 대상
+    const isSync = SYNC_GEN_KINDS.has(cur.kind as GenKind) || (!cur.serverJobId && !!cur.requestId);
     if (cur.lastStatus === 'processing' && isSync) {
       if (now - cur.startedAt < NOT_ARRIVED_GRACE_MS) {
         // 요청이 아직 서버 원장에 닿기 전 — 유예
         store().patchJob(key, { lastCheckedAt: now });
         return;
       }
-      if (_hooks.viewerJob() === key) {
+      if (isLiveRequest(cur)) {
         // X-K1: 404는 킬스위치·구서버일 수도 있다 — 화면이 자기 요청의 응답을 기다리는 중이면
-        // 결과는 화면이 판정한다(markGenJobDone / 화면 오류 처리). 과금 여부 단정 안내 금지.
+        // 결과는 화면이 판정한다(markGenJobDone / discardGenJob / endGenRequest). 과금 여부 단정 안내 금지.
         store().patchJob(key, { lastCheckedAt: now });
         return;
       }
+      // resume 뷰어(자기 요청 없음)·재시작 후: 정리 + 뷰어가 보고 있으면 중립 안내(X-K1 — 과금 단정 금지)
+      console.info('[GenTracker] job 없음(404, 유예 경과) — 정리', {
+        kind: cur.kind, jobId: key, viewer: _hooks.viewerJob() === key,
+      });
+      store().removeJob(key);
+      if (_hooks.viewerJob() === key) showAlert('결과를 확인하지 못했어요', CHARGE_UNCONFIRMED_BODY);
+      return;
     }
     console.info('[GenTracker] job 없음(404) — 조용히 정리', { kind: cur.kind, jobId: key });
     store().removeJob(key);
@@ -298,11 +340,11 @@ export interface RegisterGenJobInput {
   startedAt?: number | null;
 }
 
-/** kind + (requestId 또는 서버 job id)로 레코드 찾기 */
+/** kind + (레코드 키 · requestId · 서버 job id)로 레코드 찾기 */
 export function findGenJob(kind: GenKind, id: string | null | undefined): TrackedJob | null {
   if (!id) return null;
-  const direct = store().jobs[genJobKey(kind, id)];
-  if (direct) return direct;
+  const direct = store().jobs[genJobKey(kind, id)] ?? store().jobs[id];
+  if (direct && direct.kind === kind) return direct;
   return (
     Object.values(store().jobs).find(
       (j) => j.kind === kind && (j.requestId === id || j.serverJobId === id)
@@ -354,12 +396,37 @@ export function registerGenJob(input: RegisterGenJobInput): string {
     return existing.jobId;
   }
   const key = insertGenRecord(input);
+  if (input.requestId && (input.source ?? 'local') === 'local' && SYNC_GEN_KINDS.has(input.kind)) {
+    _liveRequests.set(key, Date.now());
+  }
   _hooks.schedulePoll();
   return key;
 }
 
-/** 서버 409 generation_in_progress(비아티스트, genJobsService.parseGenInProgress 결과) → 그 job 편입 */
-export function adoptGenJob(snap: GenJobSnapshot): string {
+/**
+ * 원장 생성 전 거절(400·403·429·402 등 — 서버에 원장이 없음) → "만드는 중" 레코드 즉시 폐기.
+ * 402 → 충전 → 재시도가 "이미 만드는 중"에 막히지 않게 한다. 서버 ack 전송 없음.
+ */
+export function discardGenJob(key: string, reason?: string): void {
+  _liveRequests.delete(key);
+  const cur = store().jobs[key];
+  if (!cur || cur.kind === 'artist') return;
+  store().removeJob(key);
+  console.info('[GenTracker] 접수 폐기(원장 전 거절)', { kind: cur.kind, jobId: key, reason: reason ?? '-' });
+}
+
+/**
+ * 서버 409 generation_in_progress(비아티스트, genJobsService.parseGenInProgress 결과) → 그 job 편입.
+ * replaceKey = 방금 이 요청으로 등록한 레코드 키: 서버 job이 다른 요청이면 그 레코드를 폐기(원장 없음),
+ * 같은 request_id(재전송)면 같은 레코드를 유지·갱신한다. 반환 = 추적할 키.
+ */
+export function adoptGenJob(snap: GenJobSnapshot, opts: { replaceKey?: string | null } = {}): string {
+  const local = opts.replaceKey ? store().jobs[opts.replaceKey] : null;
+  if (local && !(snap.requestId && local.requestId === snap.requestId)) {
+    discardGenJob(local.jobId, 'conflict-other-job');
+  } else if (local) {
+    _liveRequests.delete(local.jobId); // 같은 요청의 재전송 — 이 요청의 응답은 409로 끝남 → 원장 추적
+  }
   const key = registerGenJob({
     kind: snap.kind,
     requestId: snap.requestId ?? null,
@@ -375,6 +442,7 @@ export function adoptGenJob(snap: GenJobSnapshot): string {
 
 /** 화면이 결과를 직접 받음 → done 기록. acked=true면 즉시 확인 처리(레코드 정리 + 서버 ack) */
 export function markGenJobDone(key: string, result: any, opts: { acked?: boolean; serverJobId?: string | null } = {}): void {
+  _liveRequests.delete(key);
   const cur = store().jobs[key];
   if (!cur || cur.kind === 'artist') return;
   store().patchJob(key, {
@@ -386,6 +454,37 @@ export function markGenJobDone(key: string, result: any, opts: { acked?: boolean
   console.info('[GenTracker] 완성 기록(화면 수신)', { kind: cur.kind, jobId: key, acked: !!opts.acked });
   if (opts.acked) ackGenJob(key);
   else _hooks.notify();
+}
+
+/**
+ * 화면이 최종 결과(서버 완료·서버 확정 실패)를 직접 보여줬음 → 확인 처리.
+ * 로컬 레코드가 있으면(키·requestId·서버 id로 찾음) 상태를 확정하고 ack(로컬 정리 + 서버 ack),
+ * 없으면(이력·다른 기기·편입 전) 서버 ack만 보낸다(재배달 방지). id = 서버 job id 권장.
+ */
+export function settleGenJob(
+  kind: GenKind,
+  id: string | null | undefined,
+  outcome: 'done' | 'failed',
+  info: { result?: any; error?: string | null; refunded?: boolean | null } = {}
+): void {
+  if (!id) return;
+  const local = findGenJob(kind, id);
+  if (local) {
+    _liveRequests.delete(local.jobId);
+    const isServerId = id !== local.jobId && id !== local.requestId;
+    store().patchJob(local.jobId, {
+      lastStatus: outcome,
+      lastCheckedAt: Date.now(),
+      serverJobId: local.serverJobId ?? (isServerId ? id : null),
+      ...(outcome === 'done'
+        ? { genResult: info.result ?? local.genResult ?? null }
+        : { error: info.error ?? null, refunded: info.refunded ?? null }),
+    });
+    ackGenJob(local.jobId);
+    return;
+  }
+  console.info('[GenTracker] 결과 확인(로컬 레코드 없음) — 서버 ack만', { kind, id, outcome });
+  void ackGenJobOnServer(kind, id);
 }
 
 async function sendServerAck(job: TrackedJob): Promise<void> {
@@ -414,6 +513,7 @@ export function ackGenJob(key: string): boolean {
   const cur = store().jobs[key];
   if (!cur || cur.kind === 'artist') return false;
   if (cur.lastStatus === 'processing') return false;
+  _liveRequests.delete(key);
   store().patchJob(key, { ackedAt: Date.now() });
   store().removeJob(key, { dismissed: true });
   console.info('[GenTracker] 결과 확인(ack)', { kind: cur.kind, jobId: key, status: cur.lastStatus });

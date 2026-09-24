@@ -119,3 +119,14 @@ export function chargeNotice(refunded?: boolean | null, notCharged?: boolean | n
   if (notCharged === true) return '별은 차감되지 않았어요.';
   return '별 사용 내역을 확인해 주세요.';
 }
+
+/**
+ * 실패 안내 본문 — 서버 오류 문장이 이미 과금 안내(서버 확정 문장)를 담고 있으면 그대로,
+ * 아니면 오류 문장 + chargeNotice. 오류 문장이 없으면 chargeNotice만.
+ */
+export function failureBody(error?: string | null, refunded?: boolean | null, notCharged?: boolean | null): string {
+  const e = (error || '').trim();
+  if (e && /별|⭐|환불|차감/.test(e)) return e;
+  const notice = chargeNotice(refunded, notCharged);
+  return e ? `${e}\n${notice}` : notice;
+}

@@ -24,13 +24,19 @@ export function genRequestHeaders(requestId: string | null | undefined): Record<
   return requestId ? { 'X-Gen-Request-Id': requestId } : {};
 }
 
+/** 서버 UTC ISO → epoch ms(없으면 undefined) */
+export function parseServerUtcSafe(v: unknown): number | undefined {
+  return parseServerUtc(v) ?? undefined;
+}
+
 function strOrNull(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v);
   return s ? s : null;
 }
 
-function mapStatus(st: unknown): GenJobSnapshot['status'] {
+/** 서버 상태 문자열 → 스냅샷 상태(원장 Job·generations·inst_jobs 공용) */
+export function mapGenStatus(st: unknown): GenJobSnapshot['status'] {
   switch (st) {
     case 'processing':
     case 'pending':
@@ -38,8 +44,16 @@ function mapStatus(st: unknown): GenJobSnapshot['status'] {
       return 'processing';
     case 'done':
     case 'completed':
+    case 'complete':
+    case 'success':
       return 'done';
     case 'failed':
+    // 종료형 비정상 상태(현 서버 계약엔 없음 — 방어): 실패로 처리, 과금 안내는 refunded 명시 때만(X-K1)
+    case 'expired':
+    case 'cancelled':
+    case 'canceled':
+    case 'error':
+    case 'timeout':
       return 'failed';
     default:
       return 'unknown';
@@ -60,7 +74,7 @@ export function mapServerGenJob(raw: any, fallbackKind?: GenKind | null): GenJob
     jobId,
     requestId: strOrNull(raw?.request_id),
     kind,
-    status: mapStatus(raw?.status),
+    status: mapGenStatus(raw?.status),
     createdAtMs: createdAtMs ?? undefined,
     result: raw?.result ?? null,
     error: strOrNull(raw?.error),
@@ -82,6 +96,20 @@ export function parseGenInProgress(err: any, fallbackKind?: GenKind | null): Gen
   const snap = mapServerGenJob({ ...data, status: 'processing' }, fallbackKind);
   if (!snap) console.warn('[GenJobs] 409 generation_in_progress — job 정보 없음', { kind: data?.kind ?? fallbackKind ?? null });
   return snap;
+}
+
+/** 같은 X-Gen-Request-Id가 이미 실패로 끝남(409 request_already_failed) → 새 request_id로 재시도해야 함 */
+export function isRequestAlreadyFailed(err: any): boolean {
+  return err?.response?.status === 409 && err?.response?.data?.code === 'request_already_failed';
+}
+
+/** 성공·실패(500/502) 응답 본문의 원장 필드 — `{gen_job_id, request_id, replayed}` (원장 off·구서버면 null) */
+export function genLedgerFields(data: any): { genJobId: string | null; requestId: string | null; replayed: boolean } {
+  return {
+    genJobId: strOrNull(data?.gen_job_id),
+    requestId: strOrNull(data?.request_id),
+    replayed: data?.replayed === true,
+  };
 }
 
 /** GET /generate/jobs/recoverable — supported=false면 구서버(404·405). 그 외 오류는 throw */

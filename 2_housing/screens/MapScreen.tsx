@@ -50,6 +50,8 @@ import { useActiveArtistJob, useDirectorJob, type TrackedJob } from '../stores/g
 import { finalizeArtistJob, openJobViewer, openGenJob } from '../services/generationTracker';
 import { getKindAdapter } from '../services/genJobs';
 
+const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
+
 // v3.107: 대기열 타이머(timerStore)·광고 단축 배선 폐지 — 작업은 요청 즉시 로딩 화면으로
 // 직행하고, 재요청 제한은 피로도(작곡만 서버 /fatigue/* 게이트)로 표현한다.
 // AdMob SDK 자체는 유지(광고권 등 다른 용도 계획) — 이 화면의 큐 단축 배선만 제거됨.
@@ -255,10 +257,11 @@ export default function MapScreen({ navigation }: Props) {
   const [tutorialVisible, setTutorialVisible] = useState(false);
   const [jobNow, setJobNow] = useState(Date.now());
   // v3.228: 작사·작곡(music·inst)·이미지(cover·cover_refine)·영상 디렉터 추적 job — 같은 말풍선 슬롯 일반화
-  const lyricistJob = useDirectorJob('lyricist');
-  const composerJob = useDirectorJob('composer');
-  const imageJob = useDirectorJob('image');
-  const videoJob = useDirectorJob('video');
+  // 어댑터가 등록된 kind만 후보(작곡 = music·inst 중 등록된 것 — 미등록 kind가 슬롯을 가리지 않게)
+  const lyricistJob = useDirectorJob('lyricist', isRegisteredGenJob);
+  const composerJob = useDirectorJob('composer', isRegisteredGenJob);
+  const imageJob = useDirectorJob('image', isRegisteredGenJob);
+  const videoJob = useDirectorJob('video', isRegisteredGenJob);
   /** 말풍선·탭 분기 대상 비아티스트 job — processing·done(미확인)만, 어댑터 등록된 kind만 */
   const genBubbleJob = (type: DirectorType): TrackedJob | null => {
     const job =

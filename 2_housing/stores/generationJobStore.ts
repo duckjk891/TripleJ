@@ -249,16 +249,18 @@ export function pickDirectorJob(list: TrackedJob[]): TrackedJob | null {
   );
 }
 
-/** 비반응형: 디렉터의 대표 job */
-export function getDirectorJob(director: GenJobDirector): TrackedJob | null {
-  return pickDirectorJob(listUserGenJobs().filter((j) => j.director === director));
+/** 비반응형: 디렉터의 대표 job. accept로 대상 한정(예: 어댑터 등록된 kind만 — 스토어는 레지스트리를 모름) */
+export function getDirectorJob(director: GenJobDirector, accept?: (j: TrackedJob) => boolean): TrackedJob | null {
+  return pickDirectorJob(listUserGenJobs().filter((j) => j.director === director && (!accept || accept(j))));
 }
 
-/** 반응형: 디렉터의 대표 job(작업실 말풍선) */
-export function useDirectorJob(director: GenJobDirector): TrackedJob | null {
+/** 반응형: 디렉터의 대표 job(작업실 말풍선). accept로 대상 한정(작곡 = music·inst 중 등록된 것만) */
+export function useDirectorJob(director: GenJobDirector, accept?: (j: TrackedJob) => boolean): TrackedJob | null {
   const jobs = useGenerationJobStore((s) => s.jobs);
   const userId = useAuthStore((s) => (s.user?.id ? String(s.user.id) : null));
-  return pickDirectorJob(listUserGenJobs(null, jobs, userId).filter((j) => j.director === director));
+  return pickDirectorJob(
+    listUserGenJobs(null, jobs, userId).filter((j) => j.director === director && (!accept || accept(j)))
+  );
 }
 
 /** 반응형: 단일 job 구독(추적 뷰어) */

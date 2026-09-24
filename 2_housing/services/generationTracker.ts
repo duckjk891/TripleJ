@@ -421,6 +421,11 @@ export function setViewerJob(jobId: string | null): void {
   _viewerJobId = jobId;
 }
 
+/** v3.228: 뷰어 해제 — 지금 보고 있는 job이 이 job일 때만(화면 교체 순서 경합 방지) */
+export function releaseViewerJob(jobId: string | null | undefined): void {
+  if (jobId && _viewerJobId === jobId) _viewerJobId = null;
+}
+
 /** 추적 뷰어 열기 — StudioStack 화면이면 그 navigation, 아니면 전역 */
 export function openJobViewer(jobId: string, navigation?: any): void {
   console.info('[GenTracker] 뷰어 열기', { jobId });
@@ -695,6 +700,9 @@ export {
   ackGenJob,
   openGenJob,
   guardGeneration,
+  discardGenJob,
+  endGenRequest,
+  settleGenJob,
   getGenJobsCapability,
   type RegisterGenJobInput,
 } from './genJobs/runtime';
