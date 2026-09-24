@@ -38,7 +38,7 @@ import { useArtistStore } from '../stores/artistStore';
 // v3.197: 프리로드 공용 모듈(consume/trigger/discard) — BT/화면꺼짐 전환 실패 완화
 // v3.217 ①(a): createTrackSound — 웹 단일 audio element 재사용 팩토리(네이티브는 createAsync 그대로).
 //   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
-import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext } from '../services/playback';
+import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -398,6 +398,7 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.isLoaded) {
+      noteAutoAdvanceProgress(status); // v3.225: 새 곡 재생 진척 — 자동 건너뛰기 표식 해제
       // isSeekingRef(live) — 드래그 중엔 재생바를 status로 덮어쓰지 않음
       if (!isSeekingRef.current) {
         setPosition(status.positionMillis);
@@ -482,6 +483,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             // onPlaybackStatusUpdate로 재생을 잇는다(스토어 기본 로더를 쓰면 재생바가 멈춤).
             autoContinueWithRelated(async (nextTrack) => {
               // v3.197: 실패 시 참조/상태 정리 — 죽은 객체 방치 금지(재생버튼 1탭 복구가 받아준다)
+              markAutoAdvance(nextTrack); // v3.225: 관련곡 이어듣기 = 자동 진행
               try {
                 if (soundRef.current) {
                   await soundRef.current.unloadAsync().catch(() => {});
@@ -509,6 +511,8 @@ export default function PlayerScreen({ route, navigation }: any) {
                 liveStore.setSound(null);
                 liveStore.setIsPlaying(false);
                 setIsPlaying(false);
+                // v3.225: 자동 진행 로드 실패(네이티브) — 재생 불가 곡 건너뛰기(상한·네트워크 단절 시 위 정지 유지)
+                void skipUnplayableOnAutoAdvance(nextTrack, advanceViaNetwork);
               }
             });
           }
@@ -520,13 +524,17 @@ export default function PlayerScreen({ route, navigation }: any) {
       console.warn('[BTDebug] sound error', { src: 'Player', trackId: usePlayerStore.getState().track?.id, error: String(status.error) });
       setIsPlaying(false);
       playerStore.setIsPlaying(false);
+      // v3.225: 자동 진행 중 곡의 실패(웹 ended-swap/advanceViaNetwork 404 → MediaError)만 건너뛰기
+      void skipUnplayableOnAutoAdvance(usePlayerStore.getState().track, advanceViaNetwork);
     }
   };
 
   // v3.197: didJustFinish 네트워크 전환(기존 v3.99 경로) — 프리로드 미스/스왑 실패 폴백 공용.
   // 호출 전 playTrackAtIndex는 완료된 상태여야 한다.
+  // v3.225: 자동 진행 전용 로더 — 표식을 달고, 로드 실패 시 재생 불가 곡 건너뛰기에도 재사용된다.
   const advanceViaNetwork = async (nextTrack: TrackData) => {
     const store = usePlayerStore.getState();
+    markAutoAdvance(nextTrack);
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync().catch(() => {});
@@ -553,6 +561,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       store.setSound(null);
       store.setIsPlaying(false);
       setIsPlaying(false);
+      // v3.225: 네이티브 로드 실패 — 재생 불가 곡 건너뛰기(상한·네트워크 단절 시 위 정지 유지)
+      void skipUnplayableOnAutoAdvance(nextTrack, advanceViaNetwork);
     }
   };
 
@@ -575,6 +585,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const loadAndPlay = async (target: TrackData = track) => {
     if (!target?.id) return;
     discardPreloaded('player-load'); // v3.197: 새 재생 — 이전 곡 기준 핀 프리로드 폐기
+    clearAutoAdvance(); // v3.225: 직접 재생 — 실패해도 자동 건너뛰기 없음(현행 정지·1탭 복구)
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync();
@@ -637,6 +648,25 @@ export default function PlayerScreen({ route, navigation }: any) {
           if (st && String(st.id) === String(res.data.id) && !st.title) {
             if (__DEV__) console.info('[PlayerScreen] 스텁 트랙 → 풀 트랙 역주입', { id: res.data.id });
             usePlayerStore.getState().setTrack(res.data);
+          } else {
+            // v3.225: 제목은 있고 커버만 빠진 스냅샷(영속 큐 포함) — 재생 화면은 fullTrack으로 커버가
+            // 보이지만 미니플레이어는 store.track을 그려 영구히 비었다. 커버 필드만 track·queue에 병합.
+            // setQueue가 saveOwnerQueue(계정 보관함 queue+track)까지 갱신 → 재시작 후에도 복구 유지.
+            const cover = res.data.cover_image || res.data.cover_image_url;
+            const rid = String(res.data.id);
+            const lacksCover = (t: any) =>
+              !!t && String(t.id) === rid && !t.cover_image && !t.cover_image_url;
+            const ps = usePlayerStore.getState();
+            if (cover && (lacksCover(ps.track) || ps.queue.some(lacksCover))) {
+              const merge = (t: any) => ({
+                ...t,
+                cover_image: cover,
+                ...(res.data.cover_image_url ? { cover_image_url: res.data.cover_image_url } : {}),
+              });
+              if (lacksCover(ps.track)) ps.setTrack(merge(ps.track));
+              ps.setQueue(ps.queue.map((t: any) => (lacksCover(t) ? merge(t) : t)));
+              if (__DEV__) console.info('[PlayerScreen] 커버 결손 스냅샷 → 커버 병합', { id: rid });
+            }
           }
         }
       } catch (err) {
@@ -835,6 +865,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     const target = store.queue[idx];
     if (!target?.id) return;
     discardPreloaded('manual-skip'); // v3.197: 수동 스킵 — 핀된 프리로드 폐기(잘못된 곡 재생 방지)
+    clearAutoAdvance(); // v3.225: 직접 스킵 — 실패해도 자동 건너뛰기 없음(현행 정지·1탭 복구)
     store.playTrackAtIndex(idx);
     try {
       if (soundRef.current) {

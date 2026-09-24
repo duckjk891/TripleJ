@@ -1,9 +1,10 @@
+import { useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
-import { loadAndPlayTrack, invalidatePlayback } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
+import { loadAndPlayTrack, invalidatePlayback, maybeHydrateCover } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
 import { colors } from '../theme/colors';
 
 function getCoverUrl(img: string): string {
@@ -18,6 +19,15 @@ export default function MiniPlayer() {
   // v3.198: 사운드 객체 직접 구독 금지(v3.197) — 존재 여부만 불리언 셀렉터로 구독(리렌더 소음 방지)
   const hasSound = usePlayerStore((s) => !!s.sound);
   const sessionActive = usePlayerStore((s) => s.sessionActive);
+
+  // v3.225: 목록 스냅샷에 커버가 빠진 채 큐에 들어온 곡(v3.223 append 경로·다음곡·재시작 복원)은
+  // 재생 화면(상세 재조회)과 달리 하단 미니플레이어에서 플레이스홀더로 남았다 — 곡이 바뀔 때 보강.
+  const trackId = track?.id;
+  const lacksCover = !!track && !track.cover_image && !track.cover_image_url;
+  useEffect(() => {
+    if (trackId != null && lacksCover) maybeHydrateCover(track);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackId, lacksCover]);
 
   // Player 화면이 열려있으면 숨김
   if (isPlayerScreenOpen) return null;

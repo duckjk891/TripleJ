@@ -147,6 +147,9 @@ if (Platform.OS === 'web') {
     webNextUrl = null;
     if (!webSwapSrcAndPlay(url)) return false;
     s.playTrackAtIndex(idx); // track 갱신 → 위 구독이 mediaSession 메타 동기화
+    // v3.225: 자동 진행 표식 — 이 src가 404 등으로 'error'(MediaError)를 내면 양쪽 상태 콜백의
+    // status.error 분기가 skipUnplayableOnAutoAdvance로 건너뛴다(재생 진척 시 표식 자동 해제).
+    markAutoAdvance(next);
     s.setPosition(0);
     s.setIsPlaying(true);
     try { useArtistStore.getState().addExp(1, 'play'); } catch {} // 재생 완료 EXP(PlayerScreen 경로 동등)
@@ -186,6 +189,7 @@ export function invalidatePlayback(): void {
   loadGen++;
   discardPreloaded('invalidate'); // v3.197: 미니 닫기 등 — 핀된 프리로드도 함께 폐기
   releaseActiveLocalFile(); // v3.205: 재생 종료 — 소비된 프리로드 로컬 파일도 삭제
+  clearAutoAdvance(); // v3.225: 닫기 — 진행 중 자동 건너뛰기 표식 폐기
   if (__DEV__) console.info('[playback] invalidate', { gen: loadGen });
 }
 
@@ -510,7 +514,8 @@ export async function autoContinueWithRelated(
     }
     console.info('[playerStore] 관련곡 이어재생', { id: nextTrack.id, queue_size: usePlayerStore.getState().queue.length, source: res.data?.source });
     usePlayerStore.getState().playTrackAtIndex(idx);
-    await (loadFn ? loadFn(nextTrack) : loadAndPlayTrack(nextTrack));
+    // v3.225: 기본 로더도 자동 진행으로 표시(관련곡 로드 실패 시 건너뛰기 대상)
+    await (loadFn ? loadFn(nextTrack) : loadAndPlayTrack(nextTrack, { auto: true }));
   } catch (err: any) {
     // v3.197: [BTDebug] 계측 — 백그라운드 related 왕복 실패(H1 취약 지점) 확진용
     console.warn('[BTDebug] related fail', { trackId: endedTrack.id, status: err?.response?.status, message: err?.message, appState: AppState.currentState });
@@ -520,6 +525,94 @@ export async function autoContinueWithRelated(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// v3.225: 자동 진행 중 재생 불가 곡 건너뛰기 — 곡 종료 후 다음 곡(자동 진행)이 삭제된 트랙이면
+// 서버 404 → 로드 실패(네이티브 throw / 웹 MediaError) → 정지로 자동재생이 끊기던 결함.
+// 자동 진행 로드에만 표식(autoAdvance)을 달고, 그 곡이 재생 진척(position>0) 전에 실패하면
+// 곡 결함을 GET /tracks/{id}로 확인해 삭제 곡은 큐(=계정 보관함)에서 제거 후 다음 곡으로 잇는다.
+//  · 사용자 직접 재생 실패 = 표식 없음 → 현행 유지(정지, 재생버튼 1탭 복구 관행)
+//  · 서버 미도달(네트워크 단절·Doze) = 곡 결함 아님 → 큐 보존·현행 정지
+//  · 연속 건너뛰기 상한 AUTO_SKIP_MAX — 도달 시 현행처럼 정지(무한 루프 방지)
+// ─────────────────────────────────────────────────────────────────────────────
+const AUTO_SKIP_MAX = 3;
+let autoAdvance: { trackId: string } | null = null;
+let autoSkipCount = 0;
+
+/** 자동 진행 로드 표식 — 곡 종료 후 다음 곡/관련곡/건너뛰기 로드 직전에 호출 */
+export function markAutoAdvance(track: any): void {
+  autoAdvance = track?.id != null ? { trackId: String(track.id) } : null;
+}
+
+/** 사용자 직접 재생 — 표식·연속 건너뛰기 카운트 해제(직접 누른 곡 실패는 건너뛰지 않음) */
+export function clearAutoAdvance(): void {
+  autoAdvance = null;
+  autoSkipCount = 0;
+}
+
+/** 상태 콜백(isLoaded)에서 호출 — 새 곡 재생이 실제로 진척되면 표식·카운트 해제 */
+export function noteAutoAdvanceProgress(status: any): void {
+  if (autoAdvance && (status?.positionMillis ?? 0) > 0) clearAutoAdvance();
+}
+
+/**
+ * 로드/재생 실패 지점에서 호출(fire & forget). 자동 진행 중인 그 곡의 실패일 때만 건너뛰고 true.
+ * loadFn은 호출자의 자동 진행 로더(스스로 markAutoAdvance 해야 함) — 큐 소진 시 관련곡 경로에도 주입.
+ */
+export async function skipUnplayableOnAutoAdvance(
+  failedTrack: any,
+  loadFn: (track: any) => Promise<void>,
+): Promise<boolean> {
+  const fid = failedTrack?.id != null ? String(failedTrack.id) : '';
+  if (!fid || autoAdvance?.trackId !== fid) return false; // 직접 재생 실패 — 현행 유지
+  autoAdvance = null; // 같은 실패의 중복 전파(에러 이벤트·catch)는 1회만 처리
+  if (autoSkipCount >= AUTO_SKIP_MAX) {
+    console.warn('[BTDebug] auto-skip limit → stop', { trackId: fid, count: autoSkipCount });
+    autoSkipCount = 0;
+    return false;
+  }
+  if (usePlayerStore.getState().repeat === 'one') return false; // 한 곡 반복 — 건너뛸 다음 곡 없음(현행 정지)
+  let httpStatus: number | undefined;
+  try {
+    await api.get(`/tracks/${fid}`);
+    httpStatus = 200;
+  } catch (err: any) {
+    httpStatus = err?.response?.status;
+  }
+  if (!httpStatus || httpStatus >= 500) {
+    // 서버 미도달/장애 — 곡 결함 근거 없음: 큐 보존·현행 정지(재생버튼 1탭 복구)
+    console.warn('[BTDebug] auto-skip abort (no track verdict)', { trackId: fid, status: httpStatus });
+    autoSkipCount = 0;
+    return false;
+  }
+  const s = usePlayerStore.getState();
+  if (s.track?.id == null || String(s.track.id) !== fid) return false; // 확인 중 사용자가 전환/닫음
+  autoSkipCount++;
+  const gone = httpStatus === 400 || httpStatus === 403 || httpStatus === 404 || httpStatus === 410;
+  const qi = s.queue.findIndex((t: any) => String(t?.id) === fid);
+  if (gone && qi >= 0) {
+    s.removeFromQueue(qi); // 보관함(saveOwnerQueue)까지 갱신 — 재시작 후 반복 실패 방지
+    // removeFromQueue는 현재곡 제거 시 인덱스를 "다음 곡" 자리로 보정한다 — getNextIndex가
+    // 그 곡을 건너뛰지 않게 직전 자리로 되돌림(순차=다음 곡, 끝이면 repeat/관련곡 규칙 그대로)
+    if (qi === s.currentIndex) usePlayerStore.getState().setCurrentIndex(qi - 1);
+  }
+  const cur = usePlayerStore.getState();
+  const nextIdx = cur.getNextIndex();
+  const next = nextIdx >= 0 ? cur.queue[nextIdx] : null;
+  console.warn('[BTDebug] auto-skip unplayable', { trackId: fid, status: httpStatus, removed: gone && qi >= 0, nextId: next?.id ?? null, count: autoSkipCount });
+  if (next?.id) {
+    cur.playTrackAtIndex(nextIdx);
+    await loadFn(next);
+  } else {
+    await autoContinueWithRelated(loadFn); // 큐 소진 — 기존 관련곡 이어듣기 경로
+  }
+  return true;
+}
+
+/** playback.ts 경로의 자동 진행 로더 */
+function loadAndPlayTrackAuto(track: any): Promise<void> {
+  return loadAndPlayTrack(track, { auto: true });
+}
+
 /**
  * v3.197: 상태 콜백 팩토리 — createAsync 인라인 콜백을 승격해 프리로드 스왑 사운드에도
  * 동일 콜백(v3.192 effectiveDuration 보정 포함)을 부착할 수 있게 한다.
@@ -527,6 +620,7 @@ export async function autoContinueWithRelated(
 function makeStatusCallback(newTrack: any): (status: any) => void {
   return (status: any) => {
     if (status.isLoaded) {
+      noteAutoAdvanceProgress(status); // v3.225: 새 곡 재생 진척 — 자동 건너뛰기 표식 해제
       const s = usePlayerStore.getState();
       s.setIsPlaying(status.isPlaying);
       s.setPosition(status.positionMillis || 0);
@@ -559,7 +653,7 @@ function makeStatusCallback(newTrack: any): (status: any) => void {
           console.warn('[BTDebug] didJustFinish', { src: 'playback', trackId: newTrack?.id, nextIdx, appState: AppState.currentState, preloadHit: false });
           if (nextIdx >= 0 && s.queue[nextIdx]) {
             s.playTrackAtIndex(nextIdx);
-            loadAndPlayTrack(s.queue[nextIdx]);
+            loadAndPlayTrack(s.queue[nextIdx], { auto: true }); // v3.225: 자동 진행 표식
           } else {
             // v3.91: 큐 소진(반복 off) — 관련곡을 받아 자동 이어듣기(수동 큐 우선)
             autoContinueWithRelated();
@@ -571,6 +665,8 @@ function makeStatusCallback(newTrack: any): (status: any) => void {
       // 자동 재재생은 하지 않음 — 견고화된 재생버튼 1탭이 복구 경로.
       console.warn('[BTDebug] sound error', { src: 'playback', trackId: newTrack?.id, error: String(status.error) });
       usePlayerStore.getState().setIsPlaying(false);
+      // v3.225: 자동 진행 중 곡의 실패(웹 ended-swap/관련곡 404 등)만 건너뛰기 — 그 외는 위 정지 그대로
+      void skipUnplayableOnAutoAdvance(newTrack, loadAndPlayTrackAuto);
     }
   };
 }
@@ -606,7 +702,7 @@ async function playPreloadedSound(pre: { index: number; track: any; sound: Audio
     console.warn('[BTDebug] preload swap fail → network fallback', { src: 'playback', trackId: pre.track?.id, message: err?.message, local: false });
     try { await pre.sound.unloadAsync(); } catch {}
     deleteLocalFile(pre.fileUri); // v3.205: 실패 스왑 파일 정리(폴백은 원격 스트림 — 불변)
-    await loadAndPlayTrack(pre.track);
+    await loadAndPlayTrack(pre.track, { auto: true }); // v3.225: 자동 진행 표식
   }
 }
 
@@ -636,8 +732,11 @@ export async function createTrackSound(
 }
 
 /** 트랙 사운드 로드+재생. didJustFinish 시 셔플/반복 반영해 자동 다음곡. */
-export async function loadAndPlayTrack(newTrack: any): Promise<void> {
+export async function loadAndPlayTrack(newTrack: any, opts?: { auto?: boolean }): Promise<void> {
   const gen = ++loadGen; // 이 로드의 세대 — 도중에 invalidate/새 로드가 오면 스스로 폐기
+  // v3.225: 자동 진행(곡 종료 후 다음 곡)만 건너뛰기 표식 — 직접 재생(opts 없음)은 표식·카운트 해제
+  if (opts?.auto) markAutoAdvance(newTrack);
+  else clearAutoAdvance();
   discardPreloaded('new-load'); // v3.197: 수동 스킵/새 재생 — 이전 곡 기준 핀 프리로드 폐기
   const store = usePlayerStore.getState();
   if (store.sound) {
@@ -676,6 +775,8 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
     usePlayerStore.getState().setSound(null);
     usePlayerStore.getState().setIsPlaying(false);
     console.warn('[BTDebug] load fail', { src: 'playback', trackId: newTrack?.id, message: err?.message, appState: AppState.currentState });
+    // v3.225: 자동 진행 로드 실패(네이티브 throw)만 건너뛰기 — 이후 새 로드/닫기로 세대가 바뀌었으면 무시
+    if (opts?.auto && gen === loadGen) void skipUnplayableOnAutoAdvance(newTrack, loadAndPlayTrackAuto);
   }
 }
 
@@ -685,7 +786,7 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
  * store의 track/queue 항목에 병합한다(실패 무시). 미니플레이어는 store 구독이라 자동 반영.
  * 필드명 확인: MiniPlayer(:93)·TrackRow·PlayerScreen 전부 `cover_image || cover_image_url` 셈법.
  */
-function maybeHydrateCover(track: any): void {
+export function maybeHydrateCover(track: any): void {
   if (!track?.id) return;
   if (track.cover_image || track.cover_image_url) return;
   const id = String(track.id);
