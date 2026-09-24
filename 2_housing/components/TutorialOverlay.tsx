@@ -78,6 +78,8 @@ interface TutorialOverlayProps {
    * 스크롤 애니메이션 중 구좌표 하이라이트가 떠 있는 현상 방지(사용자 지시 "이동 중에는 딤만").
    */
   suspended?: boolean;
+  /** v3.227: 노출 상태 변화 알림(true=튜토리얼 진행 중) — 작업실 생성 상태 말풍선을 튜토리얼 중 숨기는 용도 */
+  onVisibleChange?: (visible: boolean) => void;
 }
 
 const SEEN_KEY_PREFIX = TUTORIAL_SEEN_KEY_PREFIX; // 'maidol_tutorial_seen_v1:' — tutorialGate와 단일 출처
@@ -104,7 +106,7 @@ function useGlobalPopupBlocked(): boolean {
 }
 
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
-  ({ screenKey, steps, enabled = true, onStepChange, suspended = false }, ref) => {
+  ({ screenKey, steps, enabled = true, onStepChange, suspended = false, onVisibleChange }, ref) => {
     const insets = useSafeAreaInsets();
     const { width: winW, height: winH } = useWindowDimensions();
     const isFocused = useIsFocused();
@@ -124,6 +126,12 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     // onStepChange는 ref로 미러 — 콜백 identity 변화로 스텝 이펙트가 중복 발화하지 않게
     const onStepChangeRef = useRef(onStepChange);
     onStepChangeRef.current = onStepChange;
+    // v3.227: 노출 상태 알림(ref 미러 — 콜백 identity 변화로 재발화하지 않게)
+    const onVisibleChangeRef = useRef(onVisibleChange);
+    onVisibleChangeRef.current = onVisibleChange;
+    useEffect(() => {
+      onVisibleChangeRef.current?.(visible);
+    }, [visible]);
 
     const show = useCallback(() => {
       if (!enabled) {

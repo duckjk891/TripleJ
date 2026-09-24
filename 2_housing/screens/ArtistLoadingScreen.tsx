@@ -9,18 +9,28 @@ import {
   Easing,
   ActivityIndicator,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
-// expo-file-system v19+ : 신 API에서는 cacheDirectory/downloadAsync가 빠짐 → legacy 사용
-import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
-import { spendExtraSlot } from '../services/characterService';
+import { spendExtraSlot, parseGenerationInProgress } from '../services/characterService';
 import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
-import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { useTrackedJob, getBlockingArtistJob, type TrackedUsedItem } from '../stores/generationJobStore';
+import {
+  registerArtistJob,
+  adoptInProgressJob,
+  finalizeArtistJob,
+  acknowledgeFailedJob,
+  guardArtistGeneration,
+  setViewerJob,
+  refreshRecoverable,
+  ensureServerCapability,
+} from '../services/generationTracker';
+import { appendAuthImageToForm } from '../utils/authImage';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
@@ -54,31 +64,9 @@ function inferMimeType(filename: string): string {
   return `image/${ext === 'jpg' ? 'jpeg' : ext}`;
 }
 
-// v3.76(MAIDOL 이식): 비동기 생성 잡 폴링 — 5초 간격, 최대 180틱(15분), 연속 오류 3회 허용.
-// done → job 데이터 반환, failed/타임아웃 → throw. isCancelled()로 언마운트 시 중단.
-async function pollCharacterJob(jobId: string, isCancelled: () => boolean): Promise<any> {
-  let consecutiveErrors = 0;
-  for (let tick = 0; tick < 180; tick++) {
-    await new Promise((r) => setTimeout(r, 5000));
-    if (isCancelled()) throw new Error('cancelled');
-    try {
-      const res = await api.get(`/character/job/${jobId}`);
-      consecutiveErrors = 0;
-      const status = res.data?.status;
-      if (__DEV__ && tick % 6 === 0) console.info('[ArtistLoading] job poll', { jobId, tick, status });
-      if (status === 'done') return res.data;
-      if (status === 'failed') {
-        throw new Error(res.data?.error || '캐릭터 시트 생성에 실패했습니다. 사용된 별은 자동으로 환불됩니다.');
-      }
-    } catch (err: any) {
-      if (err?.message === 'cancelled' || err?.message?.includes('환불')) throw err;
-      consecutiveErrors++;
-      console.error('[ArtistLoading] job poll 오류', { jobId, tick, consecutiveErrors, message: err?.message });
-      if (consecutiveErrors >= 3) throw new Error('생성 상태 확인에 실패했어요. 잠시 후 내 아티스트에서 확인해주세요.');
-    }
-  }
-  throw new Error('생성이 너무 오래 걸려요. 잠시 후 다시 확인해주세요. 실패 시 별은 자동 환불됩니다.');
-}
+// v3.227 A-보완: 화면 내부 폴링(pollCharacterJob — 오류 3회 포기·15분 상한) 삭제 →
+// 전역 추적기(services/generationTracker.ts)가 화면과 무관하게 job을 추적한다.
+// 이 화면은 POST(접수)까지만 담당하고, 이후엔 추적 뷰어로 상태를 보여줄 뿐이다.
 
 // v3.76: 코디 선택분(상의/하의/신발)을 서버 정식 계약(object_name 필드)으로 전송.
 // 기존 방식(이미지 재다운로드 후 top_image 첨부)보다 단순하고 서버가 원본 화질로 처리.
@@ -90,29 +78,19 @@ function appendOutfitObjectNames(form: FormData, items: AppliedItem[]) {
   }
 }
 
-// 9004: 백엔드 MinIO에 영구 저장된 이미지(object_name)를 fetch해서 form에 첨부.
-// web은 Blob/File, RN은 expo-file-system으로 로컬 캐시에 다운로드 후 file:// uri 첨부.
-async function appendMinioImageToForm(
-  form: FormData,
-  field: string,
-  objectName: string,
-) {
-  const url = `${BACKEND_BASE_URL}/api/character/preview/${objectName}`;
-  const ext = (objectName.split('.').pop() || 'jpg').toLowerCase();
-  const name = `${field}.${ext}`;
-  const mime = inferMimeType(name);
+// v3.227 H-3: appendMinioImageToForm(원본 사진을 무인증으로 내려받아 다시 올리던 경로) 제거 →
+// 실사 옷 입히기는 서버 원본 경로를 Form `original_object_name`으로 보낸다(서버가 소유권 검증 후 직접 읽음).
 
-  if (Platform.OS === 'web') {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`fetch ${objectName} 실패: ${r.status}`);
-    const blob = await r.blob();
-    const file = new File([blob], name, { type: blob.type || mime });
-    form.append(field, file);
-  } else {
-    const localPath = `${FileSystem.cacheDirectory}${field}-${Date.now()}.${ext}`;
-    const dl = await FileSystem.downloadAsync(url, localPath);
-    form.append(field, { uri: dl.uri, name, type: mime } as any);
-  }
+/** save used_items 원천 — 추적 레코드에 텍스트로 보존(앱 재시작 후 finalize에서도 코디 기록 유지) */
+function toUsedItems(items: AppliedItem[]): TrackedUsedItem[] {
+  return items
+    .filter((it) => it.imageObjectName)
+    .map((it) => ({
+      name: it.name,
+      image_object_name: it.imageObjectName as string,
+      product_url: it.productUrl,
+      category: it.cat,
+    }));
 }
 
 // API 처리 중 표시되는 로딩 단계 (맵 팝업의 컨셉 단계와 의도적으로 다름)
@@ -141,14 +119,25 @@ function modeMeta(mode: CharacterTaskMode | null) {
   return { taskName: '아티스트' };
 }
 
-export default function ArtistLoadingScreen({ navigation }: any) {
+export default function ArtistLoadingScreen({ navigation, route }: any) {
   const taskStore = useCharacterTaskStore();
-  const mode = taskStore.mode;
+  // v3.227 A-보완: 라우트 {jobId} = 추적 뷰어(재진입 — POST 없음). 없으면 POST(접수) 후 뷰어로 전환.
+  const routeJobId: string | null = route?.params?.jobId ? String(route.params.jobId) : null;
+  const [jobId, setJobId] = useState<string | null>(routeJobId);
+  const tracked = useTrackedJob(jobId);
+  const isViewer = !!jobId;
+  const mode: CharacterTaskMode | null = isViewer ? (tracked?.mode ?? 'sheet') : taskStore.mode;
   const meta = modeMeta(mode);
   const stages = LOADING_STEPS_BY_MODE[mode ?? 'sheet'];
 
   const [messageIndex, setMessageIndex] = useState(0);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // 뷰어 상태: finalize 진행(레코드 삭제 → 화면 전환 경합 방지)·저장 실패(재시도 버튼)·실패 처리 1회
+  const finalizingRef = useRef(false);
+  const failHandledRef = useRef(false);
+  const missingHandledRef = useRef(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [nowTick, setNowTick] = useState(Date.now());
 
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침). blur 시 복원.
   useFocusEffect(
@@ -160,8 +149,70 @@ export default function ArtistLoadingScreen({ navigation }: any) {
     }, [])
   );
 
-  // ── API 호출 (mount 직후 한 번) ──
+  // v3.227: 추적기에 "뷰어가 이 job을 보고 있음"을 알림 — 완성 시 알림 팝업 대신 뷰어가 finalize
+  useFocusEffect(
+    useCallback(() => {
+      if (!jobId) return undefined;
+      setViewerJob(jobId);
+      return () => setViewerJob(null);
+    }, [jobId])
+  );
+
+  const leaveToMap = useCallback(() => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate('Map');
+  }, [navigation]);
+
+  // ── v3.227 추적 뷰어: 완성 → finalize(단일 경로) / 실패 → 환불 안내 / 레코드 소멸 → 복귀 ──
   useEffect(() => {
+    if (!jobId) return;
+    if (!tracked) {
+      if (finalizingRef.current || missingHandledRef.current) return;
+      missingHandledRef.current = true;
+      console.info('[ArtistLoading] 추적 레코드 없음 — 복귀', { jobId });
+      leaveToMap();
+      setTimeout(() => {
+        showAlert('안내', '이 작업은 이미 저장됐거나 더 이상 확인할 수 없어요. 내 아티스트에서 확인해주세요.');
+      }, 100);
+      return;
+    }
+    if (tracked.lastStatus === 'done' && !finalizingRef.current && !saveFailed) {
+      finalizingRef.current = true;
+      console.info('[ArtistLoading] 완성 — finalize', { jobId });
+      finalizeArtistJob(jobId, { navigation, replace: true }).then((out) => {
+        // saved = ArtistResult로 전환됨 / busy = 다른 경로(카드·말풍선)가 저장 중 — 레코드 소멸을 '없음'으로 오인하지 않게 유지
+        if (out === 'failed' || out === 'not-ready') {
+          finalizingRef.current = false;
+          if (out === 'failed') setSaveFailed(true);
+        }
+      });
+      return;
+    }
+    if (tracked.lastStatus === 'failed' && !failHandledRef.current) {
+      failHandledRef.current = true;
+      missingHandledRef.current = true; // 아래 레코드 정리 후 '없음' 경로 재진입 방지
+      // 서버가 실패를 확정한 경우에만 여기 도달 — 서버가 ⭐ 자동 환불(refund_character_job_points)
+      const msg = `${tracked.error || '아티스트를 만들지 못했어요.'}\n사용된 별은 자동으로 환불돼요.`;
+      console.info('[ArtistLoading] 서버 실패 확정', { jobId, refunded: tracked.refunded });
+      acknowledgeFailedJob(jobId);
+      taskStore.failApi(msg); // 입력 보존 — 아티스트 만들기의 "이어서 만들기"로 재개
+      usePointsStore.getState().fetchBalance();
+      leaveToMap();
+      setTimeout(() => showAlert('만들지 못했어요', msg), 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, tracked?.lastStatus, saveFailed]);
+
+  // 경과 시간 표시(30초마다)
+  useEffect(() => {
+    if (!isViewer) return undefined;
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [isViewer]);
+
+  // ── API 호출 (mount 직후 한 번 — 뷰어 재진입이면 POST 없음) ──
+  useEffect(() => {
+    if (routeJobId) return;
     if (!mode) {
       // store에 작업 정보 없음 — 잘못 진입
       navigation.goBack();
@@ -173,16 +224,26 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         const photoUri = taskStore.photoUri;
         const photoName = taskStore.photoName;
 
+        // v3.227 중복 생성 가드(최종 방어 — POST 직전, 과금 전): 추적 중 job이 있으면 요청 0
+        if ((mode === 'sheet' || mode === 'outfit') && getBlockingArtistJob()) {
+          console.info('[ArtistLoading] 중복 생성 차단 — POST 없음');
+          navigation.goBack();
+          setTimeout(() => { guardArtistGeneration({ where: 'ArtistLoading' }); }, 100);
+          return;
+        }
+
         if (mode === 'sheet') {
           // ── 신규 캐릭터 시트 생성 — v3.76: 비동기(job) + 텍스트-only 허용(MAIDOL v161) ──
           // v3.80: 가상화(그림) 모드 — cartoon 엔드포인트 + style_preset XOR style_image
           const isVirtual = taskStore.characterKind === 'virtual';
           const hasPhoto = !!photoUri;
+          // v3.227 H-1(W1): [이전 사진 사용] — 사진 파일 대신 서버 원본 경로(실사 전용 — cartoon은 미지원)
+          const reuseOriginal = !hasPhoto && !isVirtual ? taskStore.reuseOriginalObjectName || null : null;
           // v3.227 H-1: 생성 직전 가드(API 호출·⭐ 차감 전) — 실사인데 사진으로 만들기로 했던(의도='photo')
           // 흐름에서 사진이 사라졌으면 텍스트 전용으로 조용히 생성하지 않고 중단 → 사진 재업로드로 안내.
           // 사진 없이 만들기(의도='text')를 명시 선택한 텍스트 경로는 그대로 통과한다.
           const photoIntent = taskStore.photoIntent ?? taskStore.draft?.photoIntent ?? null;
-          if (!isVirtual && photoIntent === 'photo' && !hasPhoto) {
+          if (!isVirtual && photoIntent === 'photo' && !hasPhoto && !reuseOriginal) {
             console.warn('[ArtistLoading] 사진 누락 차단', { intent: photoIntent, kind: taskStore.characterKind });
             const blockedMsg = '얼굴 사진이 확인되지 않아 만들지 않았어요. 사진을 다시 올려주세요. (별은 사용되지 않았어요)';
             taskStore.failApi(blockedMsg);
@@ -199,13 +260,17 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             }, 100);
             return;
           }
-          if (!hasPhoto && !(taskStore.userText || '').trim()) throw new Error('사진 또는 컨셉 설명이 필요해요.');
+          if (!hasPhoto && !reuseOriginal && !(taskStore.userText || '').trim()) throw new Error('사진 또는 컨셉 설명이 필요해요.');
           const form = new FormData();
           const nameFromUri = photoName || (photoUri?.split('/').pop() ?? 'photo.jpg');
           const mime = inferMimeType(nameFromUri);
           if (hasPhoto) {
             await appendFileToForm(form, 'file', photoUri!, nameFromUri, mime);
             // v3.76(MAIDOL v137): 사진 확약 — ArtistInput에서 확인받은 값
+            if (taskStore.portraitConfirmed) form.append('portrait_confirmed', 'true');
+          } else if (reuseOriginal) {
+            // 서버가 소유권 검증(타인 403) 후 같은 바이트로 얼굴 인증 게이트 수행 — 인증 우회 없음
+            form.append('original_object_name', reuseOriginal);
             if (taskStore.portraitConfirmed) form.append('portrait_confirmed', 'true');
           }
 
@@ -233,8 +298,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             }
           }
           const endpoint = isVirtual ? '/character/generate-sheet-cartoon-async' : '/character/generate-sheet-async';
-          if (__DEV__) console.info('[ArtistLoading] generate-sheet 요청', {
-            endpoint, hasPhoto, items: items.length, isVirtual,
+          console.info('[ArtistLoading] generate-sheet 요청', {
+            endpoint, hasPhoto, reuse: !!reuseOriginal, items: items.length, isVirtual,
             stylePreset: taskStore.stylePreset, hasStyleImage: !!taskStore.styleImageUri,
             characterId: targetCid, legacyContract: taskStore.legacyContract,
           });
@@ -243,107 +308,30 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
             timeout: 120000,
           });
-          if (cancelled) return;
-          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
-          const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
-          if (cancelled) return;
-          const res = { data: job } as any;
-
-          // 9004: 원본 사진을 영구 위치에 업로드 (이후 옷 갈아입기 시 재사용) — 사진 경로에서만
-          let originalObjectName: string | null = null;
-          if (hasPhoto) {
-            try {
-              const photoForm = new FormData();
-              await appendFileToForm(photoForm, 'file', photoUri!, nameFromUri, mime);
-              const upRes = await api.post('/character/upload-original-photo', photoForm, {
-                // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
-                headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-                timeout: 60000,
-              });
-              originalObjectName = upRes.data?.object_name || null;
-            } catch (uploadErr) {
-              console.warn('[Artist] upload-original-photo 실패:', uploadErr);
-            }
-          }
-          if (cancelled) return;
-
-          // 첫 시트 자동 저장 + used_items + original_photo_object_name 영속화
-          const usedItems = items
-            .filter((it) => it.imageObjectName)
-            .map((it) => ({
-              name: it.name,
-              image_object_name: it.imageObjectName,
-              product_url: it.productUrl,
-              category: it.cat,
-            }));
-          // v3.103(B-1): 신규 생성 시 잡 결과에 character_id가 실려오면 그 cid로 save(갱신).
-          // 없으면 kind로 신규 save(구 관행 — 서버 슬롯 검사 409 동일 적용).
-          const jobCid: string | null = targetCid || (res.data?.character_id ? String(res.data.character_id) : null);
-          let savedCharacterId: string | null = jobCid;
-          const pendingGender = useCharacterTaskStore.getState().pendingGender;
-          const pendingAge = useCharacterTaskStore.getState().pendingAge;
-          // v3.109: 질문 흐름에서 지은 이름 — save의 name 필드로 서버 영속(v216 계약: save·PATCH 수용)
-          const pendingName = useCharacterTaskStore.getState().pendingName;
-          try {
-            const saveBody: any = {
-              sheet_object_name: res.data.object_name,
-              used_items: usedItems,
-            };
-            if (originalObjectName) saveBody.original_photo_object_name = originalObjectName;
-            // v3.80: 가상 슬롯 저장 — 서버가 virtual_* 필드만 갱신(실사 무손상).
-            // 실사 경로에는 variant를 절대 넣지 않음(기존 페이로드 불변).
-            if (isVirtual) {
-              saveBody.variant = 'virtual';
-              saveBody.art_style = res.data.art_style || (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset);
-            }
-            if (!taskStore.legacyContract) {
-              // 신 계약: character_id=갱신 / kind=신규. 성별도 서버에 영속(서버 우선 — v3.103)
-              if (jobCid) saveBody.character_id = jobCid;
-              else saveBody.kind = isVirtual ? 'virtual' : 'real';
-              if (pendingGender) saveBody.gender = pendingGender;
-              if (pendingAge) saveBody.age = pendingAge; // v3.164: 나이 서버 영속
-              // v3.109: 이름 서버 영속 — 스킵(null)이면 미전송 = 서버 기본 명명 로직 유지
-              if (pendingName) {
-                saveBody.name = pendingName;
-                if (__DEV__) console.info('[ArtistLoading] 이름 영속', { name: pendingName });
-              }
-            }
-            // 레거시 계정: character_id·kind 둘 다 미전송 = 구버전 계약(슬롯 면제)
-            const saveRes = await api.post('/character/save', saveBody);
-            if (saveRes.data?.character_id) savedCharacterId = String(saveRes.data.character_id);
-            if (__DEV__) console.info('[ArtistLoading] save 완료', {
-              legacyContract: taskStore.legacyContract, jobCid, savedCharacterId,
-            });
-          } catch (saveErr) {
-            console.warn('[Artist] auto-save sheet failed:', saveErr);
-          }
-          if (cancelled) return;
-
-          // v3.82: 생성 확정 — 성별을 슬롯별 로컬 프로필에 기록.
-          // v3.103: 신 계약 계정은 서버 gender가 진실의 원천 → 로컬 기록은 레거시 계정만.
-          if (pendingGender && taskStore.legacyContract) {
-            if (__DEV__) console.info('[ArtistLoading] 성별 기록(레거시)', { slot: isVirtual ? 'virtual' : 'real', gender: pendingGender });
-            useArtistProfileStore.getState().setProfile(isVirtual ? 'virtual' : 'real', { gender: pendingGender });
-          }
-
-          taskStore.completeApi({
-            preview_url: characterPreviewUrl(res.data.preview_url),
-            object_name: res.data.object_name,
+          const newJobId = startRes.data?.job_id ? String(startRes.data.job_id) : '';
+          if (!newJobId) throw new Error('생성 접수 응답을 확인하지 못했어요. 잠시 후 내 아티스트에서 확인해주세요.');
+          // v3.227: job_id 수신 직후·화면 전환 전 영속 기록(이탈해도 추적 지속) — cancelled 여부와 무관
+          registerArtistJob({
+            jobId: newJobId,
+            mode: 'sheet',
+            characterKind: isVirtual ? 'virtual' : 'real',
+            targetCharacterId: targetCid,
+            legacyContract: taskStore.legacyContract,
+            photoIntent: hasPhoto || reuseOriginal ? 'photo' : photoIntent ?? 'text',
+            pendingName: useCharacterTaskStore.getState().pendingName,
+            pendingGender: useCharacterTaskStore.getState().pendingGender,
+            pendingAge: useCharacterTaskStore.getState().pendingAge,
+            usedItems: toUsedItems(items),
+            artStyleHint: isVirtual ? (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset) : null,
+            photo: hasPhoto ? { uri: photoUri!, name: nameFromUri, mime } : null,
           });
-          if (originalObjectName) {
-            taskStore.setInput({ originalPhotoObjectName: originalObjectName });
-          }
-          taskStore.clearMode();
-          usePointsStore.getState().fetchBalance(); // v3.76: ⭐10 차감 반영
-          // v3.103: 저장된 cid를 알면 서버 아티스트 상세로 진입(목소리 연결·삭제 UI 노출)
-          // v3.113: 생성/재생성 완료 컨텍스트 표시 — ArtistResult가 [아티스트 저장하기] 버튼 노출
-          navigation.replace(
-            'ArtistResult',
-            savedCharacterId ? { characterId: savedCharacterId, justCreated: true } : { justCreated: true }
-          );
+          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
+          if (cancelled) return;
+          setJobId(newJobId); // → 추적 뷰어(완성 시 finalize가 save → ArtistResult)
+          return;
         } else if (mode === 'outfit') {
           // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
-          // 실사: photo(백엔드 영구 원본) + 옷 이미지(object_name) → generate-sheet-async
+          // 실사: 서버 원본(original_object_name Form — v3.227 H-1/H-3) + 옷 이미지(object_name) → generate-sheet-async
           // v3.122 가상: 원본 사진 대신 서버가 저장된 시트를 기준으로 로드(v223
           // use_saved_sheet) → generate-sheet-cartoon-async(nb_pro) — 화풍은 서버가
           // doc.art_style로 복원(화풍 붕괴 금지). character_id 지정 재생성이라 슬롯 미소모.
@@ -372,14 +360,22 @@ export default function ArtistLoadingScreen({ navigation }: any) {
                 if (origObjectName) {
                   taskStore.setInput({ originalPhotoObjectName: origObjectName });
                 }
-              } catch (meErr) {
-                console.warn('[Artist] /me 조회 실패:', meErr);
+              } catch (meErr: any) {
+                console.warn('[Artist] /me 조회 실패:', meErr?.response?.status);
               }
             }
             if (!origObjectName) {
               throw new Error('원본 사진이 없어요. 캐릭터를 다시 만들어주세요.');
             }
-            await appendMinioImageToForm(form, 'file', origObjectName);
+            // v3.227 H-3: 원본을 앱이 내려받아 다시 올리지 않고 서버 경로로 전달(서버가 소유권 검증 후 직접 읽음).
+            // 구서버(v3.227 미배포 — recoverable 404)만 인증 헤더 다운로드 폴백(URL 토큰 없음).
+            const cap = await ensureServerCapability();
+            if (cap === 'no') {
+              console.info('[ArtistLoading] 구서버 — 원본 인증 다운로드 폴백');
+              await appendAuthImageToForm(form, 'file', origObjectName);
+            } else {
+              form.append('original_object_name', origObjectName);
+            }
             endpoint = '/character/generate-sheet-async';
           }
 
@@ -399,43 +395,26 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
             timeout: 120000,
           });
-          if (cancelled) return;
-          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
-          const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
-          if (cancelled) return;
-          const res = { data: job } as any;
-
-          // 4) used_items 영구 저장 (UsedItemPayload 형식)
-          const usedItems = items
-            .filter((it) => it.imageObjectName)
-            .map((it) => ({
-              name: it.name,
-              image_object_name: it.imageObjectName,
-              product_url: it.productUrl,
-              category: it.cat,
-            }));
-          // v3.103(B-1): 신 계약이면 대상 cid로 save(갱신) — 잡 결과 cid 폴백
-          const outfitSaveCid: string | null =
-            outfitCid || (!taskStore.legacyContract && res.data?.character_id ? String(res.data.character_id) : null);
-          try {
-            const outfitSaveBody: any = {
-              sheet_object_name: res.data.object_name,
-              used_items: usedItems,
-            };
-            if (outfitSaveCid) outfitSaveBody.character_id = outfitSaveCid;
-            await api.post('/character/save', outfitSaveBody);
-          } catch (saveErr) {
-            console.warn('[Artist] auto-save outfit failed:', saveErr);
-          }
-          if (cancelled) return;
-
-          taskStore.completeApi({
-            preview_url: characterPreviewUrl(res.data.preview_url),
-            object_name: res.data.object_name,
+          const newJobId = startRes.data?.job_id ? String(startRes.data.job_id) : '';
+          if (!newJobId) throw new Error('생성 접수 응답을 확인하지 못했어요. 잠시 후 내 아티스트에서 확인해주세요.');
+          registerArtistJob({
+            jobId: newJobId,
+            mode: 'outfit',
+            characterKind: isVirtualOutfit ? 'virtual' : 'real',
+            targetCharacterId: outfitCid,
+            legacyContract: taskStore.legacyContract,
+            photoIntent: null,
+            pendingName: null,
+            pendingGender: null,
+            pendingAge: null,
+            usedItems: toUsedItems(items),
+            artStyleHint: null,
+            photo: null,
           });
-          taskStore.clearMode();
-          usePointsStore.getState().fetchBalance(); // v3.76: ⭐ 차감 반영
-          navigation.replace('ArtistResult', outfitSaveCid ? { characterId: outfitSaveCid } : undefined);
+          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
+          if (cancelled) return;
+          setJobId(newJobId);
+          return;
         } else {
           // ── refine: 얼굴/체형 미세조정 (옷 입히기 아님). 기존 /character/refine 흐름 유지 ──
           const currentSheetUrl = taskStore.apiResult?.preview_url || null;
@@ -477,6 +456,21 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           navigation.replace('ArtistResult');
         }
       } catch (err: any) {
+        // v3.227: 서버 409 generation_in_progress(과금 전 차단) — 진행 중 job을 추적기에 편입하고
+        // 뷰어로 전환(오류 다이얼로그 없음). 다른 기기·창에서 시작한 생성도 이어서 본다.
+        const inProgress = parseGenerationInProgress(err);
+        if (inProgress) {
+          adoptInProgressJob(inProgress);
+          if (cancelled) return;
+          console.info('[ArtistLoading] 409 generation_in_progress → 진행 중 job 뷰어', { jobId: inProgress.jobId });
+          taskStore.clearMode();
+          setJobId(inProgress.jobId);
+          return;
+        }
+        // 응답 없는 실패(네트워크·타임아웃)는 서버가 접수했을 수도 있다 → 회수 목록으로 즉시 확인(무과금 조회)
+        if (!err?.response && (mode === 'sheet' || mode === 'outfit')) {
+          void refreshRecoverable({ force: true, reason: 'post-error' });
+        }
         if (cancelled) return;
         // 백엔드 상세 에러 출력 (422의 경우 detail에 어떤 field가 missing인지 들어있음)
         console.warn('[ArtistLoading] API error:', {
@@ -569,13 +563,13 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
           msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
         } else {
-          msg = err.response?.data?.error || detailStr || err.message || '실패했어요.';
-          // 생성 도중 실패는 서버가 별을 자동 환불(비동기 잡 실패 경로)
-          if (!msg.includes('환불') && (mode === 'sheet' || mode === 'outfit')) {
-            msg += '\n사용된 별은 자동으로 환불됩니다.';
-          }
+          msg = !err?.response && (mode === 'sheet' || mode === 'outfit')
+            ? '연결이 불안정해 요청 결과를 확인하지 못했어요. 이미 접수됐다면 작업실과 내 아티스트에서 이어서 확인할 수 있어요.'
+            : err.response?.data?.error || detailStr || err.message || '실패했어요.';
+          // v3.227: 접수(POST) 단계 실패에는 환불 문구를 붙이지 않는다 — 접수된 생성은 서버가 끝까지
+          // 만들고(성공=환불 없음), 실패 확정 시에만 추적기가 "자동 환불" 안내를 띄운다.
         }
-        usePointsStore.getState().fetchBalance(); // 차감/환불 반영
+        usePointsStore.getState().fetchBalance(); // 잔액 재확인
         taskStore.failApi(msg);
         navigation.goBack();
         setTimeout(() => {
@@ -609,6 +603,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
   }, []);
 
   const currentStage = stages[messageIndex] || stages[0];
+  const elapsedMin = tracked ? Math.max(0, Math.floor((nowTick - tracked.startedAt) / 60000)) : 0;
 
   return (
     <AppScreenLayout scroll={false} insideTab avoidMiniPlayer={false}>
@@ -653,11 +648,46 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           })}
         </View>
 
-        <View style={styles.noteContainer}>
-          <AppText style={styles.noteText}>
-            아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}잠시만 기다려주세요...
-          </AppText>
-        </View>
+        {isViewer && tracked ? (
+          <>
+            <View style={styles.noteContainer}>
+              <AppText style={styles.noteText}>
+                {saveFailed
+                  ? '아티스트가 완성됐어요. 저장을 다시 시도해주세요.'
+                  : tracked.lastStatus === 'done'
+                    ? '아티스트가 완성됐어요. 저장하고 있어요...'
+                    : `${elapsedMin >= 5 ? '아직 만드는 중이에요' : `아티스트 디렉터가 ${meta.taskName} 만드는 중이에요`} · 경과 ${elapsedMin}분\n나가도 계속 만들어져요. 완성되면 작업실에서 알려드릴게요.`}
+              </AppText>
+            </View>
+            {saveFailed && (
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => {
+                  setSaveFailed(false); // 뷰어 effect가 finalize 재시도
+                }}
+              >
+                <AppText style={styles.primaryBtnText}>다시 저장하기</AppText>
+              </TouchableOpacity>
+            )}
+            {(tracked.lastStatus === 'processing' || saveFailed) && (
+              <TouchableOpacity
+                style={styles.leaveBtn}
+                onPress={() => {
+                  console.info('[ArtistLoading] 나가서 다른 작업 하기', { jobId });
+                  navigation.popTo('Map');
+                }}
+              >
+                <AppText style={styles.leaveBtnText}>나가서 다른 작업 하기</AppText>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <View style={styles.noteContainer}>
+            <AppText style={styles.noteText}>
+              아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}잠시만 기다려주세요...
+            </AppText>
+          </View>
+        )}
       </View>
     </AppScreenLayout>
   );
@@ -707,4 +737,15 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   noteText: { fontSize: 13, color: colors.text.secondary, textAlign: 'center', lineHeight: 19 },
+  // v3.227: 추적 뷰어 — 자유 이탈·저장 재시도
+  primaryBtn: {
+    marginTop: 16, alignSelf: 'stretch', backgroundColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 13, alignItems: 'center',
+  },
+  primaryBtnText: { color: colors.text.primary, fontWeight: '700', fontSize: 14 },
+  leaveBtn: {
+    marginTop: 12, alignSelf: 'stretch', borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  leaveBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
 });

@@ -21,6 +21,8 @@ initRemoteLogger();
 // 화면 사용 분석(관리자 대시보드 '사용 분석' — 화면별 체류시간·이탈률)
 import { initScreenAnalytics, trackScreen } from './utils/screenAnalytics';
 initScreenAnalytics();
+// v3.227 A-보완: 생성 job 전역 추적기(화면과 무관한 폴링 — 하이드레이션·세션 복원 대기는 내부에서 처리)
+import { startGenerationTracker } from './services/generationTracker';
 import { colors } from './theme/colors';
 import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
@@ -626,6 +628,8 @@ export default function App() {
   }, [authUserId]);
   // v3.208: AdMob MobileAds 초기화 + 테스트 기기 등록 1회 — Expo Go/web 은 내부에서 안전 no-op
   useEffect(() => { initRewardedAds(); }, []);
+  // v3.227 A-보완: 생성 job 추적기 1회 기동(멱등)
+  useEffect(() => { startGenerationTracker(); }, []);
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
   useEffect(() => {
     initPlaybackReconciler();

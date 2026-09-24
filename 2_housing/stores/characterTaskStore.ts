@@ -32,6 +32,8 @@ export interface ArtistDraft {
   forceKind: 'real' | 'virtual' | null;
   /** v3.227 H-1: 사진 사용 의도(영속). v3.219 구 draft에는 없음(undefined) — 복원 시 chat에서 추론 */
   photoIntent?: ArtistPhotoIntent;
+  /** v3.227 H-1(W1): [이전 사진 사용]으로 고른 서버 원본 경로(텍스트 — 영속 가능). 있으면 사진 재업로드 불요 */
+  reuseOriginalObjectName?: string | null;
 }
 
 export interface CharacterTaskResult {
@@ -62,6 +64,9 @@ interface CharacterTaskState {
   /** v3.227 H-1: 현재 생성 흐름의 사진 사용 의도 — ArtistLoading 생성 직전 가드가 읽는다(메모리).
    *  영속 원천은 draft.photoIntent(ArtistInput 복원 시 여기로 동기화) */
   photoIntent: ArtistPhotoIntent;
+  /** v3.227 H-1(W1): [이전 사진 사용] — 사진 파일 대신 서버에 남은 본인 원본을 생성 Form
+   *  `original_object_name`으로 보낸다(서버가 소유권 검증 후 같은 바이트로 얼굴 인증 게이트 수행) */
+  reuseOriginalObjectName: string | null;
   /** v3.80: 실사('real') vs 가상화 그림('virtual') 캐릭터 모드 */
   characterKind: 'real' | 'virtual';
   /** v3.80: 가상화 화풍 — 샘플 키(stylePreset) XOR 직접 업로드 이미지(styleImageUri/Name) */
@@ -85,7 +90,7 @@ interface CharacterTaskState {
   draft: ArtistDraft | null;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'photoIntent' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'photoIntent' | 'reuseOriginalObjectName' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -116,6 +121,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
   originalPhotoObjectName: null,
   portraitConfirmed: false,
   photoIntent: null,
+  reuseOriginalObjectName: null,
   characterKind: 'real',
   stylePreset: null,
   styleImageUri: null,
@@ -163,6 +169,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       originalPhotoObjectName: null,
       portraitConfirmed: false,
       photoIntent: null,
+      reuseOriginalObjectName: null,
       characterKind: 'real',
       stylePreset: null,
       styleImageUri: null,
@@ -186,3 +193,14 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
     }
   )
 );
+
+/**
+ * v3.227 H-1(W1) [2조 전달용]: 이번 생성에 쓸 얼굴 사진 소스가 있는가 —
+ * 메모리 사진 파일(photoUri) 또는 [이전 사진 사용] 서버 원본(reuseOriginalObjectName).
+ * ArtistCody 사진 배지("얼굴 사진 포함/설명으로 만들기")·【필수 유지】 분기는 photoUri 단독 대신 이 판정을 쓴다.
+ */
+export function hasArtistPhotoSource(
+  s: Pick<CharacterTaskState, 'photoUri' | 'reuseOriginalObjectName'> = useCharacterTaskStore.getState()
+): boolean {
+  return !!s.photoUri || !!s.reuseOriginalObjectName;
+}

@@ -25,6 +25,8 @@ import { useAuthStore } from '../stores/authStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
+import GenerationJobCard from '../components/GenerationJobCard';
+import { refreshRecoverable, guardArtistGeneration } from '../services/generationTracker';
 import { colors } from '../theme/colors';
 
 // ── v3.103(B-1): 내 아티스트 목록 — 서버 /character/list 기반 N명 체제 ─────────
@@ -97,6 +99,8 @@ export default function MyArtistsScreen({ navigation }: any) {
       }
       let cancelled = false;
       setLoading(true);
+      // v3.227 A-보완: 로컬 기록이 없는 생성 결과(다른 기기·저장소 삭제) 회수 — 30초 스로틀, 구서버 404는 조용히 건너뜀
+      void refreshRecoverable({ reason: 'MyArtists focus' });
       (async () => {
         try {
           // 목록 + 비용 병렬 로드 (모두 조회성 — 과금 없음)
@@ -267,6 +271,8 @@ export default function MyArtistsScreen({ navigation }: any) {
   // used<max: confirm 후 진입(슬롯 검사는 서버 409가 백업), used>=max: ⭐확장 confirm
   const handleAdd = () => {
     if (loading || spending) return;
+    // v3.227 A-보완: 추적 중 job이 있으면 새로 만들기(·슬롯 구매) 전에 안내 — 중복 생성 차단
+    if (guardArtistGeneration({ navigation, where: 'MyArtists' })) return;
 
     if (isLegacy) {
       // 레거시 구 계약: 같은 kind 생성 = 기존 덮어씀 → 빈 kind로만 추가 가능
@@ -376,6 +382,9 @@ export default function MyArtistsScreen({ navigation }: any) {
         <AppText style={styles.headerTitle}>내 아티스트</AppText>
         <View style={styles.backBtn} />
       </View>
+
+      {/* v3.227 A-보완: 생성 중·도착·실패 공용 카드(목록 상단 — 로딩 중에도 표시) */}
+      {!!user && <GenerationJobCard navigation={navigation} style={styles.jobCardWrap} />}
 
       {!user ? (
         <View style={styles.centerBox}>
@@ -518,6 +527,8 @@ export default function MyArtistsScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
+  // v3.227: 생성 job 카드 영역(헤더 아래, 목록 위)
+  jobCardWrap: { paddingHorizontal: 16, paddingTop: 12 },
   container: { flex: 1, backgroundColor: colors.bg.deepest },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

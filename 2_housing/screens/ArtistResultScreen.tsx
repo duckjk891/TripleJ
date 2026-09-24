@@ -39,6 +39,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { useAuthImage } from '../utils/authImage';
 import { colors } from '../theme/colors';
 
 // ── v3.121: 아티스트 상세 개편 — 착용 제품 매핑 타입 ─────────────────────────
@@ -129,8 +130,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const clonesLoading = useVoiceStore((s) => s.clonesLoading);
   // v3.121: 확대 보기 대상 URL — 시트·원본 사진 모두 같은 ZoomModal 재사용(null=닫힘)
   const [zoomUri, setZoomUri] = useState<string | null>(null);
+  // v3.227 H-3: 원본 사진 확대 시 네이티브 인증 헤더(웹은 blob URL이라 불필요)
+  const [zoomHeaders, setZoomHeaders] = useState<Record<string, string> | undefined>(undefined);
   // 9004: /me 응답의 original_photo_object_name → 미리보기 URL 캐싱
-  const [originalPhotoUrl, setOriginalPhotoUrl] = useState<string | null>(null);
+  // v3.227 H-3: URL 대신 원본 object name을 보관하고 authImage로 인증 로드(무토큰 URL 금지 — 서버 404).
+  const [originalPhotoObj, setOriginalPhotoObj] = useState<string | null>(null);
+  const originalPhoto = useAuthImage(originalPhotoObj);
   const [meeName, setMeName] = useState<string>('');
   // 앱 내부 디자인 다이얼로그 (시스템 Alert 대신)
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
@@ -304,7 +309,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             // (구서버/미보유 시 아래 /me 폴백 유지. virtual은 서버가 원본 미저장 → 생략, B-14)
             const directPhoto = (artist as any).original_photo_object_name;
             if (directPhoto) {
-              setOriginalPhotoUrl(`${BACKEND_BASE_URL}/api/character/preview/${directPhoto}?t=${Date.now()}`);
+              setOriginalPhotoObj(String(directPhoto));
             } else if (artist.kind === 'real') {
               try {
                 const meRes = await api.get('/character/me');
@@ -312,19 +317,19 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 const me = meRes.data?.character;
                 const photoObj = me?.original_photo_object_name;
                 if (photoObj && String(me?.character_id || '') === characterIdParam) {
-                  setOriginalPhotoUrl(`${BACKEND_BASE_URL}/api/character/preview/${photoObj}?t=${Date.now()}`);
+                  setOriginalPhotoObj(String(photoObj));
                 } else {
-                  setOriginalPhotoUrl(null);
+                  setOriginalPhotoObj(null);
                   if (photoObj) {
                     console.log('[ArtistResult] 원본 사진 생략 — /me 대표 real과 cid 불일치(서버 cid 직렬화 미지원)');
                   }
                 }
               } catch (meErr: any) {
                 console.warn('[ArtistResult] /me 원본 사진 폴백 실패:', meErr?.response?.status, meErr?.message);
-                if (!cancelled) setOriginalPhotoUrl(null);
+                if (!cancelled) setOriginalPhotoObj(null);
               }
             } else {
-              setOriginalPhotoUrl(null);
+              setOriginalPhotoObj(null);
             }
           } catch (err: any) {
             console.warn('[ArtistResult] /character/{cid} 조회 실패:', err?.response?.status, err?.message);
@@ -430,15 +435,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               object_name: hydrateObj,
             });
           }
-          // 원본 사진 URL (있으면)
+          // 원본 사진(있으면) — v3.227 H-3: 인증 로드(authImage)용 object name 보관
           if (ch.original_photo_object_name) {
-            const photoUrl = `${BACKEND_BASE_URL}/api/character/preview/${ch.original_photo_object_name}?t=${Date.now()}`;
-            setOriginalPhotoUrl(photoUrl);
+            setOriginalPhotoObj(String(ch.original_photo_object_name));
             useCharacterTaskStore.getState().setInput({
               originalPhotoObjectName: ch.original_photo_object_name,
             });
           } else {
-            setOriginalPhotoUrl(null);
+            setOriginalPhotoObj(null);
           }
           // 이름 (있으면)
           if (ch.name) setMeName(ch.name);
@@ -935,11 +939,16 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             v3.122(B-14 해소): 백엔드 v223부터 가상(cid doc)도 원본 사진을 저장 — 서버 모드는
             kind 무관 표시(미보존 doc은 null로 자연 생략). 레거시(me)는 원본 사진 필드가 실사
             슬롯 공유라 가상 탭에서는 기존대로 숨김(실사 사진 오표시 방지). */}
-        {(isServerMode || !isVirtualTab) && originalPhotoUrl && (
+        {/* v3.227 H-3: 원본은 인증 로드(네이티브 헤더·웹 blob) — 로드 실패(404 등)면 영역 숨김(깨진 이미지 0) */}
+        {(isServerMode || !isVirtualTab) && originalPhoto.source && (
           <TouchableOpacity
             style={styles.originalPhotoBox}
             activeOpacity={0.85}
-            onPress={() => setZoomUri(originalPhotoUrl)}
+            onPress={() => {
+              if (!originalPhoto.source) return;
+              setZoomHeaders(originalPhoto.source.headers);
+              setZoomUri(originalPhoto.source.uri);
+            }}
           >
             <View style={{ flex: 1 }}>
               <AppText style={styles.originalPhotoLabel}>만들 때 사용한 사진</AppText>
@@ -947,7 +956,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 이 사진을 바탕으로 아티스트가 만들어졌어요. 탭하면 크게 볼 수 있어요.
               </AppText>
             </View>
-            <Image source={{ uri: originalPhotoUrl }} style={styles.originalPhotoImg} />
+            <Image
+              source={originalPhoto.source}
+              style={styles.originalPhotoImg}
+              onError={() => {
+                console.warn('[authImage] 원본 표시 실패 — 영역 숨김');
+                originalPhoto.markFailed();
+              }}
+            />
           </TouchableOpacity>
         )}
 
@@ -955,7 +971,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         <TouchableOpacity
           style={styles.previewBox}
           activeOpacity={0.85}
-          onPress={() => setZoomUri(displayUrl)}
+          onPress={() => { setZoomHeaders(undefined); setZoomUri(displayUrl); }}
         >
           <Image source={{ uri: displayUrl }} style={styles.previewImg} />
           <View style={styles.zoomHint}>
@@ -1202,7 +1218,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       <ZoomModal
         visible={!!zoomUri}
         uri={zoomUri || ''}
-        onClose={() => setZoomUri(null)}
+        headers={zoomHeaders}
+        onClose={() => { setZoomUri(null); setZoomHeaders(undefined); }}
       />
 
       {/* v3.105: 서버 아티스트 재생성 confirm — ⭐ 소모 명시 */}
@@ -1525,10 +1542,13 @@ export default function ArtistResultScreen({ navigation, route }: any) {
 function ZoomModal({
   visible,
   uri,
+  headers,
   onClose,
 }: {
   visible: boolean;
   uri: string;
+  /** v3.227 H-3: 원본 사진(네이티브) 인증 헤더 — 공개 시트는 undefined */
+  headers?: Record<string, string>;
   onClose: () => void;
 }) {
   const { width: screenW, height: screenH } = Dimensions.get('window');
@@ -1631,7 +1651,7 @@ function ZoomModal({
             onPress={handleImageTap}
           >
             <Animated.Image
-              source={{ uri }}
+              source={headers ? { uri, headers } : { uri }}
               style={{
                 width: screenW,
                 height: screenH,

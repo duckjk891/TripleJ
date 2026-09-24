@@ -180,3 +180,125 @@ export const spendExtraSlot = async (): Promise<{ spent?: number; balance?: numb
     throw err;
   }
 };
+
+// ── v3.227 A-보완: 생성 job 추적 API — 서버 필드 접근은 이 매퍼 한 곳에서만 ─────────
+// GET  /character/job/{job_id}           → {job_id, mode('real'|'cartoon'), status, object_name?, preview_url?,
+//                                           original_object_name?, character_id?, art_style?, error?, created_at,
+//                                           consumed?, dismissed?, refunded?}  (404 = 없음·타인·형식 오류)
+// GET  /character/jobs/recoverable       → {jobs:[...], count, stale_fixed}  (v3.227 신규 — 구서버 404)
+// POST /character/job/{job_id}/dismiss   → 본인 done/failed만, 환불 없음 (구서버 404 — 조용히 무시)
+// 409  {error:'generation_in_progress', job_id, mode, character_id, created_at} — generate 4종 과금 전 차단
+// 서버 datetime은 utcnow().isoformat()(오프셋 없음) → UTC로 해석해야 함(JS는 오프셋 없는 값을 로컬로 파싱).
+
+export type CharacterJobStatus = 'processing' | 'done' | 'failed' | 'unknown';
+
+export interface CharacterJobSnapshot {
+  jobId: string;
+  status: CharacterJobStatus;
+  /** 서버 mode — 캐릭터 종류(real/cartoon). sheet/outfit 구분은 서버에 없음 */
+  characterKind: 'real' | 'virtual' | null;
+  characterId: string | null;
+  objectName: string | null;
+  previewUrl: string | null;
+  originalObjectName: string | null;
+  artStyle: string | null;
+  error: string | null;
+  refunded: boolean | null;
+  consumed: boolean;
+  dismissed: boolean;
+  /** 서버 created_at(epoch ms) — elapsed_sec가 있으면 그 기준으로 역산 */
+  createdAtMs: number | null;
+  hasPhoto: boolean | null;
+}
+
+/** 서버 UTC(오프셋 없는 ISO) → epoch ms. 오프셋·Z가 있으면 그대로 */
+export function parseServerUtc(v: unknown): number | null {
+  if (typeof v !== 'string' || !v) return null;
+  const hasOffset = /(Z|[+-]\d{2}:?\d{2})$/.test(v);
+  const ms = Date.parse(hasOffset ? v : `${v}Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function strOrNull(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v);
+  return s ? s : null;
+}
+
+/** job 응답·recoverable 항목·409 본문 공용 매퍼 */
+export function mapCharacterJob(raw: any): CharacterJobSnapshot | null {
+  const jobId = strOrNull(raw?.job_id);
+  if (!jobId) return null;
+  const st = raw?.status;
+  const status: CharacterJobStatus =
+    st === 'processing' || st === 'done' || st === 'failed' ? st : 'unknown';
+  const mode = raw?.mode;
+  let createdAtMs = parseServerUtc(raw?.created_at);
+  if (typeof raw?.elapsed_sec === 'number' && raw.elapsed_sec >= 0) {
+    createdAtMs = Date.now() - raw.elapsed_sec * 1000;
+  }
+  return {
+    jobId,
+    status,
+    characterKind: mode === 'cartoon' ? 'virtual' : mode === 'real' ? 'real' : null,
+    characterId: strOrNull(raw?.character_id),
+    objectName: strOrNull(raw?.object_name),
+    previewUrl: strOrNull(raw?.preview_url),
+    originalObjectName: strOrNull(raw?.original_object_name),
+    // save의 art_style에는 기존 관행대로 잡 결과 art_style(라벨)을 그대로 보낸다
+    artStyle: strOrNull(raw?.art_style ?? raw?.art_style_key),
+    error: strOrNull(raw?.error),
+    refunded: typeof raw?.refunded === 'boolean' ? raw.refunded : null,
+    consumed: !!raw?.consumed,
+    dismissed: !!raw?.dismissed,
+    createdAtMs,
+    hasPhoto: typeof raw?.has_photo === 'boolean' ? raw.has_photo : null,
+  };
+}
+
+/** 409 generation_in_progress 응답이면 진행 중 job 스냅샷, 아니면 null */
+export function parseGenerationInProgress(err: any): CharacterJobSnapshot | null {
+  if (err?.response?.status !== 409) return null;
+  const data = err?.response?.data;
+  if (data?.error !== 'generation_in_progress') return null;
+  const snap = mapCharacterJob({ ...data, status: 'processing' });
+  return snap;
+}
+
+/** GET /character/job/{id} — 404는 null(없음·타인), 그 외 오류는 throw(추적기가 백오프) */
+export const getCharacterJob = async (jobId: string): Promise<CharacterJobSnapshot | null> => {
+  try {
+    const res = await api.get(`/character/job/${encodeURIComponent(jobId)}`, { timeout: 20000 });
+    return mapCharacterJob({ job_id: jobId, ...res.data });
+  } catch (err: any) {
+    if (err?.response?.status === 404) return null;
+    throw err;
+  }
+};
+
+/** GET /character/jobs/recoverable — supported=false면 구서버(404·405) */
+export const listRecoverableJobs = async (): Promise<{ supported: boolean; jobs: CharacterJobSnapshot[] }> => {
+  try {
+    const res = await api.get('/character/jobs/recoverable', { timeout: 20000 });
+    const raw = Array.isArray(res.data?.jobs) ? res.data.jobs : [];
+    const jobs = raw.map(mapCharacterJob).filter((j: CharacterJobSnapshot | null): j is CharacterJobSnapshot => !!j);
+    return { supported: true, jobs };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404 || status === 405) return { supported: false, jobs: [] };
+    throw err;
+  }
+};
+
+/** POST /character/job/{id}/dismiss — 결과 버리기(환불 없음). 구서버·이미 없음(404)은 조용히 true */
+export const dismissCharacterJob = async (jobId: string): Promise<boolean> => {
+  try {
+    await api.post(`/character/job/${encodeURIComponent(jobId)}/dismiss`, {}, { timeout: 20000 });
+    return true;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404 || status === 405) return true;
+    console.warn('[CharRecover] dismiss 실패', { status });
+    return false;
+  }
+};

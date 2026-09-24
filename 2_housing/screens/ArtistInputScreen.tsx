@@ -24,6 +24,10 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { getFaceVerifyStatus } from '../services/faceVerifyService';
+import GenerationJobCard from '../components/GenerationJobCard';
+import { useActiveArtistJob, useUserArtistJobs } from '../stores/generationJobStore';
+import { refreshRecoverable, ensureServerCapability } from '../services/generationTracker';
+import { useAuthImage } from '../utils/authImage';
 import { colors } from '../theme/colors';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
@@ -125,9 +129,19 @@ const QUESTIONS: QuestionDef[] = [
   },
 ];
 
+// v3.227 H-2: 실사 + 얼굴 사진이 있을 때 외모 질문(머리·얼굴·피부·체형)은 "사진과 다르게 하고 싶을 때만"
+// 답하도록 안내 — 답변이 사진을 덮어써 얼굴이 달라지는 문제 완화(건너뛴 항목은 buildFinalText에서 제외 — 직렬화 불변).
+// 사진 없음(텍스트 전용)·캐릭터(가상)는 기존 문구 그대로.
+const PHOTO_MODE_KEYS: ReadonlySet<keyof StyleAnswers> = new Set<keyof StyleAnswers>(['hair', 'face', 'skin', 'body']);
+const PHOTO_MODE_HINT = '사진과 다르게 하고 싶을 때만 적어주세요(건너뛰면 사진 그대로).';
+function questionTextFor(q: QuestionDef, withPhoto: boolean): string {
+  return withPhoto && PHOTO_MODE_KEYS.has(q.key) ? `${q.question} ${PHOTO_MODE_HINT}` : q.question;
+}
+
 // v3.227 H-1 [ArtistDraft]: 사진 선택/텍스트 전용 선택 버블 — 구 draft(photoIntent 없음)의 의도 추론 근거
 const PHOTO_BUBBLE_PREFIX = '사진 선택: ';
 const TEXT_ONLY_BUBBLE = '사진 없이 만들게요';
+const REUSE_PHOTO_BUBBLE = '이전에 올린 사진으로 만들게요';
 const PHOTO_REUPLOAD_BUBBLE = '이어서 만들려면 얼굴 사진을 다시 올려주세요.';
 const STYLE_STEP_PROMPT = '어떤 그림체(화풍)로 그릴까요? 샘플 중에 고르거나 원하는 화풍 이미지를 직접 올려주세요.';
 
@@ -162,6 +176,22 @@ function buildFinalText(answers: StyleAnswers): string {
   if (answers.height) parts.push(`키는 ${answers.height}`);
   if (answers.mood) parts.push(`분위기는 ${answers.mood}`);
   return parts.join(', ');
+}
+
+/** v3.227 H-1(W1): [이전 사진 사용] 버튼 — 원본 썸네일은 인증 로드(authImage), 실패 시 텍스트만 */
+function PrevPhotoButton({ objectName, onPress }: { objectName: string; onPress: () => void }) {
+  const img = useAuthImage(objectName);
+  return (
+    <TouchableOpacity style={styles.reuseBtn} onPress={onPress} accessibilityLabel="이전 사진 사용">
+      {img.source ? (
+        <Image source={img.source} style={styles.reuseThumb} onError={img.markFailed} />
+      ) : null}
+      <View style={{ flex: 1 }}>
+        <AppText style={styles.reuseBtnText}>이전 사진 사용</AppText>
+        <AppText style={styles.reuseBtnDesc}>전에 올린 얼굴 사진으로 다시 만들어요</AppText>
+      </View>
+    </TouchableOpacity>
+  );
 }
 
 export default function ArtistInputScreen({ navigation, route }: any) {
@@ -213,8 +243,20 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     : restoreParam
       ? useCharacterTaskStore.getState().photoIntent
       : null;
+  // v3.227 W0 후속: 같은 앱 세션(서버 실패 후 재진입 등)에서 store 메모리에 사진이 남아 있으면 그 사진을
+  // 그대로 이어서 쓴다 — 사진 재요구 안내를 띄우지 않는다(재요구는 파일이 실제로 사라진 경우만).
+  const memoryPhoto: { uri: string; name: string } | null = (() => {
+    if (restoredPhotoIntent !== 'photo') return null;
+    const st = useCharacterTaskStore.getState();
+    return st.photoUri ? { uri: st.photoUri, name: st.photoName || '' } : null;
+  })();
+  // v3.227 H-1(W1): [이전 사진 사용]으로 고른 서버 원본(텍스트 경로 — draft 영속)도 사진 소스로 인정
+  const restoredReuse: string | null =
+    restoredPhotoIntent === 'photo'
+      ? (resumableDraft ? resumableDraft.reuseOriginalObjectName ?? null : useCharacterTaskStore.getState().reuseOriginalObjectName)
+      : null;
   const initialPhotoResume: PhotoResumeTarget | null =
-    resumableDraft && restoredPhotoIntent === 'photo' && resumableDraft.step !== 'welcome'
+    resumableDraft && restoredPhotoIntent === 'photo' && resumableDraft.step !== 'welcome' && !memoryPhoto && !restoredReuse
       ? { step: resumableDraft.step, qIndex: resumableDraft.qIndex }
       : null;
   const [photoIntent, setPhotoIntent] = useState<ArtistPhotoIntent>(restoredPhotoIntent);
@@ -249,8 +291,15 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.219 [ArtistDraft]: photoUri는 draft 영속 제외(로컬 파일 URI — 재시작 후 소멸 가능).
   // 화면 이탈 복원 시에도 사진은 다시 올리는 흐름(텍스트 답변만 보존)이다.
   // v3.227 H-1: 대신 사진 사용 의도(photoIntent)를 영속해, 의도='photo'면 사진 단계를 다시 요구한다.
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [photoName, setPhotoName] = useState<string>('');
+  const [photoUri, setPhotoUri] = useState<string | null>(memoryPhoto ? memoryPhoto.uri : null);
+  const [photoName, setPhotoName] = useState<string>(memoryPhoto ? memoryPhoto.name : '');
+  // v3.227 H-1(W1): [이전 사진 사용] 서버 원본 경로(사진 파일 대신 생성 Form original_object_name)
+  const [reuseOriginal, setReuseOriginal] = useState<string | null>(restoredReuse);
+  // [이전 사진 사용] 후보(신서버 + 본인 원본이 있을 때만 노출)
+  const [prevOriginal, setPrevOriginal] = useState<string | null>(null);
+  // v3.227 A-보완: 추적 중(processing·done-unsaved) 아티스트 job — 있으면 새로 만들기 대신 카드만(중복 생성 차단 ①)
+  const activeJob = useActiveArtistJob();
+  const userJobs = useUserArtistJobs();
 
   // 6단계 질문
   const [qIndex, setQIndex] = useState(resumableDraft ? resumableDraft.qIndex : 0);
@@ -292,6 +341,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     }
     // v3.227 H-1: 복원된 의도를 taskStore에 동기화 — ArtistLoading 생성 직전 가드가 읽는다
     if (restoredPhotoIntent) useCharacterTaskStore.getState().setInput({ photoIntent: restoredPhotoIntent });
+    if (restoredReuse) useCharacterTaskStore.getState().setInput({ reuseOriginalObjectName: restoredReuse });
+    if (restoredPhotoIntent === 'photo' && (memoryPhoto || restoredReuse)) {
+      // v3.227 W0 후속: 메모리 사진·[이전 사진 사용] 원본이 있으면 사진 재요구 없이 이어서 진행
+      console.info('[ArtistDraft] 사진 유지 — 재요구 생략', { memory: !!memoryPhoto, reuse: !!restoredReuse });
+    }
     if (initialPhotoResume) {
       console.info('[ArtistDraft] 사진 재요구', {
         step: initialPhotoResume.step, qIndex: initialPhotoResume.qIndex, kind: resumableDraft.selectedKind,
@@ -319,9 +373,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       targetCharacterId: regenCharacterId ?? null,
       forceKind: forceKind ?? null,
       photoIntent,
+      reuseOriginalObjectName: reuseOriginal,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, chat, qIndex, styleAnswers, currentInput, selectedKind, pendingConceptText, photoIntent, photoResume]);
+  }, [step, chat, qIndex, styleAnswers, currentInput, selectedKind, pendingConceptText, photoIntent, photoResume, reuseOriginal]);
 
   // v3.219 [ArtistDraft]: '처음부터' — draft 폐기 후 초기 상태로(대화·답변·진행도 리셋)
   const handleRestartFromScratch = () => {
@@ -346,7 +401,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.227 H-1: 사진 의도·재요구 지점도 초기화(처음부터 = 사진/설명 선택부터 다시)
     setPhotoIntent(null);
     setPhotoResume(null);
-    useCharacterTaskStore.getState().setInput({ photoIntent: null });
+    setReuseOriginal(null);
+    useCharacterTaskStore.getState().setInput({ photoIntent: null, reuseOriginalObjectName: null });
     setSelectedPresetKey(null);
     setStyleUpload(null);
     setShowResumeNotice(false);
@@ -404,9 +460,26 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       setInitialLoading(false);
       return;
     }
+    // v3.227 A-보완: 로컬 기록 없는 생성 결과 회수(30초 스로틀·구서버 404 무시) — welcome 카드 원천
+    void refreshRecoverable({ reason: 'ArtistInput' });
     (async () => {
       try {
         const { characters, slots } = await listArtists();
+        // v3.227 H-1(W1): [이전 사진 사용] 후보 — 신서버(original_object_name Form 지원)에서만.
+        // 재생성 대상의 원본 우선, 없으면 대표→최근 실사 아티스트 원본.
+        void (async () => {
+          try {
+            const cap = await ensureServerCapability();
+            if (cap !== 'yes') return;
+            const reals = characters.filter((c) => c.kind === 'real' && (c as any).original_photo_object_name);
+            const target = regenCharacterId ? reals.find((c) => c.character_id === regenCharacterId) : undefined;
+            const pick = target ?? reals.find((c) => c.is_default) ?? reals[0];
+            const obj: string | null = pick ? String((pick as any).original_photo_object_name) : null;
+            if (obj) setPrevOriginal((cur) => cur ?? obj);
+          } catch {
+            /* 후보 없음 — 버튼 미노출 */
+          }
+        })();
         if (characters.length > 0 || slots.used === 0) {
           // 서버 다중 체제(신규 계정 포함) — 신 계약으로 생성
           useCharacterTaskStore.getState().setInput({ legacyContract: false });
@@ -423,6 +496,17 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       }
     })();
   }, [user]);
+
+  // v3.227 H-1(W1): 추적·회수 job의 원본(사진으로 만든 job)이 있으면 [이전 사진 사용] 후보로 우선
+  useEffect(() => {
+    const withOriginal = userJobs.find((j) => j.characterKind === 'real' && j.result?.original_object_name);
+    const obj = withOriginal?.result?.original_object_name;
+    if (!obj) return;
+    ensureServerCapability().then((cap) => {
+      if (cap === 'yes') setPrevOriginal(obj);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userJobs.length]);
 
   const pushDirector = (text: string) =>
     setChat((prev) => [...prev, { type: 'director' as const, text }]);
@@ -444,7 +528,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.227 H-1: 사진 재요구 후 사진(또는 명시적 텍스트 전환)을 받으면 멈췄던 단계로 복귀.
   // 재요구 중이 아니면 기존대로 질문 처음부터. 텍스트 전환인데 답변이 하나도 없으면 처음부터
   // (텍스트 전용은 설명이 필요 — handleStartGeneration 가드와 같은 기준).
-  const resumeOrStartQuestioning = (target: PhotoResumeTarget | null, viaTextOnly: boolean) => {
+  const resumeOrStartQuestioning = (target: PhotoResumeTarget | null, viaTextOnly: boolean, withPhotoNow = false) => {
     setPhotoResume(null);
     if (!target || (viaTextOnly && !buildFinalText(styleAnswers).trim())) {
       startQuestioning();
@@ -462,11 +546,16 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // 화풍 단계였는데 실사로 바뀐 경우 등은 마지막 질문으로(답변은 보존 — 확인 후 만들기)
     const qi = target.step === 'style' ? QUESTIONS.length - 1 : Math.min(target.qIndex, QUESTIONS.length - 1);
     setQIndex(qi);
-    pushDirector(QUESTIONS[qi].question);
+    pushDirector(questionTextFor(QUESTIONS[qi], withPhotoNow && !isVirtualMode));
     setStep('questioning');
   };
 
   // v3.227 H-1: 사진 의도='photo'인데 사진이 없으면 사진 단계로 되돌린다(방어 — 정상 흐름에선 복원 시 이미 차단)
+  // v3.227 H-1(W1): 이번 생성에 쓸 사진 소스(파일 또는 [이전 사진 사용] 서버 원본)
+  const hasPhotoSource = !!photoUri || !!reuseOriginal;
+  // v3.227 H-2: 외모 질문 안내 분기 — 실사 + 사진 소스가 있을 때만
+  const photoQuestionMode = !isVirtualMode && hasPhotoSource;
+
   const requirePhotoAgain = (from: Step) => {
     console.info('[ArtistDraft] 사진 재요구', { step: from, qIndex });
     setPhotoResume({ step: from, qIndex });
@@ -493,10 +582,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 setPhotoUri(file.uri);
                 setPhotoName(file.name);
                 setPhotoIntent('photo'); // v3.227 H-1: 사진 사용 의도 영속(draft)
+                setReuseOriginal(null); // 새 사진이 [이전 사진 사용]보다 우선
                 // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
-                taskStore.setInput({ portraitConfirmed: true, photoIntent: 'photo', characterKind: isVirtualMode ? 'virtual' : 'real' });
+                taskStore.setInput({ portraitConfirmed: true, photoIntent: 'photo', reuseOriginalObjectName: null, characterKind: isVirtualMode ? 'virtual' : 'real' });
                 pushUser(`${PHOTO_BUBBLE_PREFIX}${file.name}`);
-                resumeOrStartQuestioning(photoResume, false);
+                resumeOrStartQuestioning(photoResume, false, true);
                 // v3.163(대표): 얼굴인증 수집·이용 동의는 "만들기" 클릭이 아니라 사진 업로드
                 // 시점에 미리 — 실사+본인인증 완료+미동의 사용자만 동의 화면(consentOnly)으로.
                 // best-effort: 상태 조회 실패해도 입력 흐름은 계속(생성 시점 게이트가 후방 방어).
@@ -528,10 +618,12 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.227 H-1: 명시적 텍스트 전용 선택 — 의도 'text' 영속 + store의 이전 사진도 여기서만 비운다
     // (setInput 호출부는 사진이 있을 때만 photoUri를 갱신하므로, 잔존 사진이 텍스트 경로에 실리지 않게)
     setPhotoIntent('text');
+    setReuseOriginal(null);
     // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
     taskStore.setInput({
       portraitConfirmed: false,
       photoIntent: 'text',
+      reuseOriginalObjectName: null,
       photoUri: null,
       photoName: null,
       characterKind: isVirtualMode ? 'virtual' : 'real',
@@ -540,6 +632,50 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     pushDirector('좋아요! 설명만 듣고 상상해서 만들어드릴게요. 대신 조금 더 자세히 알려주세요!');
     const resumeTarget = photoResume;
     setTimeout(() => resumeOrStartQuestioning(resumeTarget, true), 400);
+  };
+
+  // ── v3.227 H-1(W1): [이전 사진 사용] — 서버에 남은 본인 원본으로 만들기(실사 전용) ─────
+  // 확약 다이얼로그를 다시 띄운다(본인 사진 재확인 유지). 서버는 소유권 검증 후 같은 바이트로
+  // 얼굴 인증 게이트를 그대로 수행한다(인증 우회 없음).
+  const handleReusePrevPhoto = () => {
+    const obj = prevOriginal;
+    if (!obj) return;
+    showAlert(
+      '사진 확인',
+      '이전에 올린 사진으로 만들어요. 이 사진은 본인이거나, 사진 속 인물의 동의를 받았음을 확인해주세요.\n\n사진은 캐릭터 생성에만 사용되며 AI 학습에 쓰이지 않아요.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '확인했어요',
+          onPress: () => {
+            console.info('[ArtistInput] 이전 사진 사용 확약', { kind: 'real' });
+            setPhotoUri(null);
+            setPhotoName('');
+            setReuseOriginal(obj);
+            setPhotoIntent('photo');
+            taskStore.setInput({
+              portraitConfirmed: true,
+              photoIntent: 'photo',
+              reuseOriginalObjectName: obj,
+              photoUri: null,
+              photoName: null,
+              characterKind: 'real',
+            });
+            pushUser(REUSE_PHOTO_BUBBLE);
+            resumeOrStartQuestioning(photoResume, false, true);
+            // 사진 업로드 경로와 같은 얼굴인증 동의 선진행(best-effort)
+            getFaceVerifyStatus()
+              .then((st) => {
+                if (st?.enabled && st.is_verified && st.consent_needed) {
+                  console.info('[ArtistInput] 얼굴인증 동의 선진행 → FaceVerify(consentOnly)');
+                  (navigation as any).navigate('FaceVerify', { consentOnly: true });
+                }
+              })
+              .catch((err: any) => console.warn('[ArtistInput] face status 확인 실패(계속 진행)', err?.response?.status));
+          },
+        },
+      ]
+    );
   };
 
   // ── v3.112: 실사/가상 명시 선택(구 v3.80 토글 대체) ─────
@@ -607,8 +743,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       showAlert('알림', '화풍을 하나 골라주세요. 샘플 중에 고르거나 이미지를 직접 올릴 수 있어요.');
       return;
     }
-    // v3.227 H-1: 사진 의도인데 사진이 없으면 진행 불가 — 사진 단계로
-    if (photoIntent === 'photo' && !photoUri) {
+    // v3.227 H-1: 사진 의도인데 사진(또는 [이전 사진 사용] 원본)이 없으면 진행 불가 — 사진 단계로
+    if (photoIntent === 'photo' && !hasPhotoSource) {
       requirePhotoAgain('style');
       return;
     }
@@ -625,6 +761,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.227 H-1: photoUri/photoName은 사진이 있을 때만 갱신(null 덮어쓰기 금지 — 사진 소실 회귀)
     taskStore.setInput({
       ...(photoUri ? { photoUri, photoName } : {}),
+      ...(!photoUri && reuseOriginal ? { reuseOriginalObjectName: reuseOriginal } : {}),
       photoIntent,
       userText: pendingConceptText,
       conceptText: pendingConceptText, // v3.105: 취소/실패 복원용 순수 컨셉 보존
@@ -659,7 +796,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
     if (qIndex + 1 < QUESTIONS.length) {
       const next = QUESTIONS[qIndex + 1];
-      setTimeout(() => pushDirector(next.question), 150);
+      setTimeout(() => pushDirector(questionTextFor(next, photoQuestionMode)), 150);
       setQIndex(qIndex + 1);
       setCurrentInput('');
     } else {
@@ -672,13 +809,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // (기본 착장 프롬프트 제거. 옷은 ArtistCody에서 선택, 미선택 시 디폴트 fallback)
   const handleStartGeneration = (answers: StyleAnswers) => {
     const userInput = buildFinalText(answers);
-    // v3.227 H-1: 사진 의도인데 사진이 없으면 진행 불가 — 사진 단계로(답변은 보존)
-    if (photoIntent === 'photo' && !photoUri) {
+    // v3.227 H-1: 사진 의도인데 사진(또는 [이전 사진 사용] 원본)이 없으면 진행 불가 — 사진 단계로(답변은 보존)
+    if (photoIntent === 'photo' && !hasPhotoSource) {
       requirePhotoAgain('questioning');
       return;
     }
     // v3.76: 텍스트-only 경로(사진 없음)에서는 설명이 최소 하나는 필요
-    if (!photoUri && !userInput.trim()) {
+    if (!hasPhotoSource && !userInput.trim()) {
       showAlert('알림', '사진이 없으면 설명이 필요해요. 질문에 하나 이상 답해주세요.');
       startQuestioning();
       return;
@@ -712,6 +849,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.227 H-1: photoUri/photoName은 사진이 있을 때만 갱신(null 덮어쓰기 금지 — 사진 소실 회귀)
     taskStore.setInput({
       ...(photoUri ? { photoUri, photoName } : {}),
+      ...(!photoUri && reuseOriginal ? { reuseOriginalObjectName: reuseOriginal } : {}),
       photoIntent,
       userText: conceptText,
       conceptText,
@@ -753,7 +891,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.105: 이어서 만들기 — Cody 취소(restore) 또는 직전 생성 실패(apiError) 시
   // store에 보존된 컨셉/사진/화풍으로 의상 선택부터 재개 (입력 데이터 보존 — 대표 지적)
   // v3.227 H-1: 사진 의도인데 store에 사진이 없으면 숨김 — 의상 단계로 건너뛰면 사진 없이 생성된다
-  const resumeMissingPhoto = photoIntent === 'photo' && !taskStore.photoUri;
+  const resumeMissingPhoto = photoIntent === 'photo' && !taskStore.photoUri && !taskStore.reuseOriginalObjectName;
   const canResume =
     (restoreParam || !!taskStore.apiError) && !!(taskStore.conceptText || taskStore.userText) && !resumeMissingPhoto;
   const handleResume = () => {
@@ -764,11 +902,26 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   };
 
   const renderInputArea = () => {
+    // v3.227 A-보완 중복 생성 차단 ①: 추적 중(만드는 중·저장 안 한 완성본)이면 새로 만들기 대신 추적 카드만
+    if (activeJob) {
+      return (
+        <View style={styles.inputArea}>
+          <GenerationJobCard navigation={navigation} />
+          <AppText style={styles.textOnlyHint}>
+            {activeJob.lastStatus === 'processing'
+              ? '이미 아티스트를 만드는 중이에요. 완성된 뒤에 새로 만들 수 있어요.'
+              : '완성된 아티스트를 먼저 확인해주세요. 저장하거나 닫으면 새로 만들 수 있어요.'}
+          </AppText>
+        </View>
+      );
+    }
     if (step === 'welcome') {
       // v3.81: "이미 아티스트가 있어요" 교체 게이트 제거 — 진입 관리는 MyArtists가 담당.
       // 이 화면은 항상 생성 UI (Map 미보유 경로·MyArtists 경유 진입 모두 welcome부터).
       return (
         <View style={styles.inputArea}>
+          {/* v3.227: 실패·환불 안내 등 추적 카드(차단 대상이 아닌 것만 — 차단 대상은 위에서 처리) */}
+          <GenerationJobCard navigation={navigation} />
           {canResume && (
             <TouchableOpacity style={styles.resumeBtn} onPress={handleResume}>
               <AppText style={styles.resumeBtnText}>이어서 만들기 — 입력해둔 내용으로 의상 선택</AppText>
@@ -795,6 +948,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
                 <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
               </TouchableOpacity>
+              {/* v3.227 H-1(W1): [이전 사진 사용] — 실사 + 신서버 + 본인 원본이 있을 때만 */}
+              {!isVirtualMode && prevOriginal && (
+                <PrevPhotoButton objectName={prevOriginal} onPress={handleReusePrevPhoto} />
+              )}
               {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 생성 */}
               <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
                 <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
@@ -1056,6 +1213,15 @@ const styles = StyleSheet.create({
   },
   textOnlyBtnText: { color: colors.text.secondary, fontWeight: '600', fontSize: 14 },
   textOnlyHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' },
+  // v3.227 H-1(W1): [이전 사진 사용]
+  reuseBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8, backgroundColor: colors.bg.surface1,
+  },
+  reuseThumb: { width: 36, height: 36, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  reuseBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
+  reuseBtnDesc: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
 
   // v3.219 [ArtistDraft]: 복원 안내 버블 인라인 '처음부터' 액션
   restartInlineBtn: {

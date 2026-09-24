@@ -8,13 +8,19 @@
  *
  * - 후킹: console.error/warn (항상), console.info (DEV만),
  *         native: ErrorUtils 전역 핸들러(기존 핸들러 체이닝),
- *         web: window 'error' / 'unhandledrejection' + pagehide/beforeunload(sendBeacon ?token=)
+ *         web: window 'error' / 'unhandledrejection' + pagehide/beforeunload(keepalive fetch — 헤더 인증)
  * - 배치: 5초 인터벌 OR 큐 길이 ≥ 20 시 flush
  * - 민감정보 필터: token=, api_key=, password=, secret=, bearer ..., JWT-like 패턴 → 이벤트 통째 drop
  * - 실패 모드(무음 — 절대 throw/재로깅 금지):
  *     비로그인 → 배치 무음 drop(401 스팸 방지, MAIDOL의 401 drop과 동일 결과)
- *     401/422 → drop, 네트워크/5xx → 큐 보존(최대 200, 초과 시 oldest drop)
- * - 무한루프 방지: _inEmit 재진입 가드 — flush 중 발생한 console(예: api.ts '[API Error]' 로그)은 enqueue 안 함
+ *     401/403/422 → drop, 네트워크/5xx → 큐 보존(최대 200, 초과 시 oldest drop)
+ * - v3.227 폭주 차단(만료 토큰 상태 분당 요청 ≤1, 첫 403 이후 0):
+ *     ① 401·403 → 그 토큰으로 일시정지(_authBlockedToken — 같은 토큰인 동안 enqueue·flush 무동작, 토큰 교체 시 해제)
+ *     ② 단일 in-flight(_inflight) — 실행 중이면 새 flush(임계치 트리거 포함)는 무동작
+ *     ③ 네트워크·5xx 실패 → 지수 백오프 min(5s·2^n, 5분), 연속 5회 실패 → 서킷 10분(큐는 MAX_QUEUE로 절단 유지)
+ *     ④ 성공 시 카운터 초기화 ⑤ 자체 경고는 console로 1회만(재귀 방지)
+ * - 무한루프 방지: flush 요청이 발생시킨 console(api.ts '[API Error] /_logs/frontend'·'[AUTH]')은 enqueue 안 함
+ * - v3.227: 페이지 종료 전송은 sendBeacon(URL 쿼리 토큰 인증) 대신 keepalive fetch + Authorization 헤더(URL 토큰 금지)
  * - idempotent: initRemoteLogger() 두 번 호출돼도 중복 후킹 안 함
  *
  * 본 모듈 자체는 console 으로 디버그 메시지를 출력하지 않는다 — 무한루프 방지.
@@ -55,7 +61,19 @@ let _initialized = false;
 let _queue: RemoteLogEvent[] = [];
 let _flushTimer: ReturnType<typeof setInterval> | null = null;
 let _userAgent = '';
-let _inEmit = false; // 자기 호출에서 발생한 console 재진입 방지
+// v3.227 B: 폭주 차단 상태
+let _inflight: Promise<void> | null = null;   // 단일 in-flight
+let _authBlockedToken: string | null = null;  // 401/403 받은 토큰 — 같은 토큰이면 일시정지
+let _consecutiveFailures = 0;                 // 네트워크·5xx 연속 실패
+let _nextAllowedAt = 0;                       // 백오프 해제 시각(ms)
+let _circuitUntil = 0;                        // 서킷 차단 해제 시각(ms)
+let _warnedAuth = false;
+let _warnedCircuit = false;
+const BACKOFF_BASE_MS = 5000;
+const BACKOFF_MAX_MS = 5 * 60 * 1000;
+const CIRCUIT_FAILURES = 5;
+const CIRCUIT_MS = 10 * 60 * 1000;
+const SELF_ENDPOINT = '/_logs/frontend';
 
 const _origConsole: Record<'error' | 'warn' | 'info', ((...args: any[]) => void) | null> = {
   error: null,
@@ -123,10 +141,36 @@ function _currentUrl(): string {
   }
 }
 
-function _enqueue(level: string, args: any[], extraStack?: string): void {
-  if (_inEmit) return; // 자기 자신이 발생시킨 console 재진입 차단
+function _currentToken(): string | null {
+  try { return useAuthStore.getState().token; } catch { return null; }
+}
+
+/** 토큰이 바뀌었으면 인증 일시정지 해제(재로그인·토큰 교체 즉시 재개) */
+function _syncAuthBlock(token: string | null): boolean {
+  if (_authBlockedToken && token !== _authBlockedToken) {
+    _authBlockedToken = null;
+    _warnedAuth = false;
+    _consecutiveFailures = 0;
+    _nextAllowedAt = 0;
+  }
+  return !!token && token === _authBlockedToken;
+}
+
+/** 자체 경고 — 원본 console로 1회(후킹 우회 = 재귀 0) */
+function _selfWarn(msg: string, ctx?: Record<string, any>): void {
   try {
+    const w = _origConsole.warn || console.warn;
+    w.call(console, `[remoteLogger] ${msg}`, ctx ?? {});
+  } catch { /* noop */ }
+}
+
+function _enqueue(level: string, args: any[], extraStack?: string): void {
+  try {
+    // v3.227: 인증 일시정지 중(같은 토큰)에는 쌓지도 않는다
+    if (_syncAuthBlock(_currentToken())) return;
     const { message, context, stack } = _serializeArgs(args);
+    // 자기 flush 요청이 발생시킨 console(api 인터셉터의 '[API Error] /_logs/frontend'·'[AUTH]') 재진입 차단
+    if (message.includes(SELF_ENDPOINT) || (_inflight && message.startsWith('[AUTH]'))) return;
     const ev: RemoteLogEvent = {
       level,
       message,
@@ -139,55 +183,97 @@ function _enqueue(level: string, args: any[], extraStack?: string): void {
     if (_eventHasSecret(ev)) return; // 민감정보 → drop
     if (_queue.length >= MAX_QUEUE) _queue.shift();
     _queue.push(ev);
-    if (_queue.length >= FLUSH_THRESHOLD) _flush();
+    // 임계치 즉시 flush — _flush가 inflight·백오프·서킷·인증 조건을 모두 통과할 때만 전송
+    if (_queue.length >= FLUSH_THRESHOLD) void _flush();
   } catch {
     // serialization 실패 → 조용히 drop (절대 throw 금지)
   }
 }
 
-async function _flush(): Promise<void> {
-  if (_queue.length === 0) return;
-  // 비로그인: 백엔드가 JWT 필수(401) — 보내지 않고 무음 drop (MAIDOL 401 drop과 동일 결과)
-  let token: string | null = null;
-  try { token = useAuthStore.getState().token; } catch { token = null; }
-  const batch = _queue.splice(0, MAX_BATCH);
-  if (!token) return;
-  _inEmit = true;
-  try {
-    await api.post('/_logs/frontend', { events: batch }, { timeout: 15000 });
-    // 성공: 큐에서 이미 제거됨
-  } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 422) {
-      // 인증/스키마 문제 — 재시도해도 못 보낼 가능성, drop
-      return;
-    }
-    // 네트워크/서버다운/5xx → 큐 앞쪽으로 되돌리되 cap 초과는 잘라낸다
-    const merged = batch.concat(_queue);
-    _queue = merged.slice(-MAX_QUEUE);
-  } finally {
-    _inEmit = false;
-  }
+/** 전송 가능 여부(백오프·서킷·인증 일시정지) — 불가면 false */
+function _canSend(token: string | null): boolean {
+  const now = Date.now();
+  if (now < _circuitUntil || now < _nextAllowedAt) return false;
+  if (!token) return true; // 비로그인은 _flush에서 무음 drop
+  return !_syncAuthBlock(token);
 }
 
-function _flushBeacon(): void {
-  // (web 전용) 페이지 종료 시 fire-and-forget. sendBeacon은 헤더를 못 붙여 ?token= 쿼리 인증.
-  if (_queue.length === 0) return;
-  if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
-    try { _flush(); } catch { /* noop */ }
-    return;
-  }
-  let token: string | null = null;
-  try { token = useAuthStore.getState().token; } catch { token = null; }
-  const batch = _queue.splice(0, MAX_BATCH);
-  if (!token) return; // 비로그인 — 무음 drop
-  try {
-    const blob = new Blob([JSON.stringify({ events: batch })], { type: 'application/json' });
-    const url = `${BACKEND_BASE_URL}/api/_logs/frontend?token=${encodeURIComponent(token)}`;
-    const ok = navigator.sendBeacon(url, blob);
-    if (!ok) {
-      _queue = batch.concat(_queue).slice(-MAX_QUEUE);
+function _onSendFailure(batch: RemoteLogEvent[]): void {
+  _consecutiveFailures += 1;
+  const now = Date.now();
+  if (_consecutiveFailures >= CIRCUIT_FAILURES) {
+    _circuitUntil = now + CIRCUIT_MS;
+    _nextAllowedAt = 0;
+    _consecutiveFailures = 0;
+    if (!_warnedCircuit) {
+      _warnedCircuit = true;
+      _selfWarn('연속 실패 — 10분간 전송 중단', { queued: _queue.length + batch.length });
     }
+  } else {
+    _nextAllowedAt = now + Math.min(BACKOFF_BASE_MS * 2 ** (_consecutiveFailures - 1), BACKOFF_MAX_MS);
+  }
+  // 네트워크/서버다운/5xx → 큐 앞쪽으로 되돌리되 cap 초과는 잘라낸다
+  _queue = batch.concat(_queue).slice(-MAX_QUEUE);
+}
+
+function _onSendSuccess(): void {
+  _consecutiveFailures = 0;
+  _nextAllowedAt = 0;
+  _circuitUntil = 0;
+  _warnedCircuit = false;
+}
+
+function _flush(): Promise<void> {
+  if (_inflight) return _inflight; // 단일 in-flight — 겹친 flush는 무동작
+  if (_queue.length === 0) return Promise.resolve();
+  const token = _currentToken();
+  if (!_canSend(token)) {
+    if (token && token === _authBlockedToken) _queue = []; // 인증 일시정지 — 쌓인 것도 버림
+    return Promise.resolve();
+  }
+  const batch = _queue.splice(0, MAX_BATCH);
+  // 비로그인: 백엔드가 JWT 필수(401) — 보내지 않고 무음 drop (MAIDOL 401 drop과 동일 결과)
+  if (!token) return Promise.resolve();
+  _inflight = (async () => {
+    try {
+      await api.post(SELF_ENDPOINT, { events: batch }, { timeout: 15000 });
+      _onSendSuccess();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        // 토큰 만료·무효 — 이 토큰으로는 더 보내지 않는다(토큰 교체 시 자동 재개). 배치는 drop
+        _authBlockedToken = token;
+        _queue = [];
+        if (!_warnedAuth) {
+          _warnedAuth = true;
+          _selfWarn('인증 만료 — 재로그인 전까지 전송 일시정지', { status });
+        }
+        return;
+      }
+      if (status === 422) return; // 스키마 문제 — 재시도해도 못 보냄, drop
+      _onSendFailure(batch);
+    } finally {
+      _inflight = null;
+    }
+  })();
+  return _inflight;
+}
+
+function _flushOnExit(): void {
+  // (web 전용) 페이지 종료 시 fire-and-forget. v3.227: keepalive fetch + Authorization 헤더
+  // (구 sendBeacon 쿼리 토큰 인증 폐기 — URL에 토큰을 싣지 않는다). 백오프·서킷·인증 조건 동일 적용.
+  if (_queue.length === 0 || _inflight) return;
+  const token = _currentToken();
+  if (!token || !_canSend(token)) return;
+  const batch = _queue.splice(0, MAX_BATCH);
+  try {
+    if (typeof fetch !== 'function') throw new Error('no fetch');
+    fetch(`${BACKEND_BASE_URL}/api${SELF_ENDPOINT}`, {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ events: batch }),
+    }).catch(() => { /* 종료 중 — 무음 */ });
   } catch {
     _queue = batch.concat(_queue).slice(-MAX_QUEUE);
   }
@@ -253,9 +339,9 @@ export function initRemoteLogger(): void {
       } catch { /* noop */ }
     });
 
-    // 페이지 종료 시 sendBeacon flush
-    window.addEventListener('pagehide', _flushBeacon);
-    window.addEventListener('beforeunload', _flushBeacon);
+    // 페이지 종료 시 keepalive flush
+    window.addEventListener('pagehide', _flushOnExit);
+    window.addEventListener('beforeunload', _flushOnExit);
   } else {
     // native: RN 전역 에러 핸들러 체이닝 (window.onerror 대응물)
     try {
@@ -265,7 +351,7 @@ export function initRemoteLogger(): void {
         g.ErrorUtils.setGlobalHandler((e: any, isFatal?: boolean) => {
           try {
             _enqueue('error', [e?.message || 'global error', { kind: 'ErrorUtils', isFatal: !!isFatal }], e?.stack);
-            _flush(); // fatal일 수 있으니 즉시 전송 시도
+            void _flush(); // fatal일 수 있으니 즉시 전송 시도(게이트 통과 시)
           } catch { /* noop */ }
           if (typeof prevHandler === 'function') prevHandler(e, isFatal);
         });
@@ -276,7 +362,7 @@ export function initRemoteLogger(): void {
     try {
       AppState.addEventListener('change', (state) => {
         if (state === 'background' || state === 'inactive') {
-          try { _flush(); } catch { /* noop */ }
+          try { void _flush(); } catch { /* noop */ }
         }
       });
     } catch { /* noop */ }
@@ -284,11 +370,20 @@ export function initRemoteLogger(): void {
 
   // 주기 flush
   _flushTimer = setInterval(() => {
-    try { _flush(); } catch { /* noop */ }
+    try { void _flush(); } catch { /* noop */ }
   }, FLUSH_INTERVAL_MS);
 }
 
 // 테스트/디버그 보조 (옵션) — 큐 길이 확인용
 export function _remoteLoggerDebug() {
-  return { initialized: _initialized, queueLen: _queue.length, timer: !!_flushTimer };
+  return {
+    initialized: _initialized,
+    queueLen: _queue.length,
+    timer: !!_flushTimer,
+    inflight: !!_inflight,
+    authBlocked: !!_authBlockedToken,
+    failures: _consecutiveFailures,
+    nextAllowedAt: _nextAllowedAt,
+    circuitUntil: _circuitUntil,
+  };
 }

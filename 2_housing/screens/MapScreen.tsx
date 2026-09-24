@@ -45,6 +45,9 @@ import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueDirector, FatigueStatus } from '../types';
+// v3.227 A-보완: 생성 중 자유 이탈 — 아티스트 디렉터 상태 말풍선·디렉터 탭 분기
+import { useActiveArtistJob } from '../stores/generationJobStore';
+import { finalizeArtistJob, openJobViewer } from '../services/generationTracker';
 
 // v3.107: 대기열 타이머(timerStore)·광고 단축 배선 폐지 — 작업은 요청 즉시 로딩 화면으로
 // 직행하고, 재요청 제한은 피로도(작곡만 서버 /fatigue/* 게이트)로 표현한다.
@@ -245,6 +248,18 @@ export default function MapScreen({ navigation }: Props) {
   // v3.219 [NextAction]: 3상태 — null=조회 전(말풍선·펄스 유보). boolean 초기값(false)이면
   // 보유자에게도 조회 완료 전 잠깐 아티스트 말풍선이 깜빡이는 레이스가 있어 null로 시작한다.
   const [hasArtistCharacter, setHasArtistCharacter] = useState<boolean | null>(null);
+  // v3.227 A-보완: 추적 중인 아티스트 job(processing → done-unsaved) — 아티스트 디렉터 말풍선 슬롯에 상태 표시
+  const artistJob = useActiveArtistJob();
+  // 튜토리얼 진행 중이면 상태 말풍선 숨김(앵커는 디렉터 좌표 박스라 말풍선과 무관 — 표시만 정리)
+  const [tutorialVisible, setTutorialVisible] = useState(false);
+  const [jobNow, setJobNow] = useState(Date.now());
+  const artistJobProcessing = artistJob?.lastStatus === 'processing';
+  useEffect(() => {
+    if (!artistJobProcessing) return undefined;
+    setJobNow(Date.now());
+    const t = setInterval(() => setJobNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, [artistJobProcessing]);
 
   // ── v3.213: 작업실 튜토리얼 anchor — 맵 좌표 기지라 measure 대신 스크롤 오프셋 기반 직접 계산 ──
   // winY = 대상맵y*scale − scrollY + ScrollView 창 오프셋(컨테이너 top = 뷰포트 top).
@@ -641,6 +656,19 @@ export default function MapScreen({ navigation }: Props) {
     // v3.182(대표): 아티스트 디렉터도 항상 Dialogue(캐릭터+대화) 경유 — 기보유면 대화에서
     // 내 아티스트 목록으로 안내(직행 분기 제거). hasArtist는 Dialogue 노드 분기용으로 전달.
     if (type === 'artist') {
+      // v3.227 A-보완: 추적 중인 job이 있으면 기존 진입 대신 — 만드는 중 → 추적 뷰어, 완성 → finalize → ArtistResult.
+      // 추적 job이 없을 때는 v3.219 경로(Dialogue → 아티스트 만들기 draft 이어가기) 그대로.
+      const job = artistJob;
+      if (job?.lastStatus === 'processing') {
+        console.info('[Map] 아티스트 디렉터 — 진행 중 job 뷰어', { jobId: job.jobId });
+        openJobViewer(job.jobId, navigation);
+        return;
+      }
+      if (job?.lastStatus === 'done') {
+        console.info('[Map] 아티스트 디렉터 — 완성 job 확인', { jobId: job.jobId });
+        void finalizeArtistJob(job.jobId, { navigation });
+        return;
+      }
       const director = DIRECTORS.find((d) => d.type === 'artist');
       navigation.navigate('Dialogue', {
         directorType: 'artist',
@@ -719,7 +747,15 @@ export default function MapScreen({ navigation }: Props) {
             const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[d.type];
             const restRemain = fatigueKey ? fatigueRemain[fatigueKey] : 0;
             const isResting = !!user && restRemain > 0;
-            const isNext = user && d.type === nextActionDirector && !isResting;
+            // v3.227 A-보완: 아티스트 디렉터 상태 말풍선 — isNext 말풍선 슬롯을 대체(동시 렌더 0),
+            // 튜토리얼 진행 중엔 숨김. 휴식 티켓(별도 위치)과는 병존.
+            const jobBubble =
+              d.type === 'artist' && !!user && !!artistJob && !tutorialVisible
+                ? artistJob.lastStatus === 'processing'
+                  ? `만드는 중… (${Math.max(0, Math.floor((jobNow - artistJob.startedAt) / 60000))}분)`
+                  : '완성! 눌러서 확인'
+                : null;
+            const isNext = user && d.type === nextActionDirector && !isResting && !jobBubble;
             return (
               // wrapper에 zIndex 20 → 캐릭터 + 티켓이 전경 가구(zIndex 15) 위로 올라옴
               <View key={d.type} style={{ zIndex: 20 }}>
@@ -762,6 +798,27 @@ export default function MapScreen({ navigation }: Props) {
                     <View style={styles.mapBubble}>
                       <Text style={styles.mapBubbleText} numberOfLines={1}>
                         ▸ 클릭해서 작업 시작!
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                {jobBubble && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => handleDirectorPress(d.type)}
+                    style={{
+                      position: 'absolute',
+                      left: d.x * mapScale - 140,
+                      top: (d.y - 70) * mapScale - 40,
+                      width: 280,
+                      alignItems: 'center',
+                      zIndex: 26,
+                    }}
+                    accessibilityLabel={jobBubble}
+                  >
+                    <View style={[styles.mapBubble, artistJob?.lastStatus === 'done' && styles.mapBubbleDone]}>
+                      <Text style={[styles.mapBubbleText, artistJob?.lastStatus === 'done' && styles.mapBubbleTextDone]} numberOfLines={1}>
+                        {jobBubble}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -935,6 +992,7 @@ export default function MapScreen({ navigation }: Props) {
         enabled={!!user}
         onStepChange={handleTutorialStepChange}
         suspended={tutorialSettling}
+        onVisibleChange={setTutorialVisible}
       />
     </View>
   );
@@ -1005,6 +1063,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  // v3.227: 생성 완료(저장 전) 상태 말풍선 — 금빛 강조
+  mapBubbleDone: { backgroundColor: colors.accent.secondary },
+  mapBubbleTextDone: { color: colors.text.inverse },
 
   // v3.207 ⑫: 헤더 힌트 말풍선 스타일 3종(headerHintBubble/Text/Tail) 삭제 — ⓘ 제거로 참조 0인 죽은 코드 정리
 
