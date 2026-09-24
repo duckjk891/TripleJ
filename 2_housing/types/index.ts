@@ -108,6 +108,8 @@ export interface GenerationItem {
   result_audio_url?: string | null;
   variants?: GenerationVariant[];
   error_message?: string | null;
+  /** v3.228: 서버 실패 확정 시 환불 여부(재시작 정리 포함) — true일 때만 환불 안내(X-K1) */
+  refunded?: boolean | null;
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;

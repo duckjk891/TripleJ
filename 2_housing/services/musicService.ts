@@ -7,6 +7,8 @@ import {
   commitLyricsVersion,
   getLastLyricsVersionId,
 } from './creationLogService';
+// v3.228 W1: 작곡 요청 추적 헤더(X-Gen-Request-Id)
+import { genRequestHeaders } from './genJobsService';
 import {
   GenerationItem,
   GenerationListResult,
@@ -156,7 +158,11 @@ export const uploadReferenceAudio = async (
   return response.data;
 };
 
-export const generateWithSuno = async (params: Partial<MusicParams>) => {
+/**
+ * v3.228 W1: opts.requestId → 헤더 X-Gen-Request-Id(서버 doc.client_request_id — 201 응답 유실 시 /jobs/req/{rid}로 회수,
+ * 같은 id 재전송은 진행 중 409·종료 후 201 replayed 무과금). 구서버는 헤더를 무시.
+ */
+export const generateWithSuno = async (params: Partial<MusicParams>, opts: { requestId?: string | null } = {}) => {
   const promptParts = [];
   if (params.genre) promptParts.push(`${params.genre} 장르의`);
   if (params.mood) promptParts.push(`${params.mood} 분위기로,`);
@@ -308,7 +314,7 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     duration: body.duration,
     audio_weight: body.audio_weight, reference_audio_name: body.reference_audio_name,
   }));
-  const response = await api.post('/generate/', body);
+  const response = await api.post('/generate/', body, { headers: genRequestHeaders(opts.requestId) });
   return response.data;
 };
 

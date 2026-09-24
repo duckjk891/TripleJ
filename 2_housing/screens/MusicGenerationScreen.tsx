@@ -35,6 +35,8 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 작곡 대화·생성을 절대 막지 않는다.
 import { ensureCreationSession, commitLyricsVersion } from '../services/creationLogService';
 import { FatigueStatus } from '../types';
+// v3.228 W1: 작곡 중복 생성 가드(전역 추적기)
+import { guardGeneration } from '../services/generationTracker';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -1348,6 +1350,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 서버도 POST /generate/(start_music_gen=true)에서 429로 게이트하므로(과금 전 — generate.py:444)
   // 레이스는 MusicLoadingScreen의 429 분기가 처리한다.
   const handleGenerate = () => {
+    // v3.228 W1: 사용자당 진행 중 1곡(결정 4) — 과금·피로 게이트보다 먼저. 미확인 완성본은 막지 않음.
+    if (guardGeneration('music', { navigation, where: 'MusicGeneration' })) return;
     if (fatigueRemainSec > 0) {
       console.log('[MusicGeneration] [fatigue] 게이트 — 남은', fatigueRemainSec, '초');
       showFatigueCooldownDialog({

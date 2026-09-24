@@ -14,15 +14,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
-import { useMusicStore } from '../stores/musicStore';
-import { useLyricsStore } from '../stores/lyricsStore';
 import {
   listGenerations,
   deleteGeneration,
-  generationStreamUrl,
   isGenerationInProgress,
 } from '../services/musicService';
 import { GenerationItem } from '../types';
+// v3.228 W1: store 하이드레이션은 utils/musicHydrate로 추출(작업실 도착 알림과 공용) · 결과 확인(ack) · X-K1 문구
+import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
+import { settleGenJob } from '../services/generationTracker';
+import { failureBody } from '../services/genJobs';
 
 // ── v3.93 생성 이력 화면 ─────────────────────────────────────────────────────
 // MAIDOL StudioTab2의 생성 이력(진행중/완료/실패 목록·삭제·이어보기) 이식.
@@ -30,7 +31,7 @@ import { GenerationItem } from '../types';
 //   → { generations, pagination } / DELETE /generate/{id} (상태 무관 허용).
 // 진행중 탭 → MusicLoading(resumeGenerationId)로 폴링 재개,
 // 완료 탭 → MusicResult(트랙 확정 여부에 따라 variant 비교 or 재생),
-// 실패 탭 → 실패 사유 팝업(⭐는 백엔드가 실패 시 자동 환불 — generate.py:122).
+// 실패 탭 → 실패 사유 팝업(⭐는 백엔드가 실패 시 자동 환불 — generate.py:122. v3.228: 문구는 refunded 확인 시만 단정).
 
 type Props = NativeStackScreenProps<any, 'GenerationHistory'>;
 
@@ -107,37 +108,8 @@ export default function GenerationHistoryScreen({ navigation }: Props) {
     fetchPage(page + 1, 'more');
   };
 
-  // 작곡 흐름 store 하이드레이션 — LyricsBookScreen.handleCompose 관행:
-  // MusicLoading/MusicResult가 musicStore·lyricsStore에서 제목/가사/메타를 직접 읽는다.
-  const hydrateStores = (gen: GenerationItem) => {
-    const music = useMusicStore.getState();
-    const lyrics = useLyricsStore.getState();
-    music.setSelectedModel('suno'); // 서버 생성 이력은 suno 경로만 존재 (generate.py:171)
-    music.setGenerationId(gen.id);
-    music.setSavedTrackId(gen.result_track_id || null);
-    music.setLyrics(gen.lyrics || '');
-    music.setGenre(gen.genre || '');
-    music.setMood(gen.mood || '');
-    lyrics.setGeneratedTitle(gen.title || '');
-    lyrics.setGeneratedLyrics(gen.lyrics || '');
-    // v3.102(B-4): 이력 재개는 가사 출처를 알 수 없음 — 이전 흐름의 lyrics_source 스냅샷이
-    // 발매(upload-from-generation lyrics_id)에 잘못 실리지 않도록 정리 (생성 시점 출처는 서버가 이미 보유)
-    music.setLyricsSource(null);
-    if (gen.status === 'completed') {
-      music.setStatus('completed');
-      music.setError(null);
-      music.setResultUrl(generationStreamUrl(gen.id, 0));
-    } else if (gen.status === 'failed') {
-      music.setStatus('failed');
-      music.setError(gen.error_message || '음악 생성에 실패했습니다.');
-      music.setResultUrl(null);
-    } else {
-      music.setStatus('processing');
-      music.setError(null);
-      music.setResultUrl(null);
-    }
-    music.setIsLoading(isGenerationInProgress(gen));
-  };
+  // 작곡 흐름 store 하이드레이션 — v3.228: utils/musicHydrate.ts로 추출(동작 불변)
+  const hydrateStores = hydrateMusicStoresFromGeneration;
 
   const handlePress = (gen: GenerationItem) => {
     console.log('[GenHistory] 항목 탭:', JSON.stringify({ id: gen.id, status: gen.status, track: gen.result_track_id }));
@@ -151,12 +123,16 @@ export default function GenerationHistoryScreen({ navigation }: Props) {
       // 완료 → 결과 화면 (트랙 미확정이면 MusicResult가 variant 비교 카드를 띄움)
       hydrateStores(gen);
       navigation.navigate('MusicResult', { alreadySaved: !!gen.result_track_id });
+      // v3.228: 결과 화면을 열었음 = 확인(작업실 도착 알림·말풍선 재배달 방지). 발매된 곡은 서버가 이미 소비 처리.
+      if (!gen.result_track_id) settleGenJob('music', gen.id, 'done', { result: { generation_id: gen.id } });
       return;
     }
     if (gen.status === 'failed') {
+      // v3.228 X-K1: 환불 안내는 서버가 refunded=true(또는 서버 확정 문장)를 줄 때만
+      settleGenJob('music', gen.id, 'failed', { error: gen.error_message ?? null, refunded: gen.refunded ?? null });
       showAlert(
         '생성 실패',
-        `${gen.error_message || '알 수 없는 오류로 생성에 실패했어요.'}\n\n사용한 ⭐는 자동으로 환불되었어요.`,
+        failureBody(gen.error_message || '알 수 없는 오류로 생성에 실패했어요.', gen.refunded),
         [
           { text: '닫기', style: 'cancel' },
           { text: '기록 삭제', style: 'destructive', onPress: () => doDelete(gen) },

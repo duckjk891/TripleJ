@@ -17,6 +17,22 @@ import AppScreenLayout from '../components/AppScreenLayout';
 // v3.222 ②: 진행 UI(초상 펄스+메시지+스텝+%바+노트)는 공용 ComposerLoadingView로 추출 —
 // InstLoadingScreen과 공유. 이 화면은 생성·폴링·스텝 전진 로직만 유지(동작 등가).
 import ComposerLoadingView from '../components/ComposerLoadingView';
+// v3.228 W1: 작곡 job 전역 추적(자동 도착 알림·중복 차단·재시작 환불 정리) — music 어댑터는 import 시 등록
+import {
+  registerGenJob,
+  adoptGenJob,
+  settleGenJob,
+  discardGenJob,
+  guardGeneration,
+  findGenJob,
+  newRequestId,
+  setViewerJob,
+  releaseViewerJob,
+} from '../services/generationTracker';
+import { parseGenInProgress, getGenJobByRequest } from '../services/genJobsService';
+import { failureBody, CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
+import { MUSIC_TEXT } from '../services/genJobs/music';
+import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -64,6 +80,14 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
   useEffect(() => {
     let isMounted = true;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
+    // v3.228 W1: 추적 레코드 키(뷰어 등록) · 409로 편입한 다른 요청을 보는 중인지 · 응답 유실 회수 타이머
+    let trackedKey: string | null = null;
+    let adopted = false;
+    let recoverTimer: ReturnType<typeof setInterval> | null = null;
+    const watchKey = (key: string | null) => {
+      trackedKey = key;
+      if (key) setViewerJob(key);
+    };
 
     // v3.91: 참고 음악 업로드 실패 시 사용자 확인 — true=참고 없이 진행, false=중단
     const confirmProceedWithoutReference = () =>
@@ -86,6 +110,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
 
         if (status.status === 'completed' || status.status === 'complete') {
           if (pollInterval) clearInterval(pollInterval);
+          // v3.228: 409로 편입한 다른 요청의 곡 — 이 화면 입력이 아니라 서버 생성 문서 기준으로 결과 화면 구성
+          if (adopted) hydrateMusicStoresFromGeneration(status);
           const trackId = status.result_track_id || status.track_id;
           const rawUrl =
             status.audio_url ||
@@ -108,14 +134,20 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           if (trackId) store.setGenerationId(trackId);
           store.setStatus('completed');
           store.setIsLoading(false);
+          // v3.228: 결과를 이 화면이 직접 받음 → 확인 처리(추적 레코드 정리 + 서버 ack — 재배달 방지)
+          settleGenJob('music', genId, 'done', {
+            result: { generation_id: genId, result_track_id: status.result_track_id ?? null },
+          });
           // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
           // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
           navigation.replace('MusicResult');
         } else if (status.status === 'failed' || status.status === 'error') {
           if (pollInterval) clearInterval(pollInterval);
-          store.setError(status.error_message || status.error || '음악 생성에 실패했습니다.');
+          // v3.228 X-K1: 서버 확정 실패 — 환불은 refunded=true(또는 서버 문장)일 때만 안내
+          store.setError(failureBody(status.error_message || status.error || '음악 생성에 실패했습니다.', status.refunded));
           store.setStatus('failed');
           store.setIsLoading(false);
+          settleGenJob('music', genId, 'failed', { error: status.error_message || status.error || null, refunded: status.refunded });
           navigation.replace('MusicResult');
         }
       } catch (err: any) {
@@ -125,6 +157,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         if (st === 404 || st === 403 || st === 400) {
           console.error('[MusicLoading] 폴링 중단 — 상태 조회 실패:', st, err?.response?.data?.error);
           if (pollInterval) clearInterval(pollInterval);
+          if (trackedKey) discardGenJob(trackedKey, `poll-${st}`); // 서버에 문서 없음·접근 불가 — 추적 종료
           if (!isMounted) return;
           store.setError(err?.response?.data?.error || '생성 정보를 찾을 수 없습니다.');
           store.setStatus('failed');
@@ -138,7 +171,67 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       pollInterval = setInterval(() => pollOnce(genId), 3000);
     };
 
+    // v3.228: 409 편입 후 [진행 상황 보기] — 이 화면에서 그 생성을 이어서 폴링(POST 없음)
+    const followInPlace = (genId: string) => {
+      console.info('[MusicLoading] 진행 중인 곡 이어보기(409 편입)', { genId });
+      adopted = true;
+      watchKey(findGenJob('music', genId)?.jobId ?? null);
+      store.setIsLoading(true);
+      store.setError(null);
+      store.setGenerationId(genId);
+      store.setStatus('processing');
+      pollOnce(genId);
+      beginPolling(genId);
+    };
+
+    // v3.228: 201 응답 유실(ERR_NETWORK·timeout·5xx) — 실패로 표시하지 않고 client_request_id로 회수.
+    // 120초 안에 서버 생성 문서를 찾으면 폴링으로 합류, 끝내 없으면(서버 미도달·구서버) 중립 안내(X-K1).
+    const recoverLostResponse = (rid: string, title: string | null) => {
+      watchKey(registerGenJob({ kind: 'music', requestId: rid, meta: { title } }));
+      const startedAt = Date.now();
+      let busy = false;
+      const tryOnce = async () => {
+        if (busy || !isMounted) return;
+        busy = true;
+        try {
+          const snap = await getGenJobByRequest(rid, 'music');
+          if (!isMounted) return;
+          if (snap?.jobId) {
+            if (recoverTimer) clearInterval(recoverTimer);
+            recoverTimer = null;
+            console.info('[MusicLoading] 응답 유실 회수 — 생성 합류', { genId: snap.jobId });
+            watchKey(registerGenJob({ kind: 'music', requestId: rid, serverJobId: snap.jobId }));
+            store.setGenerationId(snap.jobId);
+            store.setStatus('processing');
+            pollOnce(snap.jobId);
+            beginPolling(snap.jobId);
+            return;
+          }
+          if (Date.now() - startedAt >= 120 * 1000) {
+            if (recoverTimer) clearInterval(recoverTimer);
+            recoverTimer = null;
+            console.warn('[MusicLoading] 응답 유실 — 120초 내 서버 생성 없음(미도달·구서버)');
+            if (trackedKey) discardGenJob(trackedKey, 'lost-not-found');
+            store.setError(`결과를 확인하지 못했어요.\n${CHARGE_UNCONFIRMED_BODY}`);
+            store.setStatus('failed');
+            store.setIsLoading(false);
+            navigation.replace('MusicResult');
+          }
+        } catch (err: any) {
+          // 네트워크 일시 오류 — 다음 시도(실패 표시 없음)
+          console.warn('[MusicLoading] 응답 유실 회수 조회 오류(재시도)', { status: err?.response?.status ?? null });
+        } finally {
+          busy = false;
+        }
+      };
+      void tryOnce();
+      recoverTimer = setInterval(() => { void tryOnce(); }, 3000);
+    };
+
     const doGenerate = async () => {
+      // v3.228: 중복 생성 최종 방어(사용자당 진행 중 1곡 — 결정 4, 미확인 완성본은 비차단)
+      if (guardGeneration('music', { navigation, where: 'MusicLoading', onDismiss: () => navigation.goBack() })) return;
+      const rid = newRequestId();
       store.setIsLoading(true);
       store.setError(null);
       store.setStatus('pending');
@@ -214,7 +307,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
 
         let result: any;
         if (store.selectedModel === 'suno') {
-          result = await generateWithSuno(params);
+          result = await generateWithSuno(params, { requestId: rid });
         } else {
           result = await generateWithWondera(params);
         }
@@ -227,6 +320,10 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         if (genId) {
           store.setGenerationId(genId);
           store.setStatus('processing');
+          // v3.228: 접수 즉시 전역 추적 등록(이탈·재시작 후에도 작업실 말풍선·도착 알림으로 회수)
+          if (store.selectedModel === 'suno') {
+            watchKey(registerGenJob({ kind: 'music', requestId: rid, serverJobId: String(genId), meta: { title: params.title ?? null } }));
+          }
 
           // Poll for status (v3.93: 이어보기와 공유하는 pollOnce 재사용)
           beginPolling(genId);
@@ -285,6 +382,27 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           });
           return;
         }
+        // v3.228: 서버 409 — 이미 진행 중인 곡(다른 창·기기 포함)을 추적기에 편입하고 안내
+        const busySnap = parseGenInProgress(err, 'music');
+        if (busySnap) {
+          adoptGenJob(busySnap);
+          store.setIsLoading(false);
+          store.setStatus('idle');
+          console.info('[MusicLoading] 409 진행 중인 곡 — 편입', { genId: busySnap.jobId });
+          showAlert(MUSIC_TEXT.busyTitle, MUSIC_TEXT.busyBody, [
+            { text: '닫기', style: 'cancel', onPress: () => navigation.goBack() },
+            { text: '진행 상황 보기', onPress: () => { if (isMounted) followInPlace(busySnap.jobId); } },
+          ]);
+          return;
+        }
+        // v3.228: 응답 유실(네트워크·timeout·5xx)은 실패로 표시하지 않는다 — 서버 원장으로 회수
+        const httpStatus = err?.response?.status;
+        if (store.selectedModel === 'suno' && (!err?.response || (typeof httpStatus === 'number' && httpStatus >= 500))) {
+          console.warn('[MusicLoading] 응답 유실 — 원장 회수 전환', { status: httpStatus ?? null, message: err?.message });
+          store.setStatus('processing');
+          recoverLostResponse(rid, lyricsStore.generatedTitle || null);
+          return;
+        }
         const errorMsg =
           err?.response?.data?.detail ||
           err?.message ||
@@ -303,6 +421,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       store.setError(null);
       store.setGenerationId(resumeGenerationId);
       store.setStatus('processing');
+      // v3.228: 추적 중인 곡이면 뷰어로 등록(작업실 알림 대신 이 화면이 결과를 보여줌)
+      watchKey(findGenJob('music', resumeGenerationId)?.jobId ?? null);
       pollOnce(resumeGenerationId); // 즉시 1회 확인 (이미 완료된 경우 바로 결과로)
       beginPolling(resumeGenerationId);
     } else {
@@ -312,6 +432,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
     return () => {
       isMounted = false;
       if (pollInterval) clearInterval(pollInterval);
+      if (recoverTimer) clearInterval(recoverTimer);
+      releaseViewerJob(trackedKey);
     };
   }, []);
 

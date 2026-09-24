@@ -20,6 +20,10 @@ import { getInstrumentalStatus } from '../services/trackService';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 import { BACKEND_BASE_URL } from '../services/api';
 import { colors } from '../theme/colors';
+// v3.228 W1: Inst. job 전역 추적 — inst 어댑터는 import 시 등록. 완료·실패 카드 표시 = 확인(ack)
+import { findInstJobForTrack } from '../services/genJobs/inst';
+import { settleGenJob, setViewerJob, releaseViewerJob } from '../services/generationTracker';
+import { failureBody } from '../services/genJobs';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -119,6 +123,9 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
     let interval: ReturnType<typeof setInterval> | null = null;
     const startedAt = Date.now();
     if (__DEV__) console.info('[InstLoading] 폴링 시작', { trackId, nonce, resume });
+    // v3.228: 추적 중인 이 곡의 Inst. job이면 뷰어로 등록(작업실 알림 대신 이 화면이 결과 표시)
+    const trackedKey = findInstJobForTrack(trackId)?.jobId ?? null;
+    if (trackedKey) setViewerJob(trackedKey);
 
     const pollOnce = async () => {
       if (Date.now() - startedAt > 10 * 60 * 1000) {
@@ -141,10 +148,18 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
           setMessageIndex(INST_STEPS.length - 1);
           setResultTrackId(data?.result_track_id ? String(data.result_track_id) : null);
           setPhase('done');
+          settleGenJob('inst', data?.job_id ? String(data.job_id) : trackedKey, 'done', {
+            result: { result_track_id: data?.result_track_id ?? null, track_id: trackId },
+          });
         } else if (st === 'failed' || st === 'error') {
           if (interval) clearInterval(interval);
-          setErrorMsg(data?.error || 'Inst. 생성에 실패했어요. 차감된 스타(⭐)는 환불됩니다.');
+          // v3.228 X-K1: 환불 안내는 서버 refunded=true(또는 서버 확정 문장)일 때만
+          setErrorMsg(failureBody(data?.error || 'Inst. 생성에 실패했어요.', data?.refunded));
           setPhase('failed');
+          settleGenJob('inst', data?.job_id ? String(data.job_id) : trackedKey, 'failed', {
+            error: data?.error ?? null,
+            refunded: typeof data?.refunded === 'boolean' ? data.refunded : null,
+          });
         }
       } catch (err: any) {
         // 일시 네트워크/서버 오류는 폴링 지속(생성 자체는 서버 백그라운드 진행 — 기존 관행)
@@ -157,6 +172,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
       if (interval) clearInterval(interval);
+      releaseViewerJob(trackedKey);
     };
     // resume은 진입 시점 값만 로그에 사용(재시작 키 아님)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -324,7 +340,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
             </View>
             <AppText style={styles.cardTitle}>Inst. 생성 실패</AppText>
             <AppText style={styles.cardSub}>
-              {errorMsg || 'Inst. 생성에 실패했어요. 차감된 스타(⭐)는 환불됩니다.'}
+              {errorMsg || 'Inst. 생성에 실패했어요.'}
             </AppText>
             <TouchableOpacity
               style={styles.primaryBtn}

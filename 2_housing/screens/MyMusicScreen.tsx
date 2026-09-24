@@ -42,6 +42,9 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import { playTrackNow } from '../services/playback';
+// v3.228 W1: Inst. job 전역 추적(작업실 말풍선·도착 알림·재시작 환불 정리) — 곡별 서버 claim은 그대로
+import { registerGenJob } from '../services/generationTracker';
+import { findInstJobForTrack } from '../services/genJobs/inst';
 
 interface Track {
   id: number;
@@ -430,6 +433,13 @@ export default function MyMusicScreen({ navigation }: any) {
   // cooldown_remaining_sec>0면 확인 다이얼로그 미진입 + 공용 쿨다운 다이얼로그(12곳 관행).
   // 조회 실패는 게이트 오픈 — 서버 429(과금 전)가 최종 방어(MusicGeneration 관행).
   const handleCreateInstrumental = async (track: Track) => {
+    // v3.228: 이 곡의 Inst.가 추적 중(진행 중)이면 새 요청 없이 진행 화면으로(과금·피로 게이트 전)
+    const tracked = findInstJobForTrack(String(track.id));
+    if (tracked?.lastStatus === 'processing') {
+      if (__DEV__) console.info('[Inst] 추적 중인 Inst. — 진행 화면으로', { trackId: track.id, jobId: tracked.jobId });
+      goInstLoading(String(track.id), track.title, true);
+      return;
+    }
     try {
       const status = await getFatigueStatus('composer');
       const remain = Math.max(0, Math.floor(status?.cooldown_remaining_sec ?? 0));
@@ -468,7 +478,11 @@ export default function MyMusicScreen({ navigation }: any) {
             setInstBusy((prev) => ({ ...prev, [trackId]: true }));
             if (__DEV__) console.info('[Inst] 생성 시작', { trackId });
             try {
-              await requestInstrumental(trackId);
+              const accepted = await requestInstrumental(trackId);
+              // v3.228: 202 수신 즉시 전역 추적 등록(진행 화면 이탈·재시작 후에도 회수)
+              if (accepted?.job_id) {
+                registerGenJob({ kind: 'inst', serverJobId: String(accepted.job_id), meta: { trackId, title: track.title } });
+              }
               // v3.222 ②: '생성 시작' alert + 백그라운드 폴링 → InstLoading 진행 화면으로 교체
               // (완료 표시·미리듣기는 그 화면이 담당, 이탈 시 복귀 focus 확인으로 갈음 — 결정 2 기본안)
               goInstLoading(trackId, track.title);
@@ -497,6 +511,11 @@ export default function MyMusicScreen({ navigation }: any) {
                   showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
                 } else {
                   // v3.222 ②: 진행 중 409 → 동일 화면 resume 모드(폴링만 — MusicLoading resume 관행)
+                  // v3.228: 진행 중 job(다른 창·기기 포함)을 추적기에 편입
+                  const busyJobId = err?.response?.data?.job_id;
+                  if (busyJobId) {
+                    registerGenJob({ kind: 'inst', serverJobId: String(busyJobId), meta: { trackId, title: track.title }, source: 'conflict' });
+                  }
                   setInstBusy((prev) => ({ ...prev, [trackId]: true }));
                   goInstLoading(trackId, track.title, true);
                 }
