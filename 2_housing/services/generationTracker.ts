@@ -13,24 +13,19 @@ import {
   listUserArtistJobs,
   getBlockingArtistJob,
   listUserGenJobs,
-  GEN_KIND_DIRECTOR,
-  GEN_NEUTRAL_ARTIST_FIELDS,
   type TrackedJob,
   type TrackedJobKind,
   type TrackedJobMode,
   type TrackedUsedItem,
 } from '../stores/generationJobStore';
 import {
-  getKindAdapter,
-  listKindAdapters,
-  genJobKey,
-  newRequestId,
-  SYNC_GEN_KINDS,
-  GEN_KIND_GROUP,
-  type GenKind,
-  type GenKindAdapter,
-  type GenJobSnapshot,
-} from './genJobs';
+  bindGenTrackerHooks,
+  genTrackerAdapters,
+  genTrackerAdapterFor,
+  hasGenKinds,
+  mergeGenRecoverable,
+  type TrackerKindAdapter,
+} from './genJobs/runtime';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
@@ -52,19 +47,14 @@ import { showAlert } from '../utils/appAlert';
 //
 // v3.228 D4: kind 어댑터(registry) 구조. tick·부팅 확인·완성 알림은 kind별 TrackerKindAdapter에 위임한다.
 //   - artist: 내부 어댑터 ARTIST_ADAPTER — v3.227 경로(조회·반영·문구·로그) 그대로 이전.
-//   - lyrics·music·inst·cover·cover_refine·video: services/genJobs 레지스트리에 등록된 GenKindAdapter를
-//     genTrackerAdapter()로 감싼다. 등록되지 않은 kind의 레코드는 폴링하지 않는다.
-//   - 동기 kind(작사·커버·다듬기·영상) 404 유예: 요청 후 120초 안의 404는 "아직 도착 전"(원장은 과금 전 생성).
+//   - lyrics·music·inst·cover·cover_refine·video: services/genJobs/runtime.ts가 레지스트리 GenKindAdapter를
+//     감싼 어댑터·회수 병합·공개 API를 담당(본체와는 bindGenTrackerHooks로 연결). 미등록 kind는 폴링·회수 0.
 
 const POLL_MS = 5000;
 const BACKOFF_MS = [5000, 10000, 20000, 40000, 60000];
 const RESUME_DELAY_MS = 1500;
 const STALE_MS = 30 * 60 * 1000; // 서버 stale 기준(main.py 기동 정리·recoverable lazy 정리와 동일)
 const RECOVERABLE_THROTTLE_MS = 30000;
-/** v3.228: 동기 kind 요청 후 이 시간 안의 404는 "아직 서버 도착 전"으로 보고 processing 유지 */
-const NOT_ARRIVED_GRACE_MS = 120 * 1000;
-/** v3.228 X-K1: 과금 여부를 확인할 수 없을 때(404·킬스위치·구서버) 중립 안내 */
-const GEN_UNCONFIRMED_BODY = '잠시 후 다시 확인하거나 별 사용 내역을 확인해 주세요.';
 /** 뷰어 밖 done 앱 내 알림을 띄워도 되는 화면(작업실·마이페이지 계열) — 작곡·영상 등 생성 화면에선 배지만 */
 const NOTIFY_ROUTES = new Set(['Map', 'MyArtists', 'MyMusic', 'ArtistResult', 'VoiceManage', 'Settings']);
 
@@ -348,38 +338,47 @@ export async function refreshRecoverable(opts: { force?: boolean; reason?: strin
   _lastRecoverableAt = now;
   _recoverableInflight = (async () => {
     try {
-      const { supported, jobs } = await listRecoverableJobs();
-      if (!supported) {
-        if (_capability !== 'no') console.info('[GenTracker] recoverable 미지원(구서버) — 로컬 추적만 사용');
-        _capability = 'no';
-        return;
+      try {
+        await mergeArtistRecoverable(opts);
+      } catch (err: any) {
+        // 오류는 무시(다음 트리거에서 재시도) — 실패 표시 없음
+        console.warn('[GenTracker] recoverable 조회 오류', { status: err?.response?.status ?? null });
+        _lastRecoverableAt = 0;
       }
-      _capability = 'yes';
-      const dismissed = new Set(store().dismissedIds);
-      let added = 0;
-      for (const snap of jobs) {
-        if (dismissed.has(snap.jobId)) continue;
-        const local = store().jobs[snap.jobId];
-        if (local) {
-          if (local.lastStatus === 'processing' && snap.status !== 'processing') applySnapshot(snap.jobId, snap);
-          continue;
-        }
-        if (snap.status === 'unknown') continue;
-        store().upsertJob(snapshotToRecord(snap, 'recovered'));
-        added++;
-      }
-      console.info('[GenTracker] recoverable 병합', { reason: opts.reason ?? 'refresh', server: jobs.length, added });
-      if (processingJobs().length > 0 && !_timer && !_ticking) scheduleTick(RESUME_DELAY_MS);
-      maybeNotifyDone();
-    } catch (err: any) {
-      // 오류는 무시(다음 트리거에서 재시도) — 실패 표시 없음
-      console.warn('[GenTracker] recoverable 조회 오류', { status: err?.response?.status ?? null });
-      _lastRecoverableAt = 0;
+      // v3.228: 비아티스트 원장 회수(등록 kind가 있을 때만 — never-throw)
+      if (hasGenKinds()) await mergeGenRecoverable(opts.reason ?? 'refresh');
     } finally {
       _recoverableInflight = null;
     }
   })();
   return _recoverableInflight;
+}
+
+/** 아티스트 회수 목록 병합(v3.227 경로 그대로) — 오류는 throw(호출부가 로그·재시도 처리) */
+async function mergeArtistRecoverable(opts: { reason?: string }): Promise<void> {
+  const { supported, jobs } = await listRecoverableJobs();
+  if (!supported) {
+    if (_capability !== 'no') console.info('[GenTracker] recoverable 미지원(구서버) — 로컬 추적만 사용');
+    _capability = 'no';
+    return;
+  }
+  _capability = 'yes';
+  const dismissed = new Set(store().dismissedIds);
+  let added = 0;
+  for (const snap of jobs) {
+    if (dismissed.has(snap.jobId)) continue;
+    const local = store().jobs[snap.jobId];
+    if (local) {
+      if (local.lastStatus === 'processing' && snap.status !== 'processing') applySnapshot(snap.jobId, snap);
+      continue;
+    }
+    if (snap.status === 'unknown') continue;
+    store().upsertJob(snapshotToRecord(snap, 'recovered'));
+    added++;
+  }
+  console.info('[GenTracker] recoverable 병합', { reason: opts.reason ?? 'refresh', server: jobs.length, added });
+  if (processingJobs().length > 0 && !_timer && !_ticking) scheduleTick(RESUME_DELAY_MS);
+  maybeNotifyDone();
 }
 
 /** 부팅 시 로컬 done 레코드가 다른 곳에서 이미 저장·버려졌는지 1회 확인 */
@@ -619,7 +618,7 @@ export function guardArtistGeneration(opts: { navigation?: any; where?: string; 
   if (!job) return false;
   console.info('[GenTracker] 중복 생성 차단', { where: opts.where ?? '-', jobId: job.jobId, status: job.lastStatus });
   if (job.lastStatus === 'processing') {
-    showAlert('이미 아티스트를 만드는 중이에요', '완성된 뒤에 새로 만들 수 있어요. 나가 있어도 계속 만들어져요.', [
+    showAlert('이미 아티스트를 만드는 중이에요', '완성된 뒤에 새로 만들 수 있어요.', [
       { text: '닫기', style: 'cancel', onPress: opts.onDismiss },
       { text: '진행 상황 보기', onPress: () => openJobViewer(job.jobId, opts.navigation) },
     ]);
@@ -636,25 +635,6 @@ export function guardArtistGeneration(opts: { navigation?: any; where?: string; 
 export { getBlockingArtistJob };
 
 // ── v3.228 D4: kind 어댑터(registry) ─────────────────────────────────────
-
-/** 추적기 내부 kind 어댑터 — tick·부팅 확인·알림이 kind별 동작을 여기로 위임 */
-interface TrackerKindAdapter {
-  kind: TrackedJobKind;
-  /** 이 시간 경과 시 recoverable 1회(서버 lazy 정리 유도) */
-  capMs: number;
-  /** 현재 사용자의 이 kind 레코드(최신순) */
-  list(): TrackedJob[];
-  /** 로그 공통 필드 */
-  logTag(job: TrackedJob): Record<string, any>;
-  logCapProbe(job: TrackedJob): void;
-  /** 서버 조회 → 레코드 반영. 네트워크 오류·5xx·timeout은 throw(상태 유지·백오프) */
-  poll(job: TrackedJob): Promise<void>;
-  /** 부팅 시 done 레코드가 다른 곳에서 소비됐는지 확인(오류는 삼킴 — 유지) */
-  verifyDone(job: TrackedJob): Promise<void>;
-  /** 뷰어 밖 알림 대상 상태인가 */
-  canNotify(job: TrackedJob): boolean;
-  notify(job: TrackedJob, route: string): void;
-}
 
 /** artist — v3.227 경로 그대로(GET /character/job → applySnapshot, 30분 stale probe, 완성 알림 문구) */
 const ARTIST_ADAPTER: TrackerKindAdapter = {
@@ -687,278 +667,37 @@ const ARTIST_ADAPTER: TrackerKindAdapter = {
   },
 };
 
-const _genTrackerAdapters = new WeakMap<GenKindAdapter, TrackerKindAdapter>();
-
-/** 레지스트리 GenKindAdapter → 추적기 어댑터(공용 반영·404 유예·알림) */
-function genTrackerAdapter(gen: GenKindAdapter): TrackerKindAdapter {
-  const cached = _genTrackerAdapters.get(gen);
-  if (cached) return cached;
-  const a: TrackerKindAdapter = {
-    kind: gen.kind,
-    capMs: gen.capMs,
-    list: () => listUserGenJobs([gen.kind]),
-    logTag: (job) => ({ kind: gen.kind, jobId: job.jobId }),
-    logCapProbe: (job) => {
-      console.info('[GenTracker] 상한 경과 — recoverable 1회 호출', {
-        kind: gen.kind, jobId: job.jobId, capMin: Math.round(gen.capMs / 60000),
-      });
-    },
-    poll: async (job) => {
-      const snap = await gen.fetch(job);
-      applyGenSnapshot(job.jobId, snap);
-    },
-    verifyDone: async (j) => {
-      try {
-        const snap = await gen.fetch(j);
-        if (!snap || snap.acked) applyGenSnapshot(j.jobId, snap);
-      } catch {
-        /* 네트워크 오류 — 유지 */
-      }
-    },
-    canNotify: (j) => j.lastStatus === 'done' || j.lastStatus === 'failed',
-    notify: (job, route) => {
-      console.info('[GenTracker] 도착 알림 1회', { kind: gen.kind, jobId: job.jobId, status: job.lastStatus, route });
-      if (job.lastStatus === 'failed') {
-        // X-K1: 서버가 환불·미차감을 명시한 경우에만 단정, 그 외는 중립 문구
-        showAlert(
-          gen.text.failTitle,
-          job.refunded === true
-            ? '사용된 별은 자동으로 환불됐어요.'
-            : job.notCharged === true
-              ? '별은 차감되지 않았어요.'
-              : GEN_UNCONFIRMED_BODY,
-          [{ text: '확인', onPress: () => { ackGenJob(job.jobId); } }]
-        );
-        return;
-      }
-      showAlert(gen.text.doneTitle, gen.text.doneBody, [
-        { text: '나중에', style: 'cancel' },
-        { text: '지금 보기', onPress: () => { void openGenJob(job.jobId); } },
-      ]);
-    },
-  };
-  _genTrackerAdapters.set(gen, a);
-  return a;
-}
-
 /** 활성 어댑터(artist 먼저, 이후 레지스트리 등록 순서) */
 function trackerAdapters(): TrackerKindAdapter[] {
-  const gens = listKindAdapters();
-  if (gens.length === 0) return [ARTIST_ADAPTER];
-  return [ARTIST_ADAPTER, ...gens.map(genTrackerAdapter)];
+  if (!hasGenKinds()) return [ARTIST_ADAPTER];
+  return [ARTIST_ADAPTER, ...genTrackerAdapters()];
 }
 
 function trackerAdapterFor(kind: TrackedJobKind): TrackerKindAdapter | null {
-  if (kind === 'artist') return ARTIST_ADAPTER;
-  const gen = getKindAdapter(kind);
-  return gen ? genTrackerAdapter(gen) : null;
+  return kind === 'artist' ? ARTIST_ADAPTER : genTrackerAdapterFor(kind);
 }
 
-/** 비아티스트 서버 스냅샷 반영(null = 404) */
-function applyGenSnapshot(key: string, snap: GenJobSnapshot | null): void {
-  const cur = store().jobs[key];
-  if (!cur || cur.kind === 'artist') return;
-  const now = Date.now();
-  if (!snap || snap.status === 'unknown') {
-    const isSync = SYNC_GEN_KINDS.has(cur.kind as GenKind);
-    if (cur.lastStatus === 'processing' && isSync && now - cur.startedAt < NOT_ARRIVED_GRACE_MS) {
-      // 요청이 아직 서버 원장에 닿기 전 — 유예
-      store().patchJob(key, { lastCheckedAt: now });
-      return;
-    }
-    console.info('[GenTracker] job 없음(404) — 조용히 정리', { kind: cur.kind, jobId: key });
-    store().removeJob(key);
-    if (cur.lastStatus === 'processing' && isSync && _viewerJobId === key) {
-      // X-K1: 404는 킬스위치·구서버일 수도 있어 과금 여부를 단정하지 않는다
-      showAlert('결과를 확인하지 못했어요', GEN_UNCONFIRMED_BODY);
-    }
-    return;
-  }
-  if (snap.acked) {
-    console.info('[GenTracker] 이미 확인된 job — 정리', { kind: cur.kind, jobId: key });
-    store().removeJob(key, { dismissed: true });
-    return;
-  }
-  const base: Partial<TrackedJob> = {
-    lastCheckedAt: now,
-    serverJobId: snap.jobId || cur.serverJobId || null,
-    requestId: cur.requestId ?? snap.requestId ?? null,
-  };
-  if (snap.status === 'processing') {
-    store().patchJob(key, base);
-    return;
-  }
-  if (snap.status === 'done') {
-    const wasDone = cur.lastStatus === 'done';
-    store().patchJob(key, { ...base, lastStatus: 'done', genResult: snap.result ?? cur.genResult ?? null });
-    if (!wasDone) {
-      console.info('[GenTracker] 완성 수신', { kind: cur.kind, jobId: key, viewer: _viewerJobId === key });
-      maybeNotifyDone();
-    }
-    return;
-  }
-  // failed — 서버 확정일 때만
-  if (cur.lastStatus !== 'failed') {
-    console.info('[GenTracker] 서버 실패 확정', { kind: cur.kind, jobId: key, refunded: snap.refunded });
-    store().patchJob(key, {
-      ...base, lastStatus: 'failed', error: snap.error ?? null,
-      refunded: snap.refunded ?? null, notCharged: snap.notCharged ?? null,
-    });
-    usePointsStore.getState().fetchBalance(); // 환불 반영
-    maybeNotifyDone();
-  }
-}
+// 비아티스트 런타임(services/genJobs/runtime.ts) ↔ 본체 연결(단방향 import)
+bindGenTrackerHooks({
+  schedulePoll: () => scheduleTick(POLL_MS),
+  scheduleSoon: () => scheduleTick(RESUME_DELAY_MS),
+  notify: () => maybeNotifyDone(),
+  viewerJob: () => _viewerJobId,
+});
 
-// ── v3.228 비아티스트 kind 공개 API(화면·어댑터용) ─────────────────────────
-
-export { newRequestId };
-
-export interface RegisterGenJobInput {
-  kind: GenKind;
-  /** 동기 kind: POST 직전 발급한 X-Gen-Request-Id */
-  requestId?: string | null;
-  /** 작곡 generation_id · 연주곡 job_id 등 서버 id(알면) */
-  serverJobId?: string | null;
-  meta?: Record<string, any> | null;
-  source?: TrackedJob['source'];
-  /** 서버 created_at(회수·409 편입 시) */
-  startedAt?: number | null;
-}
-
-/** kind + (requestId 또는 서버 job id)로 레코드 찾기 */
-export function findGenJob(kind: GenKind, id: string | null | undefined): TrackedJob | null {
-  if (!id) return null;
-  const direct = store().jobs[genJobKey(kind, id)];
-  if (direct) return direct;
-  return (
-    Object.values(store().jobs).find(
-      (j) => j.kind === kind && (j.requestId === id || j.serverJobId === id)
-    ) ?? null
-  );
-}
-
-/**
- * 생성 접수 기록 → 폴링 개시. 반환 = 스토어 키(markGenJobDone·ackGenJob·setViewerJob에 사용).
- * 동기 kind는 POST **직전**(requestId), 작곡·연주곡은 201·202 수신 직후(serverJobId) 호출.
- */
-export function registerGenJob(input: RegisterGenJobInput): string {
-  const existing = findGenJob(input.kind, input.requestId) ?? findGenJob(input.kind, input.serverJobId);
-  if (existing) {
-    store().patchJob(existing.jobId, {
-      serverJobId: input.serverJobId ?? existing.serverJobId ?? null,
-      requestId: existing.requestId ?? input.requestId ?? null,
-      meta: input.meta ? { ...(existing.meta || {}), ...input.meta } : existing.meta ?? null,
-    });
-    scheduleTick(POLL_MS);
-    return existing.jobId;
-  }
-  const id = input.requestId || input.serverJobId || newRequestId();
-  const key = genJobKey(input.kind, id);
-  store().upsertJob({
-    ...GEN_NEUTRAL_ARTIST_FIELDS,
-    usedItems: [],
-    jobId: key,
-    kind: input.kind,
-    startedAt: input.startedAt ?? Date.now(),
-    lastStatus: 'processing',
-    lastCheckedAt: null,
-    ownerUserId: currentUserId() || 'unknown',
-    source: input.source ?? 'local',
-    notifiedAt: null,
-    staleProbeAt: null,
-    requestId: input.requestId ?? null,
-    serverJobId: input.serverJobId ?? null,
-    meta: input.meta ?? null,
-    director: GEN_KIND_DIRECTOR[input.kind],
-    ackedAt: null,
-  });
-  console.info('[GenJobStore] 접수 기록', {
-    kind: input.kind, jobId: key, requestId: input.requestId ?? null, serverJobId: input.serverJobId ?? null,
-  });
-  scheduleTick(POLL_MS);
-  return key;
-}
-
-/** 서버 409 generation_in_progress(비아티스트) → 그 job 편입(다른 기기·창 포함) */
-export function adoptGenJob(snap: GenJobSnapshot): string {
-  const key = registerGenJob({
-    kind: snap.kind,
-    requestId: snap.requestId ?? null,
-    serverJobId: snap.jobId,
-    meta: snap.meta ?? null,
-    source: 'conflict',
-    startedAt: snap.createdAtMs ?? null,
-  });
-  console.info('[GenTracker] 409 generation_in_progress → job 편입', { kind: snap.kind, jobId: key });
-  scheduleTick(RESUME_DELAY_MS);
-  return key;
-}
-
-/** 화면이 결과를 직접 받음 → done 기록. acked=true면 즉시 확인 처리(레코드 정리) */
-export function markGenJobDone(key: string, result: any, opts: { acked?: boolean } = {}): void {
-  const cur = store().jobs[key];
-  if (!cur || cur.kind === 'artist') return;
-  store().patchJob(key, { lastStatus: 'done', lastCheckedAt: Date.now(), genResult: result ?? cur.genResult ?? null });
-  console.info('[GenTracker] 완성 기록(화면 수신)', { kind: cur.kind, jobId: key, acked: !!opts.acked });
-  if (opts.acked) ackGenJob(key);
-  else maybeNotifyDone();
-}
-
-/**
- * 결과 확인(ack) — 레코드 정리 + 회수 재편입 방지(dismissedIds).
- * processing은 확인 대상이 아님(false). 서버 ack(POST /api/generate/jobs/{kind}/{id}/ack)는 genJobsService 연결 지점.
- */
-export function ackGenJob(key: string): boolean {
-  const cur = store().jobs[key];
-  if (!cur || cur.kind === 'artist') return false;
-  if (cur.lastStatus === 'processing') return false;
-  store().patchJob(key, { ackedAt: Date.now() });
-  store().removeJob(key, { dismissed: true });
-  console.info('[GenTracker] 결과 확인(ack)', { kind: cur.kind, jobId: key, status: cur.lastStatus });
-  return true;
-}
-
-/** 결과 화면·진행 뷰어 열기(어댑터 위임). 어댑터 미등록이면 false */
-export async function openGenJob(key: string, navigation?: any): Promise<boolean> {
-  const job = store().jobs[key];
-  if (!job || job.kind === 'artist') return false;
-  const adapter = getKindAdapter(job.kind);
-  if (!adapter) {
-    console.warn('[GenTracker] 어댑터 미등록 — 열기 불가', { kind: job.kind, jobId: key });
-    return false;
-  }
-  console.info('[GenTracker] 열기', { kind: job.kind, jobId: key, status: job.lastStatus });
-  await adapter.open(job, navigation);
-  return true;
-}
-
-/**
- * 중복 생성 가드(비아티스트) — 같은 그룹(GEN_KIND_GROUP)의 진행 중 job이 있으면 앱 내 팝업 + true.
- * 과금 게이트(피로·잔액)보다 **먼저**, 새 요청을 만들기 전에 호출:
- *   `if (guardGeneration('video', { navigation, where: 'VideoDirector' })) return;`
- * 완성됐지만 미확인 결과는 막지 않는다(사용자 결정 4). match로 대상 한정 가능(예: inst 곡별).
- */
-export function guardGeneration(
-  kind: GenKind,
-  opts: { navigation?: any; where?: string; onDismiss?: () => void; match?: (job: TrackedJob) => boolean } = {}
-): boolean {
-  const group = GEN_KIND_GROUP[kind];
-  const kinds = (Object.keys(GEN_KIND_GROUP) as GenKind[]).filter((k) => GEN_KIND_GROUP[k] === group);
-  const job = listUserGenJobs(kinds).find(
-    (j) => j.lastStatus === 'processing' && (!opts.match || opts.match(j))
-  );
-  if (!job) return false;
-  const adapter = getKindAdapter(job.kind) ?? getKindAdapter(kind);
-  console.info('[GenTracker] 중복 생성 차단', { kind, where: opts.where ?? '-', jobId: job.jobId, status: job.lastStatus });
-  const title = adapter?.text.busyTitle ?? '이미 만드는 중이에요';
-  const body = adapter?.text.busyBody ?? '완성된 뒤에 새로 만들 수 있어요.';
-  const buttons: Array<{ text: string; style?: 'cancel'; onPress?: () => void }> = [
-    { text: '닫기', style: 'cancel', onPress: opts.onDismiss },
-  ];
-  if (adapter) buttons.push({ text: '진행 상황 보기', onPress: () => { void openGenJob(job.jobId, opts.navigation); } });
-  showAlert(title, body, buttons);
-  return true;
-}
+// v3.228 비아티스트 공개 API — 구현은 services/genJobs/runtime.ts(2조는 여기 또는 runtime에서 import)
+export {
+  newRequestId,
+  findGenJob,
+  registerGenJob,
+  adoptGenJob,
+  markGenJobDone,
+  ackGenJob,
+  openGenJob,
+  guardGeneration,
+  getGenJobsCapability,
+  type RegisterGenJobInput,
+} from './genJobs/runtime';
 
 // ── 재개 트리거·부팅 ────────────────────────────────────────────────────
 

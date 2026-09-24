@@ -30,6 +30,7 @@ import {
   refreshRecoverable,
   ensureServerCapability,
 } from '../services/generationTracker';
+import { chargeNotice } from '../services/genJobs';
 import { appendAuthImageToForm } from '../utils/authImage';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -192,7 +193,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
       failHandledRef.current = true;
       missingHandledRef.current = true; // 아래 레코드 정리 후 '없음' 경로 재진입 방지
       // 서버가 실패를 확정한 경우에만 여기 도달 — 서버가 ⭐ 자동 환불(refund_character_job_points)
-      const msg = `${tracked.error || '아티스트를 만들지 못했어요.'}\n사용된 별은 자동으로 환불돼요.`;
+      // v3.228 X-K1: 환불 안내는 서버가 refunded=true를 준 경우에만 단정(그 외 중립 — 문구만, 동작 불변)
+      const msg = `${tracked.error || '아티스트를 만들지 못했어요.'}\n${chargeNotice(tracked.refunded)}`;
       console.info('[ArtistLoading] 서버 실패 확정', { jobId, refunded: tracked.refunded });
       acknowledgeFailedJob(jobId);
       taskStore.failApi(msg); // 입력 보존 — 아티스트 만들기의 "이어서 만들기"로 재개

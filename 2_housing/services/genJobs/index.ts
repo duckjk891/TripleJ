@@ -107,3 +107,15 @@ export function newRequestId(): string {
   for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
   return out;
 }
+
+// ── v3.228 X-K1: 과금 안내 문구 — 서버가 명시한 경우에만 환불·미차감을 단정 ─────────────
+
+/** 과금 여부를 확인할 수 없을 때(404·킬스위치·구서버·네트워크) 중립 안내 */
+export const CHARGE_UNCONFIRMED_BODY = '잠시 후 다시 확인하거나 별 사용 내역을 확인해 주세요.';
+
+/** 실패 확정 시 과금 안내 한 줄 — refunded===true / notCharged===true일 때만 단정 */
+export function chargeNotice(refunded?: boolean | null, notCharged?: boolean | null): string {
+  if (refunded === true) return '사용된 별은 자동으로 환불됐어요.';
+  if (notCharged === true) return '별은 차감되지 않았어요.';
+  return '별 사용 내역을 확인해 주세요.';
+}

@@ -46,8 +46,9 @@ import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService'
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueDirector, FatigueStatus } from '../types';
 // v3.227 A-보완: 생성 중 자유 이탈 — 아티스트 디렉터 상태 말풍선·디렉터 탭 분기
-import { useActiveArtistJob } from '../stores/generationJobStore';
-import { finalizeArtistJob, openJobViewer } from '../services/generationTracker';
+import { useActiveArtistJob, useDirectorJob, type TrackedJob } from '../stores/generationJobStore';
+import { finalizeArtistJob, openJobViewer, openGenJob } from '../services/generationTracker';
+import { getKindAdapter } from '../services/genJobs';
 
 // v3.107: 대기열 타이머(timerStore)·광고 단축 배선 폐지 — 작업은 요청 즉시 로딩 화면으로
 // 직행하고, 재요청 제한은 피로도(작곡만 서버 /fatigue/* 게이트)로 표현한다.
@@ -253,13 +254,32 @@ export default function MapScreen({ navigation }: Props) {
   // 튜토리얼 진행 중이면 상태 말풍선 숨김(앵커는 디렉터 좌표 박스라 말풍선과 무관 — 표시만 정리)
   const [tutorialVisible, setTutorialVisible] = useState(false);
   const [jobNow, setJobNow] = useState(Date.now());
+  // v3.228: 작사·작곡(music·inst)·이미지(cover·cover_refine)·영상 디렉터 추적 job — 같은 말풍선 슬롯 일반화
+  const lyricistJob = useDirectorJob('lyricist');
+  const composerJob = useDirectorJob('composer');
+  const imageJob = useDirectorJob('image');
+  const videoJob = useDirectorJob('video');
+  /** 말풍선·탭 분기 대상 비아티스트 job — processing·done(미확인)만, 어댑터 등록된 kind만 */
+  const genBubbleJob = (type: DirectorType): TrackedJob | null => {
+    const job =
+      type === 'lyricist' ? lyricistJob
+        : type === 'composer' ? composerJob
+          : type === 'image' ? imageJob
+            : type === 'video' ? videoJob
+              : null;
+    if (!job || (job.lastStatus !== 'processing' && job.lastStatus !== 'done')) return null;
+    return getKindAdapter(job.kind) ? job : null;
+  };
   const artistJobProcessing = artistJob?.lastStatus === 'processing';
+  const anyJobProcessing =
+    artistJobProcessing ||
+    [lyricistJob, composerJob, imageJob, videoJob].some((j) => j?.lastStatus === 'processing');
   useEffect(() => {
-    if (!artistJobProcessing) return undefined;
+    if (!anyJobProcessing) return undefined;
     setJobNow(Date.now());
     const t = setInterval(() => setJobNow(Date.now()), 60000);
     return () => clearInterval(t);
-  }, [artistJobProcessing]);
+  }, [anyJobProcessing]);
 
   // ── v3.213: 작업실 튜토리얼 anchor — 맵 좌표 기지라 measure 대신 스크롤 오프셋 기반 직접 계산 ──
   // winY = 대상맵y*scale − scrollY + ScrollView 창 오프셋(컨테이너 top = 뷰포트 top).
@@ -595,6 +615,15 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
+    // v3.228: 추적 job(만드는 중·완성)이 있는 디렉터 탭(말풍선 포함)은 휴식 게이트보다 먼저 job 처리 —
+    // 생성 직후 시작되는 쿨다운이 "완성! 눌러서 확인"을 가로막지 않게(진행 뷰어·결과 화면은 무과금).
+    const genJob = genBubbleJob(type);
+    if (genJob) {
+      console.info('[Map] job-bubble', { director: type, kind: genJob.kind, jobId: genJob.jobId, status: genJob.lastStatus });
+      void openGenJob(genJob.jobId, navigation);
+      return;
+    }
+
     // v3.107→v3.118: 디렉터 휴식(쿨다운) 게이트 — 탭 시 단축 다이얼로그(⭐/광고권).
     // v3.122.1: 아티스트 디렉터는 탭 게이트 제외 — 탭이 내 아티스트 열람·관리(무과금)
     // 진입 경로를 겸하므로 차단이 과함(실테스트 발견). 생성/재생성/꾸미기 시작 지점의
@@ -749,12 +778,14 @@ export default function MapScreen({ navigation }: Props) {
             const isResting = !!user && restRemain > 0;
             // v3.227 A-보완: 아티스트 디렉터 상태 말풍선 — isNext 말풍선 슬롯을 대체(동시 렌더 0),
             // 튜토리얼 진행 중엔 숨김. 휴식 티켓(별도 위치)과는 병존.
-            const jobBubble =
-              d.type === 'artist' && !!user && !!artistJob && !tutorialVisible
-                ? artistJob.lastStatus === 'processing'
-                  ? `만드는 중… (${Math.max(0, Math.floor((jobNow - artistJob.startedAt) / 60000))}분)`
-                  : '완성! 눌러서 확인'
-                : null;
+            // v3.228: 작사·작곡·이미지·영상 디렉터도 같은 슬롯(등록된 kind의 processing·done만).
+            const slotJob =
+              !!user && !tutorialVisible ? (d.type === 'artist' ? artistJob : genBubbleJob(d.type)) : null;
+            const jobBubble = slotJob
+              ? slotJob.lastStatus === 'processing'
+                ? `만드는 중… (${Math.max(0, Math.floor((jobNow - slotJob.startedAt) / 60000))}분)`
+                : '완성! 눌러서 확인'
+              : null;
             const isNext = user && d.type === nextActionDirector && !isResting && !jobBubble;
             return (
               // wrapper에 zIndex 20 → 캐릭터 + 티켓이 전경 가구(zIndex 15) 위로 올라옴
@@ -816,8 +847,8 @@ export default function MapScreen({ navigation }: Props) {
                     }}
                     accessibilityLabel={jobBubble}
                   >
-                    <View style={[styles.mapBubble, artistJob?.lastStatus === 'done' && styles.mapBubbleDone]}>
-                      <Text style={[styles.mapBubbleText, artistJob?.lastStatus === 'done' && styles.mapBubbleTextDone]} numberOfLines={1}>
+                    <View style={[styles.mapBubble, slotJob?.lastStatus === 'done' && styles.mapBubbleDone]}>
+                      <Text style={[styles.mapBubbleText, slotJob?.lastStatus === 'done' && styles.mapBubbleTextDone]} numberOfLines={1}>
                         {jobBubble}
                       </Text>
                     </View>

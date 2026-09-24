@@ -10,12 +10,14 @@ import {
   acknowledgeFailedJob,
   openJobViewer,
 } from '../services/generationTracker';
+import { chargeNotice } from '../services/genJobs';
 import { colors } from '../theme/colors';
 
 // ── v3.227 A-보완 보완1: 생성 job 공용 카드(MyArtists 상단·ArtistInput welcome) ─────────
 // processing = "아티스트를 만드는 중이에요 · 경과 m분" → 탭하면 추적 뷰어(ArtistLoading {jobId})
 // done       = "완성된 아티스트가 도착했어요" + 썸네일 → [아티스트로 저장](finalize) / [닫기](dismiss)
-// failed     = "만들지 못했어요 — 사용된 별은 자동으로 환불돼요" → [확인](레코드 정리)
+// failed     = "만들지 못했어요 — (서버 refunded=true일 때만) 사용된 별은 자동으로 환불됐어요" → [확인](레코드 정리)
+// v3.228: 이탈 권장 문구 금지(결정 5) · 과금 단정은 서버 명시 때만(X-K1)
 // 회수 목록은 기간 제한 없음(consume/dismiss 전까지 노출 — 사용자 결정 4).
 
 function elapsedMinutes(job: TrackedJob, now: number): number {
@@ -40,7 +42,7 @@ function JobRow({ job, navigation, now }: { job: TrackedJob; navigation?: any; n
           <AppText style={styles.title}>
             {job.mode === 'outfit' ? '옷을 입히는 중이에요' : '아티스트를 만드는 중이에요'} · 경과 {elapsedMinutes(job, now)}분
           </AppText>
-          <AppText style={styles.desc}>나가 있어도 계속 만들어져요. 탭하면 진행 상황을 볼 수 있어요.</AppText>
+          <AppText style={styles.desc}>탭하면 진행 상황을 볼 수 있어요.</AppText>
         </View>
       </TouchableOpacity>
     );
@@ -104,7 +106,7 @@ function JobRow({ job, navigation, now }: { job: TrackedJob; navigation?: any; n
         <View style={styles.body}>
           <AppText style={styles.title}>아티스트를 만들지 못했어요</AppText>
           <AppText style={styles.desc}>
-            {job.error ? `${job.error} · ` : ''}사용된 별은 자동으로 환불돼요.
+            {job.error ? `${job.error} · ` : ''}{chargeNotice(job.refunded)}
           </AppText>
           <View style={styles.btnRow}>
             <TouchableOpacity style={styles.ghostBtn} onPress={() => acknowledgeFailedJob(job.jobId)}>
