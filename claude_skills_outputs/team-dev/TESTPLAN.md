@@ -3354,3 +3354,101 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - [e2e] ② 재생 중 알림·메시지·채팅방 진입 시 미니플레이어 미표시+재생 지속(음 끊김 0)·이탈 시 재노출, DmChat 키보드 미간섭, 백그라운드·잠금화면 컨트롤 유지. 표시 화면 회귀(차트·플레이리스트·피드·검색·작업실·마이페이지·AlbumDetail).
 - [e2e] ③ 추천하기 시트 '카카오톡' 라벨 육안 + 공유 시트 기동. ④ ⭐ 표기 육안(iOS·Android·웹 각 1회 스모크 — 기존 ⭐ 리터럴 다수라 저위험).
 - [실기기] A-2 비고 엣지(동일 앨범 교차 origin 재진입 후 조회 실패 시 이탈 방향) 실동작 확인.
+
+## v3.222 + v3.223 (2026-09-24) — 1차 게이트(유닛·정적): ① 영상 디렉터 프리셋 진입 헤더 ② Inst 진행 화면(ComposerLoadingView 추출·InstLoading) ③ A/B 시크(서버 — 프런트 무변경) + v3.223 재생목록 보존(append 통일·하이드레이션 대기) — 시나리오 + 판정
+
+전제: 앱(2_housing) 기준 = PLAN v3.222(:5131~)·v3.223 섹션 + 구현 12파일(커밋 65a9eb2 이후 작업 트리 — 수정 10: App.tsx·AlbumDetailScreen·ChartScreen·FeedDetailScreen·FeedScreen·MusicLoadingScreen·MyMusicScreen·VideoDirectorScreen·services/playback.ts·stores/playerStore.ts, 신규 2: components/ComposerLoadingView.tsx·screens/InstLoadingScreen.tsx). 정독 + grep 전수 + tsc + **node 유닛 하니스 실측**(sucrase 트랜스파일, AsyncStorage·expo-av 스텁 — 실 zustand 5.0.12 persist·실 @react-navigation/routers 7.5.3 StackRouter 구동). 파일 무수정(TESTPLAN 제외)·원격 무접촉. v3.222 ③ 서버 generate.py Range는 배포 완료 — [api] 실측은 이월.
+하니스(세션 scratchpad): u/t_store.js(playerStore 18건) · u/t_hyd.js(하이드레이션 대기 8건) · u/t_play.js(playTrackNow 5건+관찰 1) · router_probe*.js(StackRouter 전이 실측).
+
+### A. v3.222 ① 영상 디렉터 프리셋 진입 헤더
+| # | 태그 | 항목 | 시나리오(Given/When/Then)·근거 | 판정 |
+|---|---|---|---|---|
+| B-1 | [unit] | initial:false 중첩 navigate → [Map, VideoDirector] 적재 | Given Studio 미방문 세션 When MyMusic ⋮ 다운로드→'영상'(MyMusicScreen.tsx:305-308 `params:{screen:'VideoDirector', initial:false, params:{initialTrackId}}`) Then core useNavigationBuilder.tsx:284(getStateFromParams — initial:false면 params 상태 미사용)·:530-545(getInitialState=[Map])·:683(initial===false&&첫 초기화 시 navigate 디스패치) 경로 확인 + StackRouter 실측 `Map > VideoDirector`. Map 마운트 → useLayoutEffect(MapScreen.tsx:443-472) 엔터명 타이틀 주입(focus 불요) | PASS |
+| B-2 | [unit] | VideoDirector focus headerLeft 주입 — Dialogue :105-120 관행 대조 | Then VideoDirectorScreen.tsx:171-187 useFocusEffect(useCallback([navigation])) → `getParent()?.setOptions({headerLeft})` — TouchableOpacity marginLeft:12·Feather arrow-left 22·colors.text.primary·a11y "작업실로 돌아가기" = DialogueScreen.tsx:104-119와 1:1(차이는 onPress만 goBack→navigate('Map')). blur cleanup 없음 = v3.201(C) 불변식 준수(클리어는 MapScreen.tsx:477-481 focus 전담). setOptions 대상 = Tab의 Studio 라우트 옵션뿐 → 타 탭 헤더 오염 없음. `[VideoDirector]` 로그 1줄 | PASS |
+| B-3 | [unit] | ← 동작 = RN7 NAVIGATE 전이 실측(스펙 전제 검증) | Given 스택 [Map,Dialogue,VD] / [Map,VD] When ← `navigation.navigate('Map')`(VideoDirectorScreen.tsx:178) Then StackRouter.tsx:371-382(현재≠대상·pop 미지정 → 기존 라우트 미탐색)·:442-452(push) — 실측 `Map > Dialogue > VideoDirector > Map` / `Map > VideoDirector > Map`. **PLAN 전제 "중간 Dialogue까지 pop"은 RN6 의미론 — RN7에선 push**(대조: `popTo('Map')`·`navigate('Map',undefined,{pop:true})` → `Map`). 화면상 작업실 복귀는 성립하나 VD(+Dialogue) 인스턴스가 하부에 잔존·왕복마다 누적·Android HW back이 VD로 복귀. 비교: 구 정상 진입 ←(Dialogue 클로저 goBack, source=Dialogue)은 실측 `Map > VideoDirector`(Dialogue만 제거, VD 잔류 = 가시 무반응)로 원래 결함 — 따라서 **가시 회귀는 아님**(개선), 스택 누적은 C-9 FAIL에 병합 판정 | PASS(비고 — 조치는 C-9) |
+| B-4 | [unit] | 정상 진입 회귀 — 프리셋 로직·배너·tabPress | Then VideoDirectorScreen 변경 hunk = :167-187 헤더 블록 1개뿐 — 프리셋 선곡/비공개 안내/videoDraft 클리어·복원 배너 로직 hunk 0. App.tsx Studio tabPress(:397-399) hunk 0. 정상 진입 시 Dialogue 주입 화살표를 VD focus가 덮어씀(마지막 focus 승) — 목적지 Map 단일화(결정 1 기본안) | PASS |
+
+### B. v3.222 ② Inst 진행 화면
+| # | 태그 | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|---|
+| C-1 | [unit] | ComposerLoadingView 추출 = MusicLoading 동작 등가(로직 hunk 0) | Then MusicLoadingScreen diff hunk 6개 = import 정리(:1-11·:27)·pulseAnim 선언/effect 제거(:49·:72-93 → 컴포넌트 :40-62로 이동, 파라미터 동일 1.1/800ms/inOut)·렌더 치환(:351-411)·styles 삭제(:415-540) — 생성·폴링·429 재시도·resume·replace(MusicResult)·4s 전진(:45-50)·progress 점프(:53-61) hunk 0. styles 텍스트 diff = 미사용 `container` 1키만 차이(참조 grep 0), 나머지 20키 바이트 동일. 렌더: steps[safeIndex].message·스텝 state(done/active/pending)·✓·`progress>0` 게이트·노트 문안 동일(noteText Math.min 클램프는 messageIndex≤4 불변식하 등가) | PASS |
+| C-2 | [unit] | InstLoading 5스텝·4s 전진·status 점프 | Then INST_STEPS 5종(InstLoadingScreen.tsx:27-33 제출→보컬 분리→오디오 받기→정규화→발매 = 결정 3 기본안). 4s interval phase==='loading'만(:80-86, 마지막 단계 캡). processing → `max(i,1)`(:110-112 = ≥2단계), completed → index 4 + phase 'done'(:113-117), pending 무변 | PASS |
+| C-3 | [unit] | 5s 폴링·10분 타임아웃·일시 오류 지속 | Then 즉시 1회 + setInterval 5000(:129-130), 10분 경과 시 clearInterval+'timeout'(:98-103 — 문안 :320 = 구 MyMusic :400 문안 동일), catch 시 폴링 지속(:123-126). mounted 가드(:100·:107) | PASS |
+| C-4 | [unit] | resume 모드 = 폴링만·중복 POST 없음 | Then InstLoading 내 requestInstrumental/POST 호출 grep 0 — 화면 자체가 생성 요청을 하지 않음(POST는 MyMusic confirmCreateInstrumental 1곳 :469). resume 플래그는 로그 용도(:95)·즉시 1회 확인으로 이미 완료면 바로 완료 카드 | PASS |
+| C-5 | [unit] | failed 환불 문안·completed 미리듣기 | Then failed → `data.error || 'Inst. 생성에 실패했어요. 차감된 스타(⭐)는 환불됩니다.'`(:120 = 구 :391 문안 동일)+[돌아가기]. completed → result_track_id(:116) → `${BACKEND_BASE_URL}/api/tracks/stream-proxy/{id}`(:142 — PlayerScreen:562·MusicResult:210 동일 규약) → expo-av createAsync(shouldPlay:false) + Slider(:257-269) — isSeekingRef 드래그 중 status 미덮어쓰기(:153)·seekValue 버퍼·onSlidingComplete setPositionAsync(:209-219)·`disabled={!seekable}`(duration>0) = MusicResult v3.204 패턴 동형. result_track_id 결측 시 플레이어 생략·완료 카드 유지 | PASS |
+| C-6 | [unit] | 언마운트 정리(인터벌·사운드) | Then 스텝 interval cleanup(:85), 폴링 cleanup mounted=false+clearInterval(:131-134), 사운드 effect cleanup unloadAsync(:170-175), createAsync 진행 중 언마운트 시 즉시 unload(:159-162), goMyPage 선 unload(:222-229). **언마운트 경로의 정리 코드 자체는 완비** — 단 이탈 경로가 언마운트를 일으키지 않는 문제는 C-9 | PASS |
+| C-7 | [unit] | App.tsx 라우트 등록·타입 | Then import(:77-78)·StudioStackParamList `InstLoading: { trackId: string; title?: string; resume?: boolean }`(:127-128)·`<StudioStack.Screen name="InstLoading">`(:233-234, gestureEnabled 기본 = 이탈 자유). goInstLoading 전달 params 3필드와 타입 일치 | PASS |
+| C-8 | [unit] | MyMusic 폴링 이관·진입 배선·분기 불변 | Then ⑴ pollInstrumental while 루프 grep 0, reconcileInstBusy(:393-419 — busy 트랙만 status 1회, completed/failed 시 busy 해제+fetchTracks(true))·useFocusEffect(:421-425, user 게이트). fetchTracks(:121) 선언이 reconcile(:393)보다 앞 — TDZ 없음. instBusyRef 미러로 재구독 없음 ⑵ 202 → goInstLoading(trackId,title)(:472, initial:false :381-383) ⑶ 409 job 형상 → busy true + resume:true(:497-499), 409 existing_track_id 분기·402·404·429 쿨다운·기타 오류 문안 hunk 0, handleCreateInstrumental 쿨다운 선게이트(:429-450) hunk 0 ⑷ ⋮ 진행 중 제외 조건(:372-373 `!instBusy[id]`) 유지 | PASS |
+| C-9 | [unit] | **이탈 경로 누수 — ←/돌아가기가 InstLoading을 언마운트하지 않음** | Given 완료 카드에서 미리듣기 재생 중 When ←(InstLoadingScreen.tsx:68) 또는 [돌아가기](:303) = `navigation.navigate('Map')` Then RN7 StackRouter 실측 `Map > InstLoading > Map`(push — B-3 동일 근거 StackRouter.tsx:371-382·:442-452) → InstLoading 미언마운트 → C-6 cleanup 미실행 → **미리듣기 오디오가 정지 수단 없이 계속 재생**(미니플레이어는 이 Sound를 모름), 로딩 중 이탈 시 폴링도 10분까지 지속. 탭 전환 이탈도 blur 정지 없음(useFocusEffect cleanup 부재). 부수: VD ←(VideoDirectorScreen.tsx:178)도 동일 push로 왕복마다 VD 인스턴스 누적 | **FAIL** |
+| C-10 | [unit] | **같은 InstLoading 인스턴스 재사용 시 상태 잔존** | Given Inst A 완료(phase 'done') → [마이페이지에서 보기](:222-230 = Tab navigate — Studio 스택 [Map, InstLoading(A)] 포커스 유지) When 곡 B에 Inst 만들기 → goInstLoading(B)(MyMusicScreen.tsx:377-386) Then StackRouter.tsx:374-376 "현재 라우트와 이름 같으면 그 라우트 재사용" — 실측 `sameKey=true`, params만 B로 교체 → phase·resultTrackId·errorMsg·messageIndex(:44-47) 리셋 없음, 폴링 effect deps=[trackId](:135)만 재시작 → **"B (Inst.) 완성!" 카드 + A 음원 미리듣기가 B 진행 중에 표시**(B 완료 전까지). 동일 트랙 재시도(A 실패 → 탭 이탈 → 재요청)는 trackId 불변이라 폴링 재시작조차 없음 → '실패' 카드 고착 | **FAIL** |
+
+### C. v3.222 ③ A/B 시크(프런트)
+| # | 태그 | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|---|
+| D-1 | [unit] | 프런트 무변경 | Then `git diff 65a9eb2 -- screens/MusicResultScreen.tsx` 0줄 — v3.204 Slider·seekable 게이트 그대로(서버 Range 배포로 duration 확정 시 활성화 전제) | PASS |
+
+### D. v3.223 재생목록 보존
+| # | 태그 | 항목 | 시나리오·근거 | 판정 |
+|---|---|---|---|---|
+| E-1 | [unit] | playTrackNow mode 기본 append | 하니스 t_play.js(실 playerStore): P1 큐 [1,2,3]+곡9 → [1,2,3,9]·idx 3·track 9·loadAndPlayTrack(9) / P1b 보관함 queue 4·currentIndex 3 동기 / P2 중복 곡 2(+queue 인자 [7,8]) → 추가 없음·idx 1 재생(append는 queue 인자 무시) / P3 replace [7,8]→idx 1 / P4 replace 무큐→[track]. 구현 playback.ts:720-745 — 차트 관행(ChartScreen.tsx:219-222 addToQueue→findIndex→인덱스 재생)과 동형 | PASS(5/5) |
+| E-2 | [unit] | 호출부 5곳 전환 | Then FeedScreen.tsx:204·FeedDetailScreen.tsx:124·MyMusicScreen.tsx:623 `playTrackNow(track)`(append 기본), AlbumDetailScreen.tsx:130-140 playFrom addToQueue+인덱스, ChartScreen.tsx:227-237 검색 탭 addToQueue+인덱스(searchResults 통째 교체 제거). 'replace' 호출자 0 — PlaylistScreen.tsx:204 setQueue(플레이리스트=교체) diff 0 의도적 잔존. playback.ts:702 setQueue는 커버 보강 map(동일 큐 — 무해) | PASS |
+| E-3 | [unit] | **setQueue 잔존 grep — 곡 단위 탭 암묵 교체 3곳 누락** | Then 전수 grep `setQueue(`: PLAN F2 "교체 호출부 전수"에 없던 곡 단위 탭 3곳이 여전히 화면 리스트로 큐 교체 → setQueue→saveOwnerQueue로 계정 보관함 덮어쓰기(A1 결함 그대로): ⑴ **SearchScreen.tsx:166-168** handlePress `setQueue(results)` — 하단 '검색' 탭(App.tsx:384-385) 주 동선 ⑵ UserChannelScreen.tsx:133-137 playTrack `setQueue(queue)` ⑶ ArtistDetailScreen.tsx:106-110 handleTrackPress `setQueue(tracks)`. 구현은 PLAN 5곳과 일치하나 PLAN 열거 누락 — "곡 하나 재생 = 보관함 파괴" 경로 잔존 | **FAIL** |
+| E-4 | [unit] | restoreQueueFor 빈 큐 저장 스킵·playTrackAtIndex 저장 | 하니스 t_store.js 18/18 PASS: 비회원 add/playTrackAtIndex 미저장, 보관 無+큐 2곡 승계 저장, owner add/dup 거부/playTrackAtIndex(idx·track 스냅샷)/setCurrentIndex/reorder/remove 저장, 범위 밖 인덱스 no-op, resetOnLogout 저장→초기화·guestNoticeAck 유지, 보관 有 복원(isPlaying·sessionActive false), **보관 無+빈 큐 → savedQueues 키 미생성(U6a)·하이드레이션 전 {} 경합 모사에서도 u1 미기록(U6c)**, claimQueue 승계 | PASS |
+| E-5 | [unit] | App.tsx hasHydrated 대기 + 2s 폴백 | 하니스 t_hyd.js 8/8 PASS(App.tsx:585-601 원문 추출 실행): H1 hydrated → 즉시 1회·구독 0 / H2 미하이드 → 대기, onFinishHydration → 1회+unsub 1회, 2s 타이머 후 중복 0 / H3 이벤트 부재 → 2000ms 폴백 1회+unsub / H4 이벤트 2회 → 1회(done 게이트) / **H5 실 zustand persist(AsyncStorage 150ms 지연): 시작 hasHydrated=false → 대기 후 restoreQueueFor=true·3곡 복원**. useEffect 호출부(:611) webOAuthTokenPending 게이트 유지 | PASS |
+| E-6 | [unit] | 불변 5종 diff 0 | Then ⑴ 미니 게이트: components/MiniPlayer.tsx diff 0·HIDE_MINIPLAYER_ROUTES(App.tsx:565) 무변 ⑵ partialize: playerStore diff hunk 2개(:167·:185)뿐 — 하니스 U8 키 = savedQueues·shuffle·repeat·guestNoticeAck ⑶ claimQueue hunk 0(U7 동작 확인) ⑷ 게스트 모달: TrackActionSheet.tsx·PlayerScreen.tsx diff 0 ⑸ 미디어세션: playback.ts hunk 2개 모두 playTrackNow(:713-745) — :121-149 hunk 0. authStore.ts diff 0 | PASS |
+
+### E. 공통
+| # | 태그 | 항목 | 근거 | 판정 |
+|---|---|---|---|---|
+| F-1 | [unit] | `npx tsc --noEmit` | 2_housing 전체 오류 0줄(35s) | PASS |
+| F-2 | [unit] | diff 격리 12파일 | Then 65a9eb2 이후 2_housing tracked 변경 = 정확히 수정 10 + 신규 2(ComposerLoadingView 09-24 11:49·InstLoadingScreen 11:51). 그 외 untracked = 사이클 이전 문서(v39~v42 md, mtime 07~08월)·scratchpad뿐 | PASS |
+
+### 비게이트 관찰(기록)
+- O-1 id 타입 혼재: addToQueue 중복 판정은 `t.id === track.id`(엄격), playTrackNow는 String 비교 → number 1 큐에 "1" 탭 시 중복 추가·기존 인덱스 재생(t_play P5 실측 queue=[1,"1"]). 기존 부채이나 append 통일로 노출 확대 — 필요 시 addToQueue String 정규화.
+- O-2 웹 OAuth 실패 후행 복원(App.tsx:524)은 하이드레이션 대기 헬퍼 미경유 — restoreQueueFor 빈 큐 스킵(E-4)이 방어하므로 무해.
+- O-3 initial:false로 Studio 최초 마운트 시 Map 마운트 부수효과(MapScreen.tsx:494-506 가상 팬덤 리포트 alert, 24h due 시)가 VD/InstLoading 위에 뜰 수 있음 — e2e 육안 확인.
+- O-4 Studio tabPress `navigate('Studio',{screen:'Map'})`(App.tsx:397-399)도 RN7에선 push(core useNavigationBuilder.tsx:699-705 pop 미지정) — 기존 부채, C-9와 동일 근원(백로그).
+- O-5 InstLoading 미리듣기는 전역 플레이어를 정지시키지 않음(MusicResult 동일 관행) — 동시 재생 가능성 e2e 확인.
+
+### 판정
+**v3.222·223 1차 게이트 미통과** — 23항목 중 PASS 20 · FAIL 3.
+- **C-9 FAIL** (v3.222① ②): InstLoadingScreen.tsx:68·:303, VideoDirectorScreen.tsx:178 `navigation.navigate('Map')` = RN7에서 push → InstLoading 미언마운트로 미리듣기 오디오 고아 재생·폴링 지속, VD 왕복 누적. 권고: 세 곳 `navigation.popTo('Map')`(실측 → `Map`) + InstLoading useFocusEffect cleanup에서 미리듣기 pauseAsync(탭 전환 대비).
+- **C-10 FAIL** (v3.222②): InstLoadingScreen.tsx:44-47·:90-135 — 동일 라우트 재사용 시 phase/resultTrackId/errorMsg/messageIndex 미리셋. 권고: goInstLoading에 요청 nonce(예: `req: Date.now()`) 추가 + 폴링 effect deps [trackId, req] 진입부에서 상태 초기화(setPhase('loading')·setMessageIndex(0)·setResultTrackId(null)·setErrorMsg(null)·기존 사운드 unload), 또는 StudioStack InstLoading에 `getId={({params}) => params?.req}`로 신규 push.
+- **E-3 FAIL** (v3.223①): SearchScreen.tsx:166-168 · UserChannelScreen.tsx:133-137 · ArtistDetailScreen.tsx:106-110 곡 단위 탭 setQueue 잔존 — PLAN 열거 누락(replan: 3곳 append 치환, 차트 관행 동형). 앨범 곡과 동일하게 결정 1 성격이므로 교체 유지 원하면 사용자 결정으로 명시 필요.
+재시험 범위: 수정 후 C-9·C-10·E-3 + B-2/B-3(popTo 전이 재실측)·E-2 grep·tsc·격리.
+
+이월(2차 게이트 — [e2e→웹/실기기]·[api]):
+- [api] v3.222 ③ generate stream Range 실측(206·Content-Range·Accept-Ranges·무Range 200+Content-Length·불량 416·variant=1·타 사용자 403·inline) — 배포 완료분, 이번 게이트 범위 외.
+- [e2e] ① 마이페이지 ⋮ 다운로드→영상: Studio 미방문/기방문 2케이스 헤더 엔터명+← 존재, ← → 작업실(수정 후 스택 [Map] 확인), 정상 진입(Map→Dialogue→VD) ←·videoDraft 배너·비공개 곡 안내·작업실 tabPress.
+- [e2e] ② Inst 진행 화면 실완주(⭐ 과금 — 사용자 승인 후): 1~5 스텝·완료 카드 미리듣기 재생·시크·[마이페이지에서 보기]→"<원제> (Inst.)" 목록, 이탈 후 재요청 409→resume, 실패 환불 문안, 연속 2곡 Inst(C-10 재현 시나리오), ← 시 오디오 정지(C-9).
+- [e2e] ③ A/B 화면 버전 A·B 재생바 드래그 시크(iOS·Android·웹)·카드 탭 vs 슬라이더 제스처 경합·seek LISTEN 1회.
+- [e2e] v3.223 재생목록 보존: 로그인→담기 3곡→강제종료→재시작(자동 로그인)→차트 '내 재생목록' 3곡(자동 재생·미니 노출 없음)→피드/앨범/검색 곡 재생→3곡+1곡(교체 아님)→재시작→4곡 유지, 로그아웃/재로그인·계정 A/B 전환·가입 claimQueue, 비회원 재시작 폐기, 플레이리스트=교체, 미니 이전/다음·웹 미디어세션 next/prev·관련곡 이어듣기.
+
+### 재검증 (2026-09-24, 1차 게이트 FAIL 3건 픽스 — C-9·C-10·E-3 + O-1)
+전제: 앱 작업 트리(2_housing) 픽스 반영분 정독 + grep + tsc + node 하니스 재실측. 파일 무수정(TESTPLAN 제외)·원격 무접촉.
+하니스(세션 scratchpad): **router_probe3.js**(App.tsx getId 원문 추출 eval + 실 StackRouter 7.5.3 — 12/12) · **u/t_e3.js**(Search·UserChannel·ArtistDetail·Chart 검색 탭 핸들러 원문 구간 추출 실행, 실 playerStore — 28/28) · 기존 u/t_store.js 18/18 · u/t_hyd.js 8/8 · u/t_play.js 5/5(+P5 관찰 → queue=[1]로 해소).
+
+| # | 태그 | 항목 | 재검증 근거 | 판정 |
+|---|---|---|---|---|
+| C-9 | [unit] | 이탈 경로 언마운트 | InstLoadingScreen.tsx:63-66 `backToMap = popTo('Map')` 공용 → 헤더 ←(:78)·실패 [돌아가기](:331) 모두 경유, 파일 내 `navigate('Map')` 0. VideoDirectorScreen.tsx:176-187 headerLeft onPress `popTo('Map')`(:181). 실측 R1 `[Map,InstLoading] → popTo → Map`(대조 R1b navigate = `Map > InstLoading > Map` 구 결함 재현), R3f 누적 `[Map,Inst(A),Inst(B)] → Map`. 언마운트 → C-6 cleanup(폴링 mounted=false+clearInterval :157-160, 사운드 unload :198-203) 실행 경로 확보. 탭 전환 대비: useFocusEffect(:71-95) cleanup에서 soundRef pauseAsync + setIsPlaying(false) — 헤더 클리어는 건드리지 않음(v3.201 불변식 유지). blur 중 로드 완료 사운드는 shouldPlay:false라 무음 | **PASS** |
+| C-10 | [unit] | 동일 인스턴스 재사용 상태 잔존 | App.tsx:127 `nonce?: string`, :234-238 `getId={({ params }) => params?.nonce ?? params?.trackId}`. MyMusicScreen.tsx:377-389 goInstLoading 매 호출 `nonce=String(Date.now())` — 202(:474)·409 resume(:501) 공통 경유. 실측 R3 top=Inst(A/n1)+navigate(B/n2) → **새 key push**(StackRouter.tsx:365-370 getId findLast 미일치 → :443-452), R3b 같은 nonce → 기존 key 재사용, R3c 동일 트랙 재시도(새 nonce) → 새 key(실패 카드 고착 해소), R3d nonce 결측 → trackId 폴백, R3e(대조) getId 없음 → 같은 key 재사용(구 결함 재현). 이중 방어: 폴링 effect deps `[trackId, nonce]`(:163) 진입부 phase/resultTrackId/errorMsg/messageIndex/isPlaying/position/duration 초기화(:111-117) — phase 변경으로 사운드 effect cleanup(unload) 연쇄 | **PASS** |
+| E-3 | [unit] | 곡 단위 탭 setQueue 잔존 | SearchScreen.tsx:166-172 handlePress · UserChannelScreen.tsx:134-142 playTrack(track) · ArtistDetailScreen.tsx:106-114 handleTrackPress → `addToQueue` + String findIndex + `setCurrentIndex` + navigate('Player',{track}) = 차트 관행(ChartScreen.tsx:218-224) 1:1. 하니스 t_e3 각 핸들러 원문 실행: 보관함 [1,2,3]+곡9 → `[1,2,3,9]`·idx3·Player(track9)·savedQueues.u1 4곡/idx3 저장, 중복 곡2 → 추가 없음·idx1, [1]+"1" → 이중 추가 없음·idx0, 빈 큐 → [5]·idx0. 핸들러 구간 내 setQueue 0 | **PASS**(4×7) |
+| B-2 | [unit] | VD headerLeft 재확인 | 아이콘·marginLeft 12·a11y "작업실로 돌아가기"·blur cleanup 없음 불변, onPress만 popTo('Map')로 교체 | PASS |
+| B-3 | [unit] | popTo 전이 재실측 | R2 `[Map,Dialogue,VD] → popTo → Map`, R2b 프리셋 `[Map,VD] → Map`, R2c(O-4 누적) `[Map,Dialogue,Map,VD] → Map > Dialogue > Map`(가장 가까운 Map까지 — 무해). 1차 비고(VD·Dialogue 하부 잔존·누적) **해소** | PASS |
+| E-2 | [unit] | setQueue 잔존 전수 grep | `setQueue(` = PlaylistScreen.tsx:204(플레이리스트=교체, v3.36 의도적 잔존) · playback.ts:702(커버 보강 map — 동일 큐) · playback.ts:728(playTrackNow 'replace' 분기 — 호출자 0) 3곳뿐. 곡 단위 탭 경로 0. playTrackNow 호출부 FeedScreen:204·FeedDetailScreen:124·MyMusicScreen:625 모두 append 기본 | PASS |
+| O-1 | [unit] | id 타입 혼재 | playerStore.ts:99-100 `String(t?.id) === String(track.id)`. t_e3: addToQueue [1]+"1"=false·+2=true·+"2"=false·무 id 거부. ChartScreen 엄격 findIndex 잔존 0(:221·:232 String 2곳). t_play P5 → `queue=[1] currentIndex=0`(1차 [1,"1"] 해소) | PASS(해소) |
+| F-1 | [unit] | `npx tsc --noEmit` | 오류 0줄(EXIT 0, 38.6s) | PASS |
+| F-2 | [unit] | diff 격리 | 65a9eb2 이후 2_housing tracked 변경 13 + 신규 2 = 15 = 1차 12파일 + 픽스 추가 3(SearchScreen·UserChannelScreen·ArtistDetailScreen; ChartScreen·playerStore는 기존 집합 내 hunk 추가). 전부 mtime 09-24 12:07~12:09 픽스 창. 그 외 untracked = 사이클 이전 문서 md·scratchpad뿐 | PASS |
+| R-1 | [unit] | 회귀: UserChannel 호출부 시그니처 | playTrack(track) 1인자 — 호출부 3곳 :202(피드 트랙 블록 `b.track`)·:302(발매곡 `t`)·:371(아티스트 곡 `t`) 모두 1인자, 제거된 `queue` 지역변수 참조 0(tsc 0). `!track?.id` 가드 유지 | PASS |
+| R-2 | [unit] | 회귀: 검색 탭 기존 동작 | SearchScreen handlePress 호출부 :191(결과 행)·:308(onPlay) 불변, CTR 로깅 `/tracks/search/click`(:162-165) hunk 0, navigate('Player',{track:t}) 유지 — 재생 진입 보존(PlayerScreen.tsx:739 routeTrack 우선 재생 — 구 경로와 동일 소비). 차이는 큐가 results 교체 → append 뿐(의도) | PASS |
+
+#### 비게이트 관찰(재검증 추가)
+- **O-6 범위 밖 `navigate('Map')` 4곳 판정**(router_probe3 OBS 실측):
+  - ArtistInputScreen.tsx:298 헤더 ‹ — 무조건 `navigate('Map')`. 진입 = Dialogue 액션 `navigate:ArtistInput`(DialogueScreen.tsx:184·:288) 또는 MyArtists(:310-311·:330) push → 실측 `Map > Dialogue > ArtistInput → … > ArtistInput > Map` / `Map > MyArtists > ArtistInput > Map`. **C-9와 동일 push 결함**(ArtistInput·Dialogue 하부 잔존·왕복 누적·Android HW back 복귀). 오디오 없음 → 가시 피해는 스택 누적뿐.
+  - ArtistCodyScreen.tsx:656 헤더 ‹ else 분기(returnToCover 아님) — ArtistInput/ArtistResult `replace('ArtistCody')`로 `[Map,Dialogue,ArtistCody]` → 실측 `… > ArtistCody > Map`. **C-9와 동일 push 결함**(:634 주석이 언급한 "Cody가 stack에 남는" 증상의 동일 근원).
+  - ArtistResultScreen.tsx:506 저장 완료 확인 else 분기 · MyArtistsScreen.tsx:212 handleBack else 분기 — `canGoBack()===false`(스택 단일 라우트 + 부모 Tab back 불가)에서만 도달 → 스택에 Map이 **없는** 루트 상태 폴백이라 C-9(기존 Map 위 중복 push)와 **다른 경우**. 실측 `ArtistResult → ArtistResult > Map`(popTo였다면 `Map` 대체 — 하부 잔존 차이만). 정상 경로(ArtistResult popToTop `Map > Dialogue > ArtistResult → Map`, MyArtists goBack)는 무결. 루트 도달 가능 경로: MyMusicScreen.tsx:268-269 Studio 미마운트 시 선행 navigate(Map)로 방어됨 → 실질 저위험.
+  - 권고(백로그, 이번 게이트 범위 외): ArtistInput:298·ArtistCody:656 → `popTo('Map')`. 동근원 O-4(App.tsx:405 tabPress)·MyMusicScreen.tsx:268 `navigate('Studio',{screen:'Map'})`도 중첩 NAVIGATE(pop 미지정) push.
+- O-7 getId=nonce 부수: [마이페이지에서 보기](Tab navigate — 언마운트 없음) 또는 탭 전환 이탈 후 새 Inst 요청 시 이전 InstLoading 인스턴스가 하부에 잔존(R3 `Map > Inst(A) > Inst(B)`). 사운드는 goMyPage unload·blur pause로 무음, 완료/실패 인스턴스는 폴링 정지 — 로딩 중 이탈분만 10분 상한 백그라운드 폴링(구 MyMusic 백그라운드 폴링과 동등). ← 한 번(popTo)으로 전부 정리 → 게이트 무영향, e2e에서 HW back 시 이전 카드 노출 여부만 육안 확인.
+
+#### 재검증 판정
+**v3.222·223 1차 게이트 통과** — 1차 FAIL 3건(C-9·C-10·E-3) 전부 PASS, 재확인 B-2·B-3·E-2·O-1·F-1·F-2 PASS, 회귀 R-1·R-2 PASS(하니스 합계 71/71: router_probe3 12 · t_e3 28 · t_store 18 · t_hyd 8 · t_play 5). 2차 게이트([e2e]·[api]) 이월 목록은 위 1차 판정 블록 그대로 유효 — ② Inst e2e에 "← 시 오디오 정지·스택 [Map]", "연속 2곡 Inst 시 B 진행 카드 깨끗", "탭 전환 시 미리듣기 pause" 확인 포함.

@@ -130,9 +130,14 @@ export default function UserChannelScreen() {
     }
   }, [user, followBusy, isSelf, isFollowing, authorId, navigation]);
 
-  const playTrack = (track: any, queue: any[]) => {
+  // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — 목록 통째 setQueue 교체 제거(재생목록 보존)
+  const playTrack = (track: any) => {
     if (!track?.id) return;
-    playerStore.setQueue(queue.length ? queue : [track]);
+    playerStore.addToQueue(track);
+    const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    if (__DEV__) console.info('[UserChannel] 곡 탭 → 큐 추가+재생', { id: track.id, idx, queueLen: q.length });
     navigation.navigate('Player', { track });
   };
 
@@ -166,7 +171,6 @@ export default function UserChannelScreen() {
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
-    const queue = trackBlocks.map((b) => b.track);
     return (
       <TouchableOpacity
         key={String(item.id)}
@@ -195,7 +199,7 @@ export default function UserChannelScreen() {
                 <View key={`tr${i}`} style={styles.feedTrackWrap}>
                   <TrackRow
                     track={{ ...b.track, id: String(b.track.id) }}
-                    onPress={() => playTrack(b.track, queue)}
+                    onPress={() => playTrack(b.track)}
                   />
                 </View>
               ))}
@@ -295,7 +299,7 @@ export default function UserChannelScreen() {
               <TrackRow
                 key={String(t.id)}
                 track={{ ...t, id: String(t.id) }}
-                onPress={() => playTrack(t, tracks)}
+                onPress={() => playTrack(t)}
               />
             ))
           ) : <EmptyState title="아직 발매한 곡이 없어요." />}
@@ -364,7 +368,7 @@ export default function UserChannelScreen() {
                         <TrackRow
                           key={String(t.id)}
                           track={{ ...t, id: String(t.id) }}
-                          onPress={() => playTrack(t, artistTracks)}
+                          onPress={() => playTrack(t)}
                         />
                       ))
                     ) : <EmptyState title="이 아티스트로 발매한 공개 곡이 없어요." />

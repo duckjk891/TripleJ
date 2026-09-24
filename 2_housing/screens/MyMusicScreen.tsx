@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -300,9 +300,11 @@ export default function MyMusicScreen({ navigation }: any) {
       {
         text: '영상',
         onPress: () => {
+          // v3.222 ①: initial:false — Studio 미방문 세션에도 스택 [Map, VideoDirector] 적재.
+          // Map 마운트만으로 엔터명 헤더 셋업(useLayoutEffect) = 정상 진입과 동일 타이틀·뒤로가기.
           navigation.getParent()?.navigate('MainTabs', {
             screen: 'Studio',
-            params: { screen: 'VideoDirector', params: { initialTrackId: String(t.id) } },
+            params: { screen: 'VideoDirector', initial: false, params: { initialTrackId: String(t.id) } },
           });
         },
       },
@@ -370,35 +372,59 @@ export default function MyMusicScreen({ navigation }: any) {
     && !(t.title || '').includes('(Inst.)')
     && !instBusy[String(t.id)];
 
-  // v3.210 ③: Inst. 상태 폴링 — 기존 생성 폴링 관행(pending/processing → completed/failed) 재사용.
-  // 5초 간격 최대 10분(서버 vocal-removal 폴링과 동일 축), 일시 오류는 무시하고 계속.
-  const pollInstrumental = async (trackId: string, title: string) => {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 10 * 60 * 1000) {
-      await new Promise((r) => setTimeout(r, 5000));
-      try {
-        const data = await getInstrumentalStatus(trackId);
-        const st = String(data?.status || '').toLowerCase();
-        if (__DEV__) console.info('[Inst] 상태', { trackId, status: st });
-        if (st === 'completed' || st === 'success' || st === 'done') {
-          setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-          showAlert('완료', `"${title} (Inst.)" 트랙이 내 곡에 추가되었어요.`);
-          fetchTracks(true);
-          return;
-        }
-        if (st === 'failed' || st === 'error') {
-          setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-          showAlert('실패', data?.error || 'Inst. 생성에 실패했어요. 차감된 스타(⭐)는 환불됩니다.');
-          return;
-        }
-      } catch (err: any) {
-        // 일시 네트워크/서버 오류는 폴링 지속 (생성 자체는 서버 백그라운드에서 진행)
-        console.error('[Inst] 상태 조회 실패(계속 폴링)', { trackId, status: err?.response?.status });
-      }
-    }
-    setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-    showAlert('안내', 'Inst. 생성이 오래 걸리고 있어요. 잠시 후 내 곡 목록을 새로고침해 확인해주세요.');
+  // v3.222 ②: Inst 폴링 소유권을 InstLoadingScreen으로 이관 — 이 화면은 진입 배선만 담당.
+  // ①과 동일한 헤더 정합(initial:false — Map 하부 적재, ← 주입은 InstLoading이 동일 관행 적용).
+  const goInstLoading = (trackId: string, title: string, resume = false) => {
+    // v3.223 C-10: 요청마다 nonce — StudioStack getId로 매 진입 새 InstLoading 인스턴스(이전 상태 잔존 방지)
+    const nonce = String(Date.now());
+    if (__DEV__) console.info('[Inst] InstLoading 진입', { trackId, resume, nonce });
+    navigation.getParent()?.navigate('MainTabs', {
+      screen: 'Studio',
+      params: {
+        screen: 'InstLoading',
+        initial: false,
+        params: { trackId, title, nonce, ...(resume ? { resume: true } : {}) },
+      },
+    });
   };
+
+  // v3.222 ②: 기존 pollInstrumental while 루프 제거 — 복귀 focus 시 busy 트랙 status 1회 확인으로
+  // instBusy 해제 + 목록 갱신(⋮ 진행 중 항목 제외 회귀는 instBusy 유지로 보존).
+  // instBusy는 ref 미러로 읽어 focus effect 재구독(재fetch) 없이 최신값을 본다.
+  const instBusyRef = useRef(instBusy);
+  instBusyRef.current = instBusy;
+  const reconcileInstBusy = useCallback(async () => {
+    const busyIds = Object.keys(instBusyRef.current).filter((id) => instBusyRef.current[id]);
+    if (!busyIds.length) return;
+    let anyDone = false;
+    await Promise.all(
+      busyIds.map(async (trackId) => {
+        try {
+          const data = await getInstrumentalStatus(trackId);
+          const st = String(data?.status || '').toLowerCase();
+          if (__DEV__) console.info('[Inst] focus 상태 확인', { trackId, status: st });
+          if (
+            st === 'completed' || st === 'success' || st === 'done' ||
+            st === 'failed' || st === 'error'
+          ) {
+            setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+            anyDone = true;
+          }
+        } catch (err: any) {
+          // 확인 실패는 다음 focus에서 재시도(진행 자체는 서버 백그라운드)
+          console.error('[Inst] focus 상태 확인 실패', { trackId, status: err?.response?.status });
+        }
+      })
+    );
+    if (anyDone) fetchTracks(true); // 완료/실패 확정 — 새 "<원제> (Inst.)" 반영 등 목록 갱신
+  }, [fetchTracks]);
+
+  // v3.222 ②: InstLoading에서 복귀(또는 임의 재진입) focus 시 busy 트랙 1회 확인
+  useFocusEffect(
+    useCallback(() => {
+      if (user) reconcileInstBusy();
+    }, [user, reconcileInstBusy])
+  );
 
   // v3.215 ④: Inst = 작곡(composer) 디렉터 영역 — 생성 진입 전 쿨다운 게이트.
   // cooldown_remaining_sec>0면 확인 다이얼로그 미진입 + 공용 쿨다운 다이얼로그(12곳 관행).
@@ -443,8 +469,9 @@ export default function MyMusicScreen({ navigation }: any) {
             if (__DEV__) console.info('[Inst] 생성 시작', { trackId });
             try {
               await requestInstrumental(trackId);
-              showAlert('생성 시작', 'Inst. 버전을 만들고 있어요. 완료되면 알려드릴게요.');
-              pollInstrumental(trackId, track.title);
+              // v3.222 ②: '생성 시작' alert + 백그라운드 폴링 → InstLoading 진행 화면으로 교체
+              // (완료 표시·미리듣기는 그 화면이 담당, 이탈 시 복귀 focus 확인으로 갈음 — 결정 2 기본안)
+              goInstLoading(trackId, track.title);
             } catch (err: any) {
               const status = err?.response?.status;
               console.error('[Inst] 생성 요청 실패', { trackId, status });
@@ -469,7 +496,9 @@ export default function MyMusicScreen({ navigation }: any) {
                 if (err?.response?.data?.existing_track_id) {
                   showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
                 } else {
-                  showAlert('알림', '이미 이 곡의 Inst. 생성이 진행 중이에요.');
+                  // v3.222 ②: 진행 중 409 → 동일 화면 resume 모드(폴링만 — MusicLoading resume 관행)
+                  setInstBusy((prev) => ({ ...prev, [trackId]: true }));
+                  goInstLoading(trackId, track.title, true);
                 }
               } else if (status === 404) {
                 // v3.214 ③: 서버 /instrumental 미배포(v3.210) 과도기 안내 — 배포 후 404는 곡 미존재뿐이라 무해
@@ -593,7 +622,7 @@ export default function MyMusicScreen({ navigation }: any) {
                   <TrackRow
                     track={{ ...b.track, id: String(b.track.id) }}
                     liked={!!likedMap[String(b.track.id)]}
-                    onPress={() => playTrackNow(b.track, queue)}
+                    onPress={() => playTrackNow(b.track)} // v3.223 ①: 곡 단위 탭 = append(재생목록 보존)
                   />
                 </View>
               ))}

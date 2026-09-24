@@ -295,7 +295,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     parent.setOptions({
       headerLeft: () => (
         <TouchableOpacity
-          onPress={() => navigation.navigate('Map')}
+          onPress={() => navigation.popTo('Map')} // v3.222: RN7 navigate 는 Map 을 새로 push — popTo 로 스택 정리
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >

@@ -218,16 +218,20 @@ export default function ChartScreen() {
     // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
     playerStore.addToQueue(track);
     const q = usePlayerStore.getState().queue;
-    const idx = q.findIndex((t: any) => t.id === track.id);
+    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id)); // v3.223 O-1 정규화(addToQueue와 동일 판정)
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
     if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     navigation.navigate('Player', { track });
   };
 
   const handleSearchTrackPress = (track: ChartTrack) => {
-    const idx = searchResults.findIndex((t) => t.id === track.id);
-    playerStore.setQueue(searchResults);
-    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    // v3.223 ①: 검색 결과 탭 = append(차트 곡 탭 :218-224 관행 1:1) — searchResults 통째
+    // setQueue 교체 제거(로그인 재생목록 보존 — 교체는 플레이리스트 재생만).
+    playerStore.addToQueue(track);
+    const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id)); // v3.223 O-1 정규화
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    if (__DEV__) console.info('[ChartScreen] 검색 곡 탭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     closeSearchModal();
     navigation.navigate('Player', { track });
   };

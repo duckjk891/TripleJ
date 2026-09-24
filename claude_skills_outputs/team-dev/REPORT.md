@@ -2985,3 +2985,19 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 **검증**: 1차 게이트 12/12 PASS(TESTPLAN v3.220 — 내비 전환 완전성·제외 규칙 grep·tsc 0에러·diff 12파일 격리). 이월: 실기기/웹 실조작(진입 5경로·복귀 3방향·미니플레이어 숨김·⭐ 육안·Android back 스모크), 비게이트 엣지 1건(에러 경로 한정 from 클로저 — 정상 동선 무영향).
 
 **특이**: 구현 1차 시도가 모델 사용 한도로 중단 → 사용자 지시로 동일 모델 재시도 완료. v3.220은 v3.217~221 일괄 커밋(37a2304) 이후 별도 커밋.
+
+## v3.222 + v3.223 (2026-09-24)
+
+**요청**: v3.222 ① 마이페이지 다운로드→영상 진입 시 상단바가 '작업실'로 뜸(엔터명+뒤로가기 필요) ② Inst 만들기를 작곡 디렉터 1~5단계 진행 화면과 완성 후 미리듣기로 연동 ③ 작곡 2곡 생성 화면 미리듣기 시크 불가. v3.223 로그인 사용자 재생목록 미보존.
+
+**수행**
+- v3.222① 원인: 프리셋 진입이 VideoDirector 를 Studio 스택 단독 루트로 적재 → Map(엔터명 헤더 주입 주체) 미마운트. MyMusic 중첩 navigate `initial:false` + VideoDirector focus 시 headerLeft ← 주입.
+- v3.222② MusicLoading 진행 UI를 ComposerLoadingView 로 추출(동작 등가), InstLoadingScreen 신설(5단계·시간 전진+status 점프·5s 폴링·10분 타임아웃·resume·실패 환불 안내·완성 시 stream-proxy 시크 미리듣기). MyMusic 백그라운드 폴링 → InstLoading 진입(202/409) + focus 시 reconcileInstBusy.
+- v3.222③ 원인: 서버 `GET /generate/{id}/stream/` 에 Range·Content-Length 전무. tracks.py v193 Range 블록 동형 이식 + inline 전환(server_staging_v3222/generate.py). **서버 배포 완료**(사용자 실행, md5 8786687e 일치·health 200·인증 401). 프런트 무변경.
+- v3.223 원인: 계정별 보관함(savedQueues)·재시작 복원은 존재했으나, 곡 단위 재생 경로들이 setQueue 로 큐를 통째 교체 → 보관함 즉시 덮어쓰기. playTrackNow mode(append 기본) 도입, 곡 탭 경로 8곳(Chart 검색·Feed·FeedDetail·MyMusic·AlbumDetail + 재검증 추가분 Search·UserChannel·ArtistDetail) append 전환, 빈 큐 보관함 덮어쓰기 방어, playTrackAtIndex 저장 보강, restoreSession 하이드레이션 대기(+2s 폴백), 큐 중복 판정 String 정규화. 플레이리스트 재생=교체·게스트 폐기·claimQueue 불변.
+
+**검증**: 1차 게이트 23항목 중 FAIL 3건(C-9 RN7 `navigate('Map')` 가 Map 을 새로 push → 화면 미해제·사운드/폴링 누수, C-10 InstLoading 인스턴스 재사용으로 이전 결과 잔존, E-3 PLAN 열거 누락 교체 경로 3곳) → 픽스(popTo·blur 시 pause·getId+nonce·append 3곳) → 재검증 통과(하니스 71/71 — 실제 StackRouter 7.5.3·playerStore 실행). 재검증 관찰 O-6에서 동일 결함 2곳(ArtistInput ←, ArtistCody 복귀) 추가 발견 → 오케스트레이터가 popTo 로 동일 수정(tsc 통과).
+
+**이월(2차 게이트·실기기)**: [api] generate stream Range 실측(로그인 토큰), [e2e] 다운로드→영상 헤더, Inst 진행 화면 실완주(⭐ 과금), A/B 시크 실측, 재생목록 보존(담기→곡 재생→재시작 복원), Android 하드웨어 back 시 이전 InstLoading 카드 노출 여부(O-7).
+
+**특이**: Fable 사용량 한도로 에이전트 3회 중단 → 사용자 지시로 크레딧 사용 후 Opus 5.5 로 전환해 완료. 백엔드 worktree(TripleJ-backend)가 라이브와 desync — 서버 작업은 라이브 pull 관행 유지.

@@ -1,14 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  Image,
-  Animated,
-  Easing,
-  ActivityIndicator,
-} from 'react-native';
-import { AppText } from '../components/ui';
+import { useEffect, useState } from 'react';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMusicStore } from '../stores/musicStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -24,7 +14,9 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { showAlert } from '../utils/appAlert';
 import { BACKEND_BASE_URL } from '../services/api';
 import AppScreenLayout from '../components/AppScreenLayout';
-import { colors } from '../theme/colors';
+// v3.222 ②: 진행 UI(초상 펄스+메시지+스텝+%바+노트)는 공용 ComposerLoadingView로 추출 —
+// InstLoadingScreen과 공유. 이 화면은 생성·폴링·스텝 전진 로직만 유지(동작 등가).
+import ComposerLoadingView from '../components/ComposerLoadingView';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -46,7 +38,6 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
   const resumeGenerationId: string | undefined = route.params?.resumeGenerationId;
   const [messageIndex, setMessageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
 
@@ -68,28 +59,6 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       setMessageIndex((i) => Math.max(i, stepFromProgress));
     }
   }, [progress]);
-
-  // Pulse animation
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
 
   // Call generation API
   useEffect(() => {
@@ -348,193 +317,14 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
 
   return (
     <AppScreenLayout scroll={false} insideTab avoidMiniPlayer={false}>
-      <View style={styles.content}>
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <View style={styles.portraitContainer}>
-            <Image source={portrait} style={styles.portraitImage} />
-          </View>
-        </Animated.View>
-
-        <AppText style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</AppText>
-
-        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
-
-        {/* 스텝 인디케이터 */}
-        <View style={styles.stepRow}>
-          {LOADING_STEPS.map((s, i) => {
-            const state = i < messageIndex ? 'done' : i === messageIndex ? 'active' : 'pending';
-            return (
-              <View key={s.label} style={styles.stepItem}>
-                <View
-                  style={[
-                    styles.stepDot,
-                    state === 'active' && styles.stepDotActive,
-                    state === 'done' && styles.stepDotDone,
-                  ]}
-                >
-                  <AppText style={styles.stepDotText}>
-                    {state === 'done' ? '✓' : i + 1}
-                  </AppText>
-                </View>
-                <AppText
-                  style={[
-                    styles.stepLabel,
-                    state === 'active' && styles.stepLabelActive,
-                    state === 'done' && styles.stepLabelDone,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {s.label}
-                </AppText>
-              </View>
-            );
-          })}
-        </View>
-
-        {progress > 0 && (
-          <View style={styles.progressContainer}>
-            <View style={styles.progressBar}>
-              <View
-                style={[styles.progressFill, { width: `${progress}%` }]}
-              />
-            </View>
-            <AppText style={styles.progressText}>{Math.round(progress)}%</AppText>
-          </View>
-        )}
-
-        <View style={styles.noteContainer}>
-          <AppText style={styles.noteText}>
-            작곡 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}
-            1~3분 정도 소요될 수 있어요.
-          </AppText>
-        </View>
-      </View>
+      {/* v3.222 ②: 추출 컴포넌트 사용 — 표시(steps·messageIndex·progress·portrait·noteText)만 위임 */}
+      <ComposerLoadingView
+        steps={LOADING_STEPS}
+        messageIndex={messageIndex}
+        progress={progress}
+        portrait={portrait}
+        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n1~3분 정도 소요될 수 있어요.`}
+      />
     </AppScreenLayout>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.deepest,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  portraitContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    overflow: 'hidden',
-    borderWidth: 3,
-    borderColor: colors.accent.primary,
-    marginBottom: 32,
-  },
-  portraitImage: {
-    width: 120,
-    height: 360,
-    resizeMode: 'cover',
-    position: 'absolute',
-    top: 0,
-    left: 0,
-  },
-  loadingText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-    marginBottom: 24,
-    textAlign: 'center',
-  },
-  spinner: {
-    marginBottom: 20,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginBottom: 20,
-    paddingHorizontal: 4,
-  },
-  stepItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  stepDot: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: colors.bg.surface1,
-    borderWidth: 1.5,
-    borderColor: colors.border.subtle,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  stepDotActive: {
-    backgroundColor: colors.accent.primary,
-    borderColor: colors.accent.primary,
-  },
-  stepDotDone: {
-    backgroundColor: colors.bg.surface2,
-    borderColor: colors.accent.primary,
-  },
-  stepDotText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.text.primary,
-  },
-  stepLabel: {
-    fontSize: 10,
-    color: colors.text.muted,
-    textAlign: 'center',
-  },
-  stepLabelActive: {
-    color: colors.accent.primary,
-    fontWeight: '700',
-  },
-  stepLabelDone: {
-    color: colors.text.secondary,
-  },
-  progressContainer: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24,
-    gap: 12,
-  },
-  progressBar: {
-    flex: 1,
-    height: 8,
-    backgroundColor: colors.bg.surface1,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent.primary,
-    borderRadius: 4,
-  },
-  progressText: {
-    color: colors.text.secondary,
-    fontSize: 14,
-    fontWeight: '600',
-    minWidth: 40,
-    textAlign: 'right',
-  },
-  noteContainer: {
-    backgroundColor: colors.bg.surface1,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-  },
-  noteText: {
-    fontSize: 13,
-    color: colors.text.secondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-});

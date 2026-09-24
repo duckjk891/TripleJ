@@ -5127,3 +5127,158 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 4. **④ 튜토리얼 타이틀**: 기본안 = '스타'→'⭐ 스타'. 원문 고정(v3.213 "문안 = 사용자 원문" 이력) 원하면 제외 지시.
 
 규칙: 민감 정보 플레이스홀더(앱 단독 사이클 — SSH·키·크리덴셜 기재 없음), 코드 수정·커밋·배포는 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후. v3.219 미커밋분 위에서 분석했으므로 구현 착수 전 v3.219 커밋 선행 권장.
+
+# v3.222 — ① 영상 디렉터 프리셋 진입 헤더 정합 ② Inst 생성 → 작곡 디렉터 진행 화면·완료 미리듣기 연동 ③ 작곡 A/B 미리듣기 시크
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (커밋 65a9eb2 기준 작업 트리 — 앱 파일:라인은 현행 코드 직접 정독). 서버 실측 = **라이브 EC2 읽기 전용 ssh(`<SSH_HOST>`=maidol-ec2, /home/ubuntu/maidol/backend_9004) + 무토큰 curl 존재성 프로브** — 서버 파일:라인은 라이브 기준. 주의: 백엔드 git worktree(TripleJ-backend)는 HEAD 2474b06(v3.190)로 **라이브와 desync**(instrumental 코드 자체 부재 실측) — ③ 서버 작업은 v3.217 관행(server_staging_v3222 신설 = 라이브 pull + `_orig` 보존 + md5 재대조, EC2는 코드 베이크라 docker build·배포 전부 사용자 승인)을 따른다. ①②는 앱 단독(서버 무변경), ③만 서버 1함수 변경.
+
+## 0단계 findings / Plan verification (파일:라인 — 앱은 현행 코드, 서버는 라이브 EC2 실측)
+
+**F1. ① 프리셋 진입 상단바 '작업실' — 원인 실증: 중첩 navigate가 Map을 적재하지 않아 헤더 셋업 주체가 부재**
+- 헤더 구조: StudioStack 자체는 headerShown:false(App.tsx:190-194) — 작업실 계열에서 보이는 상단바는 **항상 Tab 헤더 1개**이며 기본값은 titleHeader '작업실'(App.tsx:397-404, titleHeader :296-303, ← 없음).
+- 정상 진입 헤더의 실체: **엔터명 타이틀은 MapScreen이 마운트 시 parent(Tab) setOptions로 주입**(MapScreen.tsx:443-472 useLayoutEffect — 엔터명 Marquee+HomeHeaderActions, sticky)하고, **← 화살표는 DialogueScreen이 focus 시 headerLeft로 주입**(DialogueScreen.tsx:105-120), 클리어는 Map 복귀 focus가 전담(MapScreen.tsx:477-481, v3.201 불변식). 정상 진입 스택 = Map → Dialogue(video, transparentModal) → navigate('VideoDirector')(DialogueScreen.tsx:200 action 'navigate:VideoDirector' → :289 navigation.navigate) = [Map, Dialogue, VideoDirector] — 타이틀·화살표 모두 하위 화면이 심어놓은 것이 잔존하는 구조. 화살표 onPress는 Dialogue 클로저의 goBack이라 VideoDirector 위에서 눌러도 Map 복귀.
+- 프리셋 진입(v3.221, MyMusicScreen.tsx:303-306): `getParent()?.navigate('MainTabs',{screen:'Studio',params:{screen:'VideoDirector',params:{initialTrackId}}})`. React Navigation 7 중첩 navigate는 **지정 화면을 스택의 유일 초기 라우트로 적재**(initialRouteName Map은 `initial:false` 없이는 미적재):
+  - (a) Studio 탭 미방문 세션 → 스택 [VideoDirector] 단독: Map useLayoutEffect 미실행 = 타이틀 '작업실' 기본값 + headerLeft 주입 주체 없음 + back 스택 자체 부재 → **사용자 재현 상태 그대로**.
+  - (b) Studio 기방문 → 기존 스택 위 push: 타이틀은 엔터명 잔존하나 ← 는 여전히 없음(마지막 Map focus가 클리어해 둔 상태).
+  두 경우 모두 뒤로가기 부재. VideoDirectorScreen은 헤더 무접촉(setOptions·goBack 배선 grep 0건) 확인 — 이탈 수단이 하단 탭뿐.
+- 프리셋 로직 자체(:207-225 — 선곡 통과·비공개 곡 안내·videoDraft 클리어)는 정상. 문제는 스택 적재·헤더만.
+- 동일 잠복 패턴: CoverGenerationScreen.tsx:647(ArtistCody 중첩 navigate) — 이번 범위 외, 기록만.
+
+**F2. ② Inst 현행 플로우와 작곡 진행 화면 — 재사용 재료·결합 장애 실측**
+- 현행 Inst: MyMusicScreen ⋮ → handleCreateInstrumental(:406-427, composer 쿨다운 선게이트) → confirmCreateInstrumental(:430-479, ⭐5 다이얼로그 → requestInstrumental → '생성 시작' alert → pollInstrumental; 402 충전 안내·409 진행 중·404 과도기 분기 :451-478) → pollInstrumental(:375-401) = **5s×10분 while 폴링, completed→alert+fetchTracks / failed→환불 안내** — 진행 UI 없음(다이얼로그·백그라운드 폴링뿐), result_track_id 미사용.
+- "작곡 디렉터 1~5 로딩 화면" = **MusicLoadingScreen**(StudioStack 'MusicLoading'): LOADING_STEPS 5단계(멜로디→화음→작곡→믹싱→마무리, :34-40), 4s 자동 전진(:54-59)+서버 progress% 점프(:62-70), 스텝 인디케이터(:363-392)·%바(:394-403)·초상 펄스, 완료 시 replace('MusicResult')(:144) — "다 만들면 들어보기"는 MusicResult가 담당. resumeGenerationId 재개 모드(:331-341) = **생성 시작 없이 폴링만 하는 화면 재사용 선례**.
+- 결합 장애: MusicLoadingScreen의 doGenerate(:172-328)가 musicStore·generateWithSuno·참고음 업로드·피로 429 재시도에 강결합 — Inst(트랙 축 API)를 모드 파라미터로 밀어 넣으면 분기 비대 → (a) 화면 통짜 재사용 비채택.
+- 서버 실측(라이브 EC2 — 배포 확인: 무토큰 GET /tracks/1/instrumental/status 401 vs 임의 경로 404):
+  - POST /tracks/{id}/instrumental 202(tracks.py:3045-3205, 응답에 status_url), GET .../instrumental/status(:3210-3257) 반환 = **{status, job_id, result_track_id, error, refunded, created_at, updated_at}** — 완료 시 result_track_id 확보 가능(기존 Inst 트랙만 있어도 completed+id 응답 :3237-3242).
+  - job 내부 전이는 **pending→processing→completed/failed 3단뿐**(inst_service.py:483·446·491) — 1~5단계 세분 필드 없음 → 스텝 표시는 클라 시간 기반(MusicLoading 관행) + status 도달 점프로 설계(**서버 무변경**). 파이프라인 실순서(제출→보컬 분리→다운로드→정규화→발매)를 표시 문안으로만 차용.
+  - 완료 트랙 재생 소스 = /tracks/stream-proxy/{id} — v193 Range 구현(tracks.py:1318-1348)이라 완료 미리듣기는 시크 포함 정상 전제.
+
+**F3. ③ A/B 미리듣기 시크 불가 — 원인 실증: 프런트는 v3.204에 이미 Slider, 서버 생성 스트림이 Range 미지원**
+- 화면 특정: "곡 2개 생성 화면" = **MusicResultScreen A/B 비교**(showComparison :197, variant 카드 :658-710). 재생바는 표시 전용 View가 아니라 v3.204(①)에서 Slider 이식 완료(active 카드 :689-701·단일 플레이어 :732-744, PlayerScreen 패턴 시킹 상태 :141-146·handleSeek :425-437·LISTEN seek 1회 기록 :171-183). 단 `disabled={!seekable}`(:697·:740), seekable=duration>0(:413), duration=expo-av status.durationMillis(:238).
+- 원인(서버): A/B 오디오 소스 = generationStreamUrl(:213 → musicService.ts:377-384, ?token 쿼리 인증) → **GET /api/generate/{gen_id}/stream/ — 라이브 generate.py stream_generation(:1224~)의 StreamingResponse에 Range 처리·Accept-Ranges·Content-Length 전무(파일 전체 grep 0건 실측) + Content-Disposition attachment(:1304-1311)**. 반면 저장 트랙 stream-proxy는 v193 Range 완비. expo-av(웹 HTML5 audio·네이티브 ExoPlayer/AVPlayer)는 Range 미지원·길이 미상 스트림에서 duration 미확정→Slider disabled(드래그 무반응)이거나 duration이 잡혀도 setPositionAsync 무효/처음부터 재생 — 사용자 증상과 정합. **v3.204가 프런트만 이식하고 서버 격차를 놓친 것.**
+- 소비처 전수(grep): MusicResult A/B(:213)·GenerationHistory 이어듣기(:129)·MusicLoading url 조립(:134·:279) — 전부 재생 문맥, 다운로드 용도 없음 → attachment→inline 전환 안전.
+- 곡별 독립성: variant 전환 시 sound 재로드+position/duration/시킹 상태 리셋(:268-275), 활성 카드만 바 노출(:686) — 구조는 이미 곡별 독립. **시크만 뚫리면 "각 곡마다 재생바 이동" 요구 충족.** 부차 확인: variant 카드 TouchableOpacity(:661) 내부 Slider 제스처 경합(특히 web) — Range 픽스 후 실기기 확인.
+- 저장 확정 후 단일 플레이어(store.savedTrackId → stream-proxy :210)는 Range 지원 경로라 기존에도 시크 가능했을 것 — 증상 범위는 생성 직후(A/B·미확정 단일) 한정으로 해석.
+
+## 확정 스펙
+
+### ① 영상 디렉터 프리셋 진입 = 정상 진입과 동일 헤더 [2파일 소변경]
+- MyMusicScreen.tsx:303-306: Studio 중첩 params에 **`initial: false` 추가** → 미방문 세션에도 스택 [Map, VideoDirector] 적재. Map 마운트만으로 엔터명 헤더 셋업(useLayoutEffect — focus 불요) = 정상 진입과 동일 타이틀.
+- VideoDirectorScreen: **useFocusEffect로 parent headerLeft ← 주입**(Dialogue :105-120 관행 그대로 — 아이콘·마진 동일, 클리어는 Map focus 승계). onPress = `navigation.navigate('Map')` — 정상 진입([Map,Dialogue,VD] — 중간 Dialogue까지 pop)·프리셋 진입 모두 **Map(작업실) 복귀로 일원화**(기본안: 헤더 문맥=엔터명과 일치). 정상 진입 시 Dialogue가 이미 심은 화살표와 중복 주입되나 마지막 focus가 이기고 목적지 동일 — 무해.
+- 회귀 확인 지점: 비공개 곡 프리셋 안내(:214-215) 유지, videoDraft 복원 배너(정상 진입) 유지, '작업실' tabPress Map 리셋(App.tsx:391-396) 유지. 로그 `[VideoDirector]` 헤더 주입 1줄.
+
+### ② Inst 생성 → 작곡 진행 화면(1~5)·완료 미리듣기 [기본안 = (b)진행 UI 추출 공용화 + (c)전용 경량 화면]
+- **components/ComposerLoadingView.tsx 신설**: MusicLoadingScreen 프레젠테이션부(초상 펄스+메시지+5스텝 인디케이터+%바+노트, :349-412+styles)를 props(steps, messageIndex, progress?, portrait, noteText)로 추출. MusicLoadingScreen은 이를 사용하도록 치환(시각·로직 무변경 — 회귀 0 목표).
+- **screens/InstLoadingScreen.tsx 신설**(StudioStack 'InstLoading' 등록 + StudioStackParamList, params { trackId, title, resume? }):
+  - 스텝 5종 Inst 문안(기본안): 제출 → 보컬 분리 → 오디오 받기 → 정규화 → 발매 (서버 파이프라인 순서 차용 — 표시용). 4s 시간 전진 + status 점프(processing 진입 시 ≥2단계, completed 시 5/✓ — 서버 세분 필드 부재 실측 전제).
+  - 폴링 = getInstrumentalStatus 5s(기존 축·10분 타임아웃 문안 :400 재사용). completed → **result_track_id**(실측 스키마)로 done 상태: 5단계 ✓ + 완료 카드 = **미리듣기 플레이어(expo-av+Slider — MusicResult v3.204 패턴, 소스 /tracks/stream-proxy/{result_track_id} = Range OK)** + [마이페이지에서 보기] 버튼. failed → 환불 문안(:391 재사용) + [돌아가기]. 이탈 자유(gestureEnabled 기본 — 서버 백그라운드 진행, MusicLoading의 잠금과 달리 강제성 없음).
+  - 진입 배선: confirmCreateInstrumental(:443-448)에서 202 수락 시 '생성 시작' alert 대신 `navigate('MainTabs',{screen:'Studio',params:{screen:'InstLoading', initial:false, params:{trackId,title}}})`(①과 동일 헤더 정합 — Map 하부 적재, ← 주입은 InstLoading도 ① 관행 동일 적용). **409(이미 진행 중) → 동일 화면 resume 모드**(폴링만 — MusicLoading resumeGenerationId :331-341 관행). 402·404·쿨다운 게이트(:406-427) 분기는 현행 유지.
+  - **폴링 소유권 이관**: MyMusicScreen pollInstrumental while 루프(:375-401) 제거. instBusy는 유지하되 화면 focus 시 busy 트랙 status 1회 확인으로 해제+fetchTracks(복귀 시 목록 갱신). ⋮ 진행 중 항목 제외(:368-371) 회귀 유지.
+- 서버 무변경(스키마 실측 그대로). 로그 `[Inst]` 유지 + `[InstLoading]` 신설.
+
+### ③ 작곡 A/B 미리듣기 시크 [백엔드 1함수 + 프런트 검증 — 기본안 = 서버 Range 이식]
+- **B-1(server_staging_v3222)**: generate.py stream_generation(:1224~)에 stream_proxy v193 Range 블록 이식(tracks.py:1318-1355 동형) — stat_object로 total 확보 → Range 파싱 → 206 + Content-Range/Accept-Ranges/Content-Length, 비-Range 200에도 Content-Length+Accept-Ranges 선언, Content-Disposition **attachment→inline**(소비처 전수 재생 문맥 — F3). variant 선택 로직(:1231~)·권한 검사 무변경. 로그 `[GenerationStream] range` 1줄.
+- 프런트 코드 변경 없음(기본안) — v3.204 Slider·seekable 게이트가 duration 확정과 함께 그대로 살아난다. 실기기에서 카드 TouchableOpacity 제스처 경합이 확인되는 경우에 한해 카드 onPress와 Slider 영역 분리(바 영역을 카드 밖 터치 영역으로) 소수정 허용.
+- 배포: EC2 docker build 필요 — **prod 변경 사용자 승인 후**(라이브 pull+_orig+md5 재대조 관행). 승인 전 대안(보류 시): 클라 FileSystem 캐시 후 재생 폴백 — 웹 미지원·용량 이슈로 비추천(사용자 결정 4).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| screens/MyMusicScreen.tsx | ① initial:false(:303-306) · ② InstLoading 진입 배선+409 resume+폴링 루프 제거·focus 1회 확인 | frontend-dev | `[Inst]` |
+| screens/VideoDirectorScreen.tsx | ① headerLeft focus 주입(→Map) | frontend-dev | `[VideoDirector]` |
+| components/ComposerLoadingView.tsx (신규) | ② MusicLoading 진행 UI 추출 | frontend-dev | `[InstLoading]` |
+| screens/MusicLoadingScreen.tsx | ② 추출 컴포넌트 사용 치환(로직 무변경) | frontend-dev | — |
+| screens/InstLoadingScreen.tsx (신규) · App.tsx | ② 진행·완료 미리듣기 화면 + StudioStack 등록·ParamList | frontend-dev | `[InstLoading]` |
+| backend_9004/app/routes/generate.py (server_staging_v3222) | ③ stream_generation Range/Content-Length/inline (v193 이식) | backend-dev | `[GenerationStream]` |
+| screens/MusicResultScreen.tsx | ③ 원칙 무변경(검증) — 실기기 제스처 경합 시에만 소수정 | tester/frontend-dev | — |
+
+## 40% 룰 판정
+**가결**. ①은 파라미터 1개+focus 주입 1블록(앱 내 검증 선례 Dialogue :105-120 1:1). ③ 서버는 같은 파일군에 있는 v193 검증 코드의 동형 이식(1함수)이고 프런트는 원칙 무변경. 최대 항목은 ②(신규 화면 1+추출 1)이나 진행 UI는 기존 화면 추출 재사용, 폴링은 기존 5s 축 이관, 완료 미리듣기는 MusicResult v3.204 패턴 재사용으로 신규 로직 최소. 리스크 상위 2건과 후퇴선: ⑴ ② MusicLoading 추출 리팩토링이 정상 작곡 완주를 건드릴 가능성 — 실패 시 추출 포기하고 InstLoading에 UI 복제(중복 감수) 후퇴, ⑵ ③ 서버 배포 승인 지연 — ①②만 선반영(③은 프런트 무변경이라 독립 배포 가능). 이월: CoverGeneration→ArtistCody 중첩 navigate 헤더 정합(F1 잠복), MusicLoading url 조립(:134)의 스트림 시크 일관 검증, ⭐ 리터럴 CURRENCY_ICON 일원화(v3.220 이월분 유지).
+
+## test-designer 항목
+1. [unit] ① 프리셋 진입 2케이스(Studio 미방문/기방문): 헤더 타이틀=엔터명·← 존재, ← → Map 복귀, 스택에 Map 존재(initial:false).
+2. [unit] ① 정상 진입(Map→Dialogue→VideoDirector) 회귀: 헤더 동일·← Map 복귀·videoDraft 복원 배너, 비공개 곡 프리셋 안내(:214-215), '작업실' tabPress Map 리셋.
+3. [unit] ② ComposerLoadingView 추출 후 MusicLoading 회귀: 5단계 4s 전진·progress% 점프·스텝 ✓ 렌더·완료 replace(MusicResult)·피로 429 재시도 경로 무변경(스냅샷).
+4. [unit] ② InstLoading: pending→processing→completed 전이별 스텝 점프, completed 시 result_track_id로 미리듣기 소스(stream-proxy) 배선, failed 환불 문안, 10분 타임아웃 문안, resume 모드(생성 요청 없이 폴링만).
+5. [unit] ② 진입 배선: 확인 다이얼로그→202→InstLoading(initial:false — 헤더 정합), 409→resume 진입, 402 충전 안내·404 과도기(:475-476)·composer 쿨다운 게이트(:406-427) 회귀.
+6. [unit] ② MyMusic 폴링 이관: while 루프 제거 후 focus 1회 확인으로 instBusy 해제+fetchTracks, ⋮ 진행 중 항목 제외(:368-371) 유지, 새 "<원제> (Inst.)" 트랙 목록 노출.
+7. [api] ③ Range 실측(스테이징→배포 후 프로덕션): `Range: bytes=0-1023` → 206+Content-Range/Accept-Ranges, 무Range → 200+Content-Length, variant=1 동일, 불량 Range 416, 타 사용자 403·미완료 404 회귀, inline 전환 후 웹 재생 정상.
+8. [e2e] ③ A/B 화면: 버전 A·B 각각 재생바 드래그 시크(iOS·Android·웹), 드래그 중 position 미덮어쓰기, seek LISTEN {from_ms,to_ms} 1회 기록, 버전 전환 후 재시크, 카드 탭 선택 vs 슬라이더 드래그 제스처 경합 없음.
+9. [e2e] ② Inst 완주: 마이페이지 ⋮→Inst 만들기→진행 화면 1~5→완료 미리듣기 재생·시크→마이페이지 목록 확인. 이탈 후 재시도(409)→resume 화면 복귀.
+10. [e2e] 회귀: 정상 작곡 완주(가사→작곡 대화→MusicLoading→MusicResult A/B→선택 저장→발매·보상), 저장 후 단일 플레이어 시크, GenerationHistory 이어보기/이어듣기, v3.221 다운로드 2택(영상=프리셋 진입 헤더 확인·음원 mp3).
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **① ← 목적지**: 기본안 = Map(작업실) — 헤더 엔터명 문맥·정상 진입과 단일 동선. 프리셋 진입만 마이페이지 복귀 원하면 from 파라미터 분기 지시 1줄.
+2. **② 이탈 중 완료 알림**: 기본안 = 앱내 완료 alert 폐지(진행 화면이 완료 표시 담당, 이탈 시 복귀 목록 갱신으로 확인). 기존처럼 어디서든 완료 alert 원하면 MyMusic 백그라운드 폴링 병행(이중 폴링) 지시.
+3. **② Inst 스텝 문안**: 기본안 = Inst 전용 5종(제출→보컬 분리→오디오 받기→정규화→발매). 작곡 문안(멜로디~마무리) 그대로 원하면 지시.
+4. **③ 서버 배포**: B-1은 EC2 docker build — server_staging_v3222 작성 후 **배포 승인 요청 1회**(②까지 묶어 승인 불요 — ③만 서버). 승인 보류 시 ③은 미해결 상태로 ①② 선반영(클라 다운로드 폴백은 웹 미지원이라 비추천).
+
+규칙: 민감 정보 플레이스홀더(`<SSH_HOST>`=maidol-ec2 별칭만 기재 — 토큰·크리덴셜 로그/문서 기재 금지, 이번 실측도 무토큰 프로브·읽기 전용 ssh만), 서버 수정은 server_staging_v3222에서만(라이브 pull 원본+_orig 보존+배포 직전 md5 재대조), 프로덕션 쓰기(docker build·배포)는 사용자 승인 후, 코드 수정·커밋은 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후.
+
+# v3.223 — 로그인 사용자 재생목록(큐) 보존 실효화: 암묵 큐 교체·보관함 덮어쓰기 정리 + 재시작 복원 견고화
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (커밋 65a9eb2 이후 작업 트리 — 파일:라인은 현행 코드 직접 정독). 서버 실측 = 라이브 EC2 읽기 전용 ssh(`<SSH_HOST>`=maidol-ec2) routes 전수 grep. **서버 무변경**(전 항목 앱 단독). 정책 불변(v3.36 확정): 비회원 큐=앱 재시작 시 폐기·가입 시 claimQueue 승계·플레이리스트 재생=큐 교체. v3.222 planner와 병렬 — 본 섹션은 파일 끝 append만, v3.222 섹션 무접촉.
+
+## 0단계 findings / Plan verification (파일:라인 — 전부 현행 코드 실증)
+
+**F1. 보존 인프라는 이미 존재하고 재시작 복원 경로도 배선돼 있다 — "서버 저장"이 아니라 계정 스코프 로컬 영속(savedQueues)**
+- playerStore(stores/playerStore.ts): persist 대상은 `savedQueues`(계정별 보관함 Record<userId,{queue,currentIndex,track}>)·shuffle·repeat·guestNoticeAck뿐(partialize :228-233). 작업 큐(queue/currentIndex/track)와 queueOwnerId는 **의도적 비영속**(:223-227 주석 — 비회원 폐기·계정 오염 방지 정합).
+- 저장 시점: saveOwnerQueue(:67-71)가 queueOwnerId 있을 때만 보관함에 스냅샷 — setQueue(:95)·addToQueue(:101)·removeFromQueue(:113)·reorderQueue(:127)·setCurrentIndex(:172)·resetOnLogout(:132)·claimQueue(:147)에서 호출. **setTrack(:91)·playTrackAtIndex(:178-183)는 미호출** → 보관 스냅샷의 현재곡/인덱스가 낡을 수 있음(경미).
+- 복원 경로: App.tsx:582 `restoreSession()`(부팅 1회) → authStore.ts:178-190 저장 토큰 → loginWithToken(:84-101) → **restoreQueueFor(user.id)**(:93) → playerStore.ts:149-169 보관함에서 큐·현재곡 복원(isPlaying:false·sessionActive:false — **자동 재생 없음**, 지시 요건 이미 충족). 일반 로그인(:77)·회원가입 claimQueue(:114)도 배선 완료.
+- 서버 큐 API: **없음** — 라이브 EC2 routes 전수 grep에서 'queue'는 admin_cs.py·admin_items.py(관리자 작업큐)뿐. 회원 서버 자산은 /playlists(플레이리스트)만 존재(앱 소비처 PlaylistScreen.tsx:61-145). 앱 services/에도 큐 저장/로드 API 호출 0건 → 기기 간 동기화는 구조적 미구현.
+
+**F2. "보존되지 않는" 형태 판정 — (a)(b)(c) 각각**
+- **(a) 재시작 소실: 복원 로직은 정상이나 체감 소실을 만드는 실결함 3건.**
+  - **A1(최유력). 암묵 큐 교체가 계정 보관함까지 즉시 파괴**: 곡 하나를 재생했을 뿐인데 큐 전체가 그 화면 리스트로 교체되고, setQueue→saveOwnerQueue(:95)가 보관함을 덮어씀 → '담기'로 모은 재생목록이 **재생 1회로 영구 소실, 다음 재시작 때 "예전 목록이 아님" = 보존 안 됨 체감**. 교체 호출부 전수: 검색 결과 탭(ChartScreen.tsx:228-233 setQueue(searchResults)), 피드 인라인(FeedScreen.tsx:203 playTrackNow(track, allTracks()) — playback.ts:714-722가 setQueue 교체), 피드 상세(FeedDetailScreen.tsx:123), 마이뮤직 피드 트랙(MyMusicScreen.tsx:596), 앨범 개별 곡(AlbumDetailScreen.tsx:131-137 playFrom). 반면 **차트 곡 탭은 append**(ChartScreen.tsx:218-224 addToQueue+setCurrentIndex — v3.220). 정책상 교체는 "플레이리스트 재생"(PlaylistScreen.tsx:201-208)만 해당 — 나머지 교체는 정책 외 관성 코드.
+  - **A2. 복원 큐 비가시**: v3.198 게이트로 재시작 직후 미니플레이어 미노출(MiniPlayer.tsx:28 — sound null+sessionActive false, 의도된 설계). PlayerScreen 큐 시트는 미니 경유라 도달 불가 → 복원 확인 수단이 차트 '내 재생목록' 탭(ChartScreen.tsx:89·122-124)뿐. "복원됐는데 없는 것처럼 보임" 체감 기여.
+  - **A3(잠재·저확률). 하이드레이션 경합 시 파괴적**: restoreQueueFor가 persist 하이드레이션 전에 실행되면 savedQueues={} → else 분기(:164-168)가 **빈 큐를 saveOwnerQueue로 보관함에 덮어씀**. 현실적으론 하이드레이션(부팅 즉시 AsyncStorage read)이 restoreSession의 네트워크 왕복(/auth/me)보다 항상 빠르지만 코드상 보장이 없다 — 방어 필요.
+  - 부차: 관련곡 자동 이어재생(playback.ts:479-513)이 큐 종료 시 addToQueue → 보관함에 자동 곡이 계속 누적 — "내가 만든 목록과 다름" 체감 기여(정책 결정 사안).
+- **(b) 로그아웃→재로그인 소실: 아님(정상 구현)** — resetOnLogout(playerStore.ts:129-140)이 saveOwnerQueue **후** 초기화, 재로그인 restoreQueueFor 복원. **v3.219 DraftKeep 회귀 아님 — git diff 실측**: 37a2304의 authStore.ts +15줄(:159-171)은 characterTaskStore·musicStore draft 청소뿐, playerStore 무접촉(resetOnLogout 호출 :158은 v3.36부터 기존).
+- **(c) 기기 간 미동기화: 구조적 미구현이 맞음**(F1 — 서버 큐 API 부재, savedQueues는 AsyncStorage 기기 로컬).
+
+## 확정 스펙 (기본안 = (b) 계정 스코프 로컬 영속 유지 — 기존 savedQueues 인프라 그대로, 서버 무변경)
+
+서버 저장(기기 간 동기화)은 백엔드 신설(모델+CRUD+마이그레이션)이라 이번 범위 외 — 백로그 기록(사용자 결정 2). 로그인 사용자 보존은 이미 있는 로컬 인프라의 **실효성 결함 3건(A1·A2·A3) 수리**로 달성한다.
+
+### ① A1 — 곡 단위 재생 = append 통일(차트 관행), 교체는 리스트 단위만 [핵심]
+- playback.ts playTrackNow(:714-722)에 `mode: 'append'|'replace'` 파라미터(기본 'append'): append = 큐에 없으면 addToQueue 후 해당 곡 playTrackAtIndex(차트 :218-224 관행 1:1), replace = 현행 setQueue 교체.
+- 호출부 치환(곡 단위 탭 → append): FeedScreen.tsx:203, FeedDetailScreen.tsx:123, MyMusicScreen.tsx:596, AlbumDetailScreen.tsx:131-137(playFrom), ChartScreen.tsx:228-233(검색 결과 탭 — searchResults 통째 setQueue 제거, 탭한 곡만 append).
+- 교체 유지(정책 그대로): 플레이리스트 재생(PlaylistScreen.tsx:201-208 — "플레이리스트 재생=큐 교체" 문구·로그 유지).
+- 부작용 인지: 피드/앨범에서 "다음곡"이 화면 리스트가 아닌 내 큐 순서를 따르게 됨 — 정책(재생목록=사용자 소유 단일 목록) 정합이 우선. 화면별 롤백은 호출부 1줄이라 후퇴 용이.
+### ② A3 — 재시작 복원 견고화 + 저장 시점 보강
+- App.tsx:582: restoreSession 실행을 playerStore 하이드레이션 완료 후로 — `usePlayerStore.persist.hasHydrated()` 확인, 미완이면 `onFinishHydration` 1회 대기 후 실행(zustand v4 persist API). 로그 `[playerStore] hydration-wait` 1줄.
+- playerStore.ts restoreQueueFor else 분기(:164-168): **queue.length===0이면 saveOwnerQueue 스킵**(빈 큐로 보관함 덮어쓰기 금지 — 승계할 게 있을 때만 저장). 방어이므로 정상 경로 무영향.
+- 저장 시점 보강: playTrackAtIndex(:178-183)에 saveOwnerQueue 추가(현재곡·인덱스 스냅샷 최신화 — 복원 시 현재 곡 정확). 복원 범위 현행 유지: 큐+currentIndex+track 복원, **재생 위치(position) 미복원·자동 재생 금지·미니 미노출**(sessionActive:false — v3.198 게이트 불변).
+### ③ A2 — 가시성(최소 손잡이)
+- 기본안: 미니플레이어 정책(v3.198) 불변. 재시작 복원 성공 시(restoreQueueFor true 반환, App 레벨) 1회 안내는 **미도입**(팝업 피로 — 사용자 결정 3). 대신 복원 확인 동선인 차트 '내 재생목록' 탭이 ①로 항상 진실을 보여주게 되는 것으로 갈음. UI 변경 0.
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| services/playback.ts | ① playTrackNow mode('append' 기본/'replace') | frontend-dev | `[playback]` |
+| screens/FeedScreen.tsx · FeedDetailScreen.tsx · MyMusicScreen.tsx · AlbumDetailScreen.tsx | ① 곡 탭 append 치환(각 1곳) | frontend-dev | `[playback]` |
+| screens/ChartScreen.tsx | ① 검색 결과 탭 setQueue 교체→append(:228-233) | frontend-dev | `[ChartScreen]` |
+| stores/playerStore.ts | ② restoreQueueFor 빈 덮어쓰기 방어(:164-168) · playTrackAtIndex 저장(:178-183) | frontend-dev | `[playerStore]` |
+| App.tsx | ② restoreSession 하이드레이션 대기(:582) | frontend-dev | `[playerStore]` |
+
+## 40% 룰 판정
+**가결**. 신규 화면·신규 스토어 0, 서버 0. ①은 기존 차트 append 관행(ChartScreen.tsx:218-224)의 1:1 이식 + 호출부 5곳 1줄 치환, ②는 스토어 소변경 2곳+App 1곳(zustand 공식 API). 리스크 상위 2건과 후퇴선: ⑴ ① append 통일이 피드/앨범 연속재생 UX를 바꿈 — 화면 단위 호출부 1줄이라 개별 롤백(replace 유지) 가능, ⑵ ② 하이드레이션 대기가 부팅 로그인을 지연시킬 가능성 — hasHydrated 즉시 true면 현행과 동일 경로, 실패 시 타임아웃(2s) 후 기존 즉시 실행 폴백. 이월(백로그): 서버 큐 API(기기 간 동기화 — 백엔드 신설), 관련곡 자동 이어재생의 보관함 누적(결정 3), CoverGeneration 중첩 navigate(v3.222 이월분 유지).
+
+## test-designer 항목
+1. [unit] playerStore: 로그인 상태(queueOwnerId 有) 큐 편집(add/remove/reorder/setQueue/setCurrentIndex/playTrackAtIndex)마다 savedQueues[owner] 갱신, 비회원(owner null)은 미저장.
+2. [unit] restoreQueueFor: 보관 큐 有→복원(queue·currentIndex·track, isPlaying false·sessionActive false), 보관 無+현재 큐 有→승계 저장, 보관 無+현재 큐 空→**saveOwnerQueue 미호출**(빈 덮어쓰기 방어).
+3. [unit] resetOnLogout: 저장 후 초기화 순서, guestNoticeAck 유지, v3.219 DraftKeep 블록이 playerStore 무접촉 회귀 가드.
+4. [unit] playTrackNow: mode 기본 append(중복 시 기존 인덱스 재생·추가 없음), replace 시 교체 — 플레이리스트 경로만 replace 호출 확인.
+5. [unit] ChartScreen 검색 탭: 곡 탭 시 기존 큐 유지+해당 곡 append 재생(searchResults 통째 교체 없음).
+6. [e2e] 핵심 재현: 로그인→담기 3곡→앱 강제종료→재시작(자동 로그인)→차트 '내 재생목록' 탭 = 3곡 그대로(자동 재생 없음·미니 미노출), 이어서 피드에서 다른 곡 재생→'내 재생목록' = 3곡+1곡(교체 아님)→재시작→4곡 유지.
+7. [e2e] 로그아웃→재로그인 복원, 계정 A/B 전환 시 서로의 큐 미노출, 회원가입 직전 비회원 큐 claimQueue 승계.
+8. [e2e] 정책 회귀: 비회원 담기(안내 팝업 1회·guestNoticeAck)→앱 재시작 시 폐기, 플레이리스트 재생=큐 교체 유지, 게스트 큐 안내 모달(TrackActionSheet:75-81·PlayerScreen:914) 무변경.
+9. [e2e] 재생 흐름 회귀: 미니플레이어 토글/이전/다음(append된 큐 순서), v3.198 복원 큐 미니 미노출 유지, v3.216b~217 웹 미디어세션 next/prev(playback.ts:121-149 track 구독 동기화)가 append 큐에서 정상, 관련곡 이어듣기(큐 종료 시) 동작 유지.
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **① 앨범 곡 탭**: 기본안 = append(곡 단위 탭이므로). 앨범을 플레이리스트에 준해 "교체"로 남기려면 AlbumDetailScreen 1곳만 replace 유지 지시 1줄.
+2. **기기 간 동기화(서버 큐 저장)**: 기본안 = 이월(백로그 — 백엔드 모델·API 신설 필요, 이번 범위 앱 단독). 착수 원하면 B-백로그로 지시.
+3. **관련곡 자동 이어재생 곡의 보관함 누적**: 기본안 = 현행 유지(청취 흐름 존중). 담은 곡만 보존 원하면 자동 추가분 저장 제외 지시.
+4. **재시작 복원 1회 안내(토스트/배지)**: 기본안 = 미도입(팝업 최소화 — 복원은 '내 재생목록' 탭으로 확인). 원하면 앱내 다이얼로그 규칙(showAlert)로 1회 노출 지시.
+
+규칙: 서버 무변경(라이브 EC2는 이번 분석에서 읽기 전용 grep만), 민감 정보 플레이스홀더(`<SSH_HOST>`=maidol-ec2), 코드 수정·커밋은 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후.

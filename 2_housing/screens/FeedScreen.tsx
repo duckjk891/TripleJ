@@ -200,7 +200,8 @@ export default function FeedScreen() {
       return;
     }
     if (__DEV__) console.info('[FeedScreen] play track inline', { id: track.id });
-    playTrackNow(track, allTracks());
+    // v3.223 ①: 곡 단위 탭 = append(기본) — 화면 리스트로 큐를 교체하지 않는다(재생목록 보존)
+    playTrackNow(track);
   };
 
   const goLogin = () => navigation.navigate('Settings');

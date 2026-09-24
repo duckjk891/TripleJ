@@ -710,14 +710,36 @@ function maybeHydrateCover(track: any): void {
   })();
 }
 
-/** 화면 이동 없이 즉시 재생 — 큐를 세팅하고 해당 곡부터 재생(미니플레이어 등장). */
-export async function playTrackNow(track: any, queue?: any[]): Promise<void> {
+/**
+ * 화면 이동 없이 즉시 재생(미니플레이어 등장).
+ * v3.223 ①: 곡 단위 재생 = append 통일(기본) — 차트 곡 탭 관행(ChartScreen :218-224) 1:1.
+ *  · 'append'(기본): 큐에 없으면 맨 뒤 추가(중복이면 기존 인덱스 재생·추가 없음) 후 그 곡 재생 —
+ *    '담기'로 모은 계정 재생목록을 재생 1회가 파괴하지 않는다(암묵 큐 교체 = 보관함 덮어쓰기 제거).
+ *  · 'replace': 리스트 단위 재생 정책(플레이리스트 재생=큐 교체, v3.36 불변)용 — 기존 동작 그대로.
+ */
+export async function playTrackNow(
+  track: any,
+  queue?: any[],
+  mode: 'append' | 'replace' = 'append',
+): Promise<void> {
   const store = usePlayerStore.getState();
-  const q = queue && queue.length ? queue : [track];
-  store.setQueue(q);
-  const idx = Math.max(0, q.findIndex((t: any) => t.id === track.id));
-  store.playTrackAtIndex(idx);
-  if (__DEV__) console.info('[playback] playTrackNow', { id: track.id, queue: q.length });
+  if (mode === 'replace') {
+    const q = queue && queue.length ? queue : [track];
+    store.setQueue(q);
+    const idx = Math.max(0, q.findIndex((t: any) => t.id === track.id));
+    store.playTrackAtIndex(idx);
+    if (__DEV__) console.info('[playback] playTrackNow replace', { id: track.id, queue: q.length });
+    maybeHydrateCover(q[idx] || track); // v3.215 ⑤: 커버 결손 스냅샷 방어(백그라운드 — 재생과 병행)
+    await loadAndPlayTrack(q[idx] || track);
+    return;
+  }
+  // append — 차트 관행: addToQueue(중복 방지 내장) 후 해당 곡 인덱스에서 재생
+  store.addToQueue(track);
+  const q = usePlayerStore.getState().queue;
+  let idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
+  if (idx < 0) idx = q.length - 1; // 방어(정상 경로 도달 불가)
+  usePlayerStore.getState().playTrackAtIndex(idx);
+  if (__DEV__) console.info('[playback] playTrackNow append', { id: track.id, idx, queue: q.length });
   maybeHydrateCover(q[idx] || track); // v3.215 ⑤: 커버 결손 스냅샷 방어(백그라운드 — 재생과 병행)
   await loadAndPlayTrack(q[idx] || track);
 }

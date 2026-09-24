@@ -653,7 +653,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               console.info('[ArtistCody] ← 커버 대화로 복귀 (returnToCover)');
               navigation.goBack();
             } else {
-              navigation.navigate('Map');
+              navigation.popTo('Map'); // v3.222: RN7 navigate 는 Map 을 새로 push — popTo 로 스택 정리
             }
           }}
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}

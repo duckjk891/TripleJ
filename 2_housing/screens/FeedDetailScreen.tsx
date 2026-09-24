@@ -120,7 +120,8 @@ export default function FeedDetailScreen() {
       return;
     }
     if (__DEV__) console.info('[FeedDetail] play track inline', { id: track.id });
-    playTrackNow(track, feedTracks());
+    // v3.223 ①: 곡 단위 탭 = append(기본) — 피드 트랙 리스트로 큐를 교체하지 않는다(재생목록 보존)
+    playTrackNow(track);
   };
 
   const renderTrackBlock = (track: FeedTrack, key: string) => {

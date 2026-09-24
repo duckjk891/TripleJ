@@ -104,9 +104,12 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
   }, [fetchAll]);
 
   const handleTrackPress = (track: Track) => {
-    const idx = tracks.findIndex((t) => t.id === track.id);
-    playerStore.setQueue(tracks);
-    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — tracks 통째 setQueue 교체 제거(재생목록 보존)
+    playerStore.addToQueue(track);
+    const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    if (__DEV__) console.info('[ArtistDetail] 곡 탭 → 큐 추가+재생', { id: track.id, idx, queueLen: q.length });
     navigation.navigate('Player', { track });
   };
 

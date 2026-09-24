@@ -164,6 +164,32 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     }, [refreshFatigue])
   );
 
+  // v3.222 ①: focus 시 Tab 헤더 headerLeft ← 주입 — Dialogue :105-120 관행 1:1(아이콘·마진 동일,
+  // 클리어는 Map focus 승계 — v3.201 불변식). 목적지는 정상 진입([Map,Dialogue,VD])·프리셋 진입
+  // ([Map,VD] — MyMusic 다운로드 영상) 모두 Map(작업실) 복귀로 일원화(헤더 문맥=엔터명과 일치).
+  // 정상 진입 시 Dialogue가 심은 화살표와 중복 주입되지만 마지막 focus가 이기고 목적지 동일 — 무해.
+  useFocusEffect(
+    useCallback(() => {
+      if (__DEV__) console.info('[VideoDirector] 헤더 ← 주입(→Map)');
+      const parent = navigation.getParent();
+      parent?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => {
+              // v3.223 C-9: RN7 navigate('Map')는 기존 Map으로 pop하지 않고 새 Map을 push → popTo로 스택 되감기
+              if (__DEV__) console.info('[VideoDirector] ← popTo(Map)');
+              navigation.popTo('Map');
+            }}
+            style={{ marginLeft: 12 }}
+            accessibilityLabel="작업실로 돌아가기"
+          >
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+    }, [navigation])
+  );
+
   // 쿨다운 카운트다운 — 0 도달 직전 서버 재확인 (MusicGeneration 동일)
   useEffect(() => {
     if (fatigueRemainSec <= 0) return undefined;

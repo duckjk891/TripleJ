@@ -96,7 +96,8 @@ export const usePlayerStore = create<PlayerState>()(
       addToQueue: (track) => {
         if (!track?.id) return false;
         const { queue } = get();
-        if (queue.some((t) => t?.id === track.id)) return false; // 중복 방지
+        // v3.223 O-1: id 타입 혼재(number/string) 이중 추가 방지 — String 정규화 비교
+        if (queue.some((t) => String(t?.id) === String(track.id))) return false; // 중복 방지
         set({ queue: [...queue, track] });
         saveOwnerQueue();
         return true;
@@ -164,7 +165,10 @@ export const usePlayerStore = create<PlayerState>()(
         // 보관된 목록이 없으면 비회원으로 담아둔 목록을 승계(버릴 이유가 없음)
         if (__DEV__) console.info('[playerStore] restoreQueueFor — 보관 목록 없음 → 현재 목록 승계', { kept: get().queue.length });
         set({ queueOwnerId: userId });
-        saveOwnerQueue();
+        // v3.223 ②(A3 방어): 현재 큐가 비어 있으면 저장 스킵 — persist 하이드레이션 전(savedQueues={})
+        // 경합 등에서 빈 큐가 보관함을 파괴적으로 덮어쓰는 것을 금지(승계할 게 있을 때만 저장).
+        if (get().queue.length > 0) saveOwnerQueue();
+        else if (__DEV__) console.info('[playerStore] restoreQueueFor — 빈 큐 저장 스킵(보관함 보호)');
         return false;
       },
       setGuestNoticeAck: (guestNoticeAck) => set({ guestNoticeAck }),
@@ -179,6 +183,7 @@ export const usePlayerStore = create<PlayerState>()(
         const { queue } = get();
         if (index >= 0 && index < queue.length) {
           set({ currentIndex: index, track: queue[index] });
+          saveOwnerQueue(); // v3.223 ②: 현재곡·인덱스 스냅샷 최신화 — 재시작 복원 시 현재 곡 정확
         }
       },
       getNextIndex: () => {

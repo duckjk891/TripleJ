@@ -74,6 +74,8 @@ import LyricsResultScreen from './screens/LyricsResultScreen';
 import ComposerSelectScreen from './screens/ComposerSelectScreen';
 import MusicGenerationScreen from './screens/MusicGenerationScreen';
 import MusicLoadingScreen from './screens/MusicLoadingScreen';
+// v3.222 ②: Inst 생성 → 작곡 진행 화면(1~5 스텝·폴링·완료 미리듣기) — 마이페이지 ⋮에서 진입
+import InstLoadingScreen from './screens/InstLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import GenerationHistoryScreen from './screens/GenerationHistoryScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
@@ -122,6 +124,8 @@ export type StudioStackParamList = {
   MusicGeneration: undefined;
   // v3.93: resumeGenerationId — 생성 이력에서 진행 중 생성을 이어볼 때 폴링 재개 모드
   MusicLoading: { resumeGenerationId?: string } | undefined;
+  // v3.222 ②: Inst 생성 진행·완료 미리듣기 — trackId=원곡, resume=409(이미 진행 중) 폴링만 재개
+  InstLoading: { trackId: string; title?: string; resume?: boolean; nonce?: string };
   // v3.93: alreadySaved — 이력에서 트랙 확정(발매)된 완료 생성으로 진입 시 재저장 방지
   // v3.102: useVoiceConverted 파라미터 제거 — v216에서 서버 /voice-convert/* 삭제, 기능 제거 확정
   MusicResult: { alreadySaved?: boolean } | undefined;
@@ -225,6 +229,13 @@ function StudioNavigator() {
         name="MusicLoading"
         component={MusicLoadingScreen}
         options={{ gestureEnabled: false }}
+      />
+      {/* v3.222 ②: Inst 진행 화면 — gestureEnabled 기본(이탈 자유, 서버 백그라운드 진행) */}
+      {/* v3.223 C-10: 요청별 nonce로 getId 부여 — top이 InstLoading이어도 같은 인스턴스(params만 교체) 재사용 대신 새 인스턴스 */}
+      <StudioStack.Screen
+        name="InstLoading"
+        component={InstLoadingScreen}
+        getId={({ params }) => params?.nonce ?? params?.trackId}
       />
       <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
       <StudioStack.Screen name="GenerationHistory" component={GenerationHistoryScreen} />
@@ -572,6 +583,28 @@ const linking: LinkingOptions<RootStackParamList> = {
   },
 };
 
+// v3.223 ②: restoreSession은 playerStore 하이드레이션 완료 후 실행 — restoreQueueFor가
+// savedQueues 하이드레이션 전(={})에 돌면 보관 목록을 못 찾고 else 분기로 빠져 보관함을
+// 오염시킬 수 있다(A3 경합 방어). hasHydrated=true면 현행과 동일한 즉시 실행 경로,
+// 미완이면 onFinishHydration 1회 대기 + 2s 타임아웃 폴백(부팅 로그인 지연 상한).
+function restoreSessionAfterHydration() {
+  if (usePlayerStore.persist.hasHydrated()) {
+    restoreSession();
+    return;
+  }
+  if (__DEV__) console.info('[playerStore] hydration-wait — restoreSession 하이드레이션 대기');
+  let done = false;
+  let unsub: (() => void) | undefined;
+  const run = () => {
+    if (done) return;
+    done = true;
+    unsub?.();
+    restoreSession();
+  };
+  unsub = usePlayerStore.persist.onFinishHydration(() => run());
+  setTimeout(run, 2000); // 폴백: 하이드레이션 이벤트 유실 시 기존 즉시 실행 경로 유지
+}
+
 export default function App() {
   useOAuthCallback();
   // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
@@ -579,7 +612,8 @@ export default function App() {
   // v3.207 ⑪: 튜토리얼 first-run 게이트를 restoreSession보다 먼저 — 완전 신규 설치(스토리지 empty)
   // 판별이 다른 부팅 쓰기(persist 등)에 오염되기 전에 마커를 확정한다(멱등 — 오버레이도 재호출).
   // v3.216 ①: 웹 OAuth 콜백 토큰이 감지된 부팅은 restoreSession 스킵(useOAuthCallback이 실패 시에만 후행 복원)
-  useEffect(() => { initTutorialGate(); if (!webOAuthTokenPending) restoreSession(); }, []);
+  // v3.223 ②: restoreSession은 playerStore 하이드레이션 완료 후(빈 보관함 오염 방어 — 위 헬퍼)
+  useEffect(() => { initTutorialGate(); if (!webOAuthTokenPending) restoreSessionAfterHydration(); }, []);
   // v3.216b F9: 로그인 계정 확정 시 서버 튜토리얼 seen 동기화(계정 기준 1회 노출),
   // 로그아웃 시 캐시 폐기 — 이메일·소셜·토큰 복원 전 경로가 user 전환으로 수렴한다.
   const authUserId = useAuthStore((s) => s.user?.id);

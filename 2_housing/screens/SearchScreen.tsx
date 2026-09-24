@@ -163,9 +163,12 @@ export default function SearchScreen() {
     if (submitted && !activeCategory && q) {
       api.post('/tracks/search/click', { q, track_id: t.id }).catch(() => {});
     }
-    const idx = results.findIndex((x) => x.id === t.id);
-    playerStore.setQueue(results);
-    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — results 통째 setQueue 교체 제거(재생목록 보존)
+    playerStore.addToQueue(t);
+    const queueNow = usePlayerStore.getState().queue;
+    const idx = queueNow.findIndex((x: any) => String(x?.id) === String(t.id));
+    playerStore.setCurrentIndex(idx >= 0 ? idx : queueNow.length - 1);
+    if (__DEV__) console.info('[SearchScreen] 곡 탭 → 큐 추가+재생', { id: t.id, idx, queueLen: queueNow.length });
     navigation.navigate('Player', { track: t });
   };
 
