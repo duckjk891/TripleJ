@@ -132,11 +132,13 @@ export default function AlbumDetailScreen() {
     // v3.223 ①: 앨범 개별 곡 탭 = append(차트 곡 탭 관행 1:1 — addToQueue 중복 방지+해당 곡 재생).
     // 앨범 리스트로 큐를 교체하지 않는다(로그인 재생목록 보존 — 교체는 플레이리스트 재생만).
     if (__DEV__) console.info('[AlbumDetail] 재생(append)', { albumId, trackId: track?.id });
-    playerStore.addToQueue(track);
+    // 앨범 상세 cover_image는 조립된 프록시 경로 — 큐에는 object명(cover_image_url)만 남긴다
+    const rowTrack = toRowTrack(track);
+    playerStore.addToQueue(rowTrack);
     const q = usePlayerStore.getState().queue;
     const idx = q.findIndex((t: any) => String(t.id) === String(track.id));
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
-    navigation.navigate('Player', { track });
+    navigation.navigate('Player', { track: rowTrack });
   };
 
   // ── 관리: 정보 수정 ──────────────────────────────────────────────────────

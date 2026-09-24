@@ -3,13 +3,9 @@ import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePlayerStore } from '../stores/playerStore';
-import { BACKEND_BASE_URL } from '../services/api';
 import { loadAndPlayTrack, invalidatePlayback, maybeHydrateCover } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
+import { trackCoverUri } from '../utils/coverUri';
 import { colors } from '../theme/colors';
-
-function getCoverUrl(img: string): string {
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
-}
 
 export default function MiniPlayer() {
   const navigation = useNavigation<any>();
@@ -100,7 +96,7 @@ export default function MiniPlayer() {
   const store = usePlayerStore.getState();
   const hasPrev = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex > 0);
   const hasNext = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex < queue.length - 1);
-  const coverImg = track.cover_image || track.cover_image_url;
+  const coverUri = trackCoverUri(track);
   const progress = duration > 0 ? (position / duration) * 100 : 0;
 
   return (
@@ -112,8 +108,8 @@ export default function MiniPlayer() {
 
       <TouchableOpacity style={styles.content} onPress={handlePress} activeOpacity={0.8}>
         {/* 커버 이미지 */}
-        {coverImg ? (
-          <Image source={{ uri: getCoverUrl(coverImg) }} style={styles.cover} />
+        {coverUri ? (
+          <Image source={{ uri: coverUri }} style={styles.cover} />
         ) : (
           <View style={[styles.cover, styles.coverPlaceholder]}>
             <Feather name="music" size={16} color={colors.text.muted} />

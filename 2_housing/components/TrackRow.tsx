@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useRef } from 'react';
 import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { BACKEND_BASE_URL } from '../services/api';
+import { trackCoverUri } from '../utils/coverUri';
 // v3.207 ①: 튜토리얼 코치마크 anchor — 옵션 prop이 있을 때만 ⋮ 버튼 좌표를 등록(기본 무부하)
 import { TutorialAnchorKey, measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 import { AppText } from './ui';
@@ -22,9 +22,7 @@ export interface RowTrack {
 }
 
 export function getTrackCoverUri(track: RowTrack): string | null {
-  const img = track.cover_image || track.cover_image_url;
-  if (!img) return null;
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
+  return trackCoverUri(track);
 }
 
 /** left=true면 좌측 슬롯(순번)이 없는 목록 — 앞쪽 여백 없이 커버부터 시작한다 */

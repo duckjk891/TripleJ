@@ -25,6 +25,7 @@ import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { trackCoverUri } from '../utils/coverUri';
 import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 import { usePointsStore } from '../stores/pointsStore';
@@ -375,11 +376,7 @@ export default function PlayerScreen({ route, navigation }: any) {
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-  const getCoverUri = (): string | null => {
-    const img = track?.cover_image || track?.cover_image_url;
-    if (!img) return null;
-    return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
-  };
+  const getCoverUri = (): string | null => trackCoverUri(track);
 
   // 70% 위치 도달 시 재생 기록(별 +1) — MAIDOL과 동일하게 위치 기반(seek 허용). 트랙당 1회.
   const PLAY_RECORD_RATIO = 0.7;
