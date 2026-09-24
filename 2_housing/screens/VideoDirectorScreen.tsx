@@ -77,6 +77,77 @@ const coverUriOf = (t: MyTrack | null): string | null => {
   return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
 };
 
+// v3.228 W0-1 [VideoDirector] 중복 요청 차단(앱 단독) — share-video 는 캐시 미스마다 ⭐ 과금(비멱등)이라
+// 진행 중 같은/다른 조합 재요청 = 재차감 + ffmpeg 이중 실행. 화면 인스턴스 밖(모듈)에 진행 중 1건을 기록해
+// 화면을 나갔다 들어와도(재마운트) 막는다. 서버 원장(request_id) 연동은 2단계.
+//  - requesting: POST 응답 대기 중(axios timeout 300s 가 반드시 끝냄)
+//  - verifying : 응답 없이 끝남(앱 timeout·게이트웨이 오류) — 서버는 계속 인코딩 중일 수 있어 "확인 중".
+//                무과금 파일 조회(GET share-video/file: 200=완성, 404=없음)로 완성을 확인하고, 확인 기한
+//                (서버 ffmpeg 상한 600s + 여유)까지는 새 생성 요청을 막는다.
+const VIDEO_VERIFY_WINDOW_MS = 11 * 60 * 1000; // 요청 시작 기준 — ffmpeg 상한 600s(share_video.py:58) + 여유
+const VIDEO_VERIFY_INTERVAL_MS = 15 * 1000;
+type ActiveVideoJob = {
+  sig: string; trackId: string; fileUrl: string; format: 'sns' | 'wide' | 'kakao';
+  startedAt: number; phase: 'requesting' | 'verifying'; verifyUntil: number;
+};
+let activeVideoJob: ActiveVideoJob | null = null;
+// 성공(=서버 캐시 존재) 조합 시그니처 — 재요청은 캐시 히트(무과금·무피로)라 쿨다운 선게이트 생략(v3.214 U-5④).
+// 재마운트 뒤에도 유지되도록 모듈 스코프.
+const succeededVideoSigs = new Set<string>();
+
+const logDupBlock = (reason: string, extra?: Record<string, unknown>) => {
+  console.warn('[VideoDirector] 중복 요청 차단', { reason, ...extra });
+};
+
+// 무과금 완성 확인 — 헤더(상태 코드)만 받고 즉시 중단(본문 다운로드 없음). 구 서버에도 있는 GET 엔드포인트.
+const probeShareVideoFile = (url: string): Promise<'ready' | 'missing' | 'unknown'> =>
+  new Promise((resolve) => {
+    let settled = false;
+    const xhr = new XMLHttpRequest();
+    const finish = (r: 'ready' | 'missing' | 'unknown') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const timer = setTimeout(() => {
+      try { xhr.abort(); } catch { /* noop */ }
+      finish('unknown');
+    }, 15000);
+    xhr.onreadystatechange = () => {
+      if (settled || xhr.readyState < 2 || !xhr.status) return;
+      const s = xhr.status;
+      try { xhr.abort(); } catch { /* noop */ }
+      finish(s >= 200 && s < 300 ? 'ready' : s === 404 ? 'missing' : 'unknown');
+    };
+    xhr.onerror = () => finish('unknown');
+    try {
+      xhr.open('GET', url);
+      xhr.send();
+    } catch {
+      finish('unknown');
+    }
+  });
+
+// 진행 중 작업이 새 요청을 막아야 하는지 판정(만료·완성 확인되면 기록 해제). true = 막음.
+const isVideoJobBlocking = async (): Promise<boolean> => {
+  const job = activeVideoJob;
+  if (!job) return false;
+  if (job.phase === 'requesting') return true;
+  if (Date.now() > job.verifyUntil) {
+    if (activeVideoJob === job) activeVideoJob = null;
+    return false;
+  }
+  const r = await probeShareVideoFile(job.fileUrl);
+  if (r === 'ready') {
+    succeededVideoSigs.add(job.sig);
+    if (activeVideoJob === job) activeVideoJob = null;
+    if (__DEV__) console.info('[VideoDirector] 확인 중이던 영상 완성 확인 — 기록 해제', { trackId: job.trackId });
+    return false;
+  }
+  return true;
+};
+
 const INITIAL_VIDEO_GREETING: ChatMessage = {
   type: 'director',
   text: '안녕하세요! 영상 디렉터예요.\n곡을 고르면 커버와 가사가 어우러진 영상을 만들어 드릴게요. 어떤 곡으로 만들까요?\n\n선택한 답변을 탭하면 그 단계부터 다시 고를 수 있어요.',
@@ -133,11 +204,22 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  // v3.214 tester U-5④: 이 세션에서 생성 성공한 조합(트랙+스타일) 시그니처 —
-  // 재요청은 서버 캐시 히트(무과금·무피로)이므로 쿨다운 선게이트를 건너뛴다.
-  // 캐시 미스로 판명되면 서버 429가 동일 다이얼로그로 최종 방어한다.
-  const succeededSigsRef = useRef<Set<string>>(new Set());
+  // v3.214 tester U-5④: 생성 성공 조합 시그니처 → v3.228 모듈 스코프 succeededVideoSigs 로 이관(재마운트 유지).
   const [videoCost, setVideoCost] = useState<number | null>(null);
+  // v3.228 W0-1: 탭 → (쿨다운·비용 확인 다이얼로그) → POST → 확인 중 종료까지 1건만. 다이얼로그 await 이전
+  // (탭 즉시) 세팅, 모든 종료 경로에서 해제. proceedingRef 는 다이얼로그 버튼 연타로 onCleared/resolve 가
+  // 두 번 불려 proceedGeneration 이 겹치는 경로 차단.
+  const busyRef = useRef(false);
+  const proceedingRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const releaseBusy = (why: string) => {
+    if (__DEV__ && busyRef.current) console.info('[VideoDirector] 생성 가드 해제', { why });
+    busyRef.current = false;
+  };
 
   // v3.214 ⑨: 영상 디렉터 피로/쿨다운 — GET /fatigue/status?director=video (MusicGeneration 패턴)
   const [fatigue, setFatigue] = useState<FatigueStatus | null>(null);
@@ -323,6 +405,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const handleEditChoice = (msgIndex: number) => {
     const msg = chat[msgIndex];
     if (!msg || msg.type !== 'user' || !msg.step || step === 'making') return;
+    // v3.228 W0-1: 생성 착수~종료(다이얼로그·확인 중 포함) 사이 롤백 금지 — 진행 흐름과 대화 상태 어긋남 방지
+    if (busyRef.current) { logDupBlock('edit-while-busy'); return; }
     if (__DEV__) console.info('[VideoDirector] 답변 수정 — 롤백', { toStep: msg.step });
     setShowResumeNotice(false); // v3.219 [VideoDraft]: 수정 시작도 "이어서" — 안내 버블 접기
     setChat(chat.slice(0, msgIndex));
@@ -476,6 +560,10 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
 
   // v3.183: 자막 위치 선택 → 생성
   const handlePickSubPos = (subpos: 'near' | 'mid' | 'low') => {
+    // v3.228 W0-1: 카드 더블클릭/연타 — 첫 탭이 가드를 잡으면 이후 탭은 버블·요청 모두 0
+    if (busyRef.current) { logDupBlock('tap-while-busy', { subpos }); return; }
+    if (!selected) return;
+    busyRef.current = true;
     const label = subpos === 'near'
       ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽')
       : subpos === 'mid' ? '중간' : '아래쪽';
@@ -505,76 +593,158 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
 
   // v3.214 ⑨: 생성/다시 만들기 진입 게이트 — 쿨다운 중이면 과금 확인 전에 쿨다운 다이얼로그
   // (12곳 관행 showFatigueCooldownDialog 재사용, director='video'). 해제 시 proceedGeneration 직행.
-  const startGeneration = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
-    if (!selected) return;
+  // v3.228 W0-1: 진행 중(다른 화면 인스턴스 포함) 작업이 있으면 안내 후 중단 — 호출자는 busyRef 보유 상태
+  const blockForActiveJob = (reason: string) => {
+    logDupBlock(reason, { trackId: activeVideoJob?.trackId, phase: activeVideoJob?.phase });
+    showAlert('영상 만드는 중', '이미 영상을 만드는 중이에요 — 완성된 뒤에 새로 만들 수 있어요.');
+    rollbackToSubPos();
+    releaseBusy(reason);
+  };
+
+  // 호출 전제: busyRef.current === true (handlePickSubPos 가 탭 즉시 세팅)
+  const startGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
+    if (!selected) { releaseBusy('no-track'); return; }
     const sig = `${selected.id}:${JSON.stringify(styleParams(lyricsMode, subpos))}`;
-    if (fatigueRemainSec > 0 && !succeededSigsRef.current.has(sig)) {
+    // 진행 중/확인 중 작업 선확인(확인 중이면 무과금 파일 조회로 완성 여부 판정)
+    if (await isVideoJobBlocking()) { blockForActiveJob('active-job'); return; }
+    if (fatigueRemainSec > 0 && !succeededVideoSigs.has(sig)) {
       console.info('[VideoDirector] [fatigue] 게이트 — 남은', fatigueRemainSec, '초');
       showFatigueCooldownDialog({
         status: fatigue,
         remainingSec: fatigueRemainSec,
         director: 'video',
         onStatusUpdate: applyFatigueStatus,
-        onCleared: () => proceedGeneration(lyricsMode, subpos),
-        onCancel: rollbackToSubPos,
+        onCleared: () => { proceedGeneration(lyricsMode, subpos); },
+        onCancel: () => { rollbackToSubPos(); releaseBusy('fatigue-cancel'); },
       });
       return;
     }
     proceedGeneration(lyricsMode, subpos);
   };
 
-  const proceedGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
-    if (!selected) return;
-    if (typeof videoCost === 'number') {
-      const ok = await new Promise<boolean>((resolve) => {
-        showAlert('영상 만들기', `새 영상 생성 시 ⭐${videoCost}이 소모돼요.
-(같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요)`, [
-          { text: '취소', style: 'cancel', onPress: () => resolve(false) },
-          { text: '진행', onPress: () => resolve(true) },
-        ]);
-      });
-      if (!ok) { rollbackToSubPos(); return; }
+  // v3.228 W0-1: 응답 없이 끝난 요청의 완성 확인 — 확인 기한까지 무과금 파일 조회 반복.
+  // 화면을 벗어나면 조회만 멈추고 모듈 기록(verifying)은 기한까지 유지 → 재진입 시에도 재요청 차단.
+  const verifyTimedOutJob = async (job: ActiveVideoJob): Promise<'ready' | 'expired' | 'unmounted'> => {
+    while (Date.now() <= job.verifyUntil) {
+      if (!mountedRef.current) return 'unmounted';
+      const r = await probeShareVideoFile(job.fileUrl);
+      if (__DEV__) console.info('[VideoDirector] 완성 확인 조회', { trackId: job.trackId, r });
+      if (r === 'ready') return 'ready';
+      await new Promise<void>((resolve) => setTimeout(resolve, VIDEO_VERIFY_INTERVAL_MS));
     }
-    pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
-    setStep('making');
-    const params = styleParams(lyricsMode, subpos);
-    console.info('[VideoDirector] share-video 생성', { trackId: selected.id, ...params });
+    return 'expired';
+  };
+
+  // 호출 전제: busyRef.current === true (탭 경로·쿨다운 해제 onCleared·429 재다이얼로그 onCleared)
+  const proceedGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
+    // 다이얼로그 버튼 연타로 onCleared/resolve 가 겹쳐 불리는 경로 차단
+    if (proceedingRef.current) { logDupBlock('proceed-reentry'); return; }
+    if (!selected) { releaseBusy('no-track'); return; }
+    proceedingRef.current = true;
+    busyRef.current = true;
+    const track = selected;
+    let handedOff = false; // 429 재다이얼로그로 가드 소유권을 넘기면 finally 에서 해제하지 않음
     try {
-      const res = await api.post(`/tracks/${selected.id}/share-video`, null, { params, timeout: 300000 });
-      const path = res.data?.video_url;
-      if (!path) throw new Error('video_url 없음');
-      setVideoUrl(path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`);
-      setMadeFormat(params.format);
-      succeededSigsRef.current.add(`${selected.id}:${JSON.stringify(params)}`);
-      pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
-      usePointsStore.getState().fetchBalance();
-      refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
-      setStep('done');
-    } catch (err: any) {
-      const status = err?.response?.status;
-      console.error('[VideoDirector] share-video 실패', { trackId: selected.id, status });
-      // v3.214 ⑨: 서버 check_gate 429(과금 전 무비용) — 게이트와 동일 쿨다운 다이얼로그로 대응
-      if (status === 429) {
-        const remain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
-        setFatigueRemainSec(remain);
-        pushDirector('영상 디렉터가 잠시 쉬는 중이에요. 휴식을 단축하거나 잠시 후 다시 시도해주세요.');
-        setStep('subPos');
-        showFatigueCooldownDialog({
-          status: fatigue,
-          remainingSec: remain > 0 ? remain : 1,
-          director: 'video',
-          onStatusUpdate: applyFatigueStatus,
-          onCleared: () => proceedGeneration(lyricsMode, subpos),
+      if (typeof videoCost === 'number') {
+        const ok = await new Promise<boolean>((resolve) => {
+          showAlert('영상 만들기', `새 영상 생성 시 ⭐${videoCost}이 소모돼요.
+(같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요)`, [
+            { text: '취소', style: 'cancel', onPress: () => resolve(false) },
+            { text: '진행', onPress: () => resolve(true) },
+          ]);
         });
+        if (!ok) { rollbackToSubPos(); return; }
+      }
+      // 최종 방어 — 확인 다이얼로그 사이에 다른 인스턴스가 요청을 시작했을 수 있음(동기 판정)
+      if (activeVideoJob && !(activeVideoJob.phase === 'verifying' && Date.now() > activeVideoJob.verifyUntil)) {
+        blockForActiveJob('active-job-final'); // rollback + 가드 해제 포함
         return;
       }
-      pushDirector(
-        status === 402 ? '스타(⭐)가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
-        : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
-        : status === 400 ? '커버 이미지가 없어 영상을 만들 수 없었어요. 이미지 디렉터에게 커버를 먼저 부탁해보세요!'
-        : '영상 생성에 실패했어요. 잠시 후 다시 시도해주세요.'
-      );
-      setStep('format');
+      const params = styleParams(lyricsMode, subpos);
+      const sig = `${track.id}:${JSON.stringify(params)}`;
+      const fileUrl = `${BACKEND_BASE_URL}/api/tracks/${encodeURIComponent(track.id)}/share-video/file?`
+        + Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+      const startedAt = Date.now();
+      const job: ActiveVideoJob = {
+        sig, trackId: track.id, fileUrl, format: params.format, startedAt,
+        phase: 'requesting', verifyUntil: startedAt + VIDEO_VERIFY_WINDOW_MS,
+      };
+      activeVideoJob = job;
+      pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+      setStep('making');
+      console.info('[VideoDirector] share-video 생성', { trackId: track.id, ...params });
+      try {
+        const res = await api.post(`/tracks/${track.id}/share-video`, null, { params, timeout: 300000 });
+        const path = res.data?.video_url;
+        if (!path) throw new Error('video_url 없음');
+        succeededVideoSigs.add(sig);
+        if (activeVideoJob === job) activeVideoJob = null;
+        setVideoUrl(path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`);
+        setMadeFormat(params.format);
+        pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
+        usePointsStore.getState().fetchBalance();
+        refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
+        setStep('done');
+      } catch (err: any) {
+        const status = err?.response?.status;
+        const data = err?.response?.data;
+        // 서버가 명시적으로 답한 결과(4xx 전부, 서버 JSON 502 = 실패·환불 완료)만 "확정". 응답 없음(앱 timeout·
+        // 네트워크)·게이트웨이 오류(HTML 502/503/504 등)는 서버가 아직 인코딩 중일 수 있어 "확인 중"으로 둔다.
+        const definitive = typeof status === 'number'
+          && (status < 500 || (status === 502 && !!data && typeof data === 'object' && !!data.error));
+        console.error('[VideoDirector] share-video 실패', { trackId: track.id, status, definitive, code: err?.code });
+        if (!definitive) {
+          job.phase = 'verifying';
+          if (!mountedRef.current) return; // 기록은 기한까지 유지 — 재진입 시 isVideoJobBlocking 이 판정
+          pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+          const v = await verifyTimedOutJob(job);
+          if (v === 'unmounted') return;
+          if (activeVideoJob === job) activeVideoJob = null;
+          if (v === 'ready') {
+            succeededVideoSigs.add(sig);
+            console.info('[VideoDirector] 확인 중 영상 완성 확인', { trackId: track.id });
+            setVideoUrl(fileUrl);
+            setMadeFormat(params.format);
+            pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
+            refreshFatigue();
+            setStep('done');
+          } else {
+            console.error('[VideoDirector] 확인 기한 내 완성 확인 실패', { trackId: track.id });
+            pushDirector('영상 완성을 확인하지 못했어요. 잠시 후 다시 시도해주세요.');
+            setStep('format');
+          }
+          usePointsStore.getState().fetchBalance();
+          return;
+        }
+        if (activeVideoJob === job) activeVideoJob = null;
+        // v3.214 ⑨: 서버 check_gate 429(과금 전 무비용) — 게이트와 동일 쿨다운 다이얼로그로 대응
+        if (status === 429) {
+          const remain = Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0));
+          setFatigueRemainSec(remain);
+          pushDirector('영상 디렉터가 잠시 쉬는 중이에요. 휴식을 단축하거나 잠시 후 다시 시도해주세요.');
+          setStep('subPos');
+          handedOff = true; // 가드는 다이얼로그가 소유 — 취소 시 해제, 해제 시 proceedGeneration 재진입
+          showFatigueCooldownDialog({
+            status: fatigue,
+            remainingSec: remain > 0 ? remain : 1,
+            director: 'video',
+            onStatusUpdate: applyFatigueStatus,
+            onCleared: () => { proceedGeneration(lyricsMode, subpos); },
+            onCancel: () => releaseBusy('fatigue429-cancel'),
+          });
+          return;
+        }
+        pushDirector(
+          status === 402 ? '스타(⭐)가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
+          : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
+          : status === 400 ? '커버 이미지가 없어 영상을 만들 수 없었어요. 이미지 디렉터에게 커버를 먼저 부탁해보세요!'
+          : '영상 생성에 실패했어요. 잠시 후 다시 시도해주세요.'
+        );
+        setStep('format');
+      }
+    } finally {
+      proceedingRef.current = false;
+      if (!handedOff) releaseBusy('proceed-end');
     }
   };
 
