@@ -76,6 +76,12 @@ export const fetchMediaBlob = (objectName) =>
 export const getAdvertisers = (params) => API.get('/admin/ads/advertisers', { params });
 export const getAdvertiser = (userId, params) => API.get(`/admin/ads/advertisers/${userId}`, { params });
 
+export const getBrands = (params) => API.get('/admin/items/brands', { params });
+export const setBrandHidden = (brand, hidden, reason) =>
+  API.patch('/admin/items/brands/hidden', { brand, hidden, reason });
+export const renameBrand = (brand, new_brand) =>
+  API.put('/admin/items/brands/rename', { brand, new_brand });
+
 // ---- items (착장) ----
 export const getItems = (params) => API.get('/admin/items', { params });
 export const getItemOwners = () => API.get('/admin/items/owners');

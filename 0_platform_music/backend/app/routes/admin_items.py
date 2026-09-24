@@ -13,7 +13,7 @@ import io
 import logging
 import math
 import uuid as uuid_lib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -188,6 +188,7 @@ async def list_items(
     category: Optional[str] = Query(None),
     gender: Optional[str] = Query(None),
     owner_id: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
     hidden: Optional[bool] = Query(None),
     active: Optional[bool] = Query(None),
     current_admin=Depends(get_admin_user),
@@ -207,6 +208,8 @@ async def list_items(
         query["gender"] = gender
     if owner_id:
         query["user_id"] = owner_id
+    if brand is not None:
+        query["brand"] = brand
     if hidden is not None:
         query["admin_hidden"] = True if hidden else {"$ne": True}
     if active is not None:
@@ -281,6 +284,174 @@ async def list_owners(current_admin=Depends(get_admin_user), conn=Depends(get_pg
         ]
         result.sort(key=lambda x: x["name"] or "")
     return {"owners": result}
+
+
+# ---------------------------------------------------------------------------
+# 2-1. GET /brands — 브랜드명(ad_items.brand) 단위 집계
+#
+# 광고주 계정(admin_ads.advertisers)과 별개 축. 한 계정(예: 브랜드샵) 아래
+# 여러 브랜드가 일괄 등록된 경우에도 브랜드별로 성과·노출 상태를 본다.
+# ---------------------------------------------------------------------------
+
+BRAND_DAYS = {7, 30, 90}
+
+
+class BrandHiddenBody(BaseModel):
+    brand: str
+    hidden: bool
+    reason: Optional[str] = None
+
+
+class BrandRenameBody(BaseModel):
+    brand: str
+    new_brand: str
+
+
+async def _event_counts(collection, since: Optional[datetime]) -> dict:
+    """item_id별 이벤트 건수 전량 집계 — 이벤트가 수천 건 규모라 $in 없이 한 번에."""
+    match = {"timestamp": {"$gte": since}} if since else {}
+    out = {}
+    async for doc in collection.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$item_id", "n": {"$sum": 1}}},
+    ]):
+        if doc["_id"]:
+            out[str(doc["_id"])] = int(doc["n"])
+    return out
+
+
+@router.get("/brands")
+async def list_brands(
+    days: int = 30,
+    current_admin=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    if days not in BRAND_DAYS:
+        return JSONResponse(status_code=400, content={"error": "기간은 7·30·90일 중 하나여야 합니다."})
+
+    mongo = get_mongo()
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    items = await mongo.ad_items.find(
+        {}, {"brand": 1, "user_id": 1, "category": 1, "is_active": 1, "admin_hidden": 1, "created_at": 1}
+    ).to_list(length=None)
+
+    imp = await _event_counts(mongo.ad_impressions, since)
+    clk = await _event_counts(mongo.ad_clicks, since)
+    wish = {}
+    try:
+        rows = await conn.fetch("SELECT item_id, COUNT(*) AS n FROM ad_wishlist GROUP BY item_id")
+        wish = {r["item_id"]: int(r["n"]) for r in rows}
+    except Exception:
+        logger.warning("[admin-items] brands wish count failed", exc_info=True)
+
+    brands: dict = {}
+    for it in items:
+        name = (it.get("brand") or "").strip() or "(브랜드 미지정)"
+        iid = str(it["_id"])
+        b = brands.setdefault(name, {
+            "brand": name, "item_count": 0, "active_count": 0, "hidden_count": 0,
+            "categories": {}, "owner_ids": set(),
+            "impressions": 0, "clicks": 0, "wish": 0, "last_added": None,
+        })
+        b["item_count"] += 1
+        if it.get("admin_hidden"):
+            b["hidden_count"] += 1
+        elif it.get("is_active", True):
+            b["active_count"] += 1
+        cat = it.get("category") or "-"
+        b["categories"][cat] = b["categories"].get(cat, 0) + 1
+        if it.get("user_id"):
+            b["owner_ids"].add(it["user_id"])
+        b["impressions"] += imp.get(iid, 0)
+        b["clicks"] += clk.get(iid, 0)
+        b["wish"] += wish.get(iid, 0)
+        ca = it.get("created_at")
+        if isinstance(ca, datetime) and (b["last_added"] is None or ca > b["last_added"]):
+            b["last_added"] = ca
+
+    all_owner_ids = {o for b in brands.values() for o in b["owner_ids"]}
+    owner_names = {}
+    if all_owner_ids:
+        uuids = []
+        for o in all_owner_ids:
+            try:
+                uuids.append(uuid_lib.UUID(o))
+            except ValueError:
+                continue
+        rows = await conn.fetch(
+            "SELECT id, nickname, company_name FROM users WHERE id = ANY($1::uuid[])", uuids
+        )
+        owner_names = {str(r["id"]): (r["company_name"] or r["nickname"]) for r in rows}
+
+    result = []
+    for b in brands.values():
+        owners = sorted(owner_names.get(o, "-") for o in b.pop("owner_ids"))
+        b["owners"] = owners
+        b["ctr"] = round(b["clicks"] / b["impressions"] * 100, 2) if b["impressions"] else 0.0
+        b["last_added"] = b["last_added"].replace(tzinfo=timezone.utc).isoformat() if b["last_added"] else None
+        result.append(b)
+    result.sort(key=lambda x: (-x["clicks"], -x["impressions"], -x["item_count"], x["brand"]))
+
+    return {
+        "days": days,
+        "summary": {
+            "brands": len(result),
+            "items": len(items),
+            "impressions": sum(b["impressions"] for b in result),
+            "clicks": sum(b["clicks"] for b in result),
+        },
+        "brands": result,
+    }
+
+
+@router.patch("/brands/hidden")
+async def set_brand_hidden(
+    body: BrandHiddenBody,
+    current_admin=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """브랜드 전체 아이템 일괄 숨김/해제 — admin_ads 단건 숨김과 동일 필드(admin_hidden)."""
+    brand = (body.brand or "").strip()
+    if not brand:
+        return JSONResponse(status_code=400, content={"error": "브랜드명이 필요합니다."})
+    mongo = get_mongo()
+    if body.hidden:
+        update = {"$set": {"admin_hidden": True, "admin_hidden_at": datetime.now(timezone.utc)}}
+    else:
+        update = {"$set": {"admin_hidden": False}, "$unset": {"admin_hidden_at": ""}}
+    res = await mongo.ad_items.update_many({"brand": brand}, update)
+    await _log_admin_action(
+        conn, current_admin["id"], "brand_hide" if body.hidden else "brand_unhide", "brand", brand,
+        {"matched": res.matched_count, "reason": (body.reason or "").strip()},
+    )
+    logger.info("[admin-items] brand hidden=%s brand=%s matched=%d", body.hidden, brand, res.matched_count)
+    return {"brand": brand, "hidden": body.hidden, "matched": res.matched_count}
+
+
+@router.put("/brands/rename")
+async def rename_brand(
+    body: BrandRenameBody,
+    current_admin=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """브랜드명 일괄 변경 — 표기 통일·오타 정정용. 기존 브랜드명으로 합치기도 가능."""
+    old, new = (body.brand or "").strip(), (body.new_brand or "").strip()
+    if not old or not new:
+        return JSONResponse(status_code=400, content={"error": "기존·새 브랜드명이 모두 필요합니다."})
+    if old == new:
+        return JSONResponse(status_code=400, content={"error": "새 브랜드명이 기존과 같습니다."})
+    mongo = get_mongo()
+    res = await mongo.ad_items.update_many(
+        {"brand": old}, {"$set": {"brand": new, "updated_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        return JSONResponse(status_code=404, content={"error": "해당 브랜드의 아이템이 없습니다."})
+    await _log_admin_action(
+        conn, current_admin["id"], "brand_rename", "brand", old, {"new_brand": new, "matched": res.matched_count},
+    )
+    logger.info("[admin-items] brand rename '%s' -> '%s' matched=%d", old, new, res.matched_count)
+    return {"brand": new, "previous": old, "matched": res.matched_count}
 
 
 # ---------------------------------------------------------------------------
