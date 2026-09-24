@@ -34,6 +34,9 @@ interface LyricsState {
   draftStep: number;
   /** v3.219 [LyricsDraft]: 진행 중 작사 대화 전체(텍스트 답변 포함 — 2026-09-07 정책상 영속) */
   draftChat: LyricsDraftChatMessage[];
+  /** v3.229 [LyricsDraft]: draft를 시작할 때의 창작 모드(일반/저작권 등록) — 영속.
+   *  보존본 복귀 시 인사 대사(모드 선택 화면)를 건너뛰므로 draft와 함께 저장·복원한다. null=기록 전(구 draft) */
+  draftCreationMode: 'standard' | 'copyright' | null;
   isLoading: boolean;
   error: string | null;
   setGenre: (v: string) => void;
@@ -55,6 +58,7 @@ interface LyricsState {
   setSourceAssetId: (v: string) => void;
   setDraftStep: (v: number) => void;
   setDraftChat: (v: LyricsDraftChatMessage[]) => void;
+  setDraftCreationMode: (v: 'standard' | 'copyright' | null) => void;
   setIsLoading: (v: boolean) => void;
   setError: (v: string | null) => void;
   reset: () => void;
@@ -80,6 +84,7 @@ const initialState = {
   sourceAssetId: '',
   draftStep: 0,
   draftChat: [] as LyricsDraftChatMessage[],
+  draftCreationMode: null as 'standard' | 'copyright' | null,
   isLoading: false,
   error: null,
 };
@@ -111,6 +116,7 @@ export const useLyricsStore = create<LyricsState>()(
       setSourceAssetId: (sourceAssetId) => set({ sourceAssetId }),
       setDraftStep: (draftStep) => set({ draftStep }),
       setDraftChat: (draftChat) => set({ draftChat }),
+      setDraftCreationMode: (draftCreationMode) => set({ draftCreationMode }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setError: (error) => set({ error }),
       reset: () => set(initialState),
@@ -130,6 +136,8 @@ export const useLyricsStore = create<LyricsState>()(
         generatedTitle: s.generatedTitle, generatedLyrics: s.generatedLyrics,
         sourceAssetId: s.sourceAssetId,
         draftStep: s.draftStep, draftChat: s.draftChat,
+        // v3.229: 창작 모드도 draft와 함께 영속(재시작 후 1탭 복귀에서도 모드 유지)
+        draftCreationMode: s.draftCreationMode,
       }),
     }
   )

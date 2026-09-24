@@ -311,12 +311,17 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           personaId: store.personaId || undefined,
           // v3.91: 참고 음악(업로드 응답) + 참고음 세기 — generateWithSuno가 reference_audio_*/audio_weight로 전송
           referenceData: referenceData || undefined,
-          audioWeight: store.audioWeight ?? undefined,
+          // v3.229 V1: 참고 음원이 실제로 업로드된 경우에만 세기 전송 — 없으면(미선택·업로드 실패 후
+          // '참고 없이 진행') audio_weight를 싣지 않아 목소리 설정으로 새지 않게 한다(서버 기본/V2에 맡김).
+          audioWeight: referenceData ? (store.audioWeight ?? undefined) : undefined,
           // v3.102(B-4): 가사 보관함 출처 스냅샷 — generateWithSuno가 lyrics_source로 전송
           lyricsSource: store.lyricsSource || undefined,
           // v3.156: 작곡에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 근거
           characterId: store.artistCharacterId || undefined,
         };
+        if (!referenceData && store.audioWeight != null) {
+          console.info('[MusicGeneration] V1 audio_weight 미전송(참고 음원 없음)', { audioWeight: store.audioWeight });
+        }
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,
           vocal: params.vocal, instrumental: params.instrumental, durationSec: params.durationSec,

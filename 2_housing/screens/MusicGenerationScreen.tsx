@@ -37,6 +37,8 @@ import { ensureCreationSession, commitLyricsVersion } from '../services/creation
 import { FatigueStatus } from '../types';
 // v3.228 W1: 작곡 중복 생성 가드(전역 추적기)
 import { guardGeneration } from '../services/generationTracker';
+// v3.229 [DirectorResume]: 작곡 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
+import { computeComposeLyricsKey, getResumableComposeDraft } from '../utils/directorResume';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -96,21 +98,8 @@ interface ChatMessage {
 
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
 
-// v3.219 [ComposeDraft]: 가사 신원 키 — lyricsSource.lyrics_id 우선, 없으면 가사 텍스트 해시.
-// 미러링 시마다 재계산해 draft에 싣는다(가사 확인 단계의 사용자 편집이 store에 반영돼도
-// draft.lyricsKey가 함께 갱신 — 같은 대화의 재진입 판정 유지). 다른 가사로 진입(ComposeLyricsPick
-// handlePick·연주곡)하면 키가 달라져 draft 폐기 → 새 대화(잔존 오염 차단).
-function computeComposeLyricsKey(): string {
-  const music = useMusicStore.getState();
-  if (music.lyricsSource?.lyrics_id) return `id:${music.lyricsSource.lyrics_id}`;
-  const lyrics = (music.lyrics || useLyricsStore.getState().generatedLyrics || '').trim();
-  if (music.instrumental && !lyrics) return 'instrumental';
-  let h = 0;
-  for (let i = 0; i < lyrics.length; i++) {
-    h = (h * 31 + lyrics.charCodeAt(i)) | 0;
-  }
-  return `h:${h}:${lyrics.length}`;
-}
+// v3.219 [ComposeDraft]: 가사 신원 키(computeComposeLyricsKey)·draft 이어가기 판정은 v3.229에서
+// utils/directorResume로 이동 — 작업실 맵 바로 가기와 같은 규칙을 쓴다(동작 불변).
 
 export default function MusicGenerationScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -123,13 +112,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.219 [ComposeDraft]: 마운트 시점 draft 판정(커버 v3.202 H-⑤ 패턴) — lyricsKey 일치 +
   // 사용자 진행(대화 2개 이상)이 있을 때만 hydrate. 불일치 draft는 아래 마운트 effect가 폐기.
-  const [resumeDraft] = useState<ComposeDraft | null>(() => {
-    const d = useMusicStore.getState().composeDraft;
-    if (!d) return null;
-    if (d.lyricsKey !== computeComposeLyricsKey()) return null;
-    if (!d.chatHistory.some((m) => m.type === 'user')) return null;
-    return d;
-  });
+  const [resumeDraft] = useState<ComposeDraft | null>(() => getResumableComposeDraft());
   const draftAnswers: ComposeDraftAnswers | null = resumeDraft ? resumeDraft.answers : null;
   // v3.219 [ComposeDraft]: 복원 안내 배너(+'처음부터' 액션) 노출 여부
   const [showResumeNotice, setShowResumeNotice] = useState(!!resumeDraft);
@@ -703,6 +686,69 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
+  // v3.229 V1: 참고 음원 유무 ↔ "참고 음원의 세기"(step 9) 정합 — 되감기로 step 5(참고 음원)의
+  // 업로드를 취소/추가해도 step 9 문답은 참고 음원이 있을 때만 존재한다. 스텝 번호는 불변이고
+  // 대화(질문·답변 버블·echoOfStep 태그)만 정리한다. 되감기/편집 중에는 커밋·취소 후 판정.
+  const hasReferenceFile = !!musicStore.referenceFile;
+  useEffect(() => {
+    if (rewindRef.current) return;
+    if (musicStore.instrumental) return; // v3.203 연주곡 체인(참고 → BPM 직행)은 step 9를 쓰지 않음
+    if (!hasReferenceFile) {
+      if (chatHistory.some((m) => m.type === 'user' && m.step === 9)) {
+        // 이미 답한 step 9 문답 제거: [디렉터 q9(echo 8)] [사용자 step 9] → 삭제,
+        // 그 뒤 디렉터(BPM 질문, echo 9)는 echo 8로 재태깅(대중성 되감기 시 치환 대상 유지)
+        console.info('[MusicGeneration] V1 참고 음원 없음 — 참고음 세기 문답 정리');
+        setAudioWeightOn(false);
+        setChatHistory((prev) => {
+          const u9 = prev.findIndex((m) => m.type === 'user' && m.step === 9);
+          if (u9 < 0) return prev;
+          const q9 =
+            u9 > 0 && prev[u9 - 1].type === 'director' && prev[u9 - 1].text === DIRECTOR_MESSAGES[9]
+              ? u9 - 1
+              : -1;
+          const next: ChatMessage[] = [];
+          prev.forEach((m, j) => {
+            if (j === u9 || j === q9) return;
+            if (j > u9 && m.type === 'director' && m.echoOfStep === 9) {
+              next.push({ ...m, echoOfStep: 8 });
+              return;
+            }
+            next.push(m);
+          });
+          return next;
+        });
+        return;
+      }
+      if (step === 9) {
+        // 세기 질문 대기 중 참고 음원이 사라짐 → 대기 질문을 BPM(10)으로 교체
+        console.info('[MusicGeneration] V1 참고음 세기 생략(참고 음원 없음) — 9 → 10');
+        setAudioWeightOn(false);
+        setChatHistory((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.type !== 'director' || last.text !== DIRECTOR_MESSAGES[9]) return prev;
+          return [...prev.slice(0, -1), { ...last, text: DIRECTOR_MESSAGES[10] }];
+        });
+        setStep(10);
+      }
+      return;
+    }
+    // 참고 음원을 되감기로 새로 올렸고 BPM(10) 질문 대기 중이면 세기 질문(9)을 먼저 묻는다.
+    // (이미 10을 지나간 경우는 audio_weight 미전송 = 서버 기본에 맡김)
+    if (step === 10 && !chatHistory.some((m) => m.type === 'user' && m.step === 9)) {
+      const last = chatHistory[chatHistory.length - 1];
+      if (last?.type === 'director' && last.text === DIRECTOR_MESSAGES[10] && last.echoOfStep === 8) {
+        console.info('[MusicGeneration] V1 참고 음원 추가 — 참고음 세기 질문(9) 복원');
+        setChatHistory((prev) => {
+          const l = prev[prev.length - 1];
+          if (l?.type !== 'director' || l.text !== DIRECTOR_MESSAGES[10]) return prev;
+          return [...prev.slice(0, -1), { ...l, text: DIRECTOR_MESSAGES[9] }];
+        });
+        setStep(9);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, hasReferenceFile]);
+
   // Step 0: Title confirm → step 1(가사 확인)
   // 편집한 제목을 lyricsStore에 반영 (이걸 안 하면 MyMusic / LyricsResult에서 원본만 보임)
   const handleTitleConfirm = () => {
@@ -1154,6 +1200,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
   const handleWeirdnessConfirm = (apply: boolean) => {
     setWeirdnessOn(apply);
+    // v3.229 V1: "참고 음원의 세기"(step 9)는 참고 음원을 실제로 올렸을 때만 묻는다.
+    // 없으면 8 → 10(BPM) 직행 + audio_weight 미전송(서버 기본에 맡김). 스텝 번호 체계는 불변.
+    const hasReference = !!useMusicStore.getState().referenceFile;
+    if (!hasReference) {
+      setAudioWeightOn(false);
+      console.info('[MusicGeneration] V1 참고음 세기 생략(참고 음원 없음) — 8 → 10');
+    }
     advanceStep(
       apply
         ? weirdness < 0.4
@@ -1162,7 +1215,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
             ? '실험적으로 갈게요'
             : '반반 섞을게요'
         : '자동으로 맡길게요',
-      9
+      hasReference ? 9 : 10
     );
   };
   const handleAudioWeightConfirm = (apply: boolean) => {
@@ -1314,7 +1367,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setMusicalKey(musicalKeyOn ? musicalKey : '');
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
     // v3.91: 참고음 세기(audio_weight) — "적용"을 골랐을 때만 body에 실림(자동=null)
-    musicStore.setAudioWeight(audioWeightOn ? audioWeight : null);
+    // v3.229 V1: 참고 음원이 없으면 세기 값이 목소리 비중으로 새지 않도록 항상 미전송(null)
+    const hasReferenceAtGen = !!useMusicStore.getState().referenceFile;
+    if (audioWeightOn && !hasReferenceAtGen) {
+      console.info('[MusicGeneration] V1 audio_weight 미전송(참고 음원 없음)', { audioWeight });
+    }
+    musicStore.setAudioWeight(audioWeightOn && hasReferenceAtGen ? audioWeight : null);
     musicStore.setPersonaModel(!instrumental && personaModelOn && personaModel ? personaModel : '');
     musicStore.setPersonaId(!instrumental && personaModelOn && selectedPersonaId ? selectedPersonaId : null);
     musicStore.setSubVocal(instrumental ? '' : subVocalGender);

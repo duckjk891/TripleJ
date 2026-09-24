@@ -17,6 +17,9 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
 import api, { BACKEND_BASE_URL } from './api';
 import { trackCoverUri } from '../utils/coverUri';
+// v3.229 [PlayRecord]: 재생 기록(70%·재생 세션당 1회) — 아래 store 구독 단일 지점에서 판정(대표 결정:
+// 피드·미니플레이어만으로 재생해도 포함, 플레이어 화면 열림/닫힘 무관). 곡 끝은 endPlaySession으로 세션 종료.
+import { notePlayProgress, endPlaySession } from './playRecord';
 import {
   applyPlaybackAudioMode,
   setMediaSessionPlaybackState,
@@ -81,6 +84,29 @@ export function syncMediaSessionForTrack(track: any): void {
   );
 }
 
+/**
+ * v3.229 N4: 아티스트 개명 직후 호출 — 앱에 저장된 재생 큐·계정 보관함·현재 곡의 가수명을 새 이름으로
+ * 일괄 치환하고, 현재 곡이 대상이면 미디어세션(잠금화면·블루투스 메타)도 즉시 갱신한다.
+ * (웹 mediaSession 구독은 곡 id 변경에만 반응하므로 같은 곡의 이름 변경은 여기서 직접 sync)
+ * best-effort — 실패해도 개명 흐름을 막지 않는다. 반환: 치환된 항목 수.
+ */
+export function applyArtistRenameToPlayback(characterId: string, name: string): number {
+  try {
+    const store = usePlayerStore.getState();
+    const before = store.track;
+    const n = store.renameArtistInQueue(characterId, name);
+    const after = usePlayerStore.getState().track;
+    if (after && after !== before) {
+      syncMediaSessionForTrack(after);
+      console.info('[ArtistRename] media session 갱신(현재 곡)', { trackId: after.id });
+    }
+    return n;
+  } catch (err: any) {
+    console.warn('[ArtistRename] 재생 큐 반영 실패(무시)', { message: err?.message });
+    return 0;
+  }
+}
+
 // playbackState/positionState — 재생 경로가 여럿(playback.ts·PlayerScreen 자체 로더)이라
 // store 구독 단일 지점에서 동기화한다(양쪽 모두 isPlaying/position/duration을 store에 쓴다).
 // positionState는 과도 호출 금지: 상태 변화·duration 변경·시크(예상 위치와 3s+ 점프)·5s 주기만.
@@ -114,6 +140,28 @@ function prefetchNextWebUrl(): void {
     }
   })();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v3.229 [PlayRecord]: 재생 기록 단일 지점 — 전역 store 구독.
+// 모든 재생 경로(엔진 콜백 makeStatusCallback·웹 ended 스왑·프리로드 스왑·PlayerScreen 자체 콜백·
+// 웹 HTMLAudio/네이티브 expo-av 공통)는 재생 위치를 store.position/duration에 쓴다. 이 구독이 그 값을
+// playRecord 트래커로 넘기므로 플레이어 화면이 열려 있든 닫혀 있든(미니·피드 바로 재생 포함) 같은
+// 트래커로 들어가고, 콜백이 몇 개든 기록은 재생 세션당 1회다(PlayerScreen은 기록 호출을 하지 않는다).
+// 곡 귀속: 엔진 콜백이 쓰는 동안은 그 콜백에 묶인 곡 id(정확), 그 외(PlayerScreen 콜백)는 store.track.
+// ─────────────────────────────────────────────────────────────────────────────
+let prEngineTrackId: string | null = null;
+let prLastKey = '';
+usePlayerStore.subscribe((s: any) => {
+  const tid = prEngineTrackId ?? (s.track?.id != null ? String(s.track.id) : null);
+  if (!tid) return;
+  const pos = s.position || 0;
+  const dur = s.duration || 0;
+  const key = `${tid}|${pos}|${dur}`;
+  if (key === prLastKey) return; // 위치·길이 변화 없음(재생상태·큐 편집 등) — 무시
+  prLastKey = key;
+  const src = `${Platform.OS === 'web' ? 'web' : 'native'}:${prEngineTrackId ? 'engine' : 'player-cb'}:${s.isPlayerScreenOpen ? 'player-open' : 'player-closed'}`;
+  notePlayProgress(tid, pos, dur, src);
+});
 
 if (Platform.OS === 'web') {
   // v3.217 ①(a): mediaSession 트랙 sync 일원화 — store.track 변경 구독 단일 지점.
@@ -620,6 +668,9 @@ function makeStatusCallback(newTrack: any): (status: any) => void {
     if (status.isLoaded) {
       noteAutoAdvanceProgress(status); // v3.225: 새 곡 재생 진척 — 자동 건너뛰기 표식 해제
       const s = usePlayerStore.getState();
+      // v3.229 [PlayRecord]: 이 콜백의 store 쓰기(위치·길이) 동안 곡 귀속을 콜백에 묶인 곡으로 고정
+      // (setDuration 직후 해제 — 아래 didJustFinish의 곡 전환 쓰기는 store.track 귀속)
+      prEngineTrackId = newTrack?.id != null ? String(newTrack.id) : null;
       s.setIsPlaying(status.isPlaying);
       s.setPosition(status.positionMillis || 0);
       // v3.192: duration 방어 보정 — Xing 헤더 없는 VBR MP3는 엔진이 duration을 짧게 오판.
@@ -637,9 +688,12 @@ function makeStatusCallback(newTrack: any): (status: any) => void {
         });
       }
       s.setDuration(effectiveDuration);
+      prEngineTrackId = null;
       // v3.197: 종료 임박 — 다음 곡 프리로드(셔플 인덱스 핀 포함)
       maybePreloadNext(newTrack, status.positionMillis || 0, effectiveDuration);
       if (status.didJustFinish) {
+        // v3.229 [PlayRecord]: 곡 끝 — 재생 세션 종료(다음 곡 전환 전, 이 콜백의 곡 기준)
+        endPlaySession(newTrack?.id, 'playback');
         // v3.197: 프리로드 스왑 우선 — 종료 시점 네트워크 의존 제거. 미스면 기존 경로 폴백.
         const pre = consumePreloaded();
         if (pre) {

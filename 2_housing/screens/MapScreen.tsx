@@ -49,6 +49,15 @@ import { FatigueDirector, FatigueStatus } from '../types';
 import { useActiveArtistJob, useDirectorJob, type TrackedJob } from '../stores/generationJobStore';
 import { finalizeArtistJob, openJobViewer, openGenJob } from '../services/generationTracker';
 import { getKindAdapter } from '../services/genJobs';
+// v3.229 [DirectorResume]: 보존 draft 바로 가기 — 판정은 각 디렉터 화면과 공용
+import { Feather } from '@expo/vector-icons';
+import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { listArtists } from '../services/characterService';
+import {
+  getDirectorResumeTarget,
+  hasDirectorWorkInProgress,
+  type DirectorResumeTarget,
+} from '../utils/directorResume';
 
 const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
 
@@ -246,6 +255,10 @@ export default function MapScreen({ navigation }: Props) {
   const { user } = useAuthStore();
   const lyricsStore = useLyricsStore();
   const musicStore = useMusicStore();
+  // v3.229 [DirectorResume]: 아티스트 draft 구독 — 작업실 복귀 시 "이어서 하기" 말풍선 재계산용(값은 판정 함수가 읽음)
+  useCharacterTaskStore((s) => s.draft);
+  // 재생성 draft 대상 확인(비동기) 중 연타 방지
+  const resumeBusyRef = useRef(false);
 
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
   // v3.219 [NextAction]: 3상태 — null=조회 전(말풍선·펄스 유보). boolean 초기값(false)이면
@@ -612,6 +625,104 @@ export default function MapScreen({ navigation }: Props) {
     });
   };
 
+  // ── v3.229 [DirectorResume]: 보존 draft 바로 가기 ──
+  // 순서: 로그인 → 추적 작업(v3.228, 최우선) → 보존본 바로 가기 → 휴식 게이트(새로 시작할 때만) → 기존 흐름.
+  // 인사 대사(Dialogue)는 새로 시작할 때의 연출이라 보존본 복귀에서는 건너뛴다(v3.219 설계 누락 보완).
+  // 맵 휴식 게이트도 건너뛴다 — 보존 화면은 보기·수정(무과금)이고, 과금 버튼마다 화면 안 휴식 게이트가 그대로 막는다.
+  const hiredLyricistIds = () =>
+    hiredIds.filter((id) => getDirectorById(id)?.category === 'lyricist');
+
+  // 보존 화면으로 이동 — Dialogue 경유가 아니므로 탭 헤더 ← 를 여기서 주입(Dialogue :105-120 관행 동일).
+  // 자체 ← 를 주입하는 화면(작사 입력·이미지·영상·아티스트)은 focus 시 덮어쓰고, Map focus가 클리어한다.
+  const openResumeTarget = (type: DirectorType, target: DirectorResumeTarget) => {
+    console.info('[DirectorResume] [Map] resume-direct', { director: type, route: target.route, reason: target.reason });
+    navigation.getParent()?.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => (navigation as any).popTo('Map')}
+          style={{ marginLeft: 12 }}
+          accessibilityLabel="작업실로 돌아가기"
+        >
+          <Feather name="arrow-left" size={22} color={colors.text.primary} />
+        </TouchableOpacity>
+      ),
+    });
+    (navigation as any).navigate(target.route, target.params);
+  };
+
+  // 작사: 보존본의 창작 모드를 되살린다(요청 확인 화면 직행 경로 — 작사 입력 화면은 마운트 때 자체 복원)
+  const restoreLyricsCreationMode = () => {
+    const saved = useLyricsStore.getState().draftCreationMode;
+    const music = useMusicStore.getState();
+    if (saved && music.creationMode !== saved) {
+      console.info('[LyricsDraft] creationMode 복원', { from: music.creationMode, to: saved, via: 'map' });
+      music.setCreationMode(saved);
+    }
+  };
+
+  // 아티스트 재생성 draft: 대상 아티스트가 지워졌으면 이어가기 대신 draft 폐기 후 기존 흐름
+  // (ArtistInput은 재생성 대상 존재를 확인하지 않는다 — 없는 대상으로 생성 요청이 나가는 것을 막는다)
+  const resumeArtistRegen = async (target: DirectorResumeTarget) => {
+    if (resumeBusyRef.current) return;
+    resumeBusyRef.current = true;
+    try {
+      const cid = String(target.params?.characterId ?? '');
+      let exists = true;
+      try {
+        const { characters, slots } = await listArtists();
+        // 레거시 계정(목록 비어 있음·슬롯 사용 중)은 확인 불가 — 기존 처리에 맡긴다
+        exists = characters.some((c) => c.character_id === cid) || (characters.length === 0 && slots.used > 0);
+      } catch (err: any) {
+        console.warn('[DirectorResume] 재생성 대상 확인 실패 — 이어가기 진행', err?.response?.status, err?.message);
+      }
+      if (!exists) {
+        console.info('[DirectorResume] 재생성 대상 아티스트 없음 — draft 폐기 후 기존 흐름', { cid });
+        useCharacterTaskStore.getState().clearDraft();
+        proceedDirectorPress('artist');
+        return;
+      }
+      openResumeTarget('artist', target);
+    } finally {
+      resumeBusyRef.current = false;
+    }
+  };
+
+  /** 보존본이 있으면 바로 가기 처리 후 true. 튜토리얼 중·보존본 없음이면 false(기존 흐름). */
+  const tryResumeDirect = (type: DirectorType): boolean => {
+    if (tutorialVisible) return false;
+    // 아티스트 추적 작업(v3.227 만드는 중·완성)은 proceedDirectorPress가 처리 — 보존본보다 우선
+    if (type === 'artist' && (artistJob?.lastStatus === 'processing' || artistJob?.lastStatus === 'done')) {
+      return false;
+    }
+    const target = getDirectorResumeTarget(type);
+    if (!target) return false;
+    const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[type];
+    if (fatigueKey && fatigueKey !== 'artist' && fatigueRemain[fatigueKey] > 0) {
+      console.info('[DirectorResume] 휴식 중이지만 보존본 복귀 — 맵 휴식 게이트 생략(과금 버튼 게이트 유지)', {
+        director: type, remainingSec: fatigueRemain[fatigueKey],
+      });
+    }
+    if (type === 'lyricist') {
+      const hired = hiredLyricistIds();
+      // 영입 2명 이상인데 아직 고른 디렉터가 없을 때만 선택 창 — 고르면 보존 화면으로 간다(모달 onPress)
+      if (hired.length > 1 && !selectedByCategory.lyricist) {
+        console.info('[DirectorResume] 작사 디렉터 미선택 — 선택 창 후 보존 화면', { reason: target.reason });
+        setDirectorPickerFor('lyricist');
+        return true;
+      }
+      if (hired.length === 1 && !selectedByCategory.lyricist) {
+        selectForCategory('lyricist', hired[0]);
+      }
+      restoreLyricsCreationMode();
+    }
+    if (type === 'artist' && target.params?.characterId) {
+      void resumeArtistRegen(target);
+      return true;
+    }
+    openResumeTarget(type, target);
+    return true;
+  };
+
   const handleDirectorPress = (type: DirectorType) => {
     if (!user) {
       setShowLoginOverlay(true);
@@ -626,6 +737,9 @@ export default function MapScreen({ navigation }: Props) {
       void openGenJob(genJob.jobId, navigation);
       return;
     }
+
+    // v3.229 [DirectorResume]: 보존본이 있으면 인사 대사·선택 창·휴식 게이트 없이 보존 화면으로(1탭)
+    if (tryResumeDirect(type)) return;
 
     // v3.107→v3.118: 디렉터 휴식(쿨다운) 게이트 — 탭 시 단축 다이얼로그(⭐/광고권).
     // v3.122.1: 아티스트 디렉터는 탭 게이트 제외 — 탭이 내 아티스트 열람·관리(무과금)
@@ -789,7 +903,11 @@ export default function MapScreen({ navigation }: Props) {
                 ? `만드는 중… (${Math.max(0, Math.floor((jobNow - slotJob.startedAt) / 60000))}분)`
                 : '완성! 눌러서 확인'
               : null;
-            const isNext = user && d.type === nextActionDirector && !isResting && !jobBubble;
+            // v3.229 [DirectorResume]: 슬롯 우선순위 = 추적 작업(만드는 중·완성) > "이어서 하기" > "작업 시작".
+            // 튜토리얼 중엔 숨김(작업 말풍선 규칙 동일). 휴식 티켓과는 병존.
+            const resumeBubble =
+              !!user && !tutorialVisible && !jobBubble && hasDirectorWorkInProgress(d.type);
+            const isNext = user && d.type === nextActionDirector && !isResting && !jobBubble && !resumeBubble;
             return (
               // wrapper에 zIndex 20 → 캐릭터 + 티켓이 전경 가구(zIndex 15) 위로 올라옴
               <View key={d.type} style={{ zIndex: 20 }}>
@@ -832,6 +950,27 @@ export default function MapScreen({ navigation }: Props) {
                     <View style={styles.mapBubble}>
                       <Text style={styles.mapBubbleText} numberOfLines={1}>
                         ▸ 클릭해서 작업 시작!
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                {resumeBubble && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => handleDirectorPress(d.type)}
+                    style={{
+                      position: 'absolute',
+                      left: d.x * mapScale - 140,
+                      top: (d.y - 70) * mapScale - 40,
+                      width: 280,
+                      alignItems: 'center',
+                      zIndex: 26,
+                    }}
+                    accessibilityLabel="이어서 하기"
+                  >
+                    <View style={styles.mapBubble}>
+                      <Text style={styles.mapBubbleText} numberOfLines={1}>
+                        ▸ 이어서 하기
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -975,8 +1114,13 @@ export default function MapScreen({ navigation }: Props) {
                       selectForCategory(d.category, d.id);
                       setDirectorPickerFor(null);
                       // 작사의 경우 이미 프롬프트 있으면 리뷰 이동, 없으면 대화 시작
+                      // v3.229 [DirectorResume]: 보존본(요청서·진행 대화)이 있으면 그 화면으로 — 튜토리얼 중엔 기존대로
                       if (d.category === 'lyricist') {
-                        if (lyricsStore.generatedPrompt) {
+                        const resumeTarget = tutorialVisible ? null : getDirectorResumeTarget('lyricist');
+                        if (resumeTarget) {
+                          restoreLyricsCreationMode();
+                          openResumeTarget('lyricist', resumeTarget);
+                        } else if (lyricsStore.generatedPrompt) {
                           navigation.navigate('LyricsPromptReview' as any);
                         } else {
                           const director = DIRECTORS.find((x) => x.type === 'lyricist');

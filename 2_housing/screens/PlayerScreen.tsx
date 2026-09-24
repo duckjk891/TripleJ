@@ -28,7 +28,8 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { trackCoverUri } from '../utils/coverUri';
 import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode } from '../services/audioMode';
-import { usePointsStore } from '../stores/pointsStore';
+// v3.229 [PlayRecord]: 재생 기록 단일 지점(곡 재생 세션당 1회)
+import { endPlaySession } from '../services/playRecord';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 // v3.157(대표): 비트뷰 토글 제거 — components/BeatTrackView·beatsService는 보존(재도입 대비, 미사용)
 import DraggableQueue from '../components/DraggableQueue';
@@ -205,7 +206,6 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);       // 드래그 중 슬라이더 위치(웹 리셋 방지)
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
-  const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
   const durationWarnedRef = useRef<string | null>(null); // v3.192: duration 괴리 경고 1회 가드(트랙당)
   // v3.215 ⑥: 하단 상세 토글 튜토리얼 anchor ref — onLayout 시 등록, unmount 시 해제
   // (v3.207 ① player-add 등록은 스텝 교체로 제거 — 키는 registry에 주석 존치)
@@ -378,20 +378,9 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const getCoverUri = (): string | null => trackCoverUri(track);
 
-  // 70% 위치 도달 시 재생 기록(별 +1) — MAIDOL과 동일하게 위치 기반(seek 허용). 트랙당 1회.
-  const PLAY_RECORD_RATIO = 0.7;
-  const recordPlayIfNeeded = (positionMillis: number, durationMillis: number) => {
-    if (!durationMillis || durationMillis <= 0) return;
-    const tid = usePlayerStore.getState().track?.id;
-    if (!tid || recordedTrackRef.current === tid) return;
-    if (positionMillis >= durationMillis * PLAY_RECORD_RATIO) {
-      recordedTrackRef.current = tid;
-      if (__DEV__) console.info('[PlayerScreen] 70% 재생 기록', { tid });
-      api.post('/charts/record-play', { track_id: tid })
-        .then(() => { usePointsStore.getState().fetchBalance(); }) // 별 배지 갱신
-        .catch((err: any) => console.error('[PlayerScreen] record-play 실패', { status: err?.response?.status }));
-    }
-  };
+  // v3.229 [PlayRecord]: 70% 재생 기록(별 +1)은 이 화면에서 호출하지 않는다 — 아래 콜백이 쓰는
+  // store.position/duration을 services/playback.ts의 전역 store 구독 단일 지점이 판정(재생 세션당 1회,
+  // 플레이어 열림/닫힘·미니·피드 재생 무관). 이 화면은 곡 끝(didJustFinish) 세션 종료 표식만 남긴다.
 
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.isLoaded) {
@@ -426,11 +415,12 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setDuration(effectiveDuration);
       setIsPlaying(status.isPlaying);
       playerStore.setIsPlaying(status.isPlaying);
-      // 70% 도달(또는 seek로 넘김) 시 재생 기록 — 위치 기반(v3.192: effectiveDuration 기준 — 조기 기록 방지)
-      recordPlayIfNeeded(status.positionMillis, effectiveDuration);
+      // v3.229 [PlayRecord]: 70% 재생 기록은 위 store.setPosition/setDuration을 전역 구독(playback.ts)이 판정
       // v3.197: 종료 임박(20초 전/85%) — 다음 곡 프리로드(셔플 인덱스 핀, 공용 모듈·네이티브 한정)
       maybePreloadNext(liveTrack ?? track, status.positionMillis ?? 0, effectiveDuration);
       if (status.didJustFinish) {
+        // v3.229 [PlayRecord]: 곡 끝 — 재생 세션 종료(store.track 전환 전에 현재 곡 기준으로 닫는다)
+        endPlaySession((liveTrack ?? track)?.id, 'Player');
         // 재생 완료 EXP — 내 아티스트 +1
         useArtistStore.getState().addExp(1, 'play');
         // 셔플/반복 모드 반영한 다음 인덱스

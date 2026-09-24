@@ -57,6 +57,31 @@ interface PlayerState {
   /** 셔플 고려해서 이전 인덱스. 없으면 -1. */
   getPrevIndex: () => number;
   cleanup: () => void;
+  /** v3.229 N4: 아티스트 개명 직후 — 재생 큐·계정 보관함(savedQueues)·현재 곡 중 character_id가 일치하는
+   *  항목의 artist_name을 새 이름으로 일괄 치환(빈 이름이면 기획사명 → 'AI' 폴백, 서버 직렬화 규칙과 동일).
+   *  character_id가 없는 항목은 대상 아님(다음 서버 조회 때 갱신). 반환: 치환된 항목 수(큐·보관함·현재곡 합계) */
+  renameArtistInQueue: (characterId: string, name: string) => number;
+}
+
+// v3.229 N4: 큐 항목의 아티스트 식별 — 곡 문서의 character_id(발매 시 선택 아티스트) 우선,
+// 없으면 곡 스냅샷(user_character_snapshot.character_id). 둘 다 없으면 대상 아님.
+function trackCharacterId(t: any): string {
+  if (!t) return '';
+  const cid = t.character_id ?? t.user_character_snapshot?.character_id;
+  return cid != null ? String(cid) : '';
+}
+
+function renameTrackArtist(t: any, cid: string, name: string): any {
+  if (!t || trackCharacterId(t) !== cid) return t;
+  const nextName = name || t.uploader_nickname || t.agency_name || 'AI';
+  const snap = t.user_character_snapshot;
+  const snapNeeds = !!snap && typeof snap === 'object' && snap.name !== name;
+  if (t.artist_name === nextName && !snapNeeds) return t;
+  return {
+    ...t,
+    artist_name: nextName,
+    ...(snapNeeds ? { user_character_snapshot: { ...snap, name } } : {}),
+  };
 }
 
 export const usePlayerStore = create<PlayerState>()(
@@ -219,6 +244,41 @@ export const usePlayerStore = create<PlayerState>()(
         }
         // v3.198: sessionActive도 리셋 — track이 null이라 미니는 어차피 숨지만 일관성 유지(무해)
         set({ sound: null, track: null, isPlaying: false, position: 0, duration: 0, sessionActive: false });
+      },
+      renameArtistInQueue: (characterId, name) => {
+        const cid = String(characterId || '').trim();
+        if (!cid) return 0;
+        const newName = (name || '').trim();
+        const { queue, track, savedQueues } = get();
+        let nQueue = 0;
+        let nSaved = 0;
+        let nTrack = 0;
+        const nextQueue = queue.map((t) => {
+          const r = renameTrackArtist(t, cid, newName);
+          if (r !== t) nQueue++;
+          return r;
+        });
+        const nextTrack = renameTrackArtist(track, cid, newName);
+        if (nextTrack !== track) nTrack = 1;
+        const nextSaved: PlayerState['savedQueues'] = {};
+        for (const [owner, entry] of Object.entries(savedQueues || {})) {
+          if (!entry) { nextSaved[owner] = entry; continue; }
+          let changed = false;
+          const q = (entry.queue || []).map((t) => {
+            const r = renameTrackArtist(t, cid, newName);
+            if (r !== t) { nSaved++; changed = true; }
+            return r;
+          });
+          const et = renameTrackArtist(entry.track, cid, newName);
+          if (et !== entry.track) { nSaved++; changed = true; }
+          nextSaved[owner] = changed ? { ...entry, queue: q, track: et } : entry;
+        }
+        const total = nQueue + nSaved + nTrack;
+        console.info('[ArtistRename] queue rename', { n: total, queue: nQueue, saved: nSaved, current: nTrack, nameLen: newName.length });
+        if (total === 0) return 0;
+        // 현재 작업 큐·현재곡·보관함을 한 번에 반영(재생 상태·인덱스는 불변 — 곡 id 기준 비교라 재로드 없음)
+        set({ queue: nextQueue, track: nextTrack, savedQueues: nextSaved });
+        return total;
       },
     });
     },

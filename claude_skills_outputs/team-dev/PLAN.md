@@ -6119,3 +6119,392 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 3. **로그 볼륨**: S1 재생성 시 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 추가(디렉터리 생성·권한은 DEPLOY.md 1줄 명령에 포함 — 사용자 실행).
 4. **작곡 동시 생성**: 사용자당 진행 중 1곡(과금 전 409). 완성됐지만 미확인 결과는 새 생성을 막지 않음.
 5. 기본값 확정: 미확인 결과 비차단, 보이스 클론 문구 유지(4개 디렉터 범위 밖), "나가 있어도 계속 만들어져요" 잔존 2곳(GenerationJobCard.tsx:43, generationTracker.ts:594)은 이번에 "벗어나지 마세요" 원칙으로 교체.
+
+
+# v3.229 — ① 아티스트 "내 목소리" 작곡 미반영 점검 ② 디렉터 복귀 시 보존 화면까지 여러 번 눌러야 하는 문제 ③ 아티스트 개명이 곡 표기에 반영 안 됨
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 522941a, 앱 1.2.0 — 서버·웹·APK 모두 v3.228 반영). 서버 = `<SSH_HOST>`(maidol-ec2) `/home/ubuntu/maidol/backend_9004/`(git 아님, 이미지 베이크, 컨테이너 `maidol-app` 2026-09-24 ~16:00Z 기동). **서버 실측은 전부 읽기 전용**이다(scp 다운로드·호스트 로그·`docker logs` grep). 출처 표기: [P]=planner 실측, [O]=오케스트레이터 전달(재확인한 것은 [O→P]).
+- **권한 제약(기록)**: planner의 컨테이너 내 Mongo 읽기(`docker exec … python -`)는 이번 세션 권한 분류기가 "Production Reads"로 거부했다. 그래서 DB 필드 대조는 [O] 사실 + 로그로 대신하고, 남은 DB 대조는 **읽기 전용 스크립트를 준비해 오케스트레이터 실행 항목**으로 넘긴다(§1-5).
+
+사용자 요청 원문:
+1. "지금 테스트했는데 아티스트에 내 목소리가 있는 상태로 작곡을 했는데 목소리가 반영이 안되는 것 같아서 확인해줘. 그리고 디렉터들과 작업을 하다가 다른 작업을 하고 돌아오면 상태가 보존되어있긴한데 이 보존된 화면이 바로 보이는게 아니라 어느정도의 클릭 다음에 화면이 보이는 형태더라고? 이렇게 해야만 하는 이유가 있는거야?"
+2. (추가 제보) "내가 아티스트 이름이 맘에 안들어서 작곡 이후에 아티스트 이름을 바꿨는데. 만든 곡에 아티스트 이름이 반영이 안되네?"
+3. (항목 ③ 사용자 결정) "수정하면 그 이름 따라가게 반영해줘" — 기존에 개명된 아티스트의 곡도 소급한다(승인됨. 단 실행 전 대상 건수·목록을 오케스트레이터가 확인). 개명 남용 정책 리스크는 기록만 한다.
+
+현재 서버 파일 md5([P] 2026-09-24 16:4xZ, 배포 직전 재대조 기준):
+- services/suno_generator.py `c3ce9f3d7bb063b6f0c4394e5077c2ec`(mtime 09-21 22:41Z)
+- routes/generate.py `4842bb5623cf55c3f6be00da9ae88a7a`
+- routes/character.py `0c73273ce489a51da8c4ccfda7869491`(mtime 09-24 09:01Z)
+- routes/tracks.py `350c092800856da7b9f294155b16fda2`
+
+## 0단계 Plan verification findings
+
+### 1. 내 목소리 미반영
+
+#### 1-1. 문제 곡 타임라인 (컨테이너 로그 + 호스트 로그, [P])
+| 시각(UTC 09-24) | 이벤트 | 출처 |
+|---|---|---|
+| 16:27:29·16:27:39·16:30:04·16:30:09 | 작곡 대화에서 아티스트 "샘플"(cid a34d8577…) 선택 4회 **차단** — `목소리 미연결 아티스트 선택 차단 {status:null}` | frontend.log (MusicGenerationScreen.tsx:950-962) |
+| 16:28:33 | 보이스 학습 과금(voice_clone −⭐5) | gen_jobs.log:34 |
+| 16:28:37~16:29:30 | validate-info·record-info 폴링 → 16:29:31 `check-voice isAvailable=True`(voice 91521d4c…) | docker logs |
+| 16:31:04.150 | 작곡 요청 직전 check-voice 재확인 `isAvailable=True` | docker logs (generate.py:799 `_voice_expired_response`) |
+| 16:31:04.211 | `Suno style string: Carol, Romantic, Sweet, 130 BPM` · `resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=True)` · `customMode=True` | suno_generator.py:124·160·206 |
+| 16:31:04.52 | Suno taskId=fbb0147e… · 폴링 루프 `max_polls=240 is_voice_clone=True` | :297-299 |
+| 16:31:30 → 16:32:07 → 16:32:12 | TEXT_SUCCESS → FIRST_SUCCESS → **SUCCESS**(변형 2개) | docker logs |
+| 16:31:34 | 같은 사용자 2번째 작곡 POST(req=2cd7ceee)를 `[ComposeGuard] dup-blocked` → 앱 16:31:39 `/generate/ 409` | gen_jobs.log:60, frontend.log |
+| 16:41:07 | variant 0 발매 → track 6ab552a2… | docker logs |
+
+- 결론: **전달 경로는 정상이다(확정)**.
+  - 목소리 연결 → ready → 요청 직전 사용 가능 확인 → body에 `personaId` + `personaModel=voice_persona` + `model=V6`이 실렸다([O], 로그 `persona=True` [P]).
+  - 보컬 성별(`vocalGender`)과 보컬 스타일 문구는 없었다. style 문자열에 보컬 지시가 없으므로 **style이 목소리를 덮었을 가능성은 낮다**.
+  - 만료도 아니다. 요청 직전 `isAvailable=True`였다.
+- **관찰 A(요청 대비 소요시간)**: Suno 제출에서 SUCCESS까지 **68초**가 걸렸다.
+  - v3.228 실측([P], 최근 30일)은 일반곡 p50 66초, 보이스클론 곡 **114~135초**(n=2)였다. 이번 곡은 **일반곡과 같은 속도**다.
+  - 보이스 곡이 느렸던 표본은 V5_5 시기로 추정되지만 날짜는 미확정이다(§1-5 스크립트로 확정).
+  - V6에서 페르소나 처리 방식이 달라졌을 수 있다는 **정황**일 뿐이며 확정 근거는 아니다.
+
+#### 1-2. sunoapi.org 공식 문서 (WebFetch 2026-09-25 조회, docs.sunoapi.org/suno-api/generate-music[.md])
+- `personaModel`: "Only available for `V5`, `V5_5`, `V6`, `V6_MINI`, and `V6_WILD`." voice_persona는 Suno Voice로 만든 voiceId일 때 필수다.
+  - .md 판은 V5·V5_5에 **"(Discontinued)"** 표기를 붙였다. → **V5_5로 되돌리는 안은 불가**하다(확정).
+- `audioWeight`: "Relative weight of audio features. Range 0–1, up to 2 decimal places. Custom mode only. Not supported when there are no vocals". **기본값·권장값은 문서에 없다.**
+- `styleWeight`: style 준수 강도(0–1). `weirdnessConstraint`: 실험성(0–1). 둘 다 custom mode 전용이고 권장값은 없다.
+- `vocalGender`: "only increases probability". 이번 요청에는 없었다.
+- V6 가사 필드: `lyrics` 우선, 없으면 `prompt`를 가사로 쓴다(custom mode). → 우리가 `prompt`로 가사를 보내는 것은 **문서상 유효**하다.
+- 목소리 품질·유사도 권장 파라미터를 다루는 문서는 없다.
+  - suno-voice-generate·check-voice 문서에도 없다.
+  - 서드파티 가이드(mindstudio·suno.hk·evolink)에도 audioWeight 권장값이 없다.
+  - 공통 서술은 "완전한 복제가 아니라 유사한 페르소나"라는 것뿐이다.
+- 응답(record-info) 스키마: `data.param`(요청 에코 JSON 문자열), `data.response.sunoData[].model_name`·`tags`·`prompt`. 서버는 이 전문을 `generations.suno_response_raw`에 저장한다(suno_generator.py:509-510).
+  - `data.param`에 personaId와 audioWeight가 에코됐는지로 **공급자가 파라미터를 받았는지 확인**할 수 있다(§1-5).
+
+#### 1-3. 코드 실측 [P]
+- 서버 `suno_generator.py`
+  - :142-158: 모델은 호출자 값 → 없으면 `settings.suno_model_default`(=V6)로 정한다. V5/V5_5가 명시돼 와도 V6로 방어 매핑한다(v3.177/v3.179).
+  - :184-198: `personaId`·`styleWeight`·`weirdnessConstraint`·`audioWeight`·`personaModel`은 **받은 값을 그대로** 싣는다. 보이스 곡 전용 보정은 없다.
+- 이력
+  - v3.148(09-09): V5로 보내 personaId가 무시되던 회귀를 V5_5 강제로 고쳤다. REPORT_v3.md:3063-3069.
+  - 09-11 "냥냥냥"(6aa3ea81…)은 V5_5 시기 곡이다. 사용자가 만족한 사례다([O]).
+  - **v3.177(09-15) V6 이전 때 "실생성 스모크는 대표 실테스트 위임"으로 끝났다**(REPORT_v3.md:3515). **V6 보이스 곡의 목소리 유사도를 확인한 기록은 없다.**
+- 앱 `MusicGenerationScreen.tsx`
+  - 목소리 연결 아티스트를 선택하면 `persona_voice_id`를 자동 적용한다(:983-990). `personaModel='voice'`, 보컬 성별·스타일 단계는 건너뛴다.
+  - **이후 step 5~10 세부 질문은 그대로 묻는다.** step 9 문구는 "참고 음원의 세기는 얼마만큼 반영할까요?"(:81)이고, 슬라이더 기본값은 0.5다(:188, UI :1866-1895).
+  - "이대로 갈게요"를 누르면 `audioWeight`가 실린다(:1168-1171, :1316-1317 → MusicLoadingScreen.tsx:314 → musicService.ts:304).
+  - **이 질문은 참고 음원을 올리지 않아도 무조건 나온다**(step 8→9 무조건 전이 :1155-1167).
+  - 이번 곡은 참고 음원이 없었다(`use_upload_cover=False`). 그런데도 body에 `audioWeight`가 실렸다([O]).
+  - → **"참고 음원 세기"로 안내한 슬라이더 값이 실제로는 목소리(페르소나) 오디오 반영 비중으로 Suno에 들어간다(오배선, 확정)**. 사용자가 이 값을 낮추거나 기본 0.5로 두면 목소리 반영이 약해지는 방향이다. 값의 효과 크기는 문서에 없으므로 **A/B 청취로 확정**해야 한다.
+- 부수 발견(범위 밖, 기록만)
+  - step 7 "자유도"(styleWeight)와 step 8 "대중/실험"(weirdness)은 **값을 받기만 하고 서버로 보내지 않는다**. musicService.ts와 musicStore에 전송 필드가 없다.
+  - 이번 원인과는 무관하다. 사용자가 고른 답이 무시되는 UI라서 후속 정리 후보로 남긴다.
+
+#### 1-4. 원인 판정
+| 후보 | 판정 | 근거 |
+|---|---|---|
+| 앱·서버 전달 누락 | **배제(확정)** | 로그 `persona=True`, [O] body에 personaId·voice_persona, check-voice True |
+| 보이스 만료 | **배제(확정)** | 요청 직전 isAvailable=True, 생성 후 2분 |
+| ⓐ V6의 voice_persona 반영 강도가 V5_5보다 약함 | **가장 유력(미확정)** | V6 전환(09-15) 뒤 목소리 유사도를 확인한 적 없음. 사용자 만족 사례는 V5_5뿐. 소요시간이 일반곡 수준(68초 대 114~135초). V5_5는 공급자가 Discontinued로 표기해 되돌릴 수 없음 |
+| ⓑ audioWeight 오배선(참고 음원 질문이 목소리 비중을 결정) | **확정된 결함, 영향 크기 미확정** | step 9가 참고 음원이 없어도 나오고, 그 값이 personaId와 같은 요청에 들어감. 문서 정의는 "audio features의 상대 가중치". 권장값은 없음 |
+| ⓒ styleWeight·weirdness 누락 | 영향 낮음 | 문서상 style 준수·실험성 파라미터. 목소리와 직접 관계 없음. 앱이 원래 보내지 않음(부수 발견) |
+| ⓓ 가사·스타일 보컬 지시가 페르소나를 덮음 | 낮음(style 확인), 가사는 §1-5로 확인 | style에 보컬 단어 없음. 듀엣 가사라면 `[Female]/[Male]` 태그가 있음(lyrics_generator.py:145-175). 이 곡은 제목상 솔로로 추정되지만 스크립트로 확인 |
+| ⓔ Suno가 페르소나를 무시한다는 신호 | §1-5로 확인 | `suno_response_raw.data.param` 에코와 `sunoData[].model_name`, `tags` |
+
+- **결론**: 앱·서버 전달은 정상이다. 목소리가 약하게 들리는 원인으로 가장 유력한 것은 두 가지다.
+  - ⓐ V6 전환 뒤 한 번도 검증하지 않은 V6의 목소리 반영 특성
+  - ⓑ "참고 음원 세기" 질문 값이 목소리 반영 비중으로 새는 오배선
+- 둘을 가르는 것은 **같은 가사와 같은 목소리로 audioWeight만 바꾼 A/B 청취**다. 사용자 결정 1: 과금이 발생한다.
+
+#### 1-5. 오케스트레이터 실행 항목 (읽기 전용 DB 대조 — planner 권한 거부분)
+- 스크립트: `/Users/pearl/TripleJ/2_housing/scratchpad/v3229_q_voice_compare.py`
+  - 쓰기 0이다. 가사 본문과 시크릿은 출력하지 않고, 가사는 보컬 태그 유무만 본다.
+  - 실행: `ssh <SSH_HOST> 'docker exec -i -w /srv/app maidol-app python -' < …/v3229_q_voice_compare.py`
+- 출력: voice_persona 곡 **전체**를 시간순으로, 그리고 6aa3ea81 범위("냥냥냥")를 따로 뽑는다. 각 행의 항목은 다음과 같다.
+  - `engine_model`·`body_model`, 소요초
+  - `audioWeight`·`styleWeight`·`weirdness`·`vocalGender`, style 앞 80자, 가사 보컬 태그 유무
+  - **응답 에코**: `echo_personaId?`·`echo_personaModel`·`echo_audioWeight`·`echo_keys`
+  - `model_name`, `tags`
+- 판정 기준
+  - 에코에 personaId와 voice_persona가 **없으면** 공급자가 무시한 것이다. 원인을 ⓔ로 확정하고 sunoapi에 문의한다(사용자 몫).
+  - 에코에 있으면 ⓐ·ⓑ를 A/B로 가른다.
+  - V5_5 곡의 audioWeight 유무와 값, 소요초가 V6 곡과 체계적으로 다르면 PLAN에 추가 기록한다.
+  - "냥냥냥"에 audioWeight가 없었고 이번 곡에 0.5 이하가 있었다면 ⓑ의 가능성이 올라간다.
+
+### 2. 디렉터 복귀 시 보존 화면까지 탭 수 ([P] 코드 재확인)
+
+#### 2-1. 현재 탭 흐름 (MapScreen.tsx `handleDirectorPress` :615-652 → `proceedDirectorPress` :654-719)
+1. 로그인 확인 (:616-619)
+2. v3.228 추적 작업 (:621-628): "만드는 중"이면 진행 화면, "완성"이면 결과 화면으로 1탭에 간다. 휴식 게이트보다 먼저 처리한다.
+3. **휴식(피로) 게이트** (:634-649)
+   - 작사·작곡·이미지는 휴식 중이면 **이어하기까지 막고** ⭐ 또는 광고로 단축하는 다이얼로그를 띄운다.
+   - 아티스트는 v3.122.1부터 제외됐고, 영상은 맵 대상이 아니다(:142-144).
+4. 작사: 영입 디렉터가 2명 이상이면 **매번** 선택 모달을 띄운다(:659-665). 요청서가 있으면 LyricsPromptReview로 간다(:671-674).
+5. 이미지: CoverGeneration으로 바로 간다(:680-683).
+6. 아티스트: 추적 작업이 없으면 Dialogue를 거친다(:690-716). 보유자는 Dialogue 다음에 MyArtists로 간다.
+7. 나머지(작곡·영상·작사 신규): Dialogue로 간다(:718 → :605).
+- **Dialogue**(DialogueScreen.tsx): 대사 2줄이 40ms 간격 타자 효과로 나온다(:250-262). 한 번 탭하면 문장이 완성되고 한 번 더 탭하면 다음 줄로 간다(:265-297). **대사 자체는 보존 draft를 보지 않는다.**
+
+| 디렉터 | 복귀 탭 수(휴식 아님) | 보존 위치 / 재시작 후 | 복원 판정 |
+|---|---|---|---|
+| 아티스트 | 미보유: 캐릭터 1 + 대사 2~4 → ArtistInput = **3~5탭**. **보유**: 캐릭터 1 + 대사 2~4 → MyArtists → ＋추가 → ⭐ 고지 확인 → ArtistInput = **5~7탭** | `characterTaskStore.draft`, 영속(characterTaskStore.ts:107-192, 사진 URI 제외) | ArtistInputScreen.tsx:215-236. `targetCharacterId`·`forceKind` 키가 일치해야 하고, 다르면 **draft를 폐기**한다 |
+| 작사 | 캐릭터 1 + (선택 모달 1, 2명 이상일 때) + 대사 2~4 → LyricsInput = **3~6탭**. 요청서 뒤에는 1탭 | `lyricsStore.draftStep/draftChat`, 영속(lyricsStore.ts:92-133) | LyricsInputScreen.tsx:120-135 |
+| 작곡 | 캐릭터 1 + 대사 2~4 → ComposeLyricsPick(목록 로딩) → **같은 가사 카드**를 다시 탭 → ComposerSelect 자동 통과 → MusicGeneration = **4~6탭**. 다른 카드를 누르면 draft를 폐기한다 | `musicStore.composeDraft`, **메모리 전용** | MusicGenerationScreen.tsx:124-133(lyricsKey 일치 + 사용자 답 1개 이상) |
+| 이미지 | **1탭**(바로 이동) | `musicStore.coverMessages/coverStep`, 메모리 | CoverGenerationScreen.tsx:411-433. **'처음부터' 버튼이 없다** |
+| 영상 | 캐릭터 1 + 대사 2~4 → VideoDirector = **3~5탭** | `musicStore.videoDraft`, 메모리 | VideoDirectorScreen.tsx:188-197('making'·'done' 단계와 회수 진입은 제외) |
+- 휴식 중이면 작사·작곡·이미지에 **다이얼로그 처리가 1회 이상 추가**된다. ⭐나 광고로 단축하지 않으면 이어하기가 불가능하다.
+
+#### 2-2. 각 단계가 존재하는 이유와 타당성
+| 단계 | 이유(기록) | 이어하기에서의 타당성 |
+|---|---|---|
+| 로그인 | 계정 데이터 | 유지 |
+| 추적 작업 우선 | v3.228: 결과 확인은 무과금이라 휴식이 막으면 안 됨 | 유지(최우선) |
+| 맵 휴식 게이트 | v3.107/v3.118: 새 작업 전에 쿨다운을 알림 | **이어하기에는 불필요**. 과금 시점마다 화면 안 게이트가 따로 있다: LyricsPromptReview:89, MusicGeneration:1357·2082, CoverGeneration:698·1648, VideoDirector:665·914, ArtistLoading:510, ArtistCody:475. 맵 게이트는 과금 방어로는 중복이고, 무과금인 이어하기(보기·수정)만 막는다 |
+| Dialogue 대사 | v3.179/v3.182 대표 요청: "모든 디렉터가 캐릭터+흰 대화창을 거치게" 연출 통일. 작사는 창작 모드 선택(v3.200)도 여기서 함 | **새로 시작할 때는 유지**. v3.219 draft 도입 때 Dialogue를 "보존 대상 아님"으로만 두었고, **draft가 있을 때 건너뛰는 분기를 설계한 적이 없다**(PLAN.md:4995 "Dialogue 관문(2노드 인사)은 보존 제외 명기"). 이어하기에서 반복하는 것은 의도가 아니라 누락이다 |
+| 작사 선택 모달 | 영입 디렉터 선택 | 이미 선택한 디렉터가 있고 draft가 있으면 불필요 |
+| 작곡 가사 재선택 | v3.130: 새 곡의 첫 질문 = 가사 선택 | draft의 lyricsKey가 현재 가사와 같으면 불필요(같은 카드를 다시 고르는 동작일 뿐) |
+| 아티스트 MyArtists→＋추가→⭐ 고지 | v3.105: 추가 진입 시점에 비용 고지 1회 | 시작할 때 이미 봤다. 이어하기에서 반복하는 것은 불필요하다(과금은 ArtistLoading에서 하고 게이트가 있음) |
+- **답(사용자 질문)**: "이렇게 해야만 하는 이유"는 없다. 새로 시작할 때를 위한 연출(대사)과 휴식 안내가 이어하기에도 그대로 걸려 있는 것이다. v3.219에서 보존만 만들고 **바로 가기 분기**를 빼먹은 설계 누락이다.
+  - 유지할 이유가 있는 것: 추적 작업(만드는 중·완성)이 보존 화면보다 먼저인 것, 새로 시작할 때의 대사·휴식 안내, 과금 버튼에서의 휴식 게이트.
+
+### 3. 아티스트 개명 미반영 ([O] + [P] 코드 실측)
+- [O] characters a34d8577… name="한겨울"(16:46:42Z에 수정). 곡 tracks 6ab552a2…(16:41:07Z 발매, 비공개)는 `artist_name`="샘플", `user_character_snapshot.name`="샘플", `character_id` 연결은 있음.
+- **원인(확정)**: 발매할 때 이름을 **복사해 동결**한다. 개명 PATCH는 곡에 전파하지 않는다.
+  - 발매: tracks.py:206-219(`source_meta.artist_name` ← characters.name), :2156·:2192(`artist_name`), :1790·:1825(업로드 경로), `_build_character_snapshot` :95-137(`user_character_snapshot.name` 포함).
+  - 파생: Inst.는 원곡 값을 상속한다(inst_service.py:400·425, `character_id` 상속).
+  - 개명: character.py `PATCH /character/{cid}` :3377-3540은 `characters.update_one`만 하고 **tracks·mv_jobs·ES·Redis는 건드리지 않는다**.
+- 설계 목적 기록(REPORT_v3.md:3198-3212, v3.156/v236)
+  - 요청은 ③ "차트=가수명, 없으면 기획사명 폴백"과 ① "착장 표시"였다.
+  - "동결"은 착장 스냅샷(발매 당시 외형 = 이력)과 **함께 구현하면서 생긴 부수 효과**다. **이름을 고정해야 한다는 요구나 근거 기록은 없다.**
+  - 닉네임(기획사명 `uploader_nickname`)도 같은 비정규화 복사인데, 회원 탈퇴 때만 일괄 치환한다(auth.py:1232-1236). 닉네임 변경도 곡에 전파되지 않는다(동류 문제, 이번 범위 밖 — 기록).
+- 이름이 노출되는 경로(서버 직렬화, [P])
+
+| 경로 | 현재 표기 원천 | 비고 |
+|---|---|---|
+| 곡 상세·목록·마이페이지(tracks.py `_serialize_track` :35-54) | `artist_name` → 없으면 닉네임 | 상세 Redis 캐시 `cache:track:v4:{id}` 600초(:1530·:1649) |
+| 차트(charts.py:55) | 동일 | 차트 캐시 TTL 300초(:36) |
+| 아티스트 채널(artists.py:41) | 동일 | :244는 채널 요약(닉네임) |
+| 검색 — regex 폴백(tracks.py:405-418) | `artist_name`·닉네임 필드 매치 | DB 값이라 갱신하면 즉시 반영 |
+| 검색 — ES(search_service.py:207 `artist` 필드) | 색인 시점 값 | **재색인 필요** — `index_track_es_in_background`(:714), `es_index_track`(:435) |
+| 착장 탭·기획사 프로필 아티스트 명단(get_track `cover_character.name` :1605-1625, 앱 AgencyProfileScreen.tsx:87-91) | `mv_jobs.user_character_snapshot.name`이 1순위, 없으면 `tracks.user_character_snapshot.name` | 스냅샷 이름 |
+| 곡 출처 표시(`source_meta.artist_name`) | 발매 시점 값 | PlayerScreen은 상단과 중복돼 제거됨(v3.156). 데이터는 남아 있음 |
+| 좋아요 목록(likes.py:56)·플레이리스트(playlists.py:57)·피드 곡 블록(feeds.py:79, 프로젝션 :47)·앨범 곡(albums.py:70) | **닉네임만**(artist_name 미사용 — v236 통일 누락) | 개명과 무관하게 가수명 대신 기획사명이 나온다 |
+| 앱 재생 큐·미니플레이어·미디어세션(playerStore 영속, playback.ts:54·502, MiniPlayer.tsx:122) | 큐에 저장된 트랙 객체의 `artist_name` | 서버를 갱신해도 **영속 큐 항목은 그대로** |
+| 공유 영상(share_video.py) | 이름을 쓰지 않음(grep 0) | 해당 없음 |
+| DM(dm.py) | 곡 이름 표기 필드 없음(grep 0) | 해당 없음 |
+
+## 설계 결정 (자율 확정 — 근거 기록)
+
+### V. 목소리
+- **V1(앱, 확정)**: "참고 음원 세기" 질문(step 9)은 **참고 음원을 올린 경우에만** 묻는다.
+  - 참고 음원이 없으면 step 8 다음은 BPM(10)이고, `audioWeight`는 null이다(미전송).
+  - 근거: 참고 음원이 없을 때 이 값이 목소리 비중으로 새는 오배선(1-3)을 끊는다. 문구와 동작을 일치시킨다.
+  - 되감기(v3.148) 매핑도 함께 고친다.
+- **V2(서버, 확정 — 기본 무동작 스위치)**: suno_generator.py body 조립부(:184-198)에서 다음 두 조건을 모두 만족하면 `audioWeight = float(settings.suno_voice_audio_weight)`로 **덮어쓴다**.
+  - 조건: `persona_model == 'voice_persona'`, **참고 음원 없음**(`not use_upload_cover`)
+  - env `SUNO_VOICE_AUDIO_WEIGHT`, config 기본 None이다. **None이면 현행 그대로 통과**하므로 배포만으로는 동작이 바뀌지 않는다.
+  - 값은 A/B 결과로 사용자 승인 후 env로 켠다(컨테이너 재생성 필요 — 사용자 실행).
+  - 근거: 권장값이 문서에 없으므로 추측으로 박지 않는다. 구 APK(1.2.0)는 계속 step 9 값을 보내므로 서버 쪽에서 일관되게 통제해야 한다.
+- **V3(서버 로그, 확정)**: 보이스 곡 추적자를 추가한다.
+  - 제출 직전: `[suno][voice] gen_id=… model=… personaModel=… audioWeight_in=… audioWeight_sent=… styleWeight=… (override=on|off)`
+  - SUCCESS 시: `[suno][voice] gen_id=… model_name=[…] echo_persona=bool echo_audioWeight=… secs=…`
+  - `data.param` JSON을 파싱하고, personaId 값 자체는 로그에 쓰지 않는다(bool만).
+- **V4(모델)**: V5/V5_5는 공급자가 Discontinued로 표기했다 → **복귀 불가**. V6_MINI·V6_WILD도 voice_persona를 지원하지만 문서 설명이 "경량·속도"와 "대담한 창작"이라 목소리 유사도 개선 근거가 없다. → **모델 변경은 하지 않는다**. A/B에서 V6가 audioWeight와 무관하게 목소리를 못 살리면, 공급자 문의(sunoapi 지원 — 사용자 몫)로 올린다.
+- **A/B 검증 설계(사용자 결정 1 — 과금)**
+  - **코드 변경 없이 현재 앱으로 가능하다.** 같은 목소리(새로 학습해 2시간 안), 같은 가사, 같은 장르·분위기로 작곡을 2회 한다.
+    - (a) step 9 "건너뛰기" = audioWeight 미전송
+    - (b) step 9 슬라이더 **1.0** "이대로 갈게요"
+  - 각 ⭐15이고 공급자 크레딧이 들며 곡마다 2변형이 나온다. 사용자가 본인 목소리와 비교해 청취한다.
+  - 결과별 조치
+    - (b)가 확연히 낫다 → `SUNO_VOICE_AUDIO_WEIGHT=1.0`(또는 청취로 고른 값)으로 켠다.
+    - 둘 다 비슷하게 약하다 → ⓐ로 확정하고 공급자에 문의한다.
+    - (a)가 낫다 → V2를 끄고 V1만 유지한다(미전송).
+  - 보조: V3 로그와 §1-5 에코로 두 요청의 파라미터 수신 여부를 대조한다.
+  - 팀은 과금 테스트를 실행하지 않는다. 사용자가 실행하고, 팀은 로그와 DB로 판정만 한다.
+
+### R. 디렉터 복귀 바로 가기
+- **R1 순서(MapScreen.handleDirectorPress)**: 로그인 → **추적 작업(v3.228, 최우선·불변)** → **보존 draft 바로 가기(신규)** → 휴식 게이트(**새로 시작할 때만**) → 기존 `proceedDirectorPress`(선택 모달·Dialogue·새 흐름).
+  - 바로 가기는 `tutorialVisible`이면 끈다. 튜토리얼 중에는 기존 흐름을 쓴다. TUTORIAL_STEPS와 앵커는 불변이다.
+  - 로그 `[Map] resume-direct {director, route}`
+- **R2 판정 단일화 — `utils/directorResume.ts`(신규)**
+  - `getDirectorResumeTarget(type): {route, params} | null`
+  - 각 화면의 마운트 판정을 **부작용 없는 순수 함수로 옮겨** 화면과 맵이 함께 쓴다. 판정 불일치로 빈 화면이 뜨는 것을 막는다.
+    - 작사 `isLyricsDraftResumable()` — LyricsInputScreen.tsx:121 로직: `draftStep>0 && draftChat.length>0`. 요청서(`generatedPrompt`)가 있으면 기존대로 LyricsPromptReview가 우선이다.
+    - 작곡 `getResumableComposeDraft()` — MusicGenerationScreen.tsx:126-132: lyricsKey 일치 + 사용자 답 존재. `computeComposeLyricsKey`(:103-113)를 utils로 옮겨 export한다. 대상 라우트는 **ComposerSelect**다. 가사 게이트 뒤 `replace('MusicGeneration')`(ComposerSelectScreen.tsx:70-83)를 기존 경로 그대로 탄다.
+    - 영상 `getResumableVideoDraft()` — VideoDirectorScreen.tsx:190-197: 사용자 답 존재, `step∉{making,done}`.
+    - 아티스트 `peekArtistDraft()` — ArtistInputScreen.tsx:215-236의 **읽기 전용** 판정: 사용자 답 존재. 폐기 부작용은 넣지 않는다. 대상 라우트는 `ArtistInput`이고 params는 `{characterId: draft.targetCharacterId ?? undefined, forceKind: draft.forceKind ?? undefined}`다. **키를 반드시 넘긴다.** 안 넘기면 키 불일치로 draft가 폐기된다.
+    - 이미지: `coverMessages.length>0`(앨범 모드가 아닐 때) 또는 진행 중 생성. 라우트는 기존과 같다(CoverGeneration). 휴식 게이트만 건너뛴다.
+- **R3 휴식 게이트**: 보존 draft가 있으면 맵 게이트를 건너뛴다. 이어서 진행하다 과금 버튼을 누르면 화면 안 게이트(2-2 목록)가 그대로 막는다. **과금 방어는 불변**이다.
+- **R4 작사 선택 모달**: draft가 있고 `selectedByCategory.lyricist`가 이미 있으면 생략한다.
+- **R5 작사 창작 모드 보존**: Dialogue를 건너뛰면 창작 모드 선택(DialogueScreen v3.200)을 볼 수 없다. 그런데 `musicStore.creationMode`는 메모리 전용이라 재시작하면 'standard'로 돌아간다.
+  - → `lyricsStore`에 `draftCreationMode`를 추가해 영속하고, LyricsInput 미러링 때 기록한다. 복원 때 `musicStore.setCreationMode`로 되살린다.
+  - 복원 안내 버블에 모드가 copyright이면 "저작권 등록 모드로 이어서 해요" 한 줄을 붙인다.
+- **R6 이미지 '처음부터'**: CoverGeneration 복원(`hasResumableDialogue`)일 때 다른 디렉터와 같은 복원 안내 버블과 인라인 **'처음부터'**를 넣는다.
+  - 누르면 `clearCoverContextStore()`(:79)와 로컬 상태를 초기화해 첫 인사부터 시작한다. 확인 다이얼로그는 showAlert이다.
+  - 진행 중 생성·회수 진입일 때는 버튼을 숨긴다.
+- **R7 맵 말풍선**: 슬롯 우선순위를 **추적 작업(만드는 중/완성) > "이어서 하기"(신규) > 다음 액션 "작업 시작"**으로 둔다(MapScreen.tsx:784-790). 튜토리얼 중에는 숨긴다(작업 말풍선 규칙과 같음). 휴식 티켓과는 병존한다.
+- **R8 '처음부터'**: 작사·작곡·영상·아티스트는 이미 화면 안에 있다. 작사 LyricsInput 복원 버블, 작곡 배너(:2145), 영상 :1123·:433, 아티스트 :381·:1141이 해당한다. 새로 시작하려는 사용자는 **이어하기 화면 안에서 '처음부터'**를 누른다. 그 뒤 Dialogue 연출은 다음 새 시작 때 다시 본다.
+- 뒤로 가기: 바로 가기로 들어오면 스택에 Dialogue가 없어서 뒤로 가면 맵이다. 지금은 Dialogue로 되돌아가므로 오히려 개선이다.
+- 위험과 가드
+  - (a) 작곡 draft가 생성 버튼 단계에 머문 경우: 1탭으로 생성 직전 화면에 도착한다. 과금은 guardGeneration(v3.228)과 휴식 게이트가 막으므로 새 위험은 아니다.
+  - (b) 메모리 전용 draft(작곡·이미지·영상)는 재시작하면 없어서 자연히 기존 흐름을 탄다.
+  - (c) 아티스트 draft가 재생성용(targetCharacterId≠null)일 때 해당 캐릭터가 삭제됐으면 ArtistInput의 기존 처리를 따른다. 구현 시 확인한다.
+
+### N. 아티스트 이름 따라가기 (사용자 확정)
+- **방식 비교 → 일괄 갱신(write-through) 채택**
+
+| | 일괄 갱신(개명 시) | 조회 시 해석(character_id → 현재 이름) |
+|---|---|---|
+| 읽기 비용 | 0(기존 그대로) | 곡을 직렬화하는 모든 경로(tracks·charts·artists·likes·playlists·feeds·albums·search·get_track, 9곳 이상)에 characters 배치 조회 추가 |
+| 검색(ES) | 대상 곡 재색인(보통 수~수십 곡) | **그래도 재색인이 필요**(ES `artist` 필드는 색인 값) — 이점 없음 |
+| 캐시 | 대상 곡 상세 캐시 삭제. 차트는 5분 TTL로 자연 반영 | 캐시된 응답이 TTL 동안 옛 이름 — 결국 같음 |
+| 일관성 위험 | 복사본 위치(tracks 3필드·mv_jobs 스냅샷)를 빠짐없이 갱신해야 함 → 같은 함수를 소급 스크립트로도 써서 **멱등 대사**로 보완 | 새 직렬화 경로가 생길 때마다 해석을 빠뜨릴 위험 |
+| 변경 규모 | character.py PATCH 1곳 + 신규 서비스 1파일 | 9개 이상 파일 |
+
+  → 개명은 드물고 읽기는 많으므로 **일괄 갱신**으로 한다.
+- **N1 서버 신규 `app/services/artist_name_sync.py`**: `sync_artist_name(mongo, user_id, character_id, new_name) -> dict`. 멱등이다. PATCH와 소급 스크립트가 같이 쓴다.
+  - `tracks.update_many({"uploader_id": uid, "character_id": cid, "artist_name": {"$ne": v}}, {"$set": {"artist_name": v}})`
+    - `v = new_name or None`: 빈 이름이면 None이다. 직렬화가 기획사명으로 폴백한다(기존 계약).
+  - 스냅샷 이름: `{"uploader_id": uid, "character_id": cid, "user_character_snapshot": {"$type": "object"}}`에 `$set {"user_character_snapshot.name": new_name or ""}`
+    - **null 스냅샷에 점 경로 $set을 하면 오류가 나므로 `$type` 필터가 필수**다.
+    - 착장·외형·나이·성격·시트는 **이력으로 유지**한다(불변).
+  - 출처 이름: 같은 `$type` 필터로 `source_meta.artist_name`
+  - MV 스냅샷: `mv_jobs.update_many({"user_id": uid, "character_id": cid, "user_character_snapshot": {"$type":"object"}}, {"$set": {"user_character_snapshot.name": …}})`
+    - 필드명은 mv.py:707·:732-733 실측 기준이다. 구현 시 재확인한다.
+  - 영향받은 곡 id마다 Redis `cache:track:{id}`·`cache:track:v4:{id}` 삭제, `index_track_es_in_background(id)`
+  - 로그 `[ArtistRename] user=… cid=… tracks=N snap=N meta=N mv=N es_queued=N` — 이름 원문은 쓰지 않고 길이만 기록한다.
+  - 전부 best-effort다. **실패해도 개명 PATCH 응답은 성공**이다(경고 로그만 남기고, 소급 스크립트가 복구 경로).
+- **N2 character.py PATCH**: `"name" in set_fields`이고 **이전 이름과 다를 때만** update_one 뒤에 `await sync_artist_name(...)`을 호출한다.
+  - 앱은 편집 저장 때 name을 항상 보내므로, 같으면 건너뛰어 불필요한 재색인을 막는다.
+- **N3 직렬화 통일(가수명이 보이는 모든 곳)**: likes.py:56, playlists.py:57, feeds.py:79(+프로젝션 :47에 `artist_name: 1`), albums.py:70을 `doc.get("artist_name") or doc.get("uploader_nickname") or "AI"`로 바꾼다. tracks와 charts의 v236 규칙과 같다.
+  - v236 통일 누락을 보정해 좋아요·플레이리스트·피드·앨범에서도 **현재 가수명**이 보이게 한다.
+  - 응답 키는 불변이고 값만 바뀐다(가수명 우선).
+- **N4 앱 영속 큐 반영**: `playerStore`에 `renameArtistInQueue(characterId, name)`을 추가한다. queue·savedQueues·currentTrack 중 `character_id` 일치 항목의 `artist_name`을 `name || uploader_nickname || 'AI'`로 바꾼다.
+  - 현재 곡이면 미디어세션 메타데이터를 갱신한다(playback.ts:54 경로).
+  - ArtistResultScreen `performSaveProfile` 성공 직후(:790-797) 호출한다.
+  - `character_id`가 없는 큐 항목은 대상이 아니다. 다음 서버 조회 때 갱신된다.
+- **N5 소급(사용자 승인됨 — 실행 전 목록 확인 절차 필수)**
+  - 스크립트 `backfill_artist_names_v3229.py`(스테이징에 둔다. **기본 --dry-run**)
+    - dry-run: `tracks`에서 `character_id`가 있는 곡마다 소유자의 characters(`user_id`+`character_id`)를 조회한다. `artist_name` / `user_character_snapshot.name` / `source_meta.artist_name` 중 하나라도 현재 이름과 다른 곡을 뽑는다.
+    - dry-run 출력: `track_id, title, is_public, uploader(앞 8자), cid, old→new` 목록과 총계, 그리고 mv_jobs 대상 수
+    - 캐릭터 문서가 없는 곡(삭제된 아티스트)은 **건너뛰고 동결 유지**한다. 목록에 "skip(char missing)"으로 표시한다.
+  - 절차
+    - ① 오케스트레이터가 dry-run 결과(건수·목록)를 PLAN/REPORT에 기록하고 확인한다. 공개 곡 수를 별도로 표기한다.
+    - ② 사용자 1줄로 `--apply`를 실행한다. 내부는 N1 함수를 cid별로 호출하므로 멱등이다.
+    - ③ 다시 dry-run해서 **0건**을 확인한다.
+    - ④ 대표 곡 6ab552a2…의 상세·차트·검색("한겨울")에서 표기를 확인한다.
+  - 프로덕션 쓰기이므로 팀은 실행하지 않는다. 사용자 승인은 받았고 실행 주체는 사용자 또는 오케스트레이터다(목록 확인 후).
+- **N6 정책 리스크(기록만)**: 공개 곡의 가수명이 개명 즉시 차트·검색에 반영된다. 사칭이나 부적절한 이름으로 바꾸면 곡 전체에 퍼진다. 이번에는 차단하지 않는다.
+  - 완화: `[ArtistRename]` 로그로 추적할 수 있다. 관리자 웹 신고·모더레이션 흐름은 현행대로다.
+  - 후속 후보: 개명 빈도 제한, 금칙어, 관리자 이력 조회.
+- 범위 밖(기록): 기획사명(닉네임) 변경도 `uploader_nickname` 동결 때문에 곡에 전파되지 않는다(auth.py:1232-1236은 탈퇴 때만 치환). 같은 방식으로 후속 처리할 수 있다.
+
+## 변경 매트릭스·로그 추적자
+| 영역 | 파일 | 변경 | 추적자 |
+|---|---|---|---|
+| 앱 | screens/MusicGenerationScreen.tsx | V1: step 9는 참고 음원이 있을 때만(`referenceData` 존재), 없으면 8→10. 되감기 매핑도 수정. `computeComposeLyricsKey`를 utils로 이동 | `[MusicGeneration] 참고음 세기 생략(참고 음원 없음)` |
+| 앱 | utils/directorResume.ts(신규) | R2 판정 5종 + `getDirectorResumeTarget` | `[DirectorResume]` |
+| 앱 | screens/MapScreen.tsx | R1 순서, R3 휴식 게이트 우회(draft 있을 때), R4 모달 생략, R7 "이어서 하기" 말풍선 | `[Map] resume-direct` |
+| 앱 | screens/LyricsInputScreen.tsx · stores/lyricsStore.ts | R2 export, R5 `draftCreationMode` 영속·복원·버블 문구 | `[LyricsDraft] creationMode 복원` |
+| 앱 | screens/VideoDirectorScreen.tsx · screens/ArtistInputScreen.tsx | R2 판정 함수 사용(동작 불변) | 기존 `[VideoDraft]`·`[ArtistDraft]` |
+| 앱 | screens/CoverGenerationScreen.tsx | R6 복원 버블 + '처음부터' | `[CoverDraft] 처음부터` |
+| 앱 | stores/playerStore.ts · screens/ArtistResultScreen.tsx · services/playback.ts | N4 큐 이름 반영 + 미디어세션 | `[Queue] artist rename n=` |
+| 서버 | services/suno_generator.py | V2 보이스 audioWeight 스위치, V3 로그 | `[suno][voice]` |
+| 서버 | config.py | `suno_voice_audio_weight: Optional[float] = None`(env SUNO_VOICE_AUDIO_WEIGHT) | 기동 로그 1줄 |
+| 서버 | services/artist_name_sync.py(신규) · routes/character.py | N1·N2 | `[ArtistRename]` |
+| 서버 | routes/likes.py · playlists.py · feeds.py · albums.py | N3 가수명 우선 | — |
+| 서버(스크립트) | scripts/backfill_artist_names_v3229.py | N5 dry-run/apply | `[ArtistRenameBackfill]` |
+
+## 분담 (team-dev 할당문)
+- **frontend-dev A (디렉터 바로 가기)**: R1~R8. `utils/directorResume.ts`를 만들고 5개 화면의 판정을 이 함수로 바꾼다. 화면 동작은 불변이어야 한다(회귀 0).
+  - MapScreen 순서는 로그인 → 추적 작업 → 바로 가기 → 휴식 게이트 → 기존이다. 튜토리얼 중에는 바로 가기를 끈다.
+  - 작사 창작 모드를 영속하고, 이미지에 '처음부터'를 넣고, "이어서 하기" 말풍선을 추가한다.
+  - 원칙: "작업이 끝날 때까지 이 화면을 벗어나지 마세요" 문구는 불변이고 이탈을 권장하는 문구는 넣지 않는다. 팝업은 showAlert, 이모지 금지(⭐ 예외), MAIDOL 표기.
+- **frontend-dev B (목소리·이름)**: V1(step 9 조건화, 되감기 포함)과 N4(큐·미디어세션 이름 반영).
+- **backend-dev (스테이징 전용 `/private/tmp/server_staging_v3229/`)**
+  - `orig/`에 라이브 suno_generator.py·config.py·character.py·likes.py·playlists.py·feeds.py·albums.py·tracks.py(참조)·mv.py(참조)를 받고 `MD5SUMS.orig`를 만든다.
+  - V2·V3, N1·N2·N3, N5 스크립트를 작성한다. `diffs/`·`tests/`(유닛: 스위치 None 통과·설정값 덮어쓰기·참고 음원이 있으면 미적용, sync의 null 스냅샷 안전·멱등·빈 이름 None, PATCH 이름 불변 시 sync 미호출)·`DEPLOY.md`(v3.228 형식)를 만든다.
+  - **main.py는 건드리지 않는다**(신규 서비스 파일은 import만 하므로 라우터 등록이 필요 없다).
+- **test-designer**: 아래 항목.
+
+## 서버 스테이징·배포 절차 (v3.228 DEPLOY.md 관행)
+0. 다른 세션이 서버를 자주 재배포한다. **배포 직전에** 대상 파일 7개를 다시 받아 `MD5SUMS.orig`와 대조한다. 다르면 새 현재본에 diffs를 다시 적용하고(`patch --dry-run` 먼저) 테스트를 재실행한다. 디렉터리 통째 scp와 main.py 반영은 금지한다.
+1. 오케스트레이터 사전 점검(읽기 전용): md5, `test ! -e services/artist_name_sync.py`, 진행 중 작곡 0건(`generations` processing 중 point_ref 보유 0).
+2. 사용자 1줄: `.bak_pre_v3229` 백업 + 원본 md5 가드 + scp + 반영 md5 확인.
+3. 오케스트레이터: 로그 보존 1줄(사용자) → `sudo docker build -t maidol-app:latest .` → 이미지 안 md5 확인(main.py는 현재본 유지) → 컨테이너 재생성(v3.228 run 옵션과 로그 볼륨 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 유지) → health 200.
+   - `SUNO_VOICE_AUDIO_WEIGHT`는 **이번 배포에서 설정하지 않는다**(무동작). A/B 뒤 사용자 결정으로 .env에 추가하고 재생성한다.
+4. 스모크(무과금)
+   - health
+   - `PATCH /character/{테스트 계정 cid}`로 이름 변경 → 로그 `[ArtistRename] tracks=N` → 그 곡 `GET /tracks/{id}` artist_name이 새 이름
+   - 검색 regex 폴백과 ES에서 새 이름 매치(재색인 수 초 대기)
+   - 같은 이름으로 PATCH하면 `[ArtistRename]` 없음
+   - likes·playlists·feeds·albums 응답 artist_name이 가수명 우선
+   - 보이스 경로는 로그 형식만 확인한다(실생성은 A/B에서)
+5. N5 소급: dry-run 목록 기록·확인 → 사용자 `--apply` → 재 dry-run 0 → 대표 곡 확인.
+6. 롤백: `.bak_pre_v3229` 원복 + 재빌드. 소급 데이터는 dry-run 출력의 old 값으로 역적용할 수 있다(출력 보존 필수).
+
+## test-designer 항목
+1. **[api] V2 스위치**(유닛·스테이징)
+   - env 미설정이면 보이스 곡 body의 audioWeight가 앱 값 그대로다.
+   - env=1.0이면 보이스+참고 음원 없음에서 1.0으로 덮어쓴다.
+   - 참고 음원이 있거나 persona가 style_persona이거나 일반곡이면 미적용이다.
+   - `[suno][voice]` 로그 2줄 형식을 확인하고, personaId 원문이 로그에 없어야 한다.
+2. **[e2e] V1**(웹)
+   - 참고 음원 없이 목소리 아티스트로 작곡 대화를 하면 "참고 음원의 세기" 질문이 **나오지 않고** 자유도 → 대중/실험 → BPM으로 간다.
+   - 참고 음원을 올리면 질문이 나온다.
+   - 되감기로 step 5(참고 음원)에서 업로드를 취소하면 step 9가 사라진다.
+   - MusicLoading 전송 로그의 audio_weight가 undefined다.
+   - 연주곡 흐름은 불변이다(v3.203).
+3. **[DB·로그] §1-5 대조**(오케스트레이터 실행 결과 판정): 에코에 personaId·voice_persona 수신 여부, V5_5 대 V6 audioWeight·소요초 비교표를 REPORT에 싣는다.
+4. **[사용자 A/B 가이드]**: 1-5 설계 그대로 (a)·(b) 2곡을 만든다. 팀은 로그로 두 요청의 audioWeight가 미전송 대 1.0인지만 확인하고 청취 판정은 사용자에게 맡긴다. **팀의 과금 실행은 0회**다.
+5. **[e2e] 바로 가기 — 디렉터별 탭 수 1**(폰 웹 + APK)
+   - 각 디렉터에서 사용자 답 1개 이상으로 진행 → 작업실(다른 탭) 이동 → 복귀 → 캐릭터 1탭 → **보존 화면이 바로 보인다**(Dialogue 없음).
+     - 작사: 요청서 전 단계, 선택 모달 없음
+     - 작곡: 같은 가사 대화, 가사 재선택 없음
+     - 이미지
+     - 영상: 선곡 뒤 스타일 단계
+     - 아티스트: 보유 계정의 ＋추가 draft는 MyArtists·⭐ 고지 없이, 재생성 draft는 characterId 키 유지
+   - draft가 없으면 기존 흐름(Dialogue 등)이 그대로다.
+6. **[e2e] 우선순위**
+   - 추적 작업이 "만드는 중"이면 진행 화면, "완성"이면 결과 화면이다. draft가 있어도 **작업이 먼저**다.
+   - 말풍선 슬롯은 작업 > 이어서 하기 > 작업 시작 순이다.
+   - 튜토리얼 중에는 바로 가기와 말풍선이 모두 꺼지고 앵커·TUTORIAL_STEPS는 불변이다.
+7. **[e2e] 휴식 게이트**
+   - 작사·작곡·이미지 휴식 중 + draft 있음 → 1탭에 보존 화면이 나온다(다이얼로그 없음).
+   - 그 화면에서 과금 버튼을 누르면 **화면 안 휴식 다이얼로그**가 뜨고 요청 0건, ⭐ 불변이다.
+   - draft가 없으면 맵 휴식 다이얼로그가 기존대로 뜬다.
+8. **[e2e] '처음부터'**
+   - 5개 디렉터 모두 복원 화면에서 '처음부터'를 누르면 새 대화로 간다. 이미지는 신규 버튼과 showAlert 확인이 뜬다.
+   - 다음 복귀에서는 draft가 없으므로 Dialogue 흐름이다.
+9. **[e2e] 작사 창작 모드**: 저작권 등록 모드로 작사 진행 → 앱(웹) 재시작 → 1탭 복귀 → 모드 유지(버블 문구) → 발매 track_type=copyright_ready.
+10. **[api·e2e] 개명 따라가기**(테스트 계정)
+    - 아티스트 곡 발매 → 이름 변경 → 다음 경로가 전부 새 이름이다.
+      - 곡 상세(캐시 삭제 확인), 차트(≤5분), 검색(ES·regex) 새 이름 매치, 옛 이름은 매치 안 됨
+      - 착장 탭·기획사 프로필 명단, 좋아요·플레이리스트·피드·앨범
+      - 미니플레이어·재생 큐·미디어세션
+    - 착장·외형 스냅샷은 불변이다.
+    - 이름을 비우면 기획사명으로 폴백한다.
+    - 같은 이름으로 저장하면 sync가 호출되지 않는다.
+    - Inst. 파생곡도 따라간다.
+11. **[데이터] 소급**: dry-run 목록 기록(건수·공개 곡 수) → apply → 재 dry-run 0 → 6ab552a2… "한겨울" 표기 확인. 캐릭터가 없는 곡은 skip으로 표시된다.
+12. **[관찰 재현] 16:31:34 2번째 작곡 POST**
+    - 작곡 시작 30초 뒤 같은 사용자가 새 request id로 POST를 보냈고, 서버 409로 **무과금 차단**됐다(v3.228 가드 정상 동작).
+    - 앱 쪽 발생 경로(MusicLoading 재마운트, 웹 새로고침, 뒤로 간 뒤 재생성)를 재현해 확인한다. 앱 가드(guardGeneration)가 먼저 막아야 하는 경로라면 결함으로 보고한다.
+13. **[회귀]**
+    - v3.228 추적기 전체: 말풍선, 알림 1회, 409 편입, 회수
+    - v3.219 draft 5종의 화면 안 복원
+    - v3.202 커버 영속과 성공 시 클리어
+    - v3.148 작곡 되감기
+    - v3.143 목소리 미연결 아티스트 차단
+    - v3.156 발매 스냅샷(착장)
+    - v3.223 큐 보존
+    - 피로 429 다이얼로그 전 지점
+    - 정책 문구 grep: "나가 있어도|나가도 계속|나가서 다른"은 VoiceCloneWizard만 남아야 한다.
+
+## 사용자 결정 사안 (기본안 — 지시가 없으면 기본안으로 진행)
+1. **목소리 A/B 과금 테스트**
+   - 기본안: 사용자가 직접 2곡을 만든다(⭐15×2 + 공급자 크레딧, 목소리가 없으면 학습 ⭐5). 팀은 실행하지 않는다.
+   - 결과에 따라 `SUNO_VOICE_AUDIO_WEIGHT` 값을 켤지 결정한다(.env 추가와 컨테이너 재생성은 사용자 승인).
+2. **문제 곡 ⭐15 환불 여부**: 기본안 = **환불하지 않는다**. 전달은 정상이었고 결함이 확정되지 않았기 때문이다. v3.148은 결함(V5 전송)이 확정돼 환불했다. A/B에서 ⓑ(오배선)가 확정되면 재검토한다.
+3. **V6가 audioWeight와 무관하게 목소리를 약하게 반영할 경우**: 기본안 = sunoapi 지원에 문의한다(사용자 몫). 모델 되돌림은 불가(Discontinued).
+4. **소급 실행**: 승인됨. 실행 전 dry-run 목록을 오케스트레이터가 확인하고, 실행은 사용자 1줄로 한다.
+5. **기획사명(닉네임) 변경 전파**: 기본안 = 이번 범위 밖(기록). 원하면 같은 방식으로 후속 사이클에서 한다.
+6. **step 7·8(자유도·대중/실험) 미전송 UI**: 기본안 = 이번 범위 밖(기록). 전송으로 연결할지 질문을 없앨지는 후속에서 결정한다.
+
+규칙: 서버 수정은 server_staging_v3229에서만 한다(라이브 원본 pull + orig 보존 + 배포 직전 md5 재대조). 프로덕션 쓰기(scp·build·재생성·.env·소급 apply)는 사용자 승인·실행 뒤에 한다. main.py는 건드리지 않는다. 민감 정보는 플레이스홀더로 쓴다. 팝업은 showAlert, 표기는 MAIDOL, 이모지 금지(⭐ 예외), 이탈 권장 문구 금지, 과금 단정 금지. 코드 수정과 커밋은 이 계획이 승인된 뒤 team-dev 루프에서 한다.

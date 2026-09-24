@@ -18,6 +18,9 @@ import AnswerEditModal from '../components/AnswerEditModal';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { useMusicStore } from '../stores/musicStore';
+// v3.229 [DirectorResume]: 보존 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
+import { isLyricsDraftResumable } from '../utils/directorResume';
 import { colors } from '../theme/colors';
 import {
   buildLyricsRequest,
@@ -118,7 +121,13 @@ export default function LyricsInputScreen({ navigation }: Props) {
   // v3.219 [LyricsDraft]: 마운트 시점 store 스냅샷 — draft가 있으면 진행도·대화를 hydrate(이어서).
   // draft는 아래 미러링 effect가 스텝마다 기록하고, 발매(lyricsStore.reset())·'처음부터 다시'에만 지운다.
   const initialStore = useRef(useLyricsStore.getState()).current;
-  const hasResumableDraft = initialStore.draftStep > 0 && initialStore.draftChat.length > 0;
+  const hasResumableDraft = isLyricsDraftResumable(initialStore);
+  // v3.229 [LyricsDraft]: draft와 함께 저장한 창작 모드 — 복귀 시 인사 대사(모드 선택)를 건너뛰므로 여기서 되살린다.
+  // 구 draft(null)는 현재 모드 유지.
+  const restoredCreationMode = hasResumableDraft ? initialStore.draftCreationMode : null;
+  const [resumeCreationMode] = useState<'standard' | 'copyright'>(
+    () => restoredCreationMode ?? useMusicStore.getState().creationMode
+  );
   const [step, setStep] = useState(hasResumableDraft ? initialStore.draftStep : 0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
     hasResumableDraft
@@ -140,6 +149,12 @@ export default function LyricsInputScreen({ navigation }: Props) {
         step: initialStore.draftStep, chatLen: initialStore.draftChat.length,
       });
     }
+    if (restoredCreationMode && useMusicStore.getState().creationMode !== restoredCreationMode) {
+      console.info('[LyricsDraft] creationMode 복원', {
+        from: useMusicStore.getState().creationMode, to: restoredCreationMode,
+      });
+      useMusicStore.getState().setCreationMode(restoredCreationMode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -156,6 +171,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
     const s = useLyricsStore.getState();
     s.setDraftStep(step);
     s.setDraftChat(chatHistory);
+    // v3.229: 창작 모드도 draft와 함께 기록(복원 효과가 먼저 실행된 뒤라 복원값이 그대로 실린다)
+    s.setDraftCreationMode(useMusicStore.getState().creationMode);
   }, [step, chatHistory]);
 
   // v3.219 [LyricsDraft]: '처음부터 다시' — store(답변·결과·draft) 초기화 후 1번 질문부터
@@ -420,7 +437,9 @@ export default function LyricsInputScreen({ navigation }: Props) {
             </View>
             <View style={[styles.messageBubble, styles.directorBubble]}>
               <AppText style={[styles.messageText, styles.directorText]}>
-                진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+                {resumeCreationMode === 'copyright'
+                  ? '진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.\n저작권 등록 모드로 이어서 해요.'
+                  : '진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.'}
               </AppText>
               <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
                 <AppText style={styles.restartInlineBtnText}>처음부터 다시</AppText>

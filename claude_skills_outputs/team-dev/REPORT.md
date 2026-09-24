@@ -3186,3 +3186,36 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 이번 사이클에 다른 세션이 서버를 6회 재배포했다. 이번 반영은 배포 직전 현재본 md5 가드, main.py 비접촉, 디렉터리 통째 scp 금지로 충돌을 피했다. 재배포마다 진행 중 작업이 죽고 로그가 사라지는 문제가 이번 사이클 설계(boot_id 즉시 환불)와 로그 볼륨 도입의 근거다. **서버 배포 조율 창구 일원화**를 권고한다.
 - 영상 중복 과금 1건(2f85f76c)은 정황만 있고 로그 소실로 확정할 수 없었다. 로그 볼륨 적용 이후에는 같은 유형을 `[GenJobs]`·`[star-econ]` 로그로 추적할 수 있다.
 - **재시작 후 5분 오류 확인(오케스트레이터, 16:04:13Z — 재시작 15:59:14Z 기준 4분 59초)**: traceback/exception 0, 5xx 응답 0, health 200, `[GenJobs] module loaded … groups=image,inst,lyrics,music,video` 1회, 호스트 `gen_jobs.log` 동일 기록 — TESTPLAN S1-P5 충족.
+
+## v3.229 (2026-09-25) — 보이스 반영 점검·디렉터 1탭 복귀·아티스트 개명 따라가기·재생수 부풀림 수정 (PLAN 정본 = PLAN.md `# v3.229`)
+
+**요청**
+1. 아티스트 내 목소리로 작곡했는데 목소리 반영이 안 되는 것 같다 — 확인.
+2. 디렉터 작업 보존본이 바로 안 보이고 여러 번 눌러야 보인다 — 그래야 할 이유가 있는가.
+3. 작곡 이후 아티스트 이름을 바꿨는데 곡에 반영이 안 된다 → 수정하면 그 이름을 따라가게(기존 곡 소급 포함).
+4. 두 번 재생했는데 재생수가 5 → 8 로 늘었다(차트에 없는 곡).
+5. 피드·미니플레이어 재생도 재생수에 포함되어야 한다(대표 결정). 기존 부풀림은 보정하지 않음, 30초 중복 방지 수용.
+(관리자 웹 곡 생성 시각 KST 표시는 다른 세션이 119d04e 로 이미 수정·16:56Z 배포 — 검증만 수행, 이번 범위 코드 변경 없음.)
+
+**수행 결과**
+- 보이스: 앱·서버 모두 persona 를 정상 전달하고 Suno 가 personaId·voice_persona·audioWeight 0.5 를 에코함을 확인. 앱 V1 — 참고 세기 질문은 레퍼런스 업로드 시에만, 미업로드면 audio_weight 미전송. 서버 V2 `SUNO_VOICE_AUDIO_WEIGHT`(기본 빈값=기존과 동일 본문, 켜기는 A/B 청취 뒤 대표 결정), V3 `[suno][voice] … audioWeight req=… sent=… echo=…` 로그.
+- 디렉터 1탭 복귀(R1~R8): 이유 없음 — v3.219 보존 기능에서 "보존본이면 인사 대사 건너뛰기" 분기 누락. `utils/directorResume.ts` 신규, 맵 탭 순서 = 로그인 → 추적 job → 보존본 바로가기 → 휴식 게이트 → 기존 흐름. 모든 디렉터 보존본 있으면 1탭. "이어서 하기" 말풍선, 작사 창작모드 영속, 이미지 '처음부터' 추가. 튜토리얼 중 비활성.
+- 개명: 서버 `services/artist_name_sync.py` 신규 + character.py PATCH·재생성 저장·레거시 저장 3경로 훅(이름이 실제 바뀔 때만, 실패해도 개명 성공). likes/playlists/feeds/albums 가수명 우선 + `character_id` 추가(키 추가만). 앱 `renameArtistInQueue`·`applyArtistRenameToPlayback` 로 큐·현재곡·미디어세션 즉시 반영.
+- 재생수: 원인 ① 서버 `GET /tracks/{id}` 가 상세 조회마다 `playcount:buffer` incr(→ 재생수·차트 부풀림) — 제거. ② `record-play` 중복 방지 없음 — 사용자/IP해시 30초 dedup. ③ 앱 플레이어 재오픈 시 같은 재생 재기록 — `services/playRecord.ts` 로 재생 1회=기록 1회. ④ 기록이 플레이어 화면에만 붙어 피드·미니플레이어 재생 누락 — 전역 재생 엔진(playback.ts 스토어 구독)으로 이동, 로그 `[PlayRecord] … src=`.
+
+**테스트**
+- 앱 `tsc --noEmit` 0, Node 하네스 playRecord 28/28 · directorResume 14/14 · rename 11/11(12번째는 테스트 가정 오류로 제외).
+- 서버 스테이징 28/28, 배포 전 현재본 md5 = 기준 원본(다른 세션 변경 보존, main.py 비접촉).
+- tester 보완: B1(좋아요·플레이리스트·피드 큐 개명 미반영 → character_id 추가) 해소, m6(늦게 관측한 재생 누락) 해소. 문서 불일치 m1·m2(로그 grep 형식) DEPLOY 에 구현 기준으로 정정.
+- 미검증(실기기·사용자): 디렉터 탭 수 실측, 개명 노출 화면 전수, 보이스 A/B 청취, 잠금화면 메타(APK).
+
+**서버 배포 (23:26:53Z 재생성)**
+- 사용자 1줄 scp → 10파일 OK, 백업 `.bak_pre_v3229` 9개, 롤백 이미지 `maidol-app:pre-v3229-live`, 재생성 전 로그 `maidol-app_pre_v3229_20260924T232622Z.log`.
+- 재생성 직전 진행 중 작업 0, 이미지 md5 10개 = 패치본, main.py·admin_stats = 호스트 현재본.
+- **로그 볼륨 복구**: 16:56Z 다른 세션 재배포에서 빠졌던 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 재적용, LOGS_W 확인.
+- 스모크: health 200, traceback 0, 공개곡 상세 3회 조회 후 play_count 불변·buffer 키 0.
+- 소급(N5): dry-run 대상 1곡(6ab552a2 「혼자 Merry Christmas」 '샘플' → '한겨울', 공개 0). `--apply` 는 프로덕션 데이터 쓰기라 사용자 실행 대기.
+
+**특이**
+- 기존 부풀린 재생수(예: 6ab552a2 play_count 8 / play_logs 3)는 대표 결정으로 보정하지 않음.
+- 30초 안 같은 곡 처음부터 재생·43초 미만 곡 연속 반복은 서버에서 1회로 흡수(수용).

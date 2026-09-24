@@ -39,6 +39,7 @@ import {
 import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../services/genJobs';
 import { fetchVideoJob, VIDEO_CAP_MS } from '../services/genJobs/video';
 import { useGenerationJobStore } from '../stores/generationJobStore';
+import { isVideoDraftResumable } from '../utils/directorResume';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -187,12 +188,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const initialStore = useRef(useMusicStore.getState()).current;
   // v3.228 W0-2: 회수 진입(recoverJobId)은 draft 복원보다 우선 — 대화는 회수 결과로 구성
   const recoverAtMount = !!route?.params?.recoverJobId;
+  // v3.229 [DirectorResume]: 판정은 작업실 맵 바로 가기와 공용(utils/directorResume) — 규칙 불변
   const resumeDraft: VideoDraft | null =
-    !recoverAtMount &&
-    initialStore.videoDraft &&
-    initialStore.videoDraft.chat.some((m) => m.type === 'user') &&
-    initialStore.videoDraft.step !== 'making' &&
-    initialStore.videoDraft.step !== 'done'
+    !recoverAtMount && isVideoDraftResumable(initialStore.videoDraft)
       ? initialStore.videoDraft
       : null;
   const stylePrefs: VideoStylePrefs | null = initialStore.videoStylePrefs;

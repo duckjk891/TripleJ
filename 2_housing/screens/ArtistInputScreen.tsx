@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import { BACKEND_BASE_URL } from '../services/api';
 import { listArtists } from '../services/characterService';
+import { hasArtistDraftProgress } from '../utils/directorResume';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -230,7 +231,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         return null;
       }
       // 사용자 진행이 없는 draft(환영 인사만)는 복원 대상 아님
-      if (!d.chat.some((m) => m.type === 'user')) return null;
+      // v3.229 [DirectorResume]: 진행 판정은 작업실 맵 바로 가기와 공용(utils/directorResume) — 규칙 불변
+      if (!hasArtistDraftProgress(d)) return null;
       return d;
     })()
   ).current;

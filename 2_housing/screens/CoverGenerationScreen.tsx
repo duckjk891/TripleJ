@@ -46,6 +46,8 @@ import {
 import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../services/genJobs';
 import { fetchImageJob, COVER_CAP_MS, COVER_TEXT, COVER_REFINE_TEXT } from '../services/genJobs/cover';
 import { useGenerationJobStore, listUserGenJobs } from '../stores/generationJobStore';
+// v3.229 [DirectorResume]: 보존 대화 판정 공용(작업실 맵 바로 가기와 같은 규칙)
+import { isCoverPendingGeneration, hasCoverDialogueSnapshot, hasCoverUserProgress } from '../utils/directorResume';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -401,8 +403,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.202(H-⑤): coverTrackId는 이제 곡 선택 시점부터 "대화 컨텍스트"로 보관되므로,
   // "생성 대기(이어보기)" 판별은 스타일 확정(coverStyle != null, handleStyleConfirm)까지 요구.
   // 실패 확정 시 coverStyle을 지워(catch) 재진입 자동 doGenerate(재차감)를 막는다.
-  const hasPendingGeneration =
-    !albumMode && !!musicStore.coverTrackId && musicStore.coverStyle != null;
+  const hasPendingGeneration = !albumMode && isCoverPendingGeneration(musicStore);
   // v3.228 W2: 회수 진입(recoverJobId — 작업실 말풍선·도착 알림·가드 [진행 상황 보기]) / 진행 중 요청 합류
   const recoverAtMount = !!(route.params as any)?.recoverJobId;
   const attachAtMount = useRef(
@@ -411,7 +412,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.202(H-⑤): 진행 중이던 대화가 store에 영속돼 있으면 이어서 복원 (성공 확정 시에만 클리어)
   const initialStore = useRef(useMusicStore.getState()).current;
   const hasResumableDialogue =
-    !albumMode && !hasPendingGeneration && (initialStore.coverMessages?.length ?? 0) > 0;
+    !albumMode && !hasPendingGeneration && hasCoverDialogueSnapshot(initialStore);
+  // v3.229 [CoverDraft]: 복원 안내 버블(+'처음부터') — 다른 디렉터와 같은 UX. 사용자 답이 있는 대화를
+  // 이어갈 때만(인사만 있는 복원은 새로 시작과 같음). 회수·진행 중 요청 합류 진입에는 띄우지 않는다.
+  const [showResumeNotice, setShowResumeNotice] = useState(
+    hasResumableDialogue && hasCoverUserProgress(initialStore) && !recoverAtMount && !attachAtMount
+  );
+  const resumeChatLenRef = useRef(initialStore.coverMessages?.length ?? 0);
 
   // 화면 모드: dialogue(대화) / loading(생성중) / result(결과)
   const [mode, setMode] = useState<ScreenMode>(
@@ -553,6 +560,35 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     s.setCoverStep(step);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatHistory, step]);
+
+  // v3.229 [CoverDraft]: 이어서 답하기 시작하면(대화가 늘어나면) 복원 안내 버블 접기 — 작사·작곡 관행 동일
+  useEffect(() => {
+    if (showResumeNotice && chatHistory.length !== resumeChatLenRef.current) setShowResumeNotice(false);
+  }, [chatHistory, showResumeNotice]);
+
+  // v3.229 [CoverDraft]: '처음부터' — 커버 대화 컨텍스트(곡 선택·답변·대화) 청소 후 새 대화 마운트로 교체.
+  // 로컬 상태를 하나씩 되돌리는 대신 화면을 다시 올려 "새로 시작한 마운트"와 동치로 만든다.
+  // 진행 중 생성이 있으면 막는다(버튼도 dialogue 모드 복원 진입에서만 보인다).
+  const handleRestartCover = () => {
+    showAlert('처음부터 다시 할까요?', '진행하던 커버 대화와 선택한 답변이 지워지고 곡 선택부터 새로 시작해요.', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '처음부터',
+        onPress: () => {
+          if (activeCoverGen) {
+            console.info('[CoverDraft] 처음부터 보류 — 진행 중 생성 있음', { jobId: activeCoverGen.genKey });
+            setShowResumeNotice(false);
+            return;
+          }
+          console.info('[CoverDraft] 처음부터 — 커버 컨텍스트 청소·새 대화');
+          clearCoverContextStore();
+          resetCoverExtras();
+          setShowResumeNotice(false);
+          navigation.replace(route.name as any);
+        },
+      },
+    ]);
+  };
 
   // 트랙 조회 (앨범 모드는 곡 선택 단계가 없어 불필요)
   const loadTracks = async () => {
@@ -2272,6 +2308,24 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           </View>
         ))}
+        {/* v3.229 [CoverDraft]: 복원 안내 버블 — 디렉터 대화 톤 + 인라인 '처음부터' 액션(다른 디렉터와 동일 UX) */}
+        {showResumeNotice && (
+          <View style={[styles.messageRow, styles.dirRow]}>
+            <View style={styles.smallPortrait}><Image source={IMAGE_PORTRAIT} style={styles.smallPortraitImg} /></View>
+            <View style={[styles.bubble, styles.dirBubble]}>
+              <AppText style={[styles.bubbleText, { color: colors.bg.deepest }]}>
+                진행하던 커버 작업을 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+              </AppText>
+              <TouchableOpacity
+                style={styles.restartInlineBtn}
+                onPress={handleRestartCover}
+                accessibilityLabel="처음부터"
+              >
+                <AppText style={styles.restartInlineBtnText}>처음부터</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* 입력 영역 */}
@@ -2503,6 +2557,12 @@ const styles = StyleSheet.create({
   },
   // v3.151: 답변 수정 힌트·자유 서술 멀티라인 입력
   editHint: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 4, textAlign: 'right' },
+  // v3.229 [CoverDraft]: 복원 안내 버블 인라인 '처음부터' 액션(작사·영상 restartInlineBtn 관행)
+  restartInlineBtn: {
+    marginTop: 8, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.accent.primary,
+    borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12,
+  },
+  restartInlineBtnText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
   freeSceneInput: { minHeight: 84, textAlignVertical: 'top', paddingTop: 10 },
   // 로딩
   loadingContent: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },

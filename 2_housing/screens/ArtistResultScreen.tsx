@@ -33,6 +33,8 @@ import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
+// v3.229 N4: 개명 직후 재생 큐·미디어세션 가수명 반영
+import { applyArtistRenameToPlayback } from '../services/playback';
 import { useOutfitStore } from '../stores/outfitStore';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -789,6 +791,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[ArtistResult] 프로필 PATCH', { characterId: serverArtist.character_id });
     try {
       // 빈 문자열 = 서버 클리어(계약) — 입력 그대로 전송
+      const prevName = (serverArtist.name || '').trim();
       const updated = await patchArtist(serverArtist.character_id, {
         name: editName.trim(),
         gender: editGender.trim(),
@@ -796,6 +799,13 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       });
       setServerArtist(updated);
       setEditVisible(false);
+      // v3.229 N4: 이름이 실제로 바뀐 경우에만(서버 N2와 동일 조건) 앱에 저장된 재생 큐·보관함·
+      // 현재 곡·미디어세션의 가수명을 새 이름으로 일괄 치환. 서버 조회 화면은 서버 반영으로 자연 갱신.
+      const newName = ((updated?.name ?? editName) || '').trim();
+      if (newName !== prevName) {
+        const n = applyArtistRenameToPlayback(serverArtist.character_id, newName);
+        console.info('[ArtistRename] 개명 반영', { characterId: serverArtist.character_id, queueUpdated: n });
+      }
     } catch (err: any) {
       showAlert('오류', err?.response?.data?.error || '프로필 저장에 실패했어요.');
     } finally {

@@ -3854,3 +3854,181 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **과금 사고 FAIL 게이트(최우선 — FAIL 시 해당 kind 킬스위치 제외 배포)**: T1 S1-S2·W0-E1(영상 동시 2회 → 차감 1·인코딩 1·캐시 히트 무과금) / T2 S1-S3(다듬기 동시 2회 → 차감 1·버전 충돌 0·저장 실패 환불 1) / T3 S1-S4·S1-A6(가사·커버·작곡 각 1회, 초안 무게이트) / T4 S1-S5·X-R1(사망 job 환불 정확히 1회·작곡 draft 무접촉) / T5 S1-S6(동일 rid 재과금 0) / T6 S1-S7(429→409→402) / T7 S1-S8(ack 후 결과물 삭제해도 재배달 0·레거시 0) / T8 S1-P3·S1-A3(불일치 기준선 3 → 증가 0).
 - **기타 FAIL 게이트**: S1-A5(2f85f76c 등 팀 데이터 쓰기 — 최상위) · S1-A2(운영 재시작 인위 유발 — 최상위) · S1-P1·P2(현재본 미대조·main.py/디렉터리 scp) · S1-P3(진행 중 작업 있는 채 재생성) · S1-P5(기존 API·다른 세션 기능 회귀) · S1-S1(비대상 파일 변경) · S1-S10(킬스위치 미복귀) · S1-A1(타인 job 노출) · W0-U1(더블클릭 2요청) · W0-U2·X-G1⑥(아티스트 동작 변화) · W0-U3(일시 오류 '실패' 표시) · W0-U4(직접 받은 결과 재알림) · W0-U5(가드가 과금 게이트 뒤·미확인 결과 차단) · W0-U6(튜토리얼 앵커·피로 다이얼로그가 도착 결과 가로막음) · W0-U7·X-T1(이탈 권장 문구) · W0-U8(timeout 후 format 복귀로 재요청 유도) · W0-U9(tsc·diff 격리) · W1-U2(hydrate 추출 동작 변화) · W1-U3(재시작 후 무한 대기) · W2-U1(커버 재진입 자동 재요청) · W2-U3(구서버 폴백 삭제) · W3-U1(LyricsLoading 재마운트 POST) · X-G1(회귀).
 - **판정 대상 아님(기록·보고)**: S1-A4 로그 존속(재생성 없으면 "관측 대기"), X-K1(킬스위치 미적용 시 설계 보완 보고), 2f85f76c 사용자 지급 여부, c19acda4·작사 고아 4건·커버 고아 1건(보정 0 — 결정), 모바일 웹·네이티브 백그라운드 중 도착 알림 불가(플랫폼 한계 — 복귀 시 수령), character_jobs boot_id 전환·spend_points DuplicateKey 격상·share-video 비소유자 과금(백로그).
+
+## v3.229 (2026-09-25) — ① 아티스트 "내 목소리" 작곡 점검(참고음 세기 오배선 V1 · 서버 audioWeight 스위치 V2 기본 off · 요청/echo 로그 V3) ② 디렉터 복귀 1탭 바로 가기(R1~R8) ③ 아티스트 개명 따라가기(N1~N5, 소급 포함)
+
+> 대상: PLAN.md v3.229(:6124~끝), planner 테스트 항목 1~13. **확정 반영**: ① 목소리 — 앱·서버 전달 정상, Suno echo(generation 6ab55048…)로 `personaId`·`personaModel=voice_persona`·`audioWeight 0.5` 수신 **확인 완료**(PLAN §1-5의 "echo 없음 → ⓔ" 분기는 종결, 남은 판정은 ⓐ V6 특성 대 ⓑ 오배선 = 사용자 A/B) ② 복귀 = 보존본 있으면 디렉터 1탭, 인사 대사·맵 휴식 관문은 **새로 시작할 때만**(화면 안 과금 버튼의 휴식 관문은 유지), 작사 창작 모드 draft 영속, 커버 '처음부터', 말풍선 우선순위 진행·완성 > 이어서 하기 > 작업 시작, 튜토리얼 중 바로 가기 끔(앵커 불변) ③ 개명 = 새 이름 따라감 + 소급(사용자 결정), 착장·외형 스냅샷은 이력으로 보존 ④ 관찰 재현: 16:31:34 같은 사용자 두 번째 작곡 POST가 서버 409로 무과금 차단 — 앱 가드가 왜 먼저 막지 못했는지 경로 확정.
+> **팀의 과금 실행 0회**(v3.228의 "웨이브당 핵심 1회" 관행을 이번 사이클은 적용하지 않는다). 작곡 전송 body는 하니스(api 스텁)로, 운영 파라미터 확인은 **사용자 A/B 2곡의 V3 로그**로 대신한다. 과금 경로 e2e는 **비용 확인 다이얼로그 직전까지**. 개명 스모크(PATCH)는 무과금 쓰기로 PLAN 배포 절차 4단계 범위 — 테스트 계정 아티스트 한정. 소급 `--apply`·`.env`·scp·재생성은 **사용자 실행**(팀 실행 = 최상위 FAIL).
+> 실행 환경 관행(v3.191~ 계승): [e2e]는 **정적 대체 병기 + 폰 웹(app.maidol.ai.kr)·실기기 수동 절차 이관**, 네이티브 APK 확인은 다음 빌드 후("대기"). 서버 = 스테이징 `/private/tmp/server_staging_v3229/`(orig/·deploy/·diffs/·tests/·scripts/) **스텁·페이크 Mongo 하니스 우선**, 프로덕션은 읽기 전용(로그 grep·dry-run). 계정 `TEST_USER_EMAIL`(A)·`TEST_USER2_EMAIL`(B)·`ADMIN_TEST_EMAIL` 플레이스홀더, 토큰·user_id·personaId·voiceId·request_id 실값·`<SSH_HOST>`·.env 값 증적 기재 금지(PLAN 8자 접두 표기만). 이름 원문은 대표 확인 대상("한겨울")만 기재.
+> **검증 지표 — 디렉터별 복귀 탭 수(휴식 아님/휴식 중)**: 전(PLAN §2-1) → 목표. 아티스트 미보유 3~5 → **1** · 보유 5~7 → **1** / 작사 3~6 → **1**(요청서 뒤 1 유지) / 작곡 4~6 → **1**(ComposerSelect 자동 통과는 탭 아님) / 이미지 1 → 1(휴식 중 1+다이얼로그 → **1**) / 영상 3~5 → **1**. 휴식 중 작사·작곡·이미지 = 전 "⭐·광고 없이는 이어하기 불가" → **1탭**. R-E1·R-E3에서 전후 표로 REPORT에 싣는다.
+
+### 항목 매핑 (planner 1~13 → 시나리오)
+| # | planner 항목 | 시나리오 |
+|---|---|---|
+| 1 | V2 스위치·V3 로그 | V-S1·V-S2 |
+| 2 | V1 참고음 세기 조건화 | V-U1·V-E1·V-G1 |
+| 3 | §1-5 DB·로그 대조 | V-D1 |
+| 4 | 사용자 A/B 가이드 | V-AB1 |
+| 5 | 디렉터별 1탭 | R-U1·R-U2·R-E1 |
+| 6 | 우선순위·튜토리얼 | R-U2·R-U7·R-E2 |
+| 7 | 휴식 게이트 | R-U3·R-E3 |
+| 8 | '처음부터' | R-U6·R-E4 |
+| 9 | 작사 창작 모드 | R-U5·R-E5 |
+| 10 | 개명 따라가기 | N-S1~S3·N-U1·N-A1·N-E1 |
+| 11 | 소급 | N-S4·N-D1 |
+| 12 | 16:31:34 관찰 재현 | O-1 |
+| 13 | 회귀 | X-G1·X-T1 |
+
+### V — 목소리
+
+**V-S1. `SUNO_VOICE_AUDIO_WEIGHT` 스위치 [unit/서버] — FAIL 게이트(기본값에서 동작 변화·참고 음원 경로 오염)**
+- Given: 스테이징 suno_generator.py, httpx 스텁(Suno 제출 body 캡처), settings 주입.
+- When: env 조합 {미설정(None), 1.0, 0.75} × 요청 {보이스(voice_persona)+참고 음원 없음(audioWeight 0.5 / 미전송), 보이스+참고 음원 있음(`use_upload_cover=True`, 0.3), style_persona(0.5), 일반곡(persona 없음, 0.5), 연주곡(instrumental)}.
+- Then: ① env 미설정 → **모든 조합의 body가 `orig/` 버전과 바이트 단위 동일**(골든 비교 — 배포만으로 동작 불변) ② env=1.0·0.75 → 보이스+참고 음원 없음에서만 `audioWeight`=1.0·0.75(**미전송이던 요청에도 설정값이 실림** — 구 APK 일관 통제 근거) ③ 참고 음원 있음·style_persona·일반곡·연주곡 → 입력값 그대로(미전송이면 키 없음) ④ env 비숫자·범위 밖(1.5, -0.1) → 기동 경고 1줄 + None 처리(덮어쓰기 0, 예외 0) ⑤ model 결정(V6 기본·V5/V5_5 → V6 방어 매핑) 불변.
+
+**V-S2. `[suno][voice]` 로그 2줄 [unit/서버] — FAIL 게이트(personaId 원문 로그 노출)**
+- Then: 보이스 곡에서만 제출 직전 `[suno][voice] gen_id=… model=… personaModel=… audioWeight_in=… audioWeight_sent=… styleWeight=… (override=on|off)` 1줄, SUCCESS 시 `… model_name=[…] echo_persona=bool echo_audioWeight=… secs=…` 1줄. `data.param` 파싱 실패(문자열 아님·JSON 오류) → `echo_persona=unknown`·예외 0·생성 흐름 불변. 로그 전체 grep: personaId·voiceId 값·가사 원문·API 키 **0건**. 일반곡은 이 태그 0줄.
+
+**V-U1. 작곡 대화 step 9 조건화 [unit/앱] — FAIL 게이트(참고 음원 있을 때 세기 질문 소실)**
+- Given: MusicGenerationScreen 상태 하니스(musicStore 주입).
+- When: ① 참고 음원 없음(건너뛰기) → step 8 답 ② 참고 음원 업로드(referenceData 있음) → step 8 답 ③ ②에서 되감기(v3.148)로 step 5 복귀 → 업로드 취소 → step 8 다시 ④ ①에서 되감기로 step 5 → 업로드 → step 8 ⑤ 목소리 아티스트 + 참고 음원 없음 → "이대로 갈게요".
+- Then: ① 8 → **10(BPM)**, `audioWeight` null, 로그 `[MusicGeneration] V1 참고음 세기 생략(참고 음원 없음) — 8 → 10` 1회 ② 8 → **9 질문 표시**(문구 "참고 음원의 세기는 얼마만큼 반영할까요?" 불변, 슬라이더 기본 0.5) ③ step 9 사라지고 이전에 고른 세기 값 **null로 초기화**(잔존값 전송 0) ④ step 9 다시 나타남 ⑤ musicService 스텁이 받은 body에 `audio_weight` **키 없음(undefined)**, `persona_id`·`persona_model` 기존대로. 되감기 매핑 표에 step 9 → 10 인덱스 어긋남 0(진행 표시·"이전 답 수정" 대상 정합).
+
+**V-E1. 작곡 대화 참고음 세기 [e2e] — 실생성 0**
+- 정적 대체: V-U1. 수동(폰 웹, A, 목소리 연결 아티스트 — 없으면 목소리 없는 아티스트로 ②만):
+  1. 참고 음원 건너뛰기 → 자유도 → 대중/실험 → **BPM**(세기 질문 없음).
+  2. 참고 음원 업로드 → … → 대중/실험 뒤 **세기 질문 표시**.
+  3. 2에서 되감기로 참고 음원 단계 → 취소 → 세기 질문 없음.
+  4. 각 경우 "이대로 갈게요" 뒤 **비용 확인 다이얼로그에서 취소**(POST 0·⭐ 불변 — 네트워크 탭 `/generate/` 0건).
+- Then: 1~3 기대대로, 콘솔 V1 로그 1회(1·3), 이모지·AIDOL 0, 팝업 showAlert.
+
+**V-G1. 연주곡 체인 회귀 [unit+e2e] — FAIL 게이트(연주곡 체인 회귀)**
+- Then: v3.203 연주곡 흐름(연주곡 선택 → 곡 길이 step 310 → duration 게이트 → body.duration)이 V1 분기와 무관하게 불변 — 단계 전이 하니스 골든 비교 hunk 0, 연주곡에서 참고음 세기 질문 노출 규칙 불변(v3.228 기준 동작과 동일). 폰 웹: 연주곡 대화 → 비용 확인 직전까지 단계 순서 동일. 서버 V-S1 ③ 연주곡 body 불변과 합쳐 판정.
+
+**V-D1. §1-5 대조 판정 [DB·로그] — 오케스트레이터 실행 결과 판정(읽기 전용)**
+- Given: `scratchpad/v3229_q_voice_compare.py` 출력(쓰기 0 확인 — 스크립트에 insert/update/delete 호출 0 grep).
+- Then: REPORT에 voice_persona 곡 전체 시간순 표(engine_model·body_model·secs·audioWeight·styleWeight·weirdness·vocalGender·가사 보컬 태그 유무·echo_persona·echo_audioWeight·model_name) + "냥냥냥"(6aa3ea81…) 행 분리. 판정 문장: V5_5 곡 대 V6 곡의 audioWeight 유무·값·소요초 차이. 6ab55048… echo 수신은 **확인 완료로 기재**(ⓔ 배제). "냥냥냥"에 audioWeight 없고 6ab55048…에 0.5 → ⓑ 가능성 상향으로 기재(확정 아님 — V-AB1 대기).
+
+**V-AB1. 사용자 A/B 청취 가이드 [사용자 실행] — 팀 과금 0**
+- 사전: 목소리가 새로 학습돼 2시간 안(만료 시 학습 ⭐5 추가 — 사용자 판단), 같은 가사(보관함의 같은 가사 카드), 같은 장르·분위기·BPM, 참고 음원 **올리지 않음**. **서버 V2는 off 상태**(env 미설정)여야 한다 — 켜져 있으면 (a)·(b)가 같은 값으로 덮여 A/B 무의미.
+- 주의(V1 배포 후): 참고 음원이 없으면 앱이 세기 질문을 묻지 않으므로 (b)를 앱에서 만들 수 없다. → **V1 배포 전(현재 1.2.0 앱)에 A/B를 먼저 하거나**, V1 배포 후라면 (b)는 오케스트레이터가 사용자 승인으로 V2를 1.0으로 켠 상태에서 1곡 생성(그 경우 (a)는 V2 off에서 생성). 어느 쪽인지 REPORT에 기록.
+- 절차: (a) 세기 질문 **"건너뛰기"** = audioWeight 미전송 → 완성 대기 → (b) 세기 슬라이더 **1.0** "이대로 갈게요". 각 ⭐15 + 공급자 크레딧, 곡당 2변형.
+- (선택 관찰 — O-1 연계, 무과금): (a) 진행 중 같은 기기에서 새 작곡 시작 시도 → 가드 팝업 "이미 곡을 만드는 중이에요…"·POST 0 기대. 가드가 못 막아도 서버 409로 과금 0.
+- 팀 판정(청취 제외): V3 로그 (a) `audioWeight_in=None audioWeight_sent=None`, (b) `audioWeight_sent=1.0`, 두 곡 모두 `echo_persona=True`·model V6. 어긋나면 A/B 무효 → 재실행 여부는 사용자 결정.
+- 결과 → 조치: (b) 확연히 우세 → `SUNO_VOICE_AUDIO_WEIGHT` 값 사용자 승인 후 .env·재생성 / 둘 다 약함 → ⓐ 확정·sunoapi 문의(사용자) / (a) 우세 → V2 off 유지, V1만.
+
+### R — 디렉터 복귀 바로 가기
+
+**R-U1. `utils/directorResume.ts` 판정 동치·무부작용 [unit/앱] — FAIL 게이트(맵 판정과 화면 판정 불일치 → 빈 화면·draft 폐기)**
+- Given: 5종 스토어 상태 행렬 — 작사(draftStep 0/2 × draftChat 0/3 × generatedPrompt 有無), 작곡(composeDraft lyricsKey 일치/불일치 × 사용자 답 0/1+), 영상(답 0/1+ × step ∈ {style, making, done}), 아티스트(답 0/1+ × targetCharacterId null/cid × forceKind 有無), 이미지(coverMessages 0/n × 앨범 모드 × 진행 중 생성).
+- Then: ① 각 판정 함수 결과 = 해당 화면 마운트 복원 판정(리팩터 전 코드)과 **행렬 전 칸 동일** ② 판정 호출 전후 스토어 스냅샷 동일(`peekArtistDraft` 폐기 0, set 호출 0) ③ `getDirectorResumeTarget` 반환: 작사 → LyricsInput(요청서 있으면 LyricsPromptReview), 작곡 → **ComposerSelect**, 영상 → VideoDirector, 아티스트 → ArtistInput `{characterId, forceKind}` **키 동봉**, 이미지 → CoverGeneration ④ `computeComposeLyricsKey` 이동 전후 같은 입력 → 같은 키 ⑤ 5개 화면 동작 불변(v3.219 draft 복원 하니스 재실행 동일).
+
+**R-U2. MapScreen 순서 [unit/앱] — FAIL 게이트(보존본 복귀가 v3.228 진행 중 작업을 가림)**
+- When: 디렉터 탭 하니스 — {비로그인, 추적 job processing, done-unacked, failed-unacked, draft만, job+draft, 둘 다 없음} × 5 디렉터 × {휴식 중, 아님} × {튜토리얼 중, 아님}.
+- Then: 순서 = 로그인 → **추적 job(최우선)** → draft 바로 가기 → 휴식 게이트 → 기존 흐름. job+draft → **job 화면**(진행/결과), draft 경로 0. draft만 → 로그 `[Map] resume-direct {director, route}` 1회 + Dialogue push 0. 없음 → 기존 흐름(Dialogue 등) hunk 동작 불변. 튜토리얼 중 → 바로 가기 0·기존 흐름.
+
+**R-U3. 휴식 게이트 [unit/앱] — FAIL 게이트(새로 시작 시 휴식 게이트 우회 = 과금 우회)**
+- Then: ① draft **없음** + 휴식 중 → 맵 휴식 다이얼로그 기존대로(작사·작곡·이미지) ② draft 있음 + 휴식 중 → 맵 다이얼로그 0·보존 화면 ③ ②에서 화면 안 '처음부터' 누른 뒤 과금 버튼 → **화면 안 휴식 게이트 발동**(PLAN §2-2 목록 LyricsPromptReview:89·MusicGeneration:1357·2082·CoverGeneration:698·1648·VideoDirector:665·914·ArtistLoading:510·ArtistCody:475 — 각 지점 하니스 호출 1회씩, 요청 0) ④ 화면 안 게이트 코드 hunk **0**(과금 방어 불변) ⑤ draft 판정이 거짓 양성인 상태(답 0개 draft 잔재)로 휴식 우회 불가 — 판정은 R-U1 기준.
+
+**R-U4. 작사 선택 모달 생략 [unit/앱]** — draft 있음 + `selectedByCategory.lyricist` 있음 → 모달 0. 영입 2명 이상 + draft 없음 → 모달 기존대로. draft 있음 + lyricist 미선택(선택 해제·영입 해제) → 모달 표시(빈 디렉터로 진입 0).
+
+**R-U5. 작사 창작 모드 영속 [unit/앱] — FAIL 게이트(재시작 후 모드 유실로 일반 작사 발매)**
+- Then: LyricsInput 미러링 시 `lyricsStore.draftCreationMode` 기록(persist 키 불변·마이그레이션 없이 필드 가산), 재하이드레이션 → `musicStore.setCreationMode(copyright)` 복원, 로그 `[LyricsDraft] creationMode 복원` 1회, 복원 버블에 "저작권 등록 모드로 이어서 해요" 1줄(standard면 0줄). draft 클리어·'처음부터' 시 draftCreationMode도 초기화. 구 persist(필드 없음) → standard 폴백·예외 0.
+
+**R-U6. 이미지 '처음부터' [unit/앱]**
+- Then: `hasResumableDialogue`일 때만 복원 버블 + 인라인 '처음부터'. 누르면 showAlert 확인 → [처음부터] → `clearCoverContextStore()` + 로컬 상태 초기화 → 첫 인사, 로그 `[CoverDraft] 처음부터`. [취소] → 상태 불변. 진행 중 생성·`recoverJobId` 회수 진입·앨범 모드 → 버튼 **숨김**. v3.202 성공 시 클리어 경로 불변.
+
+**R-U7. 맵 말풍선 우선순위 [unit/앱] — FAIL 게이트(작업 말풍선 가림)**
+- Then: 슬롯 = 추적 job("만드는 중…"/"완성! 눌러서 확인") > "이어서 하기"(신규) > "작업 시작"(isNext). 동시 렌더 0, 휴식 티켓 병존, 튜토리얼 중 숨김. "이어서 하기" 탭 = 디렉터 탭과 같은 R-U2 경로. 아티스트 말풍선(v3.227) 동작 불변.
+
+**R-U8. 튜토리얼 앵커 불변 [unit/앱] — FAIL 게이트(튜토리얼 앵커 회귀)** — `TUTORIAL_STEPS`·`DIRECTOR_ANCHOR_BY_TYPE` hunk 0, 튜토리얼 리뷰 모드 6스텝 앵커 좌표(onLayout 측정값) 전후 동일, 튜토리얼 중 `resume-direct` 로그 0·"이어서 하기" 렌더 0.
+
+**R-E1. 디렉터별 1탭 복귀 [e2e] — 실생성 0 — 탭 수 전후 지표**
+- 정적 대체: R-U1·R-U2. 수동(폰 웹 + APK 대기, A):
+  - 공통: 디렉터에서 사용자 답 1개 이상 진행 → 작업실(다른 탭) 이동 → 맵 복귀 → 캐릭터 **1탭** → 보존 화면 즉시(Dialogue 0). 탭 수를 표로 기록(전 = PLAN §2-1 값).
+  - 작사: 요청서 전 단계, 선택 모달 0(영입 2명 이상 계정에서) / 요청서 후 → LyricsPromptReview.
+  - 작곡: 같은 가사 대화 그대로(가사 재선택·ComposeLyricsPick 0), ComposerSelect 자동 통과.
+  - 이미지: 대화 복원 + 복원 버블.
+  - 영상: 선곡 뒤 스타일 단계.
+  - 아티스트: 보유 계정 ＋추가 draft → MyArtists·⭐ 고지 0 / 재생성 draft → 같은 캐릭터 키로 복원(draft 폐기 0).
+  - draft 없음 → 기존 흐름(Dialogue 대사 2줄 인사) 그대로.
+  - 뒤로 가기: 바로 가기 진입 후 뒤로 → 맵(Dialogue로 돌아감 0).
+- Then: 5종 모두 1탭, 전후 표 REPORT 게재, 앱(웹) 재시작 후 영속 draft(작사·아티스트)만 1탭·메모리 draft(작곡·이미지·영상)는 기존 흐름.
+
+**R-E2. 우선순위 [e2e] — 실생성 0(기존 추적 job 활용)**
+- 절차: A 계정에 v3.228 추적 job이 있는 디렉터(사용자 A/B 곡 진행·완성 시점 또는 기존 미확인 결과)에서 같은 디렉터에 draft도 만든 뒤 탭 → **job 화면 먼저**. 말풍선 = 작업 > 이어서 하기 > 작업 시작. 튜토리얼 리뷰 모드 진입 → 바로 가기·말풍선 0, 앵커 위치 육안 동일(스크린샷 전후).
+- 팀이 과금으로 job을 만들지 않는다 — 조건을 만들 수 없으면 R-U2·R-U7로 판정하고 "운영 관측 대기".
+
+**R-E3. 휴식 게이트 [e2e] — 실생성 0**
+- 절차(휴식 중 조건은 사용자 A/B 곡 직후 또는 기존 쿨다운 활용): 작사·작곡·이미지 각각 draft 있음 → 1탭 보존 화면(맵 다이얼로그 0) → 과금 버튼 → **화면 안 휴식 다이얼로그**, 네트워크 요청 0·⭐ 불변. draft 없음 → 맵 휴식 다이얼로그 기존대로.
+- Then: 탭 수 전("⭐·광고 없이는 불가") → 후 1탭 기록. 과금 버튼에서 휴식 다이얼로그가 안 뜨고 비용 확인으로 넘어가면 = FAIL(과금 우회).
+
+**R-E4. '처음부터' [e2e] — 실생성 0** — 5 디렉터 복원 화면에서 '처음부터' → 새 대화(이미지는 신규 버튼 + showAlert 확인). 맵 복귀 → 다음 탭은 draft 없음 → Dialogue 흐름(휴식 중이면 맵 휴식 다이얼로그 — 새로 시작 판정).
+
+**R-E5. 작사 창작 모드 [e2e] — 실생성 0** — 저작권 등록 모드 선택 → 작사 대화 2답 → 웹 새로고침(앱 재시작) → 작사 디렉터 1탭 → 모드 유지·버블 "저작권 등록 모드로 이어서 해요" → 요청서 → 비용 확인 직전 취소. 발매 `track_type=copyright_ready` 확인은 실생성이 필요하므로 **정적(발매 body 조립 하니스)** + 사용자 실사용 관측으로 이관.
+
+### N — 아티스트 개명 따라가기
+
+**N-S1. `sync_artist_name` [unit/서버 — 페이크 Mongo] — FAIL 게이트(착장 스냅샷 덮어씀·비멱등·타인 곡 변경)**
+- Given: 사용자 A의 cid_1 곡 {스냅샷 object, 스냅샷 **null**, 스냅샷 없음, source_meta 有/無, Inst. 파생곡(character_id 상속)}, cid_2 곡, **사용자 B의 같은 cid 값 곡**(격리 확인), mv_jobs {object 스냅샷, null}.
+- When: ① `sync(A, cid_1, "새이름")` ② 같은 호출 재실행 ③ `sync(A, cid_1, "")` ④ Redis·ES 스텁 예외 주입 ⑤ Mongo update 예외 주입.
+- Then: ① `artist_name`·`user_character_snapshot.name`·`source_meta.artist_name`·mv_jobs 스냅샷 이름 = 새이름, **스냅샷의 착장·외형·나이·성격·시트 필드 해시 전후 동일**, null·없는 스냅샷 문서 = 오류 0·무접촉, cid_2·B 곡 무접촉, Inst. 포함 ② 변경 0건(`$ne` 필터)·재색인 0 — **멱등** ③ `artist_name`=None(직렬화 기획사명 폴백), 스냅샷 이름 "" ④·⑤ 예외 전파 0(경고 로그), 반환 dict에 실패 표시 ⑥ 영향 곡마다 `cache:track:{id}`·`cache:track:v4:{id}` 삭제·`index_track_es_in_background` 1회 ⑦ 로그 `[ArtistRename] user=… cid=… tracks=N snap=N meta=N mv=N es_queued=N` — **이름 원문 0**(길이만).
+
+**N-S2. PATCH 연동 [unit/서버]** — `PATCH /character/{cid}`: name 변경 → update_one 뒤 sync 1회 / name 동일(앱이 항상 보냄) → **sync 0회**·`[ArtistRename]` 0 / name 미포함(다른 필드만) → 0회 / sync 예외 → PATCH 200·응답 스키마 `orig/` 동일 / 타인 cid → 기존 403·404, sync 0. character.py hunk = PATCH 경로 한정.
+
+**N-S3. 직렬화 가수명 우선 [unit/서버]** — likes.py·playlists.py·feeds.py(프로젝션 `artist_name: 1` 포함)·albums.py: `artist_name` 有 → 가수명, 無 → `uploader_nickname`, 둘 다 無 → "AI". 응답 키셋 `orig/`와 동일(값만 변화). tracks·charts·artists 직렬화 hunk 0.
+
+**N-S4. 소급 스크립트 [unit/서버 — 페이크 Mongo] — FAIL 게이트(비멱등·dry-run 쓰기)**
+- Then: 기본 실행 = dry-run, **쓰기 호출 0**(Mongo 스텁 write 카운터 0·Redis·ES 0). 출력 = `track_id, title, is_public, uploader(8자), cid, old→new` + 총계·공개 곡 수·mv_jobs 대상 수, 캐릭터 문서 없는 곡 → "skip(char missing)"·무접촉. `--apply` → 내부 N-S1 함수 cid별 호출, 이어서 dry-run → **0건**. `--apply` 2회 → 두 번째 변경 0. 스냅샷 착장 필드 해시 불변. 출력에 old 값 보존(롤백 역적용 입력 — 파일 저장 확인).
+
+**N-U1. 앱 재생 큐·미디어세션 [unit/앱] — FAIL 게이트(큐에 구 이름 잔존)**
+- Then: `renameArtistInQueue(cid, name)` → queue·savedQueues·currentTrack 중 `character_id` 일치 항목만 `artist_name` = `name || uploader_nickname || 'AI'`, 불일치·character_id 없는 항목 무접촉, 로그 `[Queue] artist rename n=`. 현재 곡이면 미디어세션 메타데이터 갱신 호출 1회(playback.ts 경로), 아니면 0. 영속 후 재하이드레이션 값 유지. ArtistResultScreen `performSaveProfile` **성공 직후에만** 호출(실패 시 0). v3.223 큐 보존·재생 위치 불변.
+
+**N-A1. 배포 후 개명 스모크 [api] — 무과금(테스트 계정 아티스트)**
+- When: A의 기존 발매곡이 있는 아티스트(없으면 "대기" — 팀이 발매용 작곡 0) `PATCH` 이름 변경 → 같은 이름 재PATCH → 원래 이름 복귀.
+- Then: `[ArtistRename] tracks=N` 1회(재PATCH 0회), `GET /tracks/{id}` 새 이름(캐시 삭제 확인 — 600초 대기 없이), 검색 regex·ES 새 이름 매치(수 초 대기)·옛 이름 미매치, 차트 ≤5분, likes·playlists·feeds·albums 응답 가수명. 원복 후 동일 확인.
+
+**N-E1. 노출 경로 전수 [e2e] — FAIL 게이트(어느 노출 경로라도 구 이름 잔존)**
+- 정적 대체: N-S1~S3·N-U1. 수동(폰 웹, A — N-A1 계정): 이름 변경 후 곡 상세·마이페이지·차트·아티스트 채널·검색·착장 탭·기획사 프로필 명단·좋아요 목록·플레이리스트·피드·앨범·미니플레이어·재생 큐·잠금화면 미디어 정보(APK 대기) **전부 새 이름**. 착장 탭 이미지·외형 불변. 이름 비움 → 기획사명 폴백. Inst. 파생곡 새 이름.
+- Then: 경로별 체크표 REPORT 게재 — 1곳이라도 구 이름 = FAIL(캐시 TTL 내 차트는 5분 뒤 재확인 후 판정).
+
+**N-D1. 소급 운영 [ops] — FAIL 게이트(소급이 스냅샷 덮어씀·재실행 비멱등·팀 apply 실행)**
+- 절차: ① 오케스트레이터 dry-run(읽기 전용) → 건수·공개 곡 수·skip 수·목록을 PLAN/REPORT 기록 ② **사용자 1줄 `--apply`** ③ 재 dry-run **0건** ④ 6ab552a2… 상세·차트·검색에서 **"한겨울"** 표기 ⑤ apply 전후 대상 곡 1건 이상 샘플로 `user_character_snapshot`의 name 외 필드 해시 동일(읽기 전용 스크립트) ⑥ dry-run 출력 파일 보존.
+- Then: ③ >0건 또는 ⑤ 해시 변화 = FAIL(롤백 = 보존된 old 값 역적용, 사용자 실행). 팀 명령 이력에 `--apply` 0.
+
+### O — 관찰 재현
+
+**O-1. 16:31:34 두 번째 작곡 POST 경로 확정 [로그 판독 + unit 하니스] — 실생성 0 — 판정 회부(결함이면 FAIL)**
+- 배경: 첫 요청 16:31:04(Suno taskId 16:31:04.52 → 201은 수 초 내 추정), 30초 뒤 같은 사용자 새 rid(2cd7ceee…)로 `POST /generate/` → `[ComposeGuard] dup-blocked`·앱 16:31:39 409. 코드상 작곡 POST 지점은 **MusicLoading `doGenerate` 1곳뿐**(musicService.ts:317 호출자 1), 가드는 그 첫 줄(:254)과 MusicGeneration `handleGenerate`(:1354). 등록은 201 수신 뒤(:346) — 즉 두 번째 MusicLoading 마운트가 가드를 통과했다.
+- 판독(읽기 전용): ① 호스트 frontend.log 16:30:50~16:32:10 해당 사용자 라인 — `[GenTracker] 중복 생성 차단` 유무, `[MusicLoading]` 마운트·`응답 유실 회수`·`진행 중인 곡 이어보기(409 편입)` 순서 ② 두 요청의 User-Agent(웹/APK)·**클라이언트 버전**(creation_log GEN_REQUEST `app_version`, 웹 번들 해시 또는 APK versionName) ③ 두 rid가 앱 생성 32hex 형식인지(서버 생성 여부) ④ 첫 POST의 201 응답 시각(docker logs 액세스 로그) — 30초 전 도착했는지 ⑤ 두 요청 사이 새로고침·라우트 전환 로그.
+- 가설별 재현(하니스 — api 스텁, 가짜 타이머):
+  - H1 구 클라이언트(v3.228 전 웹 캐시 번들·APK 1.1.9 — 가드 없음) → ②로 판정. 결함 아님(서버 409가 설계상 방어), 캐시 번들 잔존 경로는 보고.
+  - H2 다른 기기·탭(PC 웹 + 폰, 로컬 추적 기록 비공유) → UA 2종이면 확정. 결함 아님(v3.228 설계 — 서버 409 + adopt). adopt 동작 확인.
+  - H3 새로고침 직후 하이드레이션·부팅 스캔 전 가드 조회 → 하니스: 추적 기록 persist 상태에서 새로고침 모사 → MusicLoading 재마운트 시점의 `listUserGenJobs` 결과. 비어 있으면 **결함**.
+  - H4 201 전 이탈·재진입(등록 전 창) → 하니스: POST 응답 지연 40초 중 뒤로 → MusicGeneration → 재생성. 두 번째 POST 발생 시 **결함**(등록을 POST 직전으로 당기는 보완 제안 — 영상 W0-U8과 같은 방식).
+  - H5 MusicLoading 재마운트(내비게이션 replace·스택 재구성·ComposerSelect 자동 통과 재실행) → 하니스: 같은 파라미터로 두 번 마운트. 두 번째 POST 발생 시 **결함**.
+  - H6 등록 레코드의 사용자 키 불일치(로그인 세션 복원 전 userId) → `listUserGenJobs` 필터 확인.
+- Then: 원인 가설 1개 확정 + 근거 라인(마스킹) REPORT 기재. H3~H6 확정 = 결함으로 보고(수정은 다음 사이클 결정). 확정 불가 시 "미확정 — 사용자 A/B 중 선택 관찰(V-AB1)로 재관측". 어느 경우든 **과금 0 확인**(point_events에 두 번째 rid 차감 0).
+
+### S-P — 배포 절차 게이트 [ops]
+
+**S-P1. 재대조·범위 [ops] — FAIL 게이트(다른 세션 변경 덮어쓰기·main.py 반영)** — 배포 직전 대상 7파일 md5 = `MD5SUMS.orig`(suno_generator c3ce9f3d…·generate 4842bb56…·character 0c73273c…·tracks 350c0928… 외 config·likes·playlists·feeds·albums), 불일치 → 새 현재본에 diffs 재적용(`patch --dry-run` 선행)·스테이징 테스트 재실행. `test ! -e services/artist_name_sync.py`. scp = 변경 파일 + 신규 서비스 1개만, **main.py·디렉터리 통째 0**, `.bak_pre_v3229` 생성. 이미지 내 main.py md5 = 배포 직전 현재본.
+**S-P2. 사전 점검 [ops] — FAIL 게이트(진행 중 작곡 있는 채 재생성)** — generations point_ref 보유 pending·processing = 0, inst_jobs active = 0, character_jobs processing = 0 확인 후 재생성. 재생성 옵션 v3.228 유지 + 로그 볼륨 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 유지. **`SUNO_VOICE_AUDIO_WEIGHT` 미설정**(컨테이너 env grep으로 부재 확인 — 값 기재 금지).
+**S-P3. 스모크 [smoke] — FAIL 게이트(기존 API 회귀)** — health 200, 기동 로그 V2 스위치 off 1줄, N-A1, likes·playlists·feeds·albums 200, v3.228 `jobs/recoverable` 200, 5분 Traceback 0. 보이스 경로는 로그 형식만(실생성은 V-AB1).
+
+### X — 회귀·정책
+
+**X-G1. 회귀 [unit/e2e] — FAIL 게이트**
+- ① v3.228 추적기 전체(말풍선·알림 1회·409 편입·회수·guardGeneration 지점 8곳 hunk 0) ② v3.219 draft 5종 화면 안 복원(R-U1 ⑤) ③ v3.202 커버 영속·성공 시 클리어 ④ v3.148 작곡 되감기(V-U1 매핑 포함) ⑤ v3.143 목소리 미연결 아티스트 선택 차단 ⑥ v3.156 발매 스냅샷(착장) — N-S1 해시 ⑦ v3.223 큐 보존 ⑧ 피로 429 다이얼로그 전 지점(맵 게이트 우회는 draft 있을 때만) ⑨ v3.203 연주곡(V-G1) ⑩ 튜토리얼 6스텝 앵커(R-U8) ⑪ `npx tsc --noEmit` 0.
+
+**X-T1. 정책 문구 [unit] — FAIL 게이트(이탈 권장 문구·이모지·AIDOL·시스템 Alert)**
+- When: `grep -rnE "나가 있어도|나가도 계속|화면을 나가도|나가서 다른" 2_housing/{screens,components,services,stores,utils}` + 이번 diff 신규 문자열(복원 버블·"이어서 하기"·'처음부터' 확인·모드 안내·V1) 검사.
+- Then: 이탈 권장 = **VoiceCloneWizardScreen.tsx 1건만**, "작업이 끝날 때까지 이 화면을 벗어나지 마세요" 기존 개수 유지, 신규 문자열에 이모지 0(⭐ 예외)·`\bAIDOL\b` 0·`Alert.alert` 0(showAlert만)·"저작권" 표기는 창작 모드 안내 1줄 외 0·과금 단정 문구 0.
+
+### 게이트 요약
+
+- **트랙 구조**: 서버 = V-S1·V-S2·N-S1~S4 PASS → S-P1·S-P2 → 사용자 scp·재생성 → S-P3·N-A1 → N-D1(dry-run → 사용자 apply → 0건 → "한겨울"). 앱 = V-U1·R-U1~U8·N-U1 PASS + tsc 0 → 웹 배포 → V-E1·V-G1·R-E1~E5·N-E1(정적 대체 병기, APK 대기). O-1·V-D1은 판독 트랙(배포 무관). V-AB1은 사용자 실행 — **V1 배포 전후 어느 조건에서 했는지 기록**.
+- **비용 상한**: 팀 실생성 0회. 과금은 사용자 A/B 2곡(⭐15×2 + 필요 시 학습 ⭐5)만. 개명 PATCH·소급은 무과금 쓰기(소급 apply = 사용자).
+- **FAIL 게이트**: 개명 후 노출 경로 구 이름 잔존(N-E1·N-U1·N-A1) · 소급이 착장 스냅샷 덮어씀(N-S1·N-D1⑤) · 소급 재실행 비멱등/dry-run 쓰기(N-S4·N-D1③) · 보존본 복귀가 v3.228 진행 중 작업을 가림(R-U2·R-U7·R-E2) · 새로 시작 시 휴식 게이트 우회=과금 우회(R-U3·R-E3) · 참고 음원 있을 때 세기 질문 소실(V-U1②④) · V2 기본값 동작 변화/참고 음원 경로 오염(V-S1) · personaId 로그 노출(V-S2) · 연주곡 체인 회귀(V-G1) · 튜토리얼 앵커 회귀(R-U8) · 판정 불일치로 draft 폐기(R-U1) · 창작 모드 유실(R-U5) · 이탈 권장 문구·이모지·AIDOL·시스템 Alert(X-T1) · 회귀(X-G1) · 현재본 미대조·main.py 반영·진행 중 재생성(S-P1·S-P2) · 기존 API 회귀(S-P3).
+- **최상위 FAIL**: 팀이 과금 생성 실행, 팀이 소급 `--apply`·.env·scp·재생성 실행, dry-run/판독 스크립트의 프로덕션 쓰기.
+- **판정 회부(결함이면 FAIL)**: O-1 H3~H6. **기록·보고만**: V-D1 비교표, V-AB1 청취 결과(사용자), 탭 수 전후 표, N6 개명 남용 리스크, 닉네임 변경 미전파·step 7·8 미전송(범위 밖).
