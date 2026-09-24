@@ -5,38 +5,39 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Image,
-  Modal,
-  FlatList,
-  ActivityIndicator,
   ScrollView,
   Linking,
   TextInput,
 } from 'react-native';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import api, { BACKEND_BASE_URL } from '../services/api';
+import api from '../services/api';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
-import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
+import { useWishlistStore } from '../stores/wishlistStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { listArtists } from '../services/characterService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
+// v3.227(D 추출 1단계): 피커 모달·공용 타입/헬퍼는 components/cody/*로 이동(동작 무변경).
+import CodyPickerModal from '../components/cody/CodyPickerModal';
+import {
+  ACCESSORY_SUBCATS,
+  EMPTY_DRILL,
+  SAMPLE_ITEMS,
+  type AdItem,
+  type Cat,
+  type DrillState,
+} from '../components/cody/codyShared';
 
-// v3.206: 카테고리 개편 — 활성 선택 슬롯은 상의/하의/신발/모자/가방.
-// 그리드에는 모자·가방을 '악세서리' 통합 카드 1장으로 노출(내부 슬롯은 분리 → 동시 선택 가능).
-// 나머지(헤어스타일/헤어컬러/안경/문신)는 잠금 카드(Feather lock)로만 노출 — 선택 불가, Cat에서 제외.
-type Cat = '상의' | '하의' | '신발' | '모자' | '가방';
+// v3.206: 카테고리 개편 — Cat 타입·ACCESSORY_SUBCATS는 components/cody/codyShared.ts로 이동.
 const CATEGORIES: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
 const GRID_BASIC_CATS: Cat[] = ['상의', '하의', '신발'];
-const ACCESSORY_SUBCATS: Cat[] = ['모자', '가방'];
 const LOCKED_CATS: string[] = ['헤어스타일', '헤어컬러', '안경', '문신'];
 
 // 카테고리별 핏/기장 옵션 (선택사항, 빠른 토글) — A방안
@@ -72,39 +73,6 @@ const WEAR_STYLE_HINTS: Record<string, string> = {
   '어깨에 메기': "'어깨에 메기'=한쪽 어깨에 걸쳐 멘 채",
 };
 
-interface AdItem {
-  id: string;
-  name: string;
-  image_object_name?: string;
-  product_url?: string;
-  advertiser_nickname?: string;
-  // v3.90(MAIDOL v147/v148): 5단계 드릴다운용 패싯 필드 — ad_items 원본 그대로 내려옴
-  brand?: string;
-  gender?: string;        // '남성용' | '여성용' | '공용'
-  product_name?: string;
-  color?: string;
-  category?: string;
-  is_active?: boolean;
-}
-
-// v3.90: 5단계 드릴다운 — 플랫폼 › 브랜드 › 성별 › 제품 › 색상(leaf). MAIDOL ItemSelectModal 이식.
-type DrillLevel = 'platform' | 'brand' | 'gender' | 'product';
-type DrillState = Record<DrillLevel, string | null>;
-const EMPTY_DRILL: DrillState = { platform: null, brand: null, gender: null, product: null };
-
-const platformOf = (i: AdItem) => i.advertiser_nickname || '기타';
-const brandOf = (i: AdItem) => i.brand || i.advertiser_nickname || '기타';
-const productOf = (i: AdItem) => i.product_name || i.name || '기타';
-// 성별 멤버십: 공용(및 미지정)은 남/여 모두에 포함
-const genderMatches = (i: AdItem, g: string) => {
-  const ig = i.gender || '공용';
-  if (ig === '공용') return true;
-  if (g === '남') return ig === '남성용';
-  if (g === '여') return ig === '여성용';
-  return false;
-};
-const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
-
 // v3.205(⑤): 아티스트 성별 정규화 — '남성'/'남자'/'남' → '남', '여성'/'여자'/'여' → '여'.
 // 구계정·자유 입력 등 판별 실패는 null → 자동 필터 미적용·칩 미노출(전량 노출, 안전).
 const normalizeArtistGender = (raw?: string | null): '남' | '여' | null => {
@@ -114,59 +82,8 @@ const normalizeArtistGender = (raw?: string | null): '남' | '여' | null => {
   if (t.startsWith('여')) return '여';
   return null;
 };
-// v3.205(⑤): 성별 데이터가 실재하는 카테고리만 자동 필터(상의 남69/여87/공용1, 하의 남74/여71,
-// 신발 남65/여88 — 프로덕션 /business/ads/active 실측). 나머지는 무필터(전량 사라지는 사고 방지).
-const GENDER_FILTER_CATS: Cat[] = ['상의', '하의', '신발'];
-
-// 광고 0개일 때 노출할 더미 샘플 (UX 데모용) — 카테고리당 5개
-// advertiser_nickname은 가상 브랜드명 (실제 광고주가 등록되면 그 브랜드명으로 자동 교체)
-const SAMPLE_ITEMS: Record<Cat, AdItem[]> = {
-  상의: [
-    { id: 'sample_top_1', name: '베이직 흰 티', advertiser_nickname: 'AURA' },
-    { id: 'sample_top_2', name: '오버사이즈 후디', advertiser_nickname: 'STARLIGHT' },
-    { id: 'sample_top_3', name: '데님 셔츠', advertiser_nickname: 'INDIGO CO.' },
-    { id: 'sample_top_4', name: '스트라이프 폴로', advertiser_nickname: 'MOON CLUB' },
-    { id: 'sample_top_5', name: '검은 가죽 자켓', advertiser_nickname: 'NOIR' },
-  ],
-  하의: [
-    { id: 'sample_bot_1', name: '슬림 청바지', advertiser_nickname: 'INDIGO CO.' },
-    { id: 'sample_bot_2', name: '와이드 슬랙스', advertiser_nickname: 'PIVOT' },
-    { id: 'sample_bot_3', name: '카고 팬츠', advertiser_nickname: 'STARLIGHT' },
-    { id: 'sample_bot_4', name: '플리츠 스커트', advertiser_nickname: 'AURA' },
-    { id: 'sample_bot_5', name: '조거 트레이닝', advertiser_nickname: 'STRIDE' },
-  ],
-  신발: [
-    { id: 'sample_shoes_1', name: '하얀 스니커즈', advertiser_nickname: 'STRIDE' },
-    { id: 'sample_shoes_2', name: '컴뱃 부츠', advertiser_nickname: 'NOIR' },
-    { id: 'sample_shoes_3', name: '러닝화', advertiser_nickname: 'STRIDE' },
-    { id: 'sample_shoes_4', name: '로퍼', advertiser_nickname: 'LACE+' },
-    { id: 'sample_shoes_5', name: '플랫폼 슈즈', advertiser_nickname: 'MOON CLUB' },
-  ],
-  // v3.206: 기존 장신구(귀걸이·목걸이·팔찌) 샘플 제거 — 악세서리 피커는 모자/가방 서브탭이므로
-  // 서브카테고리별 5종 샘플(실데이터 0건 폴백)로 교체. 가상 브랜드 관행 유지.
-  모자: [
-    { id: 'sample_hat_1', name: '클래식 볼캡', advertiser_nickname: 'STRIDE' },
-    { id: 'sample_hat_2', name: '코듀로이 버킷햇', advertiser_nickname: 'AURA' },
-    { id: 'sample_hat_3', name: '와치 비니', advertiser_nickname: 'NOIR' },
-    { id: 'sample_hat_4', name: '울 베레모', advertiser_nickname: 'MOON CLUB' },
-    { id: 'sample_hat_5', name: '로고 스냅백', advertiser_nickname: 'STARLIGHT' },
-  ],
-  가방: [
-    { id: 'sample_bag_1', name: '미니 크로스백', advertiser_nickname: 'CHARM' },
-    { id: 'sample_bag_2', name: '캔버스 토트백', advertiser_nickname: 'AURA' },
-    { id: 'sample_bag_3', name: '데일리 백팩', advertiser_nickname: 'STRIDE' },
-    { id: 'sample_bag_4', name: '퀼팅 숄더백', advertiser_nickname: 'GLEAM' },
-    { id: 'sample_bag_5', name: '가죽 클러치', advertiser_nickname: 'NOIR' },
-  ],
-};
-
-function adImageUrl(objectName?: string): string | null {
-  if (!objectName) return null;
-  return `${BACKEND_BASE_URL}/api/business/items/image/${objectName}`;
-}
 
 export default function ArtistCodyScreen({ navigation, route }: any) {
-  const insets = useSafeAreaInsets();
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침) —
@@ -283,12 +200,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     })();
     return () => { cancelled = true; };
   }, [isLoggedIn]);
-  const wished = useWishlistStore((s) => s.wished);
-  const wishBusy = useWishlistStore((s) => s.busy);
-  const wishItemsAll = useWishlistStore((s) => s.items);
-  const wishListLoaded = useWishlistStore((s) => s.listLoaded);
-  const wishListLoading = useWishlistStore((s) => s.listLoading);
-  const wishListError = useWishlistStore((s) => s.listError);
 
   const openPicker = async (cat: Cat) => {
     setAccessoryMode(false);
@@ -668,107 +579,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     };
   }, [navigation, route?.params?.returnToCover]);
 
-  // ── v3.205(⑤) 성별 자동 필터 — 드릴 소스 목록에 선적용(패싯 수치도 필터 후 기준) ──
-  // genderMatches 재사용: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
-  // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
-  const genderFilterActive =
-    !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat) && genderFilterOn;
-  // v3.206: 악세서리 피커 — 서브탭(모자|가방)이 baseItems 앞단 필터.
-  // 해당 서브카테고리 실데이터 0건이면 SAMPLE 폴백(장신구 아닌 모자/가방 샘플).
-  const accessorySubItems =
-    accessoryMode && pickerCat ? pickerItems.filter((i) => i.category === pickerCat) : null;
-  const sourceItems =
-    accessorySubItems !== null
-      ? (accessorySubItems.length > 0 ? accessorySubItems : SAMPLE_ITEMS[pickerCat!])
-      : pickerItems;
-  const baseItems = genderFilterActive
-    ? sourceItems.filter((i) => genderMatches(i, artistGender!))
-    : sourceItems;
-  useEffect(() => {
-    if (__DEV__ && genderFilterActive && !pickerLoading) {
-      console.info('[ArtistCody] 성별 자동 필터', {
-        gender: artistGender,
-        category: pickerCat,
-        filtered: baseItems.length,
-        total: pickerItems.length,
-      });
-    }
-  }, [genderFilterActive, pickerLoading, artistGender, pickerCat, baseItems.length, pickerItems.length]);
-
-  // ── v3.90 5단계 드릴다운 파생값 (MAIDOL ItemSelectModal 이식) ──
-  const byPlatform = drill.platform ? baseItems.filter((i) => platformOf(i) === drill.platform) : baseItems;
-  const byBrand = drill.brand ? byPlatform.filter((i) => brandOf(i) === drill.brand) : byPlatform;
-  const drillGender = drill.gender;
-  const byGender = drillGender ? byBrand.filter((i) => genderMatches(i, drillGender)) : byBrand;
-  const byProductRaw = drill.product ? byGender.filter((i) => productOf(i) === drill.product) : byGender;
-  // v3.123(대표): 기선택 아이템이 있으면 목록 맨 앞에 노출 — 재선택/변경 시 바로 보이게
-  const pickedId = pickerCat ? selected[pickerCat]?.id : undefined;
-  const byProduct = pickedId
-    ? [...byProductRaw].sort((a, b) => (a.id === pickedId ? -1 : b.id === pickedId ? 1 : 0))
-    : byProductRaw;
-
-  const currentLevel: DrillLevel | 'color' = !drill.platform
-    ? 'platform'
-    : !drill.brand
-      ? 'brand'
-      : !drill.gender
-        ? 'gender'
-        : !drill.product
-          ? 'product'
-          : 'color';
-
-  const facetOptions: string[] =
-    currentLevel === 'platform' ? [...new Set(baseItems.map(platformOf))]
-    : currentLevel === 'brand' ? [...new Set(byPlatform.map(brandOf))]
-    : currentLevel === 'gender' ? ['남', '여'].filter((g) => byBrand.some((i) => genderMatches(i, g)))
-    : currentLevel === 'product' ? [...new Set(byGender.map(productOf))]
-    : [];
-  const facetLabel =
-    currentLevel === 'platform' ? '플랫폼'
-    : currentLevel === 'brand' ? '브랜드'
-    : currentLevel === 'gender' ? '성별'
-    : currentLevel === 'product' ? '제품'
-    : '';
-
-  const crumbs: { level: DrillLevel; label: string }[] = [];
-  if (drill.platform) crumbs.push({ level: 'platform', label: drill.platform });
-  if (drill.brand) crumbs.push({ level: 'brand', label: drill.brand });
-  if (drill.gender) crumbs.push({ level: 'gender', label: genderLabel(drill.gender) });
-  if (drill.product) crumbs.push({ level: 'product', label: drill.product });
-  const drillActive = crumbs.length > 0;
-
-  const selectLevel = (level: DrillLevel, value: string) => {
-    const next = { ...drill, [level]: value };
-    if (__DEV__) console.info('[ArtistCody] drill', next);
-    setDrill(next);
-  };
-
-  const jumpTo = (level: DrillLevel) => {
-    if (level === 'platform') setDrill(EMPTY_DRILL);
-    else if (level === 'brand') setDrill((d) => ({ ...d, brand: null, gender: null, product: null }));
-    else if (level === 'gender') setDrill((d) => ({ ...d, gender: null, product: null }));
-    else if (level === 'product') setDrill((d) => ({ ...d, product: null }));
-  };
-
-  const goBack = () => {
-    setDrill((d) => {
-      if (d.product) return { ...d, product: null };
-      if (d.gender) return { ...d, gender: null, product: null };
-      if (d.brand) return { ...d, brand: null, gender: null, product: null };
-      if (d.platform) return EMPTY_DRILL;
-      return d;
-    });
-  };
-
-  // 위시리스트 탭: 현재 카테고리의 내 찜 목록 (store엔 전 카테고리 보관)
-  const wishItemsForCatRaw: WishItem[] = pickerCat
-    ? wishItemsAll.filter((it) => it.category === pickerCat)
-    : [];
-  // v3.123: 위시 탭도 기선택 우선 정렬
-  const wishItemsForCat = pickedId
-    ? [...wishItemsForCatRaw].sort((a, b) => (a.id === pickedId ? -1 : b.id === pickedId ? 1 : 0))
-    : wishItemsForCatRaw;
-
   return (
     <View style={styles.container}>
       <AppText style={[styles.title, { paddingTop: 12 }]}>
@@ -973,331 +783,27 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         </View>
       </View>
 
-      {/* 카테고리별 아이템 선택 모달 */}
-      <Modal
-        visible={pickerCat !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={closePicker}
-      >
-        <View style={styles.modalOverlay}>
-          {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
-          <View style={[styles.modalBox, { paddingBottom: insets.bottom }]}>
-            <View style={styles.modalHeader}>
-              <AppText style={styles.modalTitle}>
-                {accessoryMode ? '악세서리 고르기' : pickerCat ? `${pickerCat} 고르기` : ''}
-              </AppText>
-              <TouchableOpacity onPress={closePicker}>
-                <AppText style={styles.modalClose}>✕</AppText>
-              </TouchableOpacity>
-            </View>
-            {/* v3.90: 전체 | 위시리스트 탭 */}
-            <View style={styles.pickerTabs}>
-              <TouchableOpacity
-                style={[styles.pickerTab, pickerTab === 'all' && styles.pickerTabActive]}
-                onPress={() => setPickerTab('all')}
-              >
-                <AppText style={[styles.pickerTabText, pickerTab === 'all' && styles.pickerTabTextActive]}>
-                  전체
-                </AppText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.pickerTab, pickerTab === 'wish' && styles.pickerTabActive]}
-                onPress={() => setPickerTab('wish')}
-              >
-                <Feather
-                  name="heart"
-                  size={12}
-                  color={pickerTab === 'wish' ? colors.accent.primary : colors.text.muted}
-                />
-                <AppText style={[styles.pickerTabText, pickerTab === 'wish' && styles.pickerTabTextActive]}>
-                  {' '}내 위시리스트{isLoggedIn && wishListLoaded && !wishListError ? ` (${wishItemsForCat.length})` : ''}
-                </AppText>
-              </TouchableOpacity>
-              {/* v3.205(⑤)→v3.207(⑩): 성별 필터 칩 — 대상 카테고리(상의/하의/신발)에서 상시 노출.
-                  성별 판별 시 = 기존 "◯◯용만/전체 보기" 토글, 미상 시 = "성별 미설정" 안내 칩(발견성). */}
-              {pickerCat && GENDER_FILTER_CATS.includes(pickerCat) ? (
-                artistGender ? (
-                  <TouchableOpacity
-                    style={[styles.genderChip, genderFilterOn && styles.genderChipActive]}
-                    onPress={() => setGenderFilterOn((v) => !v)}
-                    accessibilityLabel="성별 필터 전환"
-                  >
-                    <AppText style={[styles.genderChipText, genderFilterOn && styles.genderChipTextActive]}>
-                      {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
-                    </AppText>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.genderChip}
-                    onPress={() => {
-                      if (__DEV__) console.info('[ArtistCody] 성별 자동 필터 — 미설정 칩 탭(안내)');
-                      showAlert(
-                        '성별 미설정',
-                        '아티스트 성별이 설정되지 않아 전체 아이템을 보여드리고 있어요.\n아티스트 프로필에서 성별을 설정하면 성별 맞춤 필터를 사용할 수 있어요.'
-                      );
-                    }}
-                    accessibilityLabel="성별 미설정 안내"
-                  >
-                    <AppText style={styles.genderChipText}>성별 미설정 · 전체 표시</AppText>
-                  </TouchableOpacity>
-                )
-              ) : null}
-            </View>
-
-            {/* v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방] — baseItems 앞단 필터, 각 1개씩 동시 선택 */}
-            {accessoryMode && (
-              <View style={styles.subcatRow}>
-                {ACCESSORY_SUBCATS.map((sub) => {
-                  const active = pickerCat === sub;
-                  const picked = selected[sub];
-                  return (
-                    <TouchableOpacity
-                      key={sub}
-                      style={[styles.subcatSeg, active && styles.subcatSegActive]}
-                      onPress={() => switchAccessorySub(sub)}
-                    >
-                      <AppText style={[styles.subcatSegText, active && styles.subcatSegTextActive]}>
-                        {sub}
-                        {picked ? ` · ${picked.name}` : ''}
-                      </AppText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-
-            {pickerTab === 'all' && (pickerLoading ? (
-              <View style={{ padding: 40, alignItems: 'center' }}>
-                <ActivityIndicator size="large" color={colors.accent.primary} />
-              </View>
-            ) : sourceItems.length === 0 ? (
-              <View style={{ padding: 40 }}>
-                <AppText style={styles.emptyDesc}>
-                  등록된 {pickerCat} 아이템이 없어요.
-                </AppText>
-              </View>
-            ) : genderFilterActive && baseItems.length === 0 ? (
-              // v3.205(⑤): 필터 결과 0건 — 전체 보기 전환 안내
-              <View style={{ padding: 40 }}>
-                <AppText style={styles.emptyDesc}>
-                  {genderLabel(artistGender!)}용 {pickerCat} 아이템이 없어요.{'\n'}상단 칩을 누르면 전체 보기로 전환됩니다.
-                </AppText>
-              </View>
-            ) : (
-              <FlatList
-                data={byProduct}
-                keyExtractor={(item) => item.id}
-                numColumns={2}
-                ListHeaderComponent={
-                  <View>
-                    {/* 브레드크럼: 전체 › 플랫폼 › 브랜드 › 성별 › 제품 */}
-                    <View style={styles.crumbRow}>
-                      <TouchableOpacity onPress={() => jumpTo('platform')} disabled={!drillActive}>
-                        <AppText style={[styles.crumbText, !drillActive && styles.crumbTextMuted]}>전체</AppText>
-                      </TouchableOpacity>
-                      {crumbs.map((c) => (
-                        <View key={c.level} style={styles.crumbItem}>
-                          <AppText style={styles.crumbSep}>›</AppText>
-                          <TouchableOpacity onPress={() => jumpTo(c.level)}>
-                            <AppText style={styles.crumbText}>{c.label}</AppText>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                      {drillActive && (
-                        <TouchableOpacity style={styles.drillBackBtn} onPress={goBack}>
-                          <Feather name="chevron-left" size={13} color={colors.text.secondary} />
-                          <AppText style={styles.drillBackText}>뒤로</AppText>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-
-                    {/* 현재 단계 패싯 타일 */}
-                    {currentLevel !== 'color' && facetOptions.length > 0 && (
-                      <View style={styles.facetBox}>
-                        <AppText style={styles.facetLabel}>{facetLabel} 선택</AppText>
-                        <View style={styles.facetTiles}>
-                          {facetOptions.map((opt) => (
-                            <TouchableOpacity
-                              key={opt}
-                              style={styles.facetTile}
-                              onPress={() => selectLevel(currentLevel as DrillLevel, opt)}
-                            >
-                              <AppText style={styles.facetTileText} numberOfLines={1}>
-                                {currentLevel === 'gender' ? genderLabel(opt) : opt}
-                              </AppText>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                  </View>
-                }
-                renderItem={({ item }) => {
-                  const url = adImageUrl(item.image_object_name);
-                  const isSample = item.id.startsWith('sample_');
-                  // v3.124: 기선택 아이템 시각 표시 — 정렬로 맨 앞에 오는 것만으로는
-                  // "내가 고른 것"임을 알 수 없다는 대표 피드백 → 강조 테두리 + ✓ 선택됨 배지
-                  const isPicked = item.id === pickedId;
-                  return (
-                    <TouchableOpacity
-                      style={[styles.itemCard, isPicked && styles.itemCardPicked]}
-                      onPress={() => pickItem(item)}
-                    >
-                      <View style={styles.itemImgWrap}>
-                        {url ? (
-                          <Image source={{ uri: url }} style={styles.itemImg} />
-                        ) : (
-                          <View style={[styles.itemImg, styles.itemImgFallback]}>
-                            <AppText style={{ fontSize: 28 }}>?</AppText>
-                          </View>
-                        )}
-                        {isPicked && (
-                          <View style={styles.pickedBadge}>
-                            <Feather name="check" size={11} color="#fff" />
-                            <AppText style={styles.pickedBadgeText}>선택됨</AppText>
-                          </View>
-                        )}
-                        {/* 브랜드 배지 — 이미지 좌상단에 강조 */}
-                        {item.advertiser_nickname ? (
-                          <View style={styles.brandBadge}>
-                            <AppText style={styles.brandBadgeText} numberOfLines={1}>
-                              {item.advertiser_nickname}
-                            </AppText>
-                          </View>
-                        ) : null}
-                        {/* 위시 하트 — 샘플 더미는 서버에 없어 담기 불가 → 숨김 */}
-                        {!isSample && (
-                          <TouchableOpacity
-                            style={styles.wishBtn}
-                            onPress={() => handleWishToggle(item)}
-                            disabled={!!wishBusy[item.id]}
-                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                          >
-                            {/* v3.176: 담기면 채워진 하트+플랫폼 보라 (플레이어 착장 카드와 통일) */}
-                            <MaterialCommunityIcons
-                              name={wished[item.id] ? 'heart' : 'heart-outline'}
-                              size={17}
-                              color={wished[item.id] ? colors.accent.primary : '#fff'}
-                            />
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                      <AppText style={styles.itemName} numberOfLines={2}>
-                        {item.product_name || item.name}
-                      </AppText>
-                      {item.color ? (
-                        <AppText style={styles.itemBrand} numberOfLines={1}>{item.color}</AppText>
-                      ) : null}
-                      {/* v3.109: 판매처 링크 — product_url 있는 아이템만 노출 */}
-                      {item.product_url ? (
-                        <TouchableOpacity
-                          style={styles.itemLinkBtn}
-                          onPress={() => openItemLink(item)}
-                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                        >
-                          <Feather name="external-link" size={11} color={colors.accent.primary} />
-                          <AppText style={styles.itemLinkText}>판매처 보기</AppText>
-                        </TouchableOpacity>
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                }}
-                contentContainerStyle={{ padding: 12 }}
-              />
-            ))}
-
-            {pickerTab === 'wish' && (
-              !isLoggedIn ? (
-                <View style={{ padding: 40 }}>
-                  <AppText style={styles.emptyDesc}>로그인 후 이용할 수 있습니다.</AppText>
-                </View>
-              ) : wishListLoading || !wishListLoaded ? (
-                <View style={{ padding: 40, alignItems: 'center' }}>
-                  <ActivityIndicator size="large" color={colors.accent.primary} />
-                </View>
-              ) : wishListError ? (
-                <View style={{ padding: 40 }}>
-                  <AppText style={styles.emptyDesc}>위시리스트를 불러오지 못했습니다.</AppText>
-                </View>
-              ) : wishItemsForCat.length === 0 ? (
-                <View style={{ padding: 40 }}>
-                  <AppText style={styles.emptyDesc}>
-                    위시리스트에 담긴 {pickerCat} 아이템이 없어요.{'\n'}전체 탭에서 하트를 눌러 담아보세요.
-                  </AppText>
-                </View>
-              ) : (
-                <FlatList
-                  data={wishItemsForCat}
-                  keyExtractor={(item) => item.id}
-                  numColumns={2}
-                  renderItem={({ item }) => {
-                    const url = adImageUrl(item.image_object_name);
-                    const inactive = item.is_active === false;
-                    // v3.124: 위시 탭에도 동일한 기선택 표시
-                    const isPicked = item.id === pickedId;
-                    return (
-                      <TouchableOpacity
-                        style={[styles.itemCard, isPicked && styles.itemCardPicked, inactive && styles.itemCardInactive]}
-                        onPress={() => pickItem(item)}
-                        disabled={inactive}
-                      >
-                        <View style={styles.itemImgWrap}>
-                          {url ? (
-                            <Image source={{ uri: url }} style={styles.itemImg} />
-                          ) : (
-                            <View style={[styles.itemImg, styles.itemImgFallback]}>
-                              <AppText style={{ fontSize: 28 }}>?</AppText>
-                            </View>
-                          )}
-                          {isPicked && (
-                            <View style={styles.pickedBadge}>
-                              <Feather name="check" size={11} color="#fff" />
-                              <AppText style={styles.pickedBadgeText}>선택됨</AppText>
-                            </View>
-                          )}
-                          {inactive && (
-                            <View style={styles.inactiveBadge}>
-                              <AppText style={styles.inactiveBadgeText}>판매종료</AppText>
-                            </View>
-                          )}
-                          {/* 하트 = 위시 해제 (위시 탭이므로 항상 담긴 상태 = 채워진 보라) */}
-                          <TouchableOpacity
-                            style={styles.wishBtn}
-                            onPress={() => handleWishToggle(item)}
-                            disabled={!!wishBusy[item.id]}
-                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                          >
-                            <MaterialCommunityIcons name="heart" size={17} color={colors.accent.primary} />
-                          </TouchableOpacity>
-                        </View>
-                        <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
-                        {item.advertiser_nickname ? (
-                          <AppText style={styles.itemBrand} numberOfLines={1}>
-                            {item.advertiser_nickname}
-                          </AppText>
-                        ) : null}
-                        {/* v3.109: 판매처 링크 — 위시 탭에도 동일 노출(판매종료 아이템도 링크는 유효) */}
-                        {item.product_url ? (
-                          <TouchableOpacity
-                            style={styles.itemLinkBtn}
-                            onPress={() => openItemLink(item)}
-                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                          >
-                            <Feather name="external-link" size={11} color={colors.accent.primary} />
-                            <AppText style={styles.itemLinkText}>판매처 보기</AppText>
-                          </TouchableOpacity>
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  }}
-                  contentContainerStyle={{ padding: 12 }}
-                />
-              )
-            )}
-          </View>
-        </View>
-      </Modal>
+      {/* 카테고리별 아이템 선택 모달 — v3.227: components/cody/CodyPickerModal로 추출(동작 무변경) */}
+      <CodyPickerModal
+        pickerCat={pickerCat}
+        accessoryMode={accessoryMode}
+        pickerItems={pickerItems}
+        pickerLoading={pickerLoading}
+        pickerTab={pickerTab}
+        setPickerTab={setPickerTab}
+        drill={drill}
+        setDrill={setDrill}
+        genderFilterOn={genderFilterOn}
+        setGenderFilterOn={setGenderFilterOn}
+        artistGender={artistGender}
+        selected={selected}
+        isLoggedIn={isLoggedIn}
+        closePicker={closePicker}
+        switchAccessorySub={switchAccessorySub}
+        pickItem={pickItem}
+        handleWishToggle={handleWishToggle}
+        openItemLink={openItemLink}
+      />
     </View>
   );
 }
@@ -1366,163 +872,8 @@ const styles = StyleSheet.create({
   },
   applyBtnText: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(13, 8, 32, 0.85)', justifyContent: 'flex-end' },
-  modalBox: {
-    backgroundColor: colors.bg.deepest,
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    maxHeight: '80%',
-    borderTopWidth: 1, borderTopColor: colors.accent.primary,
-  },
-  modalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 16, borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
-  },
-  modalTitle: { color: colors.text.primary, fontSize: 16, fontWeight: '700' },
-  modalClose: { color: colors.text.secondary, fontSize: 22 },
-  emptyDesc: { fontSize: 14, color: colors.text.secondary, textAlign: 'center', lineHeight: 22 },
+  // (피커 모달·필터 바·그리드 스타일은 components/cody/codyShared.ts pickerStyles로 이동)
 
-  itemCard: {
-    flex: 1, margin: 6, padding: 10,
-    backgroundColor: colors.bg.surface1, borderRadius: 12,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  itemImgWrap: { position: 'relative', marginBottom: 8 },
-  // v3.180(대표): 투명 png 제품컷 흰 배경 — 어두운 테마에서 옷이 잘 보이게 (플레이어 착장과 통일)
-  itemImg: { width: '100%', aspectRatio: 1, borderRadius: 8, backgroundColor: '#fff' },
-  itemImgFallback: {
-    backgroundColor: colors.bg.surface2,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  brandBadge: {
-    position: 'absolute', top: 6, left: 6,
-    backgroundColor: 'rgba(0,0,0,0.78)',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
-    maxWidth: '85%',
-  },
-  brandBadgeText: {
-    color: '#fff', fontSize: 10, fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  itemName: {
-    color: colors.text.primary, fontSize: 13, fontWeight: '600',
-    minHeight: 34,
-  },
-  itemBrand: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
-  itemCardInactive: { opacity: 0.45 },
-  // v3.124: 기선택 아이템 강조 — 액센트 테두리 + 살짝 밝은 배경
-  itemCardPicked: {
-    borderWidth: 2, borderColor: colors.accent.primary,
-    backgroundColor: colors.bg.surface2,
-  },
-  pickedBadge: {
-    position: 'absolute', bottom: 6, right: 6,
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: colors.accent.primary,
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
-  },
-  pickedBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  // v3.109: 판매처 링크 버튼 (아이템 카드 하단)
-  itemLinkBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    alignSelf: 'flex-start', marginTop: 6,
-    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8,
-    backgroundColor: colors.bg.surface2,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  itemLinkText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
-
-  // v3.90: 전체 | 위시리스트 탭
-  pickerTabs: {
-    flexDirection: 'row',
-    borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
-  },
-  pickerTab: {
-    flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    paddingVertical: 11,
-    borderBottomWidth: 2, borderBottomColor: 'transparent',
-  },
-  pickerTabActive: { borderBottomColor: colors.accent.primary },
-  pickerTabText: { color: colors.text.muted, fontSize: 13, fontWeight: '600' },
-  pickerTabTextActive: { color: colors.text.primary, fontWeight: '700' },
-
-  // v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방]
-  subcatRow: {
-    flexDirection: 'row', gap: 8,
-    paddingHorizontal: 12, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
-  },
-  subcatSeg: {
-    flex: 1, alignItems: 'center',
-    paddingVertical: 8, borderRadius: 10,
-    backgroundColor: colors.bg.surface1,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  subcatSegActive: {
-    backgroundColor: colors.bg.surface2,
-    borderColor: colors.accent.primary,
-  },
-  subcatSegText: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
-  subcatSegTextActive: { color: colors.text.primary, fontWeight: '800' },
-
-  // v3.205(⑤): 성별 필터 토글 칩 (탭 행 우측)
-  genderChip: {
-    alignSelf: 'center', marginRight: 10,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
-    backgroundColor: colors.bg.surface2,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  genderChipActive: { borderColor: colors.accent.primary },
-  genderChipText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700' },
-  genderChipTextActive: { color: colors.accent.primary },
-
-  // v3.90: 드릴다운 브레드크럼
-  crumbRow: {
-    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
-    paddingHorizontal: 4, paddingBottom: 8, gap: 4,
-  },
-  crumbItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  crumbText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
-  crumbTextMuted: { color: colors.text.muted, fontWeight: '600' },
-  crumbSep: { color: colors.text.muted, fontSize: 12 },
-  drillBackBtn: {
-    flexDirection: 'row', alignItems: 'center', marginLeft: 'auto',
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
-    backgroundColor: colors.bg.surface2,
-  },
-  drillBackText: { color: colors.text.secondary, fontSize: 11, fontWeight: '600' },
-
-  // v3.90: 패싯 타일 (플랫폼/브랜드/성별/제품)
-  facetBox: {
-    marginBottom: 10, padding: 10, borderRadius: 12,
-    backgroundColor: colors.bg.surface1,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  facetLabel: {
-    color: colors.text.secondary, fontSize: 11, fontWeight: '700',
-    marginBottom: 8, letterSpacing: 0.3,
-  },
-  facetTiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  facetTile: {
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
-    backgroundColor: colors.bg.surface2,
-    borderWidth: 1, borderColor: colors.border.subtle,
-    maxWidth: '100%',
-  },
-  facetTileText: { color: colors.text.primary, fontSize: 12, fontWeight: '600' },
-
-  // v3.90: 위시 하트 버튼 (이미지 우상단)
-  wishBtn: {
-    position: 'absolute', top: 6, right: 6,
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  inactiveBadge: {
-    position: 'absolute', bottom: 6, left: 6,
-    backgroundColor: 'rgba(0,0,0,0.78)',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
-  },
-  inactiveBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
 
   catBrand: {
     color: colors.accent.primary, fontSize: 10, fontWeight: '700',
