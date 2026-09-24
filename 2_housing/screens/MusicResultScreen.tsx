@@ -91,18 +91,32 @@ async function fetchCharacterInfo(): Promise<CharacterInfo> {
   try {
     const res = await api.get('/character/me');
     const ch = res.data?.character;
-    const characterId = ch ? String(ch.character_id ?? ch.id ?? ch._id ?? '') || null : null;
+    const realCid = ch ? String(ch.character_id ?? ch.id ?? ch._id ?? '') || null : null;
+    const virtualCid = ch?.virtual_character_id ? String(ch.virtual_character_id) : null;
     if (ch?.sheet_object_name) {
       return {
         snapshot: {
           sheet_object_name: ch.sheet_object_name,
           used_items: Array.isArray(ch.used_items) ? ch.used_items : [],
         },
-        characterId,
+        characterId: realCid,
       };
     }
-    if (__DEV__) console.log('[MusicResult] 캐릭터 시트 미보유 — snapshot 생략, characterId=', characterId);
-    return { snapshot: null, characterId };
+    // v3.217 ⑦: 실사 슬롯 부재 — 가상 슬롯(virtual_*) 폴백. 가상 전용 계정도 발매 스냅샷이
+    // 생성돼 곡 스타일링 탭 착장이 표시된다(PLAN F7 — 기존엔 실사 필드만 읽어 스냅샷 미생성).
+    // characterId는 가상 cid 전달 — 서버 _build_character_snapshot(cid, kind 무관 used_items)
+    // 재조립이 우선하므로 가상 cid도 자동 커버된다.
+    if (ch?.virtual_sheet_object_name) {
+      return {
+        snapshot: {
+          sheet_object_name: ch.virtual_sheet_object_name,
+          used_items: Array.isArray(ch.virtual_used_items) ? ch.virtual_used_items : [],
+        },
+        characterId: virtualCid ?? realCid,
+      };
+    }
+    if (__DEV__) console.log('[MusicResult] 캐릭터 시트 미보유(실사·가상 모두) — snapshot 생략, characterId=', realCid ?? virtualCid);
+    return { snapshot: null, characterId: realCid ?? virtualCid };
   } catch (err: any) {
     console.error('[MusicResult] /character/me 조회 실패 — snapshot 생략:', err?.response?.status, err?.message);
   }
@@ -508,6 +522,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       // BUG-3 픽스: 발매 보상은 트랙 저장 성공 직후에만 지급 (같은 generation 재지급 가드)
       grantReleaseRewards(String(payload.generation_id), trackId);
       lyricsStore.reset();
+      // v3.219 [ComposeDraft]: 발매 성공 = 작곡 대화 완주 — draft 클리어(다음 곡은 새 대화)
+      store.clearComposeDraft();
+      if (__DEV__) console.info('[ComposeDraft] 발매 성공 — draft 클리어');
       // v3.200: 발매 확정 — 창작 세션 종료(다음 곡은 새 세션)
       endCreationSession();
       // v3.200(F6): 보컬 포함 곡 발매 완료 시 AI 음성 합성 고지 1줄(법정 고지 — 문구 서버 설정화는 후속)
@@ -573,6 +590,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         // BUG-3 픽스: 커버 경유 저장도 동일하게 저장 성공 직후 지급 (중복 가드 공유)
         grantReleaseRewards(String(payload.generation_id), trackId);
         lyricsStore.reset();
+        // v3.219 [ComposeDraft]: 커버 경유 발매 성공도 동일 — 작곡 draft 클리어
+        store.clearComposeDraft();
+        if (__DEV__) console.info('[ComposeDraft] 커버 경유 발매 성공 — draft 클리어');
         // v3.200: 발매 확정 — 창작 세션 종료 (handleSave와 동일)
         endCreationSession();
       } catch (err: any) {

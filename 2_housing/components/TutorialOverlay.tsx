@@ -337,29 +337,15 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
       );
       content = (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          {/* 4분할 딤 — 가운데 구멍(anchor rect)만 원화면이 그대로 보인다 */}
+          {/* 4분할 딤 — 가운데 구멍(anchor rect)만 원화면이 그대로 보인다.
+              v3.217: 코너 마스크 링 제거에 맞춰 구멍 밀착 타일링 원복 — rect 라운딩(12px)의
+              모서리 빈틈은 ~3px 수준이라 별도 마스크 불필요(pill 형태는 F7로 전면 폐지). */}
           <View style={[styles.dimPart, { top: 0, left: 0, right: 0, height: hole.y }]} />
           <View style={[styles.dimPart, { top: hole.y, height: hole.h, left: 0, width: hole.x }]} />
           <View
             style={[styles.dimPart, { top: hole.y, height: hole.h, left: hole.x + hole.w, right: 0 }]}
           />
           <View style={[styles.dimPart, { top: hole.y + hole.h, left: 0, right: 0, bottom: 0 }]} />
-          {/* v3.214 ①: 딤 코너 마스크 — 구멍 라운딩(rect 12 / pill 반원) 밖에 4분할 딤이 못 덮은
-              밝은 모서리 잔존을 두꺼운 DIM_COLOR border 로 가린다. shape 무관 항상 렌더. */}
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: hole.x - CORNER_MASK_B,
-              top: hole.y - CORNER_MASK_B,
-              width: hole.w + CORNER_MASK_B * 2,
-              height: hole.h + CORNER_MASK_B * 2,
-              borderWidth: CORNER_MASK_B,
-              borderColor: DIM_COLOR,
-              borderRadius: holeRadius + CORNER_MASK_B,
-              backgroundColor: 'transparent',
-            }}
-          />
           {/* v3.213: 구멍 위 보라 틴트 반투명 하이라이트 박스 (테두리 최소화 — 헤어라인 글로우 톤) */}
           <View
             pointerEvents="none"
@@ -449,8 +435,9 @@ const styles = StyleSheet.create({
     // 틴트+헤어라인만으로 성립하는 디자인(간소화, elevation 미지정).
     shadowColor: colors.accent.primary,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 16,
+    // v3.217: 글로우 완화 — 0.9/16은 딤 위에서 넓은 halo(뒤 사각형처럼 보임)로 번졌다
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
   },
   card: {
     backgroundColor: colors.bg.surface1,

@@ -26,12 +26,14 @@ import * as Linking from 'expo-linking';
 import { navigationRef, resetToChartTab } from './services/navigationRef';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 // v3.207(⑤): 키보드 근본 전환 — RN Keyboard 이벤트 대신 네이티브 WindowInsetsAnimationCompat 기반
 // react-native-keyboard-controller. 루트 Provider 1회 설치(소비처는 DmChat·Modal 5종).
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { DirectorType } from './components/Character';
 import MiniPlayer from './components/MiniPlayer';
+// v3.217 ①(b): 인앱 브라우저 감지·탈출 배너 — 웹 전용 컴포넌트(네이티브 즉시 null)
+import InAppEscapeBanner from './components/InAppEscapeBanner';
 import HomeHeaderActions from './components/HomeHeaderActions';
 import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
@@ -126,7 +128,7 @@ export type StudioStackParamList = {
   // v3.93: 생성 이력 목록 (진행중 이어보기 / 완료 결과 / 실패 확인·삭제)
   GenerationHistory: undefined;
   CoverGeneration: undefined;
-  VideoDirector: undefined;
+  VideoDirector: { initialTrackId?: string } | undefined; // v3.221: 마이페이지 다운로드(영상) 연결 — 선곡 프리셋
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
   // v3.103(B-1): characterId — 서버 다중 아티스트(cid) 진입. slot은 레거시(me 폴백) 전용.
   //   ArtistInput.characterId = 재생성 대상(kind 불일치 400 → forceKind 동반 필수)
@@ -251,8 +253,9 @@ function MiniPlayerWrapper() {
   const insets = require('react-native-safe-area-context').useSafeAreaInsets();
   // v3.82: 화면 단위 숨김(ArtistResult 등) — 렌더만 막고 오디오 재생은 유지
   const miniHidden = usePlayerStore((s) => s.miniHidden);
-  // 탭 바 높이: 49(기본) + safeArea bottom
-  const tabBarHeight = 49 + insets.bottom;
+  // 탭 바 높이: 네이티브 49 + safeArea bottom. 웹은 탭바가 고정 54(:MainTabs) —
+  // v3.217 ④: 49 기준이던 웹 미니 bottom의 5px 겹침을 웹 탭바 54 기준으로 정합.
+  const tabBarHeight = (Platform.OS === 'web' ? 54 : 49) + insets.bottom;
   if (miniHidden) return null;
   return (
     <View style={{ position: 'absolute', bottom: tabBarHeight, left: 0, right: 0, zIndex: 999 }}>
@@ -315,6 +318,9 @@ const stackHeader = (navigation: any, title: string) => ({
 });
 
 function MainTabs() {
+  // v3.217 ④: 웹 viewport-fit=cover 도입으로 insets.bottom이 실값이 될 수 있어(홈 인디케이터)
+  // 웹 탭바 높이에 가산 — 콘텐츠 영역 54는 유지(react-navigation이 paddingBottom=inset 적용).
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -324,7 +330,7 @@ function MainTabs() {
           borderTopColor: colors.border.subtle,
           borderTopWidth: 1,
           // 웹은 기본 49px에서 한글 받침이 잘림. 네이티브는 safe area 계산이 있어 고정 높이 금지
-          ...(Platform.OS === 'web' ? { height: 54 } : {}),
+          ...(Platform.OS === 'web' ? { height: 54 + insets.bottom } : {}),
         },
         tabBarActiveTintColor: colors.accent.primary,
         tabBarInactiveTintColor: colors.text.muted,
@@ -636,6 +642,8 @@ export default function App() {
           <GlobalModals />
           {/* v3.85: 전역 앱 내 다이얼로그 (showAlert → dialogStore) — 시스템 팝업 대체 */}
           <AppDialogHost />
+          {/* v3.217 ①(b): 인앱 브라우저(카카오톡 등) 감지 → 외부 브라우저 탈출 유도 — 웹 전용 */}
+          {Platform.OS === 'web' ? <InAppEscapeBanner /> : null}
         </View>
       </NavigationContainer>
       </KeyboardProvider>

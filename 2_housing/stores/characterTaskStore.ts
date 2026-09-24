@@ -1,6 +1,31 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type CharacterTaskMode = 'sheet' | 'refine' | 'outfit';
+
+// ── v3.219 [ArtistDraft]: 아티스트 생성 대화 draft — ArtistInputScreen 로컬 state 미러링.
+// 이탈·재진입 시 Q&A 진행분을 복원한다(기존 v3.105 '이어서 만들기'는 의상 단계 재개 —
+// draft는 그보다 앞 단계인 Q&A 도중을 커버). 생성 성공 저장(reset())·'처음부터'에만 지운다.
+// photoUri 등 파일 URI는 draft에 넣지 않는다(앱 재시작 후 파일 소멸 — F3(d)). 전 필드가
+// 텍스트/enum이라 draft 통째로 AsyncStorage 영속(2026-09-07 텍스트 입력물 보존 정책). ──
+export interface ArtistDraftChatMessage {
+  type: 'director' | 'user';
+  text: string;
+}
+
+export interface ArtistDraft {
+  step: 'welcome' | 'questioning' | 'style';
+  chat: ArtistDraftChatMessage[];
+  qIndex: number;
+  styleAnswers: Record<string, string>;
+  currentInput: string;
+  selectedKind: 'real' | 'virtual' | null;
+  pendingConceptText: string;
+  /** 키 검증용 — 재생성 진입(targetCharacterId)·forceKind가 draft와 다르면 폐기(오염 방지) */
+  targetCharacterId: string | null;
+  forceKind: 'real' | 'virtual' | null;
+}
 
 export interface CharacterTaskResult {
   preview_url: string;       // 절대 URL (BACKEND_BASE_URL 포함)
@@ -46,6 +71,8 @@ interface CharacterTaskState {
   /** v3.103(B-1): 마이그레이션 미실행(레거시) 계정 — /character/list가 비고 slots.used>=1.
    *  true면 구 계약(me/save, character_id·kind 미지정 = 슬롯 면제)으로 생성/저장 */
   legacyContract: boolean;
+  /** v3.219 [ArtistDraft]: 생성 대화 진행 draft(null=없음) — 재진입 이어가기 원천 */
+  draft: ArtistDraft | null;
 
   startTask: (mode: CharacterTaskMode) => void;
   setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
@@ -55,11 +82,18 @@ interface CharacterTaskState {
   clearResult: () => void;
   /** mode만 null로 (자동 저장 후 isUnsaved=false로 만들 때) */
   clearMode: () => void;
+  /** v3.219 [ArtistDraft]: 대화 draft 기록/폐기 */
+  setDraft: (draft: ArtistDraft | null) => void;
+  clearDraft: () => void;
   /** 모든 상태 초기화 */
   reset: () => void;
 }
 
-export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
+// v3.219 [ArtistDraft]: persist 래핑 — draft(전부 텍스트/enum)만 AsyncStorage 영속.
+// photoUri·styleImageUri 등 파일 URI 필드는 partialize에서 제외(메모리 보존만).
+export const useCharacterTaskStore = create<CharacterTaskState>()(
+  persist(
+    (set) => ({
   mode: null,
   apiResult: null,
   apiError: null,
@@ -80,6 +114,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   pendingAge: null,
   targetCharacterId: null,
   legacyContract: false,
+  draft: null,
 
   startTask: (mode) =>
     set({
@@ -98,6 +133,10 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   clearResult: () => set({ apiResult: null, apiError: null, mode: null }),
 
   clearMode: () => set({ mode: null }),
+
+  setDraft: (draft) => set({ draft }),
+
+  clearDraft: () => set({ draft: null }),
 
   reset: () =>
     set({
@@ -120,7 +159,17 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       pendingName: null,
       pendingAge: null,
       targetCharacterId: null,
+      // v3.219 [ArtistDraft]: 생성 성공 저장(ArtistResult reset 승계)·전체 초기화 시 draft도 청소
+      draft: null,
       // legacyContract는 계정 속성(마이그레이션 여부)이라 reset에서 유지 —
       // ArtistInput 진입 시 목록 실측으로 매번 재판정됨
     }),
-}));
+    }),
+    {
+      name: 'maidol-artist-draft',
+      storage: createJSONStorage(() => AsyncStorage),
+      // 텍스트 입력물(draft)만 영속 — 사진/화풍 파일 URI·API 결과 등은 메모리 전용
+      partialize: (s) => ({ draft: s.draft }),
+    }
+  )
+);

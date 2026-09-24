@@ -20,6 +20,89 @@ export interface CoverExtrasSnapshot {
   virtualArtStyle: string | null;
 }
 
+// ── v3.219 [ComposeDraft]: 작곡 디렉터 대화 draft — MusicGenerationScreen ChatMessage와
+// 구조 동일(step/echoOfStep 메타 포함 — 되감기 호환). 단일 스냅샷(커버 coverMessages 관행)으로
+// 대화·진행 스텝·답변 상태를 미러링하고, 발매 성공(MusicResult)·'처음부터'에만 지운다.
+// lyricsKey 불일치(다른 가사로 진입) 시 폐기 — 잔존 오염 차단. persist 미도입(기본안). ──
+export interface ComposeChatMessage {
+  type: 'director' | 'user';
+  text: string;
+  step?: number;
+  echoOfStep?: number;
+}
+
+export interface ComposeDraftAnswers {
+  editedTitle: string;
+  editedLyrics: string;
+  selectedGenre: string;
+  selectedMood: string;
+  useVocal: boolean;
+  selectedVocalStyle: string;
+  selectedVocalGender: string;
+  subVocalGender: string;
+  subVocalStyle: string;
+  refStyle: string;
+  negativeTags: string;
+  negativeTagsOn: boolean;
+  styleWeight: number;
+  styleWeightOn: boolean;
+  weirdness: number;
+  weirdnessOn: boolean;
+  audioWeight: number;
+  audioWeightOn: boolean;
+  personaModel: '' | 'style' | 'voice';
+  personaModelOn: boolean;
+  selectedPersonaId: string | null;
+  bpmValue: number;
+  bpmOn: boolean;
+  musicalKey: string;
+  musicalKeyOn: boolean;
+  artistVoiceApplied: boolean;
+  selectedArtistId: string | null;
+  artistCharacterId: string | null;
+}
+
+export interface ComposeDraft {
+  /** 가사 신원 키 — lyricsSource.lyrics_id 우선, 없으면 가사 텍스트 해시(미러링 시 재계산) */
+  lyricsKey: string;
+  step: number;
+  chatHistory: ComposeChatMessage[];
+  answers: ComposeDraftAnswers;
+}
+
+// ── v3.219 [VideoDraft]: 영상 디렉터 대화 draft(선곡·진행·대화) + 스타일 sticky.
+// 스타일 파라미터는 완주 후에도 유지(다음 영상에 이전 취향 승계 — creationMode sticky 관행),
+// draft(step/chat/선곡)만 저장·공유 완료 시 클리어. persist 미도입(전부 선택지 — 기본안). ──
+export interface VideoDraftChatMessage {
+  type: 'director' | 'user';
+  text: string;
+  step?: string;
+}
+
+export interface VideoDraft {
+  selectedTrackId: string | null;
+  selectedTrackTitle: string | null;
+  step: string;
+  chat: VideoDraftChatMessage[];
+}
+
+export interface VideoStylePrefs {
+  pickedFormat: 'sns' | 'wide' | 'kakao' | null;
+  pickedLayout: 'full' | 'center';
+  pickedShape: 'square' | 'circle';
+  pickedBg: 'blur' | 'clean' | 'color' | 'solid';
+  pickedBgBlur: 'light' | 'mid' | 'strong';
+  pickedBgColor: string;
+  pickedBgAlpha: string;
+  pickedFont: string;
+  pickedBold: boolean;
+  pickedItalic: boolean;
+  pickedColor: string;
+  pickedOutline: boolean;
+  pickedOutlineColor: string;
+  pickedLyricsMode: 'scroll' | 'line';
+}
+
 interface MusicState {
   selectedModel: 'suno' | 'wondera';
   lyrics: string;
@@ -70,6 +153,12 @@ interface MusicState {
   /** v3.202(H-⑤): 가사 반영 답변의 발췌·원본 lyrics_id — 재진입/재생성 시 재조회 없이 승계 */
   coverLyricsExcerpt: string | null;
   coverLyricsId: string | null;
+  /** v3.219 [ComposeDraft]: 작곡 대화 진행 draft(null=없음) — 재진입 이어가기 원천 */
+  composeDraft: ComposeDraft | null;
+  /** v3.219 [VideoDraft]: 영상 대화 진행 draft(null=없음) */
+  videoDraft: VideoDraft | null;
+  /** v3.219 [VideoDraft]: 영상 스타일 sticky(완주 후에도 유지 — 다음 영상 기본값) */
+  videoStylePrefs: VideoStylePrefs | null;
   generationId: string | null;
   savedTrackId: string | null;
   /** v3.200: 창작 기록 세션(Phase 0) id — creationLogService가 관리, 생성/발매 body에 동봉.
@@ -116,6 +205,14 @@ interface MusicState {
   setCoverExtrasSnapshot: (v: CoverExtrasSnapshot | null) => void;
   setCoverLyricsExcerpt: (v: string | null) => void;
   setCoverLyricsId: (v: string | null) => void;
+  setComposeDraft: (v: ComposeDraft | null) => void;
+  clearComposeDraft: () => void;
+  setVideoDraft: (v: VideoDraft | null) => void;
+  clearVideoDraft: () => void;
+  setVideoStylePrefs: (v: VideoStylePrefs | null) => void;
+  /** v3.219: 커버 대화 컨텍스트 일괄 청소 — CoverGenerationScreen clearCoverContext와 동일 필드.
+   *  성공 확정(화면측)·로그아웃(authStore) 공용. */
+  clearCoverContext: () => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
   setCreationSessionId: (id: string | null) => void;
@@ -160,6 +257,9 @@ const initialState = {
   coverExtrasSnapshot: null,
   coverLyricsExcerpt: null,
   coverLyricsId: null,
+  composeDraft: null,
+  videoDraft: null,
+  videoStylePrefs: null,
   generationId: null,
   savedTrackId: null,
   creationSessionId: null,
@@ -204,6 +304,23 @@ export const useMusicStore = create<MusicState>((set) => ({
   setCoverExtrasSnapshot: (coverExtrasSnapshot) => set({ coverExtrasSnapshot }),
   setCoverLyricsExcerpt: (coverLyricsExcerpt) => set({ coverLyricsExcerpt }),
   setCoverLyricsId: (coverLyricsId) => set({ coverLyricsId }),
+  setComposeDraft: (composeDraft) => set({ composeDraft }),
+  clearComposeDraft: () => set({ composeDraft: null }),
+  setVideoDraft: (videoDraft) => set({ videoDraft }),
+  clearVideoDraft: () => set({ videoDraft: null }),
+  setVideoStylePrefs: (videoStylePrefs) => set({ videoStylePrefs }),
+  clearCoverContext: () =>
+    set({
+      coverTrackId: null,
+      coverTrackTitle: null,
+      coverStyle: null,
+      coverCharacterObjectName: null,
+      coverMessages: null,
+      coverStep: null,
+      coverExtrasSnapshot: null,
+      coverLyricsExcerpt: null,
+      coverLyricsId: null,
+    }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
   setCreationSessionId: (creationSessionId) => set({ creationSessionId }),

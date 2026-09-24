@@ -242,7 +242,9 @@ export default function MapScreen({ navigation }: Props) {
   const musicStore = useMusicStore();
 
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
-  const [hasArtistCharacter, setHasArtistCharacter] = useState(false);
+  // v3.219 [NextAction]: 3상태 — null=조회 전(말풍선·펄스 유보). boolean 초기값(false)이면
+  // 보유자에게도 조회 완료 전 잠깐 아티스트 말풍선이 깜빡이는 레이스가 있어 null로 시작한다.
+  const [hasArtistCharacter, setHasArtistCharacter] = useState<boolean | null>(null);
 
   // ── v3.213: 작업실 튜토리얼 anchor — 맵 좌표 기지라 measure 대신 스크롤 오프셋 기반 직접 계산 ──
   // winY = 대상맵y*scale − scrollY + ScrollView 창 오프셋(컨테이너 top = 뷰포트 top).
@@ -645,7 +647,8 @@ export default function MapScreen({ navigation }: Props) {
         directorName: DIRECTOR_NAMES.artist,
         directorRole: DIRECTOR_ROLES.artist,
         directorY: director?.y ?? 0,
-        hasArtist: hasArtistCharacter,
+        // v3.219 [NextAction]: 3상태화 — Dialogue 노드 분기(boolean)에는 확정 보유만 true로 전달
+        hasArtist: hasArtistCharacter === true,
       });
       return;
     }
@@ -654,13 +657,32 @@ export default function MapScreen({ navigation }: Props) {
   };
 
   // 다음 액션 디렉터 계산 (펄스 강조용)
+  // v3.219 [NextAction]: 체인 선두에 아티스트 단계 삽입 — 아티스트 미보유면 'artist'가
+  // "작업 시작" 대상(제작 순서 아티스트→작사→작곡→커버). 보유자는 기존 체인 유지.
+  // hasArtistCharacter === null(조회 전)이면 대상 산출 유보(null) — 오표시 방지.
   const lyricsDone = !!lyricsStore.generatedLyrics;
   const musicDone = !!musicStore.savedTrackId;
-  const nextActionDirector: DirectorType = !lyricsDone
-    ? 'lyricist'
-    : !musicDone
-      ? 'composer'
-      : 'image';
+  const nextActionDirector: DirectorType | null =
+    hasArtistCharacter === null
+      ? null
+      : hasArtistCharacter === false
+        ? 'artist'
+        : !lyricsDone
+          ? 'lyricist'
+          : !musicDone
+            ? 'composer'
+            : 'image';
+
+  useEffect(() => {
+    if (__DEV__) {
+      console.info('[NextAction] 말풍선 대상 산출', {
+        hasArtist: hasArtistCharacter,
+        lyricsDone,
+        musicDone,
+        target: nextActionDirector,
+      });
+    }
+  }, [hasArtistCharacter, lyricsDone, musicDone, nextActionDirector]);
 
   return (
     <View style={styles.container} ref={containerRef} collapsable={false}>

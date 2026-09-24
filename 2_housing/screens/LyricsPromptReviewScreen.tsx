@@ -313,7 +313,9 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
           activeOpacity={1}
           onPress={() => setEditingField(null)}
         >
-          <View style={styles.modalContent}>
+          {/* v3.217 ④: 하단 시트 insets.bottom 반영 — 고정 40이면 iOS 웹(사파리 툴바·홈 인디케이터)
+              및 제스처 기기에서 하단이 가려진다(PLAN F4 예외 2곳 중 1) */}
+          <View style={[styles.modalContent, { paddingBottom: Math.max(40, insets.bottom + 20) }]}>
             <AppText style={styles.modalTitle}>{getFieldTitle()}</AppText>
 
             {editingField === 'rap' ? (

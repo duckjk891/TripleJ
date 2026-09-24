@@ -20,7 +20,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMusicStore } from '../stores/musicStore';
+import { useMusicStore, type ComposeDraft, type ComposeDraftAnswers } from '../stores/musicStore';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -94,6 +94,22 @@ interface ChatMessage {
 
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
 
+// v3.219 [ComposeDraft]: 가사 신원 키 — lyricsSource.lyrics_id 우선, 없으면 가사 텍스트 해시.
+// 미러링 시마다 재계산해 draft에 싣는다(가사 확인 단계의 사용자 편집이 store에 반영돼도
+// draft.lyricsKey가 함께 갱신 — 같은 대화의 재진입 판정 유지). 다른 가사로 진입(ComposeLyricsPick
+// handlePick·연주곡)하면 키가 달라져 draft 폐기 → 새 대화(잔존 오염 차단).
+function computeComposeLyricsKey(): string {
+  const music = useMusicStore.getState();
+  if (music.lyricsSource?.lyrics_id) return `id:${music.lyricsSource.lyrics_id}`;
+  const lyrics = (music.lyrics || useLyricsStore.getState().generatedLyrics || '').trim();
+  if (music.instrumental && !lyrics) return 'instrumental';
+  let h = 0;
+  for (let i = 0; i < lyrics.length; i++) {
+    h = (h * 31 + lyrics.charCodeAt(i)) | 0;
+  }
+  return `h:${h}:${lyrics.length}`;
+}
+
 export default function MusicGenerationScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const musicStore = useMusicStore();
@@ -103,48 +119,82 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const artistVoice = useVoiceStore((s) => s.artistVoice);
   const artistPreset = artistVoice?.type === 'preset' ? artistVoice : null;
 
-  const [step, setStep] = useState(0);
+  // v3.219 [ComposeDraft]: 마운트 시점 draft 판정(커버 v3.202 H-⑤ 패턴) — lyricsKey 일치 +
+  // 사용자 진행(대화 2개 이상)이 있을 때만 hydrate. 불일치 draft는 아래 마운트 effect가 폐기.
+  const [resumeDraft] = useState<ComposeDraft | null>(() => {
+    const d = useMusicStore.getState().composeDraft;
+    if (!d) return null;
+    if (d.lyricsKey !== computeComposeLyricsKey()) return null;
+    if (!d.chatHistory.some((m) => m.type === 'user')) return null;
+    return d;
+  });
+  const draftAnswers: ComposeDraftAnswers | null = resumeDraft ? resumeDraft.answers : null;
+  // v3.219 [ComposeDraft]: 복원 안내 배너(+'처음부터' 액션) 노출 여부
+  const [showResumeNotice, setShowResumeNotice] = useState(!!resumeDraft);
+
+  const [step, setStep] = useState(resumeDraft ? resumeDraft.step : 0);
   // v3.135(대표): 가사 다음·보컬 전 아티스트 선택 단계(step 200) — 선택은 선택사항.
   // 목소리(persona) 연결 아티스트면 작곡에 자동 반영(보컬·내 목소리 단계 스킵).
   const [artists, setArtists] = useState<ServerArtist[] | null>(null);
-  const [artistVoiceApplied, setArtistVoiceApplied] = useState(false);
-  const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { type: 'director', text: DIRECTOR_MESSAGES[0] },
-  ]);
+  const [artistVoiceApplied, setArtistVoiceApplied] = useState(
+    draftAnswers ? draftAnswers.artistVoiceApplied : false
+  );
+  const [selectedArtistId, setSelectedArtistId] = useState<string | null>(
+    draftAnswers ? draftAnswers.selectedArtistId : null
+  );
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
+    resumeDraft
+      ? (resumeDraft.chatHistory as ChatMessage[])
+      : [{ type: 'director', text: DIRECTOR_MESSAGES[0] }]
+  );
 
-  // Local state for each step
-  const [editedTitle, setEditedTitle] = useState(lyricsStore.generatedTitle || '');
-  const [editedLyrics, setEditedLyrics] = useState(lyricsStore.generatedLyrics || musicStore.lyrics || '');
-  const [selectedGenre, setSelectedGenre] = useState(lyricsStore.genre || musicStore.genre || '');
-  const [selectedMood, setSelectedMood] = useState(lyricsStore.mood || musicStore.mood || '');
-  const [useVocal, setUseVocal] = useState(true);
+  // Local state for each step — v3.219 [ComposeDraft]: draft 복원 시 답변 스냅샷으로 hydrate
+  const [editedTitle, setEditedTitle] = useState(
+    draftAnswers ? draftAnswers.editedTitle : lyricsStore.generatedTitle || ''
+  );
+  const [editedLyrics, setEditedLyrics] = useState(
+    draftAnswers ? draftAnswers.editedLyrics : lyricsStore.generatedLyrics || musicStore.lyrics || ''
+  );
+  const [selectedGenre, setSelectedGenre] = useState(
+    draftAnswers ? draftAnswers.selectedGenre : lyricsStore.genre || musicStore.genre || ''
+  );
+  const [selectedMood, setSelectedMood] = useState(
+    draftAnswers ? draftAnswers.selectedMood : lyricsStore.mood || musicStore.mood || ''
+  );
+  const [useVocal, setUseVocal] = useState(draftAnswers ? draftAnswers.useVocal : true);
   // v3.84: 프리셋 아티스트 목소리가 있으면 그 성별/스타일이 기본 선택(사용자 변경 가능)
   const [selectedVocalStyle, setSelectedVocalStyle] = useState(
-    musicStore.vocalStyle || artistPreset?.style || ''
+    draftAnswers ? draftAnswers.selectedVocalStyle : musicStore.vocalStyle || artistPreset?.style || ''
   );
   const [selectedVocalGender, setSelectedVocalGender] = useState(
-    artistPreset ? (artistPreset.gender === 'male' ? '남성' : '여성') : ''
+    draftAnswers
+      ? draftAnswers.selectedVocalGender
+      : artistPreset ? (artistPreset.gender === 'male' ? '남성' : '여성') : ''
   );
-  const [subVocalGender, setSubVocalGender] = useState('');
-  const [subVocalStyle, setSubVocalStyle] = useState('');
+  const [subVocalGender, setSubVocalGender] = useState(draftAnswers ? draftAnswers.subVocalGender : '');
+  const [subVocalStyle, setSubVocalStyle] = useState(draftAnswers ? draftAnswers.subVocalStyle : '');
   const [styleDesc, setStyleDesc] = useState('');
-  const [refStyle, setRefStyle] = useState('');
-  const [negativeTags, setNegativeTags] = useState('');
+  const [refStyle, setRefStyle] = useState(draftAnswers ? draftAnswers.refStyle : '');
+  const [negativeTags, setNegativeTags] = useState(draftAnswers ? draftAnswers.negativeTags : '');
   const [customVocalInput, setCustomVocalInput] = useState('');
   // Suno 상세 파라미터 (Switch 제거 → 각 단계에서 "적용"/"건너뛰기"로 반영 여부 결정)
-  const [negativeTagsOn, setNegativeTagsOn] = useState(false);
-  const [styleWeight, setStyleWeight] = useState(0.5);
-  const [styleWeightOn, setStyleWeightOn] = useState(false);
-  const [weirdness, setWeirdness] = useState(0.3);
-  const [weirdnessOn, setWeirdnessOn] = useState(false);
-  const [audioWeight, setAudioWeight] = useState(0.5);
-  const [audioWeightOn, setAudioWeightOn] = useState(false);
+  const [negativeTagsOn, setNegativeTagsOn] = useState(draftAnswers ? draftAnswers.negativeTagsOn : false);
+  const [styleWeight, setStyleWeight] = useState(draftAnswers ? draftAnswers.styleWeight : 0.5);
+  const [styleWeightOn, setStyleWeightOn] = useState(draftAnswers ? draftAnswers.styleWeightOn : false);
+  const [weirdness, setWeirdness] = useState(draftAnswers ? draftAnswers.weirdness : 0.3);
+  const [weirdnessOn, setWeirdnessOn] = useState(draftAnswers ? draftAnswers.weirdnessOn : false);
+  const [audioWeight, setAudioWeight] = useState(draftAnswers ? draftAnswers.audioWeight : 0.5);
+  const [audioWeightOn, setAudioWeightOn] = useState(draftAnswers ? draftAnswers.audioWeightOn : false);
   // v3.78: 내 목소리 페르소나 — personaModel은 적용 방식('voice'=목소리까지, 'style'=스타일만)
-  const [personaModel, setPersonaModel] = useState<'' | 'style' | 'voice'>('voice');
-  const [personaModelOn, setPersonaModelOn] = useState(false);
-  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
-  const personaDefaultAppliedRef = useRef(false);
+  const [personaModel, setPersonaModel] = useState<'' | 'style' | 'voice'>(
+    draftAnswers ? draftAnswers.personaModel : 'voice'
+  );
+  const [personaModelOn, setPersonaModelOn] = useState(draftAnswers ? draftAnswers.personaModelOn : false);
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
+    draftAnswers ? draftAnswers.selectedPersonaId : null
+  );
+  // v3.219 [ComposeDraft]: 복원 시 클론 기본 선택 재적용 금지(사용자 확정값 우선)
+  const personaDefaultAppliedRef = useRef(!!resumeDraft);
   // v3.145: 장르/분위기 재선택 모드 — 302에서 '아니요' 시 300→301 모두 다시 질문
   const repickRef = useRef(false);
   // v3.202(E/F): 비파괴 되감기 컨텍스트 — 탭한 버블 idx·되감은 step·복귀할 원래 step.
@@ -159,10 +209,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   );
   // v3.146(대표): 장르/분위기 직접 입력 — 작사 디렉터와 동일한 자유 입력 UI (step 300/301 공용)
   const [customPickInput, setCustomPickInput] = useState('');
-  const [bpmValue, setBpmValue] = useState(120);
-  const [bpmOn, setBpmOn] = useState(false);
-  const [musicalKey, setMusicalKey] = useState('');
-  const [musicalKeyOn, setMusicalKeyOn] = useState(false);
+  const [bpmValue, setBpmValue] = useState(draftAnswers ? draftAnswers.bpmValue : 120);
+  const [bpmOn, setBpmOn] = useState(draftAnswers ? draftAnswers.bpmOn : false);
+  const [musicalKey, setMusicalKey] = useState(draftAnswers ? draftAnswers.musicalKey : '');
+  const [musicalKeyOn, setMusicalKeyOn] = useState(draftAnswers ? draftAnswers.musicalKeyOn : false);
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -181,9 +231,120 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // store에 남아 새 곡에 오염되지 않도록 초기화 (musicStore.reset()은 호출처가 없음).
   // v3.202(J): instrumental은 여기서 리셋 금지 — ComposeLyricsPick 카드 경로가 직전에 세팅한
   // 플래그다. 잔존 방지는 가사 선택(handlePick)·ComposerSelect 정규화가 담당.
+  // v3.219 [ComposeDraft]: 강제 초기화는 "새 대화" 분기에서만 — draft 복원(이어서) 시에는
+  // 답변 스냅샷의 아티스트 선택을 되살린다(복원 충돌 해소). 새 대화면 lyricsKey 불일치
+  // draft(다른 가사의 잔존분)도 함께 폐기한다.
   useEffect(() => {
-    useMusicStore.getState().setArtistCharacterId(null);
+    const music = useMusicStore.getState();
+    if (resumeDraft) {
+      music.setArtistCharacterId(draftAnswers?.artistCharacterId ?? null);
+      if (__DEV__) {
+        console.info('[ComposeDraft] draft 복원 — 이어서 진행', {
+          step: resumeDraft.step,
+          chatLen: resumeDraft.chatHistory.length,
+          lyricsKey: resumeDraft.lyricsKey,
+        });
+      }
+      return;
+    }
+    if (music.composeDraft) {
+      if (__DEV__) {
+        console.info('[ComposeDraft] lyricsKey 불일치/무진행 — draft 폐기 후 새 대화', {
+          draftKey: music.composeDraft.lyricsKey,
+          currentKey: computeComposeLyricsKey(),
+        });
+      }
+      music.clearComposeDraft();
+    }
+    music.setArtistCharacterId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // v3.219 [ComposeDraft]: 진행 대화·답변 스냅샷을 store에 미러링(커버 v3.202 H-⑤ 패턴) —
+  // 재진입 복원 원천. 사용자 진행이 있을 때만 기록하고, 발매 성공(MusicResult)·'처음부터'에만
+  // 지운다. 텍스트 입력(제목·가사)은 dep에 포함해 미확정 편집도 스냅샷에 실린다.
+  useEffect(() => {
+    if (!chatHistory.some((m) => m.type === 'user')) return;
+    useMusicStore.getState().setComposeDraft({
+      lyricsKey: computeComposeLyricsKey(),
+      step,
+      chatHistory,
+      answers: {
+        editedTitle,
+        editedLyrics,
+        selectedGenre,
+        selectedMood,
+        useVocal,
+        selectedVocalStyle,
+        selectedVocalGender,
+        subVocalGender,
+        subVocalStyle,
+        refStyle,
+        negativeTags,
+        negativeTagsOn,
+        styleWeight,
+        styleWeightOn,
+        weirdness,
+        weirdnessOn,
+        audioWeight,
+        audioWeightOn,
+        personaModel,
+        personaModelOn,
+        selectedPersonaId,
+        bpmValue,
+        bpmOn,
+        musicalKey,
+        musicalKeyOn,
+        artistVoiceApplied,
+        selectedArtistId,
+        artistCharacterId: useMusicStore.getState().artistCharacterId,
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatHistory, step, editedTitle, editedLyrics]);
+
+  // v3.219 [ComposeDraft]: '처음부터' — draft 폐기 + 대화·답변 전부 초기 상태로(새 대화 마운트와 동치)
+  const handleRestartCompose = () => {
+    if (__DEV__) console.info('[ComposeDraft] 처음부터 — draft 폐기·대화 초기화');
+    const music = useMusicStore.getState();
+    music.clearComposeDraft();
+    music.setArtistCharacterId(null); // v3.156a 마운트 초기화와 동치(새 대화)
+    rewindRef.current = null;
+    repickRef.current = false;
+    personaDefaultAppliedRef.current = false;
+    setEditStep(null);
+    setStep(0);
+    setChatHistory([{ type: 'director', text: DIRECTOR_MESSAGES[0] }]);
+    setArtistVoiceApplied(false);
+    setSelectedArtistId(null);
+    setEditedTitle(lyricsStore.generatedTitle || '');
+    setEditedLyrics(lyricsStore.generatedLyrics || music.lyrics || '');
+    setSelectedGenre(lyricsStore.genre || music.genre || '');
+    setSelectedMood(lyricsStore.mood || music.mood || '');
+    setUseVocal(true);
+    setSelectedVocalStyle(music.vocalStyle || artistPreset?.style || '');
+    setSelectedVocalGender(artistPreset ? (artistPreset.gender === 'male' ? '남성' : '여성') : '');
+    setSubVocalGender('');
+    setSubVocalStyle('');
+    setRefStyle('');
+    setNegativeTags('');
+    setNegativeTagsOn(false);
+    setStyleWeight(0.5);
+    setStyleWeightOn(false);
+    setWeirdness(0.3);
+    setWeirdnessOn(false);
+    setAudioWeight(0.5);
+    setAudioWeightOn(false);
+    setPersonaModel('voice');
+    setPersonaModelOn(false);
+    setSelectedPersonaId(null);
+    setBpmValue(120);
+    setBpmOn(false);
+    setMusicalKey('');
+    setMusicalKeyOn(false);
+    setCustomPickInput('');
+    setShowResumeNotice(false);
+  };
 
   // v3.200: 작곡 플로우 진입 시 창작 세션 확보(1회, idempotent) — 가사 화면에서 이미
   // 시작된 세션이 있으면 그대로 잇는다(같은 곡 흐름). 실패해도 무해 — 생성 요청 시
@@ -312,6 +473,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   //      새 메시지가 더 적으면 남는 기존 에코는 보존한다.
   //   ③ 이후 대화·다른 답변·진행 step 전부 보존 — 원래 위치(resumeStep)로 복귀.
   const commitExchange = (user: ChatMessage, directors: ChatMessage[], nextStep: number) => {
+    // v3.219 [ComposeDraft]: 이어서 답변 시작 — 복원 안내 배너 접기
+    setShowResumeNotice(false);
     const rw = rewindRef.current;
     if (rw) {
       rewindRef.current = null;
@@ -392,6 +555,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const handleUserBubbleTap = (idx: number) => {
     const msg = chatHistory[idx];
     if (msg?.type !== 'user' || msg.step == null) return;
+    // v3.219 [ComposeDraft]: 답변 수정 시작도 "이어서" — 복원 안내 배너 접기(되감기 배너와 중복 방지)
+    setShowResumeNotice(false);
     const target = msg.step;
     if (CHOICE_EDIT_STEPS.has(target)) {
       // 연쇄 되감기(편집 중 다른 버블 탭) — 복귀 지점은 최초의 원래 진행 위치 유지
@@ -1971,6 +2136,18 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           </View>
         ))}
       </ScrollView>
+
+      {/* v3.219 [ComposeDraft]: 복원 안내 배너 — 이어가기 기본 + '처음부터' 액션 */}
+      {showResumeNotice && (
+        <View style={styles.rewindBanner}>
+          <AppText style={styles.rewindBannerText}>
+            진행하던 작곡 대화를 이어서 할게요!
+          </AppText>
+          <TouchableOpacity onPress={handleRestartCompose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <AppText style={styles.rewindBannerCancel}>처음부터</AppText>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* v3.204(④): 복합형 답변 수정 배너 — 되감기 중(모달 비노출 시)에만. [취소] = 원위치 복귀 */}
       {rewindRef.current != null && editStep == null && (

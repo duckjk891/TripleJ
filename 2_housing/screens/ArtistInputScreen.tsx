@@ -19,7 +19,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { BACKEND_BASE_URL } from '../services/api';
 import { listArtists } from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
-import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, type ArtistDraft } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
@@ -155,33 +155,69 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.105: ArtistCody 취소 복귀 — store에 보존된 입력(컨셉·사진·화풍)을 버리지 않고 이어가기
   const restoreParam = !!route?.params?.restore;
 
+  // v3.219 [ArtistDraft]: 마운트 시점 draft 판정 — 커버(v3.202 H-⑤) 패턴.
+  // 키 검증: 재생성 진입(targetCharacterId)·forceKind가 draft와 다르면 폐기(오염 방지).
+  // restore(Cody 취소 복귀)는 기존 '이어서 만들기'(의상 재개)가 담당 — draft hydrate는 스킵.
+  const resumableDraft = useRef<ArtistDraft | null>(
+    (() => {
+      const d = useCharacterTaskStore.getState().draft;
+      if (!d) return null;
+      if (restoreParam) return null; // 기존 v3.105 흐름 우선(현행 유지)
+      const keyMismatch =
+        d.targetCharacterId !== (regenCharacterId ?? null) || d.forceKind !== (forceKind ?? null);
+      if (keyMismatch) {
+        if (__DEV__) {
+          console.info('[ArtistDraft] 키 불일치 — draft 폐기', {
+            draftCid: d.targetCharacterId, cid: regenCharacterId ?? null,
+            draftKind: d.forceKind, forceKind: forceKind ?? null,
+          });
+        }
+        useCharacterTaskStore.getState().clearDraft();
+        return null;
+      }
+      // 사용자 진행이 없는 draft(환영 인사만)는 복원 대상 아님
+      if (!d.chat.some((m) => m.type === 'user')) return null;
+      return d;
+    })()
+  ).current;
+
   const scrollRef = useRef<ScrollView>(null);
-  const [step, setStep] = useState<Step>('welcome');
+  const [step, setStep] = useState<Step>(resumableDraft ? resumableDraft.step : 'welcome');
   // v3.82: forceKind 진입이어도 kind 언급 문구는 표시하지 않음(내부 로직만 유지)
   // v3.112: 신규 추가(forceKind 없음)는 실사/가상 선택부터 — 첫 인사도 선택 유도로 분기
-  const [chat, setChat] = useState<ChatMessage[]>(() => [
-    {
-      type: 'director',
-      text: forceKind
-        ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
-        : `안녕하세요 ${titleLabel}님! 어떤 아티스트를 만들까요? 실사로 만들기와 캐릭터로 만들기 중에 골라주세요.`,
-    },
-  ]);
+  const [chat, setChat] = useState<ChatMessage[]>(() =>
+    resumableDraft
+      ? (resumableDraft.chat as ChatMessage[])
+      : [
+          {
+            type: 'director',
+            text: forceKind
+              ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
+              : `안녕하세요 ${titleLabel}님! 어떤 아티스트를 만들까요? 실사로 만들기와 캐릭터로 만들기 중에 골라주세요.`,
+          },
+        ]
+  );
 
+  // v3.219 [ArtistDraft]: photoUri는 draft 영속 제외(로컬 파일 URI — 재시작 후 소멸 가능).
+  // 화면 이탈 복원 시에도 사진은 다시 올리는 흐름(텍스트 답변만 보존)이다.
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoName, setPhotoName] = useState<string>('');
 
   // 6단계 질문
-  const [qIndex, setQIndex] = useState(0);
-  const [styleAnswers, setStyleAnswers] = useState<StyleAnswers>(EMPTY_ANSWERS);
-  const [currentInput, setCurrentInput] = useState('');
+  const [qIndex, setQIndex] = useState(resumableDraft ? resumableDraft.qIndex : 0);
+  const [styleAnswers, setStyleAnswers] = useState<StyleAnswers>(
+    resumableDraft ? { ...EMPTY_ANSWERS, ...resumableDraft.styleAnswers } : EMPTY_ANSWERS
+  );
+  const [currentInput, setCurrentInput] = useState(resumableDraft ? resumableDraft.currentInput : '');
 
   const [initialLoading, setInitialLoading] = useState(true);
 
   // v3.112(대표): 실사/가상 명시 선택 — 신규 추가(forceKind 없음)는 null로 시작해
   // welcome에서 두 선택 카드로 고른다. forceKind(재생성·레거시 빈 kind) 진입 시 고정.
   // 기존 v3.80 토글(isVirtualMode boolean)은 selectedKind 파생값으로 대체.
-  const [selectedKind, setSelectedKind] = useState<'real' | 'virtual' | null>(forceKind ?? null);
+  const [selectedKind, setSelectedKind] = useState<'real' | 'virtual' | null>(
+    resumableDraft ? resumableDraft.selectedKind : forceKind ?? null
+  );
   const isVirtualMode = selectedKind === 'virtual';
   const [styleSamples, setStyleSamples] = useState<StyleSample[]>([]);
   const [styleLoading, setStyleLoading] = useState(false);
@@ -190,7 +226,67 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const [styleUpload, setStyleUpload] = useState<{ uri: string; name: string } | null>(null);
   const [styleImgLoaded, setStyleImgLoaded] = useState<Record<string, boolean>>({});
   // 질문 완료 후 화풍 스텝을 거치는 동안 보관되는 컨셉 텍스트
-  const [pendingConceptText, setPendingConceptText] = useState('');
+  const [pendingConceptText, setPendingConceptText] = useState(
+    resumableDraft ? resumableDraft.pendingConceptText : ''
+  );
+  // v3.219 [ArtistDraft]: 복원 안내 버블(인라인 '처음부터' 액션) 노출 여부
+  const [showResumeNotice, setShowResumeNotice] = useState(!!resumableDraft);
+
+  // v3.219 [ArtistDraft]: 복원 부수 처리 — 화풍 스텝 복원이면 샘플 재로드(파일/네트워크 상태는 미보존)
+  useEffect(() => {
+    if (!resumableDraft) return;
+    if (__DEV__) {
+      console.info('[ArtistDraft] draft 복원 — 이어서 진행', {
+        step: resumableDraft.step, qIndex: resumableDraft.qIndex, chatLen: resumableDraft.chat.length,
+      });
+    }
+    if (resumableDraft.step === 'style') loadStyleSamples();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // v3.219 [ArtistDraft]: 진행 대화를 store에 미러링(커버 v3.202 H-⑤ 패턴) — 사용자 진행이
+  // 있을 때만 기록. 텍스트/enum만 담기므로 store persist(partialize)로 앱 재시작에도 생존.
+  useEffect(() => {
+    const hasProgress = chat.some((m) => m.type === 'user');
+    if (!hasProgress) return;
+    useCharacterTaskStore.getState().setDraft({
+      step,
+      chat,
+      qIndex,
+      styleAnswers: { ...styleAnswers },
+      currentInput,
+      selectedKind,
+      pendingConceptText,
+      targetCharacterId: regenCharacterId ?? null,
+      forceKind: forceKind ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, chat, qIndex, styleAnswers, currentInput, selectedKind, pendingConceptText]);
+
+  // v3.219 [ArtistDraft]: '처음부터' — draft 폐기 후 초기 상태로(대화·답변·진행도 리셋)
+  const handleRestartFromScratch = () => {
+    if (__DEV__) console.info('[ArtistDraft] 처음부터 — draft 폐기·초기화');
+    useCharacterTaskStore.getState().clearDraft();
+    setStep('welcome');
+    setChat([
+      {
+        type: 'director',
+        text: forceKind
+          ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
+          : `안녕하세요 ${titleLabel}님! 어떤 아티스트를 만들까요? 실사로 만들기와 캐릭터로 만들기 중에 골라주세요.`,
+      },
+    ]);
+    setQIndex(0);
+    setStyleAnswers(EMPTY_ANSWERS);
+    setCurrentInput('');
+    setSelectedKind(forceKind ?? null);
+    setPendingConceptText('');
+    setPhotoUri(null);
+    setPhotoName('');
+    setSelectedPresetKey(null);
+    setStyleUpload(null);
+    setShowResumeNotice(false);
+  };
 
   // Tab 헤더 좌측에 ← 버튼 주입 (web/모바일 공통 — Map으로 복귀)
   useLayoutEffect(() => {
@@ -266,8 +362,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   const pushDirector = (text: string) =>
     setChat((prev) => [...prev, { type: 'director' as const, text }]);
-  const pushUser = (text: string) =>
+  const pushUser = (text: string) => {
+    // v3.219 [ArtistDraft]: 이어서 답변 시작 — 복원 안내 버블 접기
+    setShowResumeNotice(false);
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
+  };
 
   // 질문 단계 공통 진입
   const startQuestioning = () => {
@@ -752,6 +851,22 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             </View>
           </View>
         ))}
+        {/* v3.219 [ArtistDraft]: 복원 안내 버블 — 디렉터 대화 톤 + 인라인 '처음부터' 액션 */}
+        {showResumeNotice && (
+          <View style={[styles.msgRow, styles.dirRow]}>
+            <View style={styles.dirPortrait}>
+              <Image source={ARTIST_PORTRAIT} style={styles.dirPortraitImg} />
+            </View>
+            <View style={[styles.bubble, styles.dirBubble]}>
+              <AppText style={[styles.bubbleText, { color: colors.bg.deepest }]}>
+                진행하던 아티스트 만들기를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+              </AppText>
+              <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
+                <AppText style={styles.restartInlineBtnText}>처음부터</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* v3.105: 미니플레이어 숨김 정책 — bottomLift(하단 공백) 제거 */}
@@ -811,6 +926,21 @@ const styles = StyleSheet.create({
   textOnlyBtnText: { color: colors.text.secondary, fontWeight: '600', fontSize: 14 },
   textOnlyHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' },
 
+  // v3.219 [ArtistDraft]: 복원 안내 버블 인라인 '처음부터' 액션
+  restartInlineBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  restartInlineBtnText: {
+    color: colors.accent.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   // v3.105: 이어서 만들기(입력 보존 재개) 버튼
   resumeBtn: {
     borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,

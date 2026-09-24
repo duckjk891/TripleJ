@@ -14,6 +14,7 @@ import { Audio } from 'expo-av';
 // cacheDirectory/downloadAsync가 빠져 legacy를 사용(ArtistLoadingScreen.tsx:15 관행)
 import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore } from '../stores/playerStore';
+import { useArtistStore } from '../stores/artistStore';
 import api, { BACKEND_BASE_URL } from './api';
 import {
   applyPlaybackAudioMode,
@@ -21,6 +22,14 @@ import {
   setMediaSessionPositionState,
   updateMediaSession,
 } from './audioMode';
+// v3.217 ①(a): 웹 전용 단일 HTMLAudioElement 재사용 계층 — 네이티브는 import만 되고 미사용
+import {
+  createWebTrackSound,
+  getWebStatusCbOwner,
+  setWebEndedHandler,
+  setWebStatusCb,
+  webSwapSrcAndPlay,
+} from './webAudioElement';
 
 // v3.70: 로드 세대 토큰 — 로딩 도중 사용자가 플레이어를 닫거나 다른 곡으로 전환하면
 // 늦게 완료된 createAsync 결과(유령 사운드)를 즉시 폐기한다.
@@ -77,7 +86,78 @@ export function syncMediaSessionForTrack(track: any): void {
 // playbackState/positionState — 재생 경로가 여럿(playback.ts·PlayerScreen 자체 로더)이라
 // store 구독 단일 지점에서 동기화한다(양쪽 모두 isPlaying/position/duration을 store에 쓴다).
 // positionState는 과도 호출 금지: 상태 변화·duration 변경·시크(예상 위치와 3s+ 점프)·5s 주기만.
+// ─────────────────────────────────────────────────────────────────────────────
+// v3.217 ①(a): 웹 다음 곡 URL 프리페치 — v3.205 로컬 파일 프리로드는 네이티브 한정 유지,
+// 웹은 "URL만 선확보"한다. ended 핸들러에서 XHR 없이 동기 src 교체+play()가 가능해야
+// iOS 사파리 백그라운드 autoplay 정책에 걸리지 않는다(표준 관행 — PLAN F1).
+// ─────────────────────────────────────────────────────────────────────────────
+let webNextUrl: { trackId: string; url: string } | null = null;
+function prefetchNextWebUrl(): void {
+  if (Platform.OS !== 'web') return;
+  const s = usePlayerStore.getState();
+  const idx = s.getNextIndex();
+  const next = idx >= 0 ? s.queue[idx] : null;
+  if (!next?.id) {
+    webNextUrl = null;
+    return;
+  }
+  const nid = String(next.id);
+  if (webNextUrl?.trackId === nid) return; // 이미 확보됨
+  (async () => {
+    const proxy = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`;
+    try {
+      // 웹 정식 소스 = Range(206) 지원 presigned(진짜 seek) — 실패 시 proxy 폴백
+      const res = await api.get(`/tracks/stream/${nid}`);
+      webNextUrl = { trackId: nid, url: res.data?.stream_url || proxy };
+      if (__DEV__) console.info('[WebAudio] 다음 곡 URL 프리페치', { trackId: nid, presigned: !!res.data?.stream_url });
+    } catch (err: any) {
+      webNextUrl = { trackId: nid, url: proxy };
+      if (__DEV__) console.info('[WebAudio] 프리페치 presigned 실패 → proxy 폴백', { trackId: nid, status: err?.response?.status });
+    }
+  })();
+}
+
 if (Platform.OS === 'web') {
+  // v3.217 ①(a): mediaSession 트랙 sync 일원화 — store.track 변경 구독 단일 지점.
+  // PlayerScreen 전환 경로 5곳(자동 다음곡·프리로드 스왑·관련곡·수동 스킵·routeTrack 교체)의
+  // 개별 호출 누락으로 잠금화면 메타가 이전 곡에 잔존하던 결함(F1)을 구독으로 일괄 해소한다.
+  let msTrackId: string | null = null;
+  usePlayerStore.subscribe((s: any) => {
+    const t = s.track;
+    const tid = t?.id != null ? String(t.id) : null;
+    if (tid && tid !== msTrackId) {
+      msTrackId = tid;
+      syncMediaSessionForTrack(t);
+    }
+  });
+
+  // v3.217 ①(a): ended 연속재생 — 프리페치해 둔 URL로 동기 src 교체+play().
+  // true 반환 = 처리됨(didJustFinish 미전파 — 기존 비동기 전환 경로와 이중 전진 방지).
+  // 큐 소진(next 없음)만 false → didJustFinish 전파 → 기존 관련곡 이어듣기 경로.
+  setWebEndedHandler(() => {
+    const s = usePlayerStore.getState();
+    const idx = s.getNextIndex();
+    const next = idx >= 0 ? s.queue[idx] : null;
+    if (!next?.id) return false;
+    const nid = String(next.id);
+    const url =
+      webNextUrl?.trackId === nid
+        ? webNextUrl.url
+        : `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`; // 프리페치 미스 — 결정적 proxy로 동기 교체
+    webNextUrl = null;
+    if (!webSwapSrcAndPlay(url)) return false;
+    s.playTrackAtIndex(idx); // track 갱신 → 위 구독이 mediaSession 메타 동기화
+    s.setPosition(0);
+    s.setIsPlaying(true);
+    try { useArtistStore.getState().addExp(1, 'play'); } catch {} // 재생 완료 EXP(PlayerScreen 경로 동등)
+    // 미니 경로(makeStatusCallback) 콜백은 이전 곡 클로저 — duration 보정이 새 곡 기준이 되게 재설치.
+    // PlayerScreen 콜백(external)은 스토어 라이브 트랙을 참조하므로 유지.
+    if (getWebStatusCbOwner() === 'playback') setWebStatusCb(makeStatusCallback(next), 'playback');
+    console.warn('[WebAudio] ended → 동기 src 교체 이어재생', { trackId: nid, idx });
+    prefetchNextWebUrl(); // 다음다음 곡 URL 선확보
+    return true;
+  });
+
   const msLast = { playing: null as boolean | null, duration: 0, position: 0, at: 0 };
   usePlayerStore.subscribe((s: any) => {
     const playing = !!s.isPlaying;
@@ -530,6 +610,31 @@ async function playPreloadedSound(pre: { index: number; track: any; sound: Audio
   }
 }
 
+/**
+ * v3.217 ①(a): 트랙 재생 사운드 팩토리 — 네이티브는 기존 expo-av createAsync 그대로(무변경),
+ * 웹은 단일 HTMLAudioElement 재사용(webAudioElement) — 곡 전환 시 new Audio 생성 금지.
+ * PlayerScreen의 전 재생 경로도 이 팩토리를 경유한다(호출 시그니처 createAsync 동일).
+ */
+export async function createTrackSound(
+  source: { uri: string },
+  initialStatus: { shouldPlay?: boolean },
+  onStatus: (status: any) => void,
+  opts?: { owner?: 'playback' | 'external' },
+): Promise<{ sound: Audio.Sound }> {
+  if (Platform.OS !== 'web') {
+    return Audio.Sound.createAsync(source, initialStatus, onStatus);
+  }
+  const sound = createWebTrackSound(
+    source.uri,
+    onStatus,
+    opts?.owner ?? 'external',
+    initialStatus?.shouldPlay !== false,
+  );
+  // 로드 직후(화면 살아있는 시점) 다음 곡 URL 선확보 — ended 동기 교체용(fire & forget)
+  prefetchNextWebUrl();
+  return { sound: sound as unknown as Audio.Sound };
+}
+
 /** 트랙 사운드 로드+재생. didJustFinish 시 셔플/반복 반영해 자동 다음곡. */
 export async function loadAndPlayTrack(newTrack: any): Promise<void> {
   const gen = ++loadGen; // 이 로드의 세대 — 도중에 invalidate/새 로드가 오면 스스로 폐기
@@ -545,10 +650,12 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
     const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${newTrack.id}`;
     if (__DEV__) console.info('[playback] load', { id: newTrack.id, gen });
     await applyPlaybackAudioMode(); // 타 앱 오디오 중단·백그라운드 재생
-    const { sound: newSound } = await Audio.Sound.createAsync(
+    // v3.217 ①(a): 팩토리 경유 — 네이티브는 기존 createAsync 그대로, 웹은 단일 element 재사용
+    const { sound: newSound } = await createTrackSound(
       { uri: audioUrl },
       { shouldPlay: true },
-      makeStatusCallback(newTrack)
+      makeStatusCallback(newTrack),
+      { owner: 'playback' }
     );
     if (gen !== loadGen) {
       // 로딩 도중 닫힘/전환됨 — 유령 재생 방지: 방금 만든 사운드를 폐기
@@ -558,8 +665,8 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
     }
     usePlayerStore.getState().setSound(newSound);
     usePlayerStore.getState().setIsPlaying(true);
-    // v3.216b F10: 전 재생 경로 공통 — 웹 미디어 알림 위젯 메타/핸들러 갱신(웹 외 no-op)
-    syncMediaSessionForTrack(newTrack);
+    // v3.216b F10 → v3.217 ①(a): 웹 미디어 세션 메타 sync는 store.track 변경 구독(웹 블록)이
+    // 단일 지점으로 담당 — 개별 호출 제거(전 경로에서 playTrackAtIndex/setTrack가 선행된다).
     // v3.202(A-lite): 현재 곡 로드 성공 직후 다음 곡 프리로드 조기 트리거(이중 트리거 1차).
     // 기존 20s/85% 창은 Android Doze(네트워크 차단) 진입보다 늦는 실측 — 화면/네트워크가
     // 살아있는 지금 확보한다. 실패 시 백오프(곡당 3회·10s)가 폭주를 막는다.

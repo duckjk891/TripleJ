@@ -27,7 +27,7 @@ import { AppText, EmptyState, Button, Tag } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
-import TrackShareDownloadSheet, { SheetMode } from '../components/TrackShareDownloadSheet';
+import TrackShareDownloadSheet, { SheetMode, downloadTrackMp3 } from '../components/TrackShareDownloadSheet';
 // v3.96(A-2): 내 앨범 관리 — 앨범 탭 + 생성 모달, 상세/관리는 AlbumDetailScreen
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
@@ -238,9 +238,11 @@ export default function MyMusicScreen({ navigation }: any) {
   // v3.117: 요약 행 데이터 — 대표(is_default) 우선, 없으면 첫 번째. list가 비면 /me 레거시 폴백.
   // artistSheetUrl은 cache-buster(Date.now) 포함이라 렌더마다 새 URL이 되지 않게 useMemo로 고정.
   const artistView = useMemo(() => {
-    // v3.163(대표): 대표 지정 개념 제거 — 마이페이지에는 "가장 최근에 만든" 아티스트 표시
+    // v3.163(대표): 대표 지정 개념 제거 → v3.217 ③ 복원: 대표(is_default) 우선,
+    // 대표가 없으면 "가장 최근에 만든" 아티스트 폴백(대표 지정이 실사용 의미를 갖도록)
     const def = artists.length
-      ? [...artists].sort((a, b) =>
+      ? artists.find((a) => a.is_default)
+        ?? [...artists].sort((a, b) =>
           new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
         )[0]
       : null;
@@ -289,6 +291,25 @@ export default function MyMusicScreen({ navigation }: any) {
     );
   };
 
+  // v3.221: ⋮ 다운로드 → [영상, 음원] 2택 — 영상은 영상 디렉터로 이동(해당 곡 프리셋),
+  // 음원은 기존 mp3 다운로드 즉시 실행(TrackShareDownloadSheet 모듈 헬퍼 위임).
+  const handleDownloadChoice = (t: Track) => {
+    if (__DEV__) console.info('[MyMusic] 다운로드 선택 다이얼로그', { id: t.id });
+    showAlert('다운로드', '받을 형식을 선택해주세요.', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '영상',
+        onPress: () => {
+          navigation.getParent()?.navigate('MainTabs', {
+            screen: 'Studio',
+            params: { screen: 'VideoDirector', params: { initialTrackId: String(t.id) } },
+          });
+        },
+      },
+      { text: '음원', onPress: () => { downloadTrackMp3({ id: String(t.id), title: t.title }, !!user); } },
+    ]);
+  };
+
   const handlePublishToChart = (trackId: string, title: string) => {
     showAlert(
       '차트 업로드',
@@ -302,8 +323,39 @@ export default function MyMusicScreen({ navigation }: any) {
               await api.put(`/tracks/${trackId}`, { is_public: true });
               showAlert('완료', '차트에 업로드되었습니다!');
               fetchTracks(true);
-            } catch {
-              showAlert('오류', '업로드에 실패했습니다.');
+            } catch (err: any) {
+              // v3.217 ②: report_blinded 곡 재공개 400 등 — 서버 메시지 그대로 표출
+              console.error('[MyMusic] 차트 업로드 실패', { trackId, status: err?.response?.status });
+              showAlert('오류', err?.response?.data?.error || '업로드에 실패했습니다.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // v3.217 ②: 공개곡 → 차트에서 숨기기(is_public=false) — 업로드와 양방향(PUT /tracks/{id} 기존 API).
+  // 차트는 응답 조립 시점 is_public 재필터라 숨김 즉시 차트에서 소멸(서버 무변경 — PLAN F2).
+  const handleHideFromChart = (trackId: string, title: string) => {
+    showAlert(
+      '차트에서 숨기기',
+      `"${title}"을(를) 차트에서 숨기시겠습니까?\n숨긴 곡은 언제든 다시 차트에 업로드할 수 있어요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '숨기기',
+          onPress: async () => {
+            try {
+              await api.put(`/tracks/${trackId}`, { is_public: false });
+              // 즉시 상태 반영("차트 스트리밍 중" 표기 해제) 후 서버 진실로 재동기화
+              setTracks((prev) =>
+                prev.map((t) => (String(t.id) === trackId ? { ...t, is_public: false } : t))
+              );
+              showAlert('완료', '차트에서 숨겼습니다.');
+              fetchTracks(true);
+            } catch (err: any) {
+              console.error('[MyMusic] 차트 숨기기 실패', { trackId, status: err?.response?.status });
+              showAlert('오류', err?.response?.data?.error || '차트에서 숨기지 못했습니다.');
             }
           },
         },
@@ -917,14 +969,16 @@ export default function MyMusicScreen({ navigation }: any) {
         onLikeChanged={(trackId, delta) => setTracks((prev) => prev.map((t) =>
           String(t.id) === trackId ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) } : t))}
         extraItems={actionTrack ? [
-          { icon: 'share-2', label: '공유', onPress: () => { setSdMode('share'); setSdTrack(actionTrack); } },
-          { icon: 'download', label: '다운로드', onPress: () => { setSdMode('download'); setSdTrack(actionTrack); } },
+          // v3.221: 공유 항목 임시 숨김(사용자 지시 — 기능·시트는 보존, 항목만 미노출).
+          // 다운로드 = [영상, 음원] 2택 다이얼로그 — 영상은 영상 디렉터로 연결(선곡 프리셋).
+          { icon: 'download', label: '다운로드', onPress: () => handleDownloadChoice(actionTrack) },
           // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외
           ...(canMakeInstrumental(actionTrack)
             ? [{ icon: 'disc' as const, label: 'Inst. 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
             : []),
+          // v3.217 ②: 공개↔숨김 양방향 — 공개곡="차트에서 숨기기", 비공개곡="차트에 업로드"(상호 배타)
           ...(actionTrack.is_public
-            ? []
+            ? [{ icon: 'eye-off' as const, label: '차트에서 숨기기', onPress: () => handleHideFromChart(String(actionTrack.id), actionTrack.title) }]
             : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),
           { icon: 'trash-2', label: '삭제', danger: true, onPress: () => handleDeleteTrack(String(actionTrack.id), actionTrack.title) },
         ] : undefined}

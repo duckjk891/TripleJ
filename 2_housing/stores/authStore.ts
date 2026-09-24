@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import api, { setAuthToken } from '../services/api';
 import { usePlayerStore } from './playerStore';
+import { useMusicStore } from './musicStore';
+import { useCharacterTaskStore } from './characterTaskStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface AuthUser {
@@ -154,6 +156,19 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ token: null, user: null });
     // 내 재생목록(큐)은 로그인 사용자 기능 → 로그아웃 시 초기화(재진입 시 비회원에겐 아무것도 남기지 않음)
     try { usePlayerStore.getState().resetOnLogout(); } catch (err) { console.error('[authStore] resetOnLogout 실패', { err }); }
+    // v3.219 [DraftKeep]: 계정 전환 오염 방지 — 디렉터 작업 draft 일괄 청소.
+    // lyricsStore(작사 draft)는 기본안대로 유지 — 가사 텍스트는 사용자 생성물(2026-09-07 유실
+    // 사고 이력), 기기 공유 계정 전환 오염보다 보존 우선.
+    try {
+      useCharacterTaskStore.getState().reset();
+      const music = useMusicStore.getState();
+      music.clearComposeDraft();
+      music.clearVideoDraft();
+      music.clearCoverContext();
+      if (__DEV__) console.info('[DraftKeep] logout — 아티스트/작곡/영상/커버 draft 청소(가사 draft 유지)');
+    } catch (err) {
+      console.error('[DraftKeep] logout draft 청소 실패', { err });
+    }
   },
   clearError: () => set({ error: null }),
 }));

@@ -180,6 +180,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     slotParam ?? (taskStore.characterKind === 'virtual' ? 'virtual' : 'real')
   );
   const slotInitRef = useRef(false);
+  // v3.217 ③: 생성 완료 직후 대표 지정 선택 팝업 1회 가드(포커스 재하이드레이션 시 재노출 방지)
+  const defaultPromptShownRef = useRef(false);
 
   // v3.82: 이 화면에서는 미니플레이어 UI 숨김(오디오 재생은 유지 — playerStore 전역 소유)
   // → bottomArea(꾸미기/저장)가 탭바 바로 위에 고정된다. blur 시 반드시 복원.
@@ -273,6 +275,31 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             }
             // B-3 표시용 클론 목록(무해 GET) — 연결 팝업에서 재사용
             useVoiceStore.getState().fetchClones();
+            // v3.217 ③: 생성 완료 직후(justCreated, 자동 저장 후 진입) — 대표 지정 선택 팝업.
+            // 첫 아티스트는 서버가 자동 default(is_default=true) → 팝업 생략(PLAN F3 조건 확인).
+            if (justCreated && !artist.is_default && !defaultPromptShownRef.current) {
+              defaultPromptShownRef.current = true;
+              const displayName = artist.name || '새 아티스트';
+              showAlert('대표 아티스트', `'${displayName}'을(를) 대표 아티스트로 지정할까요?`, [
+                { text: '나중에', style: 'cancel' },
+                {
+                  text: '대표로 지정',
+                  onPress: async () => {
+                    try {
+                      // PATCH is_default:true — 서버가 본인 set 후 나머지 전부 false
+                      const updated = await patchArtist(artist.character_id, { is_default: true });
+                      setServerArtist(updated);
+                      if (__DEV__) console.info('[ArtistResult] 대표 지정 완료', { cid: artist.character_id });
+                    } catch (err: any) {
+                      console.error('[ArtistResult] 대표 지정 실패', {
+                        status: err?.response?.status, message: err?.message,
+                      });
+                      showAlert('오류', err?.response?.data?.error || '대표 지정에 실패했어요. 잠시 후 다시 시도해주세요.');
+                    }
+                  },
+                },
+              ]);
+            }
             // v3.121.1: v222 배포로 cid 응답에 original_photo_object_name 직렬화됨 — 우선 사용.
             // (구서버/미보유 시 아래 /me 폴백 유지. virtual은 서버가 원본 미저장 → 생략, B-14)
             const directPhoto = (artist as any).original_photo_object_name;

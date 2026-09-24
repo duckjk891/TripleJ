@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!-- [WebShell] v3.217 ④·①(b): expo 웹 기본 템플릿(@expo/cli static/template/index.html) 복사 후
+     (1) viewport-fit=cover — iOS 사파리에서 env(safe-area-inset-*) 실값 공급.
+         없으면 웹 insets.bottom=0으로 굳어 하단 시트 9곳이 사파리 하단 툴바에 가린다(PLAN F4).
+     (2) 100dvh — iOS 사파리 동적 툴바 반영(@supports 미지원 브라우저는 100% 폴백).
+     (3) 카카오톡 인앱 진입 즉시 외부 브라우저 탈출 인라인 스크립트(①(b)).
+     expo export가 public/index.html을 템플릿으로 사용(LANG_ISO_CODE·WEB_TITLE 치환자는
+     본문에만 — 치환기가 첫 1회만 치환하므로 주석에 기호 포함 표기 금지).
+     스크립트·파비콘은 빌드가 주입. deploy.sh의 index.html→app.html 개명 흐름 그대로 호환. -->
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+      /* v3.217 ④ [WebShell]: iOS 사파리 동적 툴바 — 100vh 계열 대신 100dvh(미지원=100% 폴백) */
+      @supports (height: 100dvh) {
+        html,
+        body,
+        #root {
+          height: 100dvh;
+        }
+      }
+    </style>
+    <script>
+      /* v3.217 ①(b) [WebShell]: 카카오톡 인앱 웹뷰 — 진입 즉시 외부 기본 브라우저 탈출 시도.
+         인앱 웹뷰는 suspend로 백그라운드 오디오가 불가(코드 해결 불가 — PLAN F1) → 탈출이 유일 대응.
+         kakaotalk://web/openExternal = iOS/Android 공통 기본 브라우저로 열기(공식 스킴).
+         1.5초 내 미이탈 시 앱 번들의 InAppEscapeBanner가 안내 배너 폴백을 띄운다
+         (아래 플래그로 번들 측 중복 자동 시도를 방지). query·hash 보존. */
+      (function () {
+        try {
+          var ua = navigator.userAgent || '';
+          if (/KAKAOTALK/i.test(ua)) {
+            window.__MAIDOL_INAPP_ESCAPE_AT = Date.now();
+            location.href =
+              'kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href);
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

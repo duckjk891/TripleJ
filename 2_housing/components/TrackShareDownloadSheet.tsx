@@ -39,6 +39,51 @@ const SNS_UPLOAD_URLS: Record<string, string> = {
   tiktok: 'https://www.tiktok.com/upload',
 };
 
+// v3.221: 시트 밖(마이페이지 ⋮ 다운로드 → 음원)에서도 재사용하는 모듈 헬퍼.
+// 컴포넌트 내부 saveToDevice/handleDownloadMp3 와 동일 로직 — 시트는 아래 함수를 위임 호출.
+export async function saveTrackFileToDevice(url: string, filename: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err }));
+    return;
+  }
+  try {
+    const dest = `${FileSystem.cacheDirectory}${filename}`;
+    if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
+    const res = await FileSystem.downloadAsync(url, dest);
+    if (await Sharing.isAvailableAsync()) {
+      const isMp3 = /\.mp3$/i.test(filename);
+      await Sharing.shareAsync(res.uri, {
+        mimeType: isMp3 ? 'audio/mpeg' : 'video/mp4',
+        UTI: isMp3 ? 'public.mp3' : 'public.mpeg-4',
+      });
+    } else {
+      showAlert('저장 완료', '파일이 저장되었습니다.');
+    }
+  } catch (err: any) {
+    console.error('[TrackShareDownloadSheet] 기기 저장 실패', { message: err?.message });
+    await Linking.openURL(url).catch(() => {});
+  }
+}
+
+/** 음원(mp3) 다운로드 — 로그인 필수. 성공/실패 안내 포함(호출부 후처리 불요). */
+export async function downloadTrackMp3(
+  track: { id: string | number; title: string },
+  isLoggedIn: boolean,
+): Promise<void> {
+  if (!isLoggedIn) { showAlert('로그인 필요', '음원 다운로드는 로그인 후 이용할 수 있어요.'); return; }
+  const trackId = String(track.id);
+  if (__DEV__) console.info('[TrackShareDownloadSheet] mp3 다운로드', { trackId });
+  try {
+    const { data } = await api.post(`/tracks/download/${trackId}`);
+    const url = data?.download_url;
+    if (!url) { showAlert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
+    await saveTrackFileToDevice(url, data?.filename || `${track.title}.mp3`);
+  } catch (err: any) {
+    console.error('[TrackShareDownloadSheet] mp3 다운로드 실패', { status: err?.response?.status });
+    showAlert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+  }
+}
+
 export default function TrackShareDownloadSheet({ visible, mode, track, onClose }: Props) {
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
@@ -93,32 +138,8 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     }
   };
 
-  // v3.48(B6): 네이티브는 기기에 내려받아 OS 공유/저장 시트로 — 브라우저 이탈 없이 저장 가능
-  const saveToDevice = async (url: string, filename: string) => {
-    if (Platform.OS === 'web') {
-      await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err }));
-      return;
-    }
-    try {
-      const dest = `${FileSystem.cacheDirectory}${filename}`;
-      if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
-      const res = await FileSystem.downloadAsync(url, dest);
-      if (await Sharing.isAvailableAsync()) {
-        // v3.214 ⑥: mimeType(Android)·UTI(iOS) 명시 — 미지정 시 공유 대상 축소/실패 봉합 (VideoDirector 동일)
-        const isMp3 = /\.mp3$/i.test(filename);
-        await Sharing.shareAsync(res.uri, {
-          mimeType: isMp3 ? 'audio/mpeg' : 'video/mp4',
-          UTI: isMp3 ? 'public.mp3' : 'public.mpeg-4',
-        });
-      } else {
-        showAlert('저장 완료', '파일이 저장되었습니다.');
-      }
-    } catch (err: any) {
-      console.error('[TrackShareDownloadSheet] 기기 저장 실패', { message: err?.message });
-      // 폴백: 브라우저 열기
-      await Linking.openURL(url).catch(() => {});
-    }
-  };
+  // v3.48(B6)→v3.221: 모듈 헬퍼로 추출 — 위임
+  const saveToDevice = saveTrackFileToDevice;
 
   const handleDownloadVideo = async (format: 'sns' | 'wide' | 'kakao') => {
     if (!track) return;
@@ -132,21 +153,10 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
 
   const handleDownloadMp3 = async () => {
     if (!track) return;
-    if (!user) { onClose(); showAlert('로그인 필요', '음원 다운로드는 로그인 후 이용할 수 있어요.'); return; }
     setBusy('mp3');
-    if (__DEV__) console.info('[TrackShareDownloadSheet] mp3 다운로드', { trackId });
-    try {
-      const { data } = await api.post(`/tracks/download/${trackId}`);
-      const url = data?.download_url;
-      if (!url) { showAlert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
-      onClose();
-      await saveToDevice(url, data?.filename || `${track.title}.mp3`);
-    } catch (err: any) {
-      console.error('[TrackShareDownloadSheet] mp3 다운로드 실패', { status: err?.response?.status });
-      showAlert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
-    } finally {
-      setBusy(null);
-    }
+    onClose();
+    await downloadTrackMp3(track, !!user); // v3.221: 모듈 헬퍼 위임(로그인 안내 포함)
+    setBusy(null);
   };
 
   const Item = ({ icon, label, hint, onPress, itemKey }: any) => (

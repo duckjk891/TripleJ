@@ -36,7 +36,9 @@ import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
 // v3.197: 프리로드 공용 모듈(consume/trigger/discard) — BT/화면꺼짐 전환 실패 완화
-import { autoContinueWithRelated, consumePreloaded, discardPreloaded, maybePreloadNext, syncMediaSessionForTrack } from '../services/playback';
+// v3.217 ①(a): createTrackSound — 웹 단일 audio element 재사용 팩토리(네이티브는 createAsync 그대로).
+//   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
+import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -485,7 +487,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                   await soundRef.current.unloadAsync().catch(() => {});
                 }
                 const audioUrl = await getAudioUri(nextTrack.id);
-                const { sound: newSound } = await Audio.Sound.createAsync(
+                const { sound: newSound } = await createTrackSound(
                   { uri: audioUrl },
                   { shouldPlay: true },
                   onPlaybackStatusUpdate,
@@ -530,7 +532,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         await soundRef.current.unloadAsync().catch(() => {});
       }
       const audioUrl = await getAudioUri(nextTrack.id);
-      const { sound: newSound } = await Audio.Sound.createAsync(
+      const { sound: newSound } = await createTrackSound(
         { uri: audioUrl },
         { shouldPlay: true },
         onPlaybackStatusUpdate,
@@ -586,7 +588,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       // v3.57: 타 앱 오디오 중단(DoNotMix)·백그라운드 재생 — 공통 헬퍼
       await applyPlaybackAudioMode();
 
-      const { sound: newSound } = await Audio.Sound.createAsync(
+      // v3.217 ①(a): 팩토리 경유 — 네이티브는 기존 createAsync 그대로, 웹은 단일 element 재사용
+      const { sound: newSound } = await createTrackSound(
         { uri: audioUrl },
         { shouldPlay: true },
         onPlaybackStatusUpdate
@@ -599,9 +602,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setIsPlaying(true);
       setIsPlaying(true);
       setPosition(0);
-      // v3.57 → v3.216b F10: 웹 미디어 세션은 playback.ts 단일 지점에 위임 —
-      // 메타/커버 + play/pause/next/prev 핸들러, playbackState/positionState는 store 구독이 동기화.
-      syncMediaSessionForTrack(target);
+      // v3.57 → v3.216b F10 → v3.217 ①(a): 웹 미디어 세션 메타는 playback.ts의
+      // store.track 변경 구독 단일 지점이 동기화(setTrack 선행) — 개별 호출 제거.
     } catch (err: any) {
       // v3.197: 실패 시 참조/상태 정리 + 원격 계측 — 재생버튼 1탭 복구가 받아준다
       console.warn('[BTDebug] load fail', { src: 'Player', trackId: target?.id, message: err?.message, appState: AppState.currentState });
@@ -778,7 +780,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           soundRef.current = null;
         }
         const audioUrl = await getAudioUri(routeTrack.id);
-        const { sound: newSound } = await Audio.Sound.createAsync(
+        const { sound: newSound } = await createTrackSound(
           { uri: audioUrl },
           { shouldPlay: true },
           onPlaybackStatusUpdate,
@@ -840,7 +842,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         soundRef.current = null;
       }
       const audioUrl = await getAudioUri(target.id);
-      const { sound: newSound } = await Audio.Sound.createAsync(
+      const { sound: newSound } = await createTrackSound(
         { uri: audioUrl },
         { shouldPlay: true },
         onPlaybackStatusUpdate,

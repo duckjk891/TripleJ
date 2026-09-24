@@ -4822,3 +4822,308 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 6. **① 배포 순서**: FRONTEND_URL 교정(env+재기동)과 Pages 재배포(래퍼+앱 번들) 모두 사용자 실행/승인 — ⑥ Inst 배포와 묶어 1회 승인으로 처리 제안.
 
 규칙: 민감 정보 플레이스홀더(<SSH_HOST>=maidol-ec2 별칭만 기재, OAuth 키·DB 크리덴셜 로그/문서 기재 금지 — 이번 실측도 키 이름만 확인), 서버 수정은 server_staging_v3216에서만(**라이브 pull 원본** + _orig 보존 + 배포 직전 md5 재대조), 프로덕션 쓰기(env·SQL·시드·Pages 배포)는 전부 사용자 승인 후, git 커밋은 오케스트레이터 승인 후.
+
+# v3.217 — 웹 재생 브라우저 확장(사파리/인앱)·차트 공개↔숨김 토글·대표 아티스트 지정·iOS 웹 시트 가림·보이스 validate 500 픽스·외부 API 헬스체크 관리자·가상 착장 표시
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (RN/Expo SDK 54). 서버 변경은 **server_staging_v3217 신설** — 원본은 반드시 라이브 EC2(`<SSH_HOST>`=maidol-ec2, /home/ubuntu/maidol/backend_9004)에서 pull(+`_orig` 보존·md5 기록, 배포 직전 라이브 md5 재대조 — v3.215 베이스 착오 재발 방지). 라이브 상태 실측: `referral.py.bak_pre_v3216`·`main.py.bak_pre_v3216b` 존재 = v3.216(+b)까지 반영된 최신본 확인. **EC2는 코드 베이크 — 서버 .py 변경도 docker build 필요, prod 변경 전부 사용자 승인**(maidol-admin-web 관행). 웹 배포 = expo export → /Users/pearl/homepage/maidol/deploy.sh app (Pages, 사용자 승인). 관리자 SPA = api.maidol.ai.kr/admin (서버 app/admin_static mount — main.py:882-884), **소스는 로컬 워크트리** /Users/pearl/TripleJ/.claude/worktrees/distracted-jennings-dc69d7/0_platform_music/admin_web/ (Vite+React SPA, 브랜치 claude/distracted-jennings-dc69d7 — origin 푸시됨, deploy_admin.sh = dist 업로드+docker rebuild+9006 헬스체크). 실측 = EC2 읽기 전용 ssh + Mongo 읽기 조회 + Suno 크레딧 무과금 GET 1회.
+
+## 0단계 findings / Plan verification (파일:라인 — 서버는 프로덕션 EC2 실측)
+
+**F1. ① 웹 백그라운드 재생 — 구조 실태와 기술 한계(솔직 명기)**
+- 웹 오디오 = expo-av 웹 구현의 **곡마다 새로 만드는 detached `new Audio()`**(node_modules/expo-av/build/ExponentAV.web.js:159, 이전 요소는 unloadForSound :175-179가 pause+src 제거). **`onended` 리스너 없음** — 곡 끝 판정이 `ontimeupdate`(:160)+`media.ended`(:79) 의존. `setAudioMode`는 웹 no-op(:152) → `staysActiveInBackground`(services/audioMode.ts:14) 웹 무효.
+- 재생 경로 2원화: services/playback.ts(:545 stream-proxy, :548-552 createAsync)와 PlayerScreen.tsx(:559-571 — 곡마다 presigned XHR(`GET /tracks/stream/{id}`) 후 play). 웹 프리로드는 차단(playback.ts:261 즉시 return).
+- mediaSession: 메타·핸들러 = syncMediaSessionForTrack(playback.ts:39-75→audioMode.ts:39-62), playbackState/positionState = 스토어 구독(playback.ts:80-102→audioMode.ts:67-96). 단 **sync 호출이 playback.ts:562·PlayerScreen.tsx:604 두 곳뿐** — PlayerScreen의 자동 다음곡(:526-555)·프리로드 스왑(:444-465)·관련곡(:481-511)·수동 스킵(:831-863)·routeTrack 교체(:762-798) 전부 미호출 = 곡 전환 후 잠금화면 메타가 이전 곡 잔존.
+- 백그라운드·브라우저 대응 코드 0건: visibilitychange/wake lock/keepAwake 직접 사용 없음, **kakaotalk·intent://·사파리 판별 앱/래퍼 통틀어 0건**. 래퍼(homepage/maidol/app-shell/index.html)는 인앱 처리 없음, 모바일이면 :9에서 즉시 `/app` replace.
+- **기술 한계(확정적 사실)**: (a) iOS 사파리는 재생 중 화면꺼짐/백그라운드 유지 자체는 가능(mediaSession+audio element)하나, **곡 전환 시 "새 Audio 생성+XHR 후 play()"는 백그라운드에서 autoplay 정책에 차단될 위험** — 단일 element 재사용+`ended` 핸들러 내 동기 src 교체가 표준 관행. (b) 카카오톡 등 **인앱 웹뷰는 웹뷰 suspend로 백그라운드 오디오 대부분 불가 — 코드로 해결 불가**, 외부 브라우저 탈출이 유일 대응(카카오톡 공식 스킴 `kakaotalk://web/openExternal?url=` = iOS/Android 모두 기본 브라우저로 열기, Android는 `intent://…;package=com.android.chrome;end` 크롬 지정 관행 병용 가능). (c) **iOS에서 "크롬으로 강제"는 불가하고 무의미**(iOS 크롬도 WebKit — 백그라운드 특성 동일).
+
+**F2. ② 마이페이지 곡 ⋮ 메뉴 — 공개 방향만 있고 숨기기 부재 (앱 결함, 서버 기완비)**
+- ⋮ = 공용 TrackActionSheet + MyMusicScreen extraItems(:913-931). 현행: 재생/좋아요/재생목록/플레이리스트/공유/다운로드/Inst.(조건부 :316-319)/삭제 + **"차트에 업로드"는 `is_public=false`인 곡에만 표시**(:926-928 → handlePublishToChart :292-312 → `PUT /tracks/{id} {is_public:true}` :302). **공개곡을 숨기는 메뉴가 없음** = 사용자 증상("어디에도 업로드하기·숨기기 없음")은 공개 상태 곡에서 메뉴가 아예 안 보이는 것. 공개곡 행엔 "차트 스트리밍 중" 표기(:498-500).
+- 서버 기완비: `PUT /api/tracks/{track_id}`(tracks.py:1040, TrackUpdateBody.is_public :732) — 소유자 검증·`report_blinded` 곡 재공개 400(:1059)·track 캐시 무효화. 차트는 **응답 조립 시점에 is_public 재필터**(charts.py:112-121, 장르 :246·카테고리 :282·폴백 :513) → 숨김 즉시 차트에서 소멸(차트 캐시 무관). 발매 기본값 공개(upload Form is_public=True, upload-from-generation :2184, 레거시 무필드=공개 tracks.py:141-145). 비공개 전환 호출 선례 앱 기존재(MusicResultScreen.tsx:499·:569).
+
+**F3. ③ 대표 아티스트 — 서버 완비, 앱은 지정 UI가 처음부터 없음**
+- 서버: characters.is_default 체계 완비 — `PATCH /api/character/{cid} {is_default:true}` = 본인 set 후 나머지 전부 false, false 단독은 400(character.py:2701-2886, :2730-2796·:2836-2859), **첫 아티스트 자동 default**(:2065 `used==0`), 삭제 시 real 우선·최신순 승계(:2898-2942), 대표 해석 resolve_representative_artists(:408-432, real/virtual 슬롯별).
+- 앱: patchArtist(services/characterService.ts:148-157)와 `PatchArtistBody.is_default`(:56) 기존재하나 **`is_default:true` PATCH 호출 0건**(전수 grep). 대표 배지는 v3.163(bdc971b)에서 제거(MyArtistsScreen.tsx:388 — isDefault 매핑 :120은 잔존·미사용, ArtistResultScreen.tsx:898). MyMusicScreen 아티스트 표시는 is_default→**최신 생성** 폴백으로 대체됨(:241-246). is_default 잔여 사용처는 ArtistCodyScreen.tsx:267·269(성별 필터 폴백)뿐.
+- 생성 완료 지점: ArtistLoadingScreen.tsx:176-322(생성→자동 `POST /character/save` :291)→`replace('ArtistResult',{characterId, justCreated:true})`(:319-322). ArtistResult justCreated 하단 [꾸미기]/[아티스트 저장하기](:1128-1149), 수동 저장 handleManualSave(:495-545).
+
+**F4. ④ iOS 웹 하단 팝업 가림 — 근본 원인 = viewport-fit 부재로 웹 insets.bottom=0 + 100vh 계열**
+- expo 웹 빌드에 **`public/index.html` 템플릿 없음** → 기본 템플릿 사용(@expo/cli webTemplate.js:68-76) → dist/index.html:6·배포본 app.html:6 viewport = `width=device-width, initial-scale=1, shrink-to-fit=no` — **`viewport-fit=cover` 부재**. html/body/#root height:100%.
+- safe-area-context 웹 구현은 env(safe-area-inset-*)를 측정(NativeSafeAreaProvider.web.tsx:103-126) — viewport-fit=cover 없으면 **iOS에서 env=0 → 모든 시트의 insets.bottom 보정이 웹에서 0**. RN Modal 웹 = `position:fixed; top:0; bottom:0`(react-native-web ModalContent.js:52-55) → 시트 하단이 사파리 하단 툴바 뒤로.
+- 공통 시트 컴포넌트 없음 — 파일별 복제: PolicySheet:34-39, PlaylistPickerSheet(담기):100-107, TrackActionSheet:94, TrackShareDownloadSheet:167, PurchaseModal:43, AnswerEditModal:76-81, PlayerScreen 큐 시트 :1457, DmInboxScreen:228, ArtistCodyScreen:985 — 전부 `insets.bottom + α` 방식(= 템플릿 수정만으로 일괄 회복). 예외 2건: **LyricsPromptReviewScreen.tsx:305·:569-576 insets 미사용(고정 40)**, App.tsx:250-258 미니플레이어 bottom 49+insets vs 웹 탭바 54(:327) — 5px 겹침. showAlert(AppDialogHost)는 중앙 정렬이라 무관. 래퍼 iframe 높이 100vh(app-shell/index.html:66)는 PC 전용.
+- 안드로이드 정상인 이유: 크롬은 동적 툴바가 layout viewport에 반영돼 fixed bottom이 가려지지 않음.
+
+**F5. ⑤ 목소리 만들기 500 — 실패 지점 = sunoapi.org voice/validate 응답 code 500 (로그·DB 실측 확정)**
+- 서버 로그(24h, 오케스트레이터 확보): 앱→서버 전 단계 정상(normalize .m4a→mp3 OK → clip → ⭐5 선차감 → S3 업로드 → presign ok=True) 후 `[voice_clone:6ab448ce…] suno voice/validate request voice_host=https://maidol-media-audio-prod.s3…` → **HTTP 200, body `{'code': 500, 'msg': 'Server exception, please try again later or contact customer service'}`** → `_call_validate code=500` → ⭐ 자동 환불(정상 동작) → 앱 "샘플 등록 실패". 2계정·다수 반복 재현.
+- Mongo 실측: voice_clones 최근 20건 = failed 8·expired 7·awaiting_verify 1, failed error_message 전부 `validate 거부: validate code=500: Server exception…`. (awaiting_verify 1건 = 과거 validate 성공 이력 존재 — 게이트웨이측 최근 변화 가능성 병존, 확증 실험 필요.)
+- 코드 경로: create(routes/voice_clone.py:147-289) → `_save_audio_to_minio`(:115-141, `voice-clones/{user_id}/{clone_id}/{kind}{ext}`, music 버킷) → voice_clone_service `_presign`(:95-108, media_urls.public_presign 24h) → `_call_validate`(:130-169, body=voiceUrl/vocalStartS/vocalEndS/language/callBackUrl :236-243, generic 오류 1회 재시도 :264-282 — 동일 500). **presigned = IAM 토큰 포함 장문 URL**. `_presign` 사용 4곳: create :229·verify :356·retry :574·generate :860.
+- **유력 가설(v3.210 Inst 선례 동일)**: 게이트웨이가 장문 presigned URL 처리 실패 — Inst vocal-removal에서 실증됐고 픽스 = 짧은 토큰 302 라우트(`GET /api/tracks/inst-audio/{job_id}/{token}` tracks.py:3007-3042 → RedirectResponse presigned, inst_service.py:216-218 `secrets.token_urlsafe(24)` + `_PUBLIC_API_BASE`). 동일 패턴 이식이 기본안. 앱측은 결함 없음(VoiceCloneWizardScreen.tsx:484 — 402 외 전부 "샘플 등록 실패" 팝업 :479-485, FormData 업로드 voiceService.ts:122-144). Suno V6 전환(v3.177) 무관 — validate body에 모델 파라미터 없음.
+
+**F6. ⑥ 외부 API 전수·헬스체크 (env 키 이름 실측 + 사용 모듈 매핑 + 프로브 실증)**
+- 사용 중 외부 API(키 이름↔모듈): sunoapi.org(SUNO_API_KEY/URL — suno_generator·voice_clone_service·inst_service·suno_timestamp), OpenAI(OPENAI_API_KEY — lyrics/gpt-4o-mini·gpt-5.4·openai_image), Anthropic(ANTHROPIC_API_KEY — claude_cache·lyrics_generator), Google Gemini(GOOGLE_API_KEY — character/cover_generator·mv_assets), Kling(KLING_ACCESS/SECRET_KEY — kling_video_generator), KITS(KITS_API_KEY — lyric_recognize_service), fal.ai(FAL_API_KEY — seedance_video_generator), xAI(XAI_API_KEY — grok_video_generator), Sync Labs(SYNC_API_KEY — sync_labs_service), Replicate(REPLICATE_API_TOKEN — mv_pipeline), AWS SES(mailer.py sesv2·인스턴스 롤), AWS Rekognition(AWS_FACE_* — face_verify), AWS S3(MINIO_* — 미디어 전체). **미사용 판정**: LALAL_API_KEY(코드 참조 0)·WONDERA_API_KEY(routes/wondera 레거시 mount 잔존). 내부 의존: PG/Mongo/Redis/ES — 기존 `GET /api/health`(main.py:784)·`/api/ready`(:835) 존재.
+- **Suno 크레딧 프로브 실증**: `GET {base}/api/v1/generate/credit` → `{"code":200,"msg":"success","data":9684.0}` (무과금, 잔여 크레딧 표시 겸용 — 이번 실측 1회 호출).
+- 관리자 현황: admin.py prefix `/api/admin`(:22)+get_admin_user(Bearer JWT, role=admin), 대시보드(:81) 기존재. SPA 탭 = 대시보드/신고/곡/사용자/착장 아이템/브랜드·광고주(admin_web src/components/Layout.jsx:5-10, 라우트 App.jsx:25-31, axios baseURL '/api' src/api.js:23). 배포 = deploy_admin.sh(dist→app/admin_static + **docker rebuild**).
+
+**F7. ⑦ 가상캐릭터 착장 미표시 — 원인 = 발매 스냅샷 체인이 실사 슬롯 전용 (표시 조건·서버 저장은 정상)**
+- 표시 조건에 실사/가상 구분 없음: PlayerScreen 스타일링 탭 = `cover_character.used_items.length>0`(:1320-1321, 없으면 "착장 정보가 없습니다" :1412). cover_character = 발매 시점 스냅샷(tracks.py get_track :1593-1642 — mv_job.user_character_snapshot 우선 :1609-1611, track.user_character_snapshot 폴백 :1612).
+- 서버 저장 정상: 가상 생성도 착장 저장됨 — cid 문서는 kind=virtual이라도 `used_items`(character.py:2222, 레거시 슬롯은 virtual_used_items :2215). **Mongo 실측: characters 12건 중 virtual 3(used_items 채워짐 2)·real 2(1)** — 데이터 실존. 앱 생성 페이로드도 실사/가상 동일하게 used_items 전송(ArtistLoadingScreen.tsx:250-277).
+- **실결함 = 스냅샷 생성 체인**: (a) 앱 MusicResultScreen.tsx:90-110 fetchCharacterInfo가 `/character/me`의 **실사 슬롯 필드(sheet_object_name/used_items)만** 읽음 — 가상은 별도 `virtual_*` 필드(ArtistResultScreen.tsx:349-350·:429-431)라 미포함, **가상 전용 계정은 sheet 부재로 스냅샷 자체 미생성**(:104-105). (b) 서버 보정 `_build_character_snapshot`(tracks.py:94-140)은 character_id 전달 시 cid 문서의 used_items 사용(kind 무관 — 가상도 커버)하나, **작곡 시 "아티스트 없이 진행"(MusicGenerationScreen.tsx:756) 또는 cid 미전달 경로에선 (a) 폴백만 남음**. 참고: ArtistResult "착용한 제품"은 이미 가상 지원(:832-843) — 아티스트 상세는 정상, 곡 스타일링 탭만 결손.
+
+## 확정 스펙
+
+### ① 웹 재생 브라우저 확장 [app + public/index.html 신설 — 기본안 = (a)+(b) 플랫폼별 조합]
+- **(b) 인앱 브라우저 탈출(1순위·저위험)**: `public/index.html` 신설(④와 공유)의 인라인 스크립트 + 신규 `utils/browserEnv.ts` — UA 감지(KAKAOTALK/Instagram/NAVER/Line/FBAV 등). 카카오톡 = 진입 즉시 `kakaotalk://web/openExternal?url=<현재URL(query·hash 보존)>` 자동 시도(iOS·Android 공통 기본 브라우저로 탈출) + 1.5s 내 미이탈 시 안내 배너 폴백. 기타 인앱 = 상단 배너 "외부 브라우저로 열기"(Android = `intent://…;package=com.android.chrome;end` 버튼, iOS = 공유→"Safari로 열기" 안내 문구). 일반 브라우저는 무개입.
+- **(a) iOS 사파리 백그라운드 연속재생 개선(축소 스펙·웹 분기 격리)**: services/playback.ts 웹 전용 — expo-av 우회 **단일 HTMLAudioElement 재사용**(src 교체 방식) + `ended` 리스너에서 **사전 프리페치해 둔 다음곡 URL로 동기 src 교체+play()**(웹 프리로드 차단 :261은 유지하되 "URL만 선확보"로 대체) + mediaSession 트랙 sync를 **스토어 구독 단일 지점**으로 이관(currentTrack 변경 구독 → syncMediaSessionForTrack — PlayerScreen 전환 경로 5곳 개별 수정 회피, F1 메타 잔존 결함 동시 해소). 네이티브 경로 무변경.
+- **한계 REPORT 명기**: 인앱 웹뷰 내 백그라운드 재생은 미지원(탈출 유도가 대응), iOS 화면꺼짐 중 자동 다음곡은 개선 후에도 보장 불가(실기기 검증으로 판정 기록), iOS 크롬 강제 불가·무의미(WebKit 동일). 대안 (b')"전부 크롬 유도" 단독안은 iOS 불가로 미채택.
+
+### ② 차트 공개↔숨김 토글 [app — 서버 무변경]
+- MyMusicScreen extraItems(:926-928) 양방향화: `is_public=false` → "차트에 업로드하기"(현행 유지), **`is_public=true` → "차트에서 숨기기" 신설** — showAlert 2버튼 확인(관행 :292-312) → `PUT /tracks/{id} {is_public:false}` → 목록 상태 즉시 갱신("차트 스트리밍 중" 표기 :498-500 연동). report_blinded 재공개는 서버 400 메시지 그대로 표출. 차트 반영은 서버 응답 시점 재필터(F2)로 즉시.
+
+### ③ 대표 아티스트 지정 [app — 서버 무변경]
+- **생성 완료 시 선택**: ArtistResultScreen justCreated 진입(자동 저장 완료 후) — 서버 응답 `is_default=true`(첫 아티스트 자동 대표)면 팝업 생략, 아니면 showAlert 2버튼 "'{이름}'을(를) 대표 아티스트로 지정할까요?" [나중에]/[대표로 지정] → `patchArtist(cid,{is_default:true})`(characterService.ts:148-157 기존 함수). 앱 다이얼로그 관행(showAlert — 시스템 Alert 금지).
+- **대표 배지·변경 경로 복원**: MyArtistsScreen 카드에 "대표" 배지(isDefault 매핑 :120 재사용) + 비대표 카드에 "대표로 지정" 액션(동일 PATCH). MyMusicScreen 아티스트 표시(:241-246) = is_default 우선→최신 폴백으로 복원(대표 지정이 실사용 의미를 갖도록).
+
+### ④ iOS 웹 하단 시트 가림 [app — 공통 수정 지점 단일화]
+- **`public/index.html` 신설(핵심 단일 지점)**: expo 기본 템플릿 복사 후 (1) viewport에 **`viewport-fit=cover`** 추가 → 웹 insets.bottom 실값 공급 = insets 기반 시트 9곳 일괄 회복(F4 표), (2) html/body/#root **100dvh**(@supports 미지원 폴백 100%), (3) ①(b) 인앱 스크립트 인라인. deploy.sh의 index.html→app.html 개명 흐름 그대로 호환(산출물 head에 반영 확인을 배포 체크에 포함).
+- 개별 보정 2곳: LyricsPromptReviewScreen(:305·:569-576) insets.bottom 반영, App.tsx:250-258 미니플레이어 bottom을 웹 탭바 54(:327)와 정합. 래퍼 PC iframe 100vh→100dvh(app-shell/index.html:66) 1줄.
+
+### ⑤ 보이스 validate 500 [server_staging_v3217 — Inst 선례 이식 + 확증 실험]
+- **짧은 토큰 302 라우트 이식(기본안)**: voice_clones doc에 `audio_token`(secrets.token_urlsafe(24)) 저장, 신규 `GET /api/voice-clone/audio/{clone_id}/{kind}/{token}`(무인증, token 대조·kind∈{source,verify}, 불일치 404) → RedirectResponse(presigned, 302) — tracks.py:3007-3042 패턴. voice_clone_service `_presign` 사용 4곳(:229 create·:356 verify·:574 retry·:860 generate)을 짧은 URL 조립 헬퍼(`{public_base}/api/voice-clone/audio/…`)로 교체(내부 presign은 302 라우트 안으로 이동).
+- **확증 실험(구현 확정 전, 사용자 승인 후 1회)**: 실패한 기존 source 오브젝트를 짧은 302 URL로 voice/validate 1회 실호출 — 성공 = 가설 확정(장문 URL 원인), 실패 = 게이트웨이 장애(외부) 판정 → 픽스는 유지하되 REPORT에 외부 장애 명기 + ⑥ 헬스체크 passive 지표(voice validate 실패 카운트)로 상시 감시. 실험 전 크레딧 소모 여부 확인(check-availability·크레딧 전후 대조).
+- 앱 무변경(에러 처리 현행 유지 — VoiceCloneWizardScreen:479-485). ⭐ 환불 로직 정상 동작 실측 — 회귀 확인만. 배포 = docker build(사용자 승인).
+
+### ⑥ 외부 API 헬스체크 → 관리자 [server_staging_v3217 신규 라우트 + admin_web 신규 탭]
+- **서버** `routes/admin_health.py` 신설(prefix `/api/admin/health`, get_admin_user) + main.py include 1줄: `GET /external?force=` — 병렬 프로브(httpx, 각 8s timeout), 결과 Redis 캐시 10분(force=true 강제 갱신).
+  - **active 프로브(무과금 확실 엔드포인트만)**: suno `GET /api/v1/generate/credit`(잔여 크레딧 표시 — 실증 완료), openai `GET /v1/models`, anthropic `GET /v1/models`, gemini models list, xai `GET /v1/models`, replicate `GET /v1/account`, S3 head_bucket, SES get_account(발신 쿼터 표시), 내부(PG/Mongo/Redis/ES — 기존 /api/health 로직 재사용).
+  - **passive(무과금 헬스 엔드포인트 불확실 — 키 설정 여부 + 최근 24h 실사용 성공/실패 카운트)**: kling·kits·fal(seedance)·sync labs·rekognition + **voice validate 실패 카운트(voice_clones, ⑤ 연동)**. 미사용 명기 제외: lalal(참조 0)·wondera(레거시).
+  - 응답 shape: `[{service, tier(active|passive), status(ok|fail|unknown), latency_ms, detail(크레딧·쿼터·실패건수), checked_at}]`.
+- **admin_web**(워크트리 소스): 신규 탭 "시스템"(/health) — 상태 배지 표·새로고침 버튼(force)·페이지 오픈 중 60s 폴링(서버 10분 캐시라 부하 미미). 변경: src/App.jsx(라우트)·src/components/Layout.jsx(탭)·src/api.js(호출)·src/pages/Health.jsx 신설. 배포 = 빌드 후 deploy_admin.sh(docker rebuild 포함 — 사용자 승인). 주기 백그라운드 수집·알림은 이월.
+
+### ⑦ 가상캐릭터 착장 표시 [app 주 + 서버 무변경]
+- **앱 스냅샷 폴백 확장**(MusicResultScreen.tsx:90-110): `/character/me` 실사 슬롯 부재 시 **가상 슬롯(virtual_sheet_object_name/virtual_used_items) 폴백** + 스냅샷에 character_id 포함(있으면 서버 `_build_character_snapshot` 재조립이 우선하므로 가상 cid도 자동 커버 — F7(b)). 작곡 시 선택한 가상 아티스트 cid가 발매까지 전달되는지 검증(MusicGenerationScreen 선택 폴백 — 결손 시 보정 포함).
+- 서버 무변경(_build_character_snapshot kind 무관 used_items 사용 확인). 한계 명기: **기존 발매곡(스냅샷 미보유)은 소급 안 됨** — 스냅샷 백필 스크립트는 이월. ArtistResult "착용한 제품"은 회귀 확인만.
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| public/index.html 신설 | viewport-fit=cover·100dvh·인앱 탈출 인라인 스크립트 | frontend-dev | `[WebShell]` |
+| utils/browserEnv.ts 신설 | 인앱 UA 감지·탈출 유틸(배너용) | frontend-dev | `[InApp]` |
+| services/playback.ts | 웹 단일 audio 재사용·ended 연속재생·URL 프리페치·mediaSession 구독 sync | frontend-dev | `[WebAudio]` |
+| services/audioMode.ts | (필요 범위) sync 헬퍼 보강 | frontend-dev | `[WebAudio]` |
+| App.tsx | 인앱 배너 mount·미니플레이어 웹 탭바 정합 | frontend-dev | `[InApp]` |
+| screens/LyricsPromptReviewScreen.tsx | 하단 insets 반영 | frontend-dev | `[SheetInset]` |
+| screens/MyMusicScreen.tsx | ⋮ "차트에서 숨기기" 신설·상태 갱신·(③)대표 우선 복원 | frontend-dev | `[ChartToggle]` |
+| screens/ArtistResultScreen.tsx | justCreated 대표 지정 팝업 | frontend-dev | `[DefaultArtist]` |
+| screens/MyArtistsScreen.tsx | 대표 배지·지정 액션 복원 | frontend-dev | `[DefaultArtist]` |
+| screens/MusicResultScreen.tsx | 스냅샷 가상 슬롯 폴백·character_id 포함 | frontend-dev | `[VirtualOutfit]` |
+| homepage/maidol/app-shell/index.html | iframe 100vh→100dvh | frontend-dev | `[WebShell]` |
+| (서버) routes/voice_clone.py | audio 302 라우트 신설·audio_token | backend-dev | `[VoiceFix]` |
+| (서버) services/voice_clone_service.py | _presign 4곳 → 짧은 URL 헬퍼 | backend-dev | `[VoiceFix]` |
+| (서버) routes/admin_health.py 신설 + main.py 1줄 | 외부 API 헬스 프로브·캐시 | backend-dev | `[HealthCheck]` |
+| (admin_web) App.jsx·Layout.jsx·api.js·pages/Health.jsx 신설 | "시스템" 탭 상태 표 | frontend-dev | `[HealthCheck]` |
+
+## 40% 룰 판정
+앱 10파일 + 래퍼 1 + 서버 3(+main 1줄) + admin_web 4 = 역대 상위 체급이나, 최대 공정은 ①(a) playback 웹 분기 1개(격리·네이티브 무변경)이고 나머지는 전부 국소(메뉴 1항목·팝업 1개·폴백 1블록·템플릿 1파일·선례 이식 라우트). **조건부 가결** — ①(a)가 구현 중 웹 회귀를 만들면 ①(b)+④(탈출·시트 가림)만 남기고 ①(a)는 차기 분리(replan 규칙). 이월: 인앱 웹뷰 내 재생(불가 판정), 기존 곡 스냅샷 백필, 헬스체크 주기 수집·알림, kling/kits/fal/sync active 프로브 승격, PlayerScreen↔playback 재생 경로 이원화 통합, wondera/lalal 키·라우트 정리.
+
+## test-designer 항목
+1. [unit/app] browserEnv: UA 판정(카카오/인스타/네이버/일반), 탈출 URL에 query·hash 보존. MyMusic ⋮: 공개곡="차트에서 숨기기"·비공개곡="차트에 업로드하기" 상호 배타, PUT payload, 실패 시 상태 롤백.
+2. [unit/app] 대표 지정: justCreated & is_default=false에서만 팝업, [대표로 지정]→patchArtist({is_default:true}), 첫 아티스트(is_default=true) 팝업 생략. MyArtists 배지·지정 액션. MyMusic 대표 우선 표시 회귀.
+3. [unit/app] MusicResult 스냅샷: 실사 있음=현행, 실사 없음·가상 있음=virtual_* 폴백+character_id 포함, 둘 다 없음=스냅샷 생략.
+4. [unit/web] playback 웹: 단일 element 재사용(곡 전환 시 new Audio 미생성), ended→프리페치 URL 동기 재생, currentTrack 구독 시 mediaSession 메타 갱신(수동 스킵·자동 전환 공통), 네이티브 경로 무변경 회귀.
+5. [unit/server] voice_clone: 짧은 URL 조립(4 경로), audio 302 라우트 token 불일치 404·kind 검증·Location=presigned. admin_health: 프로브 집계 shape·타임아웃 fail 처리·redis 캐시/force·비admin 403.
+6. [api/스테이징] `GET /api/voice-clone/audio/{id}/{kind}/{token}` 302 실측, `GET /api/admin/health/external` 200(suno detail에 크레딧 수치).
+7. [실험·사용자 승인 후] 확증: 실패 source의 짧은 302 URL로 voice/validate 1회 — code 200/taskId 수신 여부 판정 기록(크레딧 전후 대조 포함). 반증 시 게이트웨이 장애 판정 절차(⑤ 스펙).
+8. [e2e(iOS 실기기 web)] 사파리: 화면꺼짐 중 재생 유지·곡 전환 여부(판정 기록), 담기 시트·TrackActionSheet·큐 시트가 하단 툴바에 안 가림(④), 잠금화면 메타 곡 전환 추종. 카카오톡 인앱: 링크 진입→외부 브라우저 자동 탈출(또는 배너), 안드로이드 크롬 intent 버튼.
+9. [e2e(web)] 차트: 공개곡 숨기기→차트 목록 즉시 소멸→재공개 복귀. 가상 아티스트로 신규 발매→스타일링 탭 착장 표시(기존 곡 미소급 확인). 보이스: 배포 후 샘플 등록→awaiting_verify 도달(E2E 완주)·⭐ 과금/실패 환불 회귀.
+10. [admin] 시스템 탭: 상태 표 렌더·새로고침(force)·suno 크레딧 표시, 기존 탭(곡/사용자 등) 회귀.
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **① 범위**: 기본안 = (a) 사파리 재생 개선 + (b) 인앱 탈출 동시 진행(①(a)는 회귀 시 차기 분리 조건부). "크롬 강제 단일안"은 iOS 불가로 미채택 — (b)의 Android 크롬 intent가 그 취지를 흡수.
+2. **⑤ 확증 실험**: 짧은 302 URL로 voice/validate 1회 실호출 필요(외부 API 호출·크레딧 무소모 확인 후 진행) — 승인 요청. 미승인 시 실험 생략하고 픽스 배포 후 E2E로 판정.
+3. **③ 대표 복원 범위**: 기본안 = 생성 팝업 + MyArtists 배지/지정 + MyMusic 대표 우선 표시까지. 팝업만 원하면 지시 1줄.
+4. **⑥ 프로브 범위**: 기본안 = 무과금 확실 8종 active + 5종 passive. kling/kits/fal/sync active 승격은 무과금 확인 후 이월.
+5. **⑥ admin_web 소스 위치**: 기본안 = 기존 워크트리(claude/distracted-jennings-dc69d7)에서 계속 작업·배포. frontend 브랜치로 편입 원하면 지시(별도 이관 공정).
+6. **배포 묶음**: (i) 서버 docker build(⑤⑥) (ii) admin_web deploy_admin.sh(⑥) (iii) Pages 재배포(①②③④⑦ 웹 번들+래퍼) — 3건 모두 사용자 실행/승인, 1회 승인으로 묶음 처리 제안.
+
+규칙: 민감 정보 플레이스홀더(<SSH_HOST>=maidol-ec2 별칭만, API 키·DB 크리덴셜 기재 금지 — 이번 실측도 키 이름·크레딧 수치만 기록), 서버 수정은 server_staging_v3217에서만(**라이브 pull 원본** + _orig 보존 + 배포 직전 md5 재대조), 프로덕션 쓰기(docker build·admin 배포·Pages 배포·외부 API 실험 호출)는 전부 사용자 승인 후, git 커밋은 오케스트레이터 승인 후.
+
+# v3.219 — 작업실 "작업 시작" 말풍선 아티스트 우선화 + 5개 디렉터 작업 중 상태 보존(이탈·재진입 이어가기)
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (RN/Expo SDK 54) 단독 — **서버 무변경**(원격 읽기 조회만 수행, 쓰기 없음). 사용자 요청 원문 2건: ① 작업실 클릭 유도 말풍선("클릭해서 작업 시작!")이 작사 디렉터에 붙음 → 아티스트 디렉터로, ② 각 디렉터 작업 도중 뒤로가기/타 페이지 이동 시 작업 내용이 처음으로 초기화되는 문제 수정. 참조 이력: 2026-09-07 가사 유실 사고(핫리로드가 메모리 store 초기화 — v3.133에서 lyricsStore AsyncStorage persist로 봉합), v3.202(H-⑤) 커버 대화 store 영속(검증된 보존 패턴 — 이번 이식의 원형), v3.105 아티스트 '이어서 만들기'.
+
+## 0단계 findings / Plan verification (전부 현행 코드 직접 정독 — 파일:라인)
+
+**F1. ① 말풍선 결정 로직 — 작사로 가는 원인 = 다음 액션 체인에 '아티스트' 단계 자체가 없음**
+- 말풍선("▸ 클릭해서 작업 시작!")·펄스는 `isNext = user && d.type === nextActionDirector && !isResting`(MapScreen.tsx:700, 배지 :726-746, 펄스 :706-724). 결정 로직 = `nextActionDirector: DirectorType = !lyricsDone ? 'lyricist' : !musicDone ? 'composer' : 'image'`(:659-663, lyricsDone=`lyricsStore.generatedLyrics`(:657)·musicDone=`musicStore.savedTrackId`(:658)).
+- **체인이 작사→작곡→커버로만 구성 — 'artist'가 후보에 없다.** 신규/작업 없음 상태는 항상 `!lyricsDone` → 작사 디렉터에 붙는 것이 현재 증상의 정확한 원인. 발매 완료 시 lyricsStore.reset()(MusicResultScreen.tsx:524·:589)으로 다시 작사로 회귀.
+- 아티스트 보유 여부는 이미 화면에 있음: `hasArtistCharacter` — focus 시 `GET /character/me`로 실측(MapScreen.tsx:381-403, 실사/가상 시트 하나라도 있으면 true :395). 단 **초기값 false(useState(false) :245) + 비동기 조회** — 이 값을 말풍선 분기에 쓰면 조회 완료 전 잠깐 아티스트 보유자에게도 아티스트 말풍선이 깜빡이는 레이스 있음(3상태 필요).
+- 말풍선은 user 있을 때만(게스트 미표시 :700) — 현행 유지 대상.
+
+**F2. ② 흐름별 상태 저장·리셋 실태 (5개 디렉터 전수)**
+
+공통 구조: Studio 탭 = native-stack(App.tsx:186-249). **탭 이동은 스택이 유지돼 화면 state 보존**(bottom-tabs 기본, unmountOnBlur 미사용 — App.tsx 전수 grep 0건). 초기화가 일어나는 경로는 (a) **뒤로가기(pop)로 화면 언마운트**(각 화면이 헤더에 goBack/navigate('Map') 주입), (b) **앱 재시작·핫리로드(메모리 store 소실)**, (c) 진입 시 초기화 effect. 로그아웃은 playerStore만 리셋(authStore.ts:151-157) — 작업 draft는 어느 store도 안 지움(계정 전환 오염 리스크, F3).
+
+| 흐름 | 진행 상태 위치 | 리셋 원인(파일:라인) | 기존 보존 장치 |
+|---|---|---|---|
+| 아티스트 생성 | ArtistInputScreen **로컬 useState**: step·chat·qIndex·styleAnswers·currentInput·selectedKind·pendingConceptText(:159-193) | 헤더 ← = navigate('Map')(:202) → pop 언마운트로 Q&A 전량 소실. store(characterTaskStore, **비영속** zustand)엔 마일스톤에만 기록: 사진 확약(:300)·kind 선택(:343)·Q&A 완료(:473,:494)·화풍 확정(:413) | v3.105 '이어서 만들기'(:531-538) — **Cody 취소(restore param)·생성 실패(apiError) 시에만** 노출, 재개 지점도 의상 선택뿐(Q&A 도중 이탈은 무보존) |
+| 작사 | LyricsInputScreen **로컬 useState**: step·chatHistory·durationLabel(:113-120). 답변 자체는 스텝마다 lyricsStore(영속)에 즉시 기록(processAnswer :156-175) | 헤더 ← goBack(:139) → 언마운트로 step/chatHistory 소실 = **재진입 시 1번 질문부터**(store엔 이전 답이 남아 제출 시 조용히 섞임). 진입 effect가 store.setStyle('') 리셋(:123). 주석이 현상 자인: "chatHistory는 로컬 state라 이탈 시 초기화됨"(:129-130) | lyricsStore = AsyncStorage persist(v3.133, lyricsStore.ts:75-112 — **generatedPrompt는 partialize 제외** :104-110). 프롬프트 생성 후엔 '요청사항으로 돌아가기' 버튼(:365-374)으로 리뷰 복귀 가능 |
+| 작곡 | MusicGenerationScreen **로컬 useState 약 30개**: step·chatHistory(:106-114)+답변 상태(editedTitle/editedLyrics/selectedGenre/Mood/보컬/persona/suno 파라미터 :117-165) | 뒤로가기 pop 언마운트 → 대화 전체 소실. 마운트 effect가 artistCharacterId 강제 초기화(:184-186, v3.156a "마운트=새 대화" 전제 — 복원 도입 시 충돌 지점). musicStore는 **비영속**(musicStore.ts:173 — persist 없음, reset() 호출처 없음 :181) | 스택 push 이동(아티스트 디렉터 다녀오기 등)은 보존(:272-273 주석·useFocusEffect 재조회 :274-278). 언마운트 보존은 전무 |
+| 커버 | **v3.202(H-⑤)로 이미 store 보존** — chatHistory/step을 musicStore.coverMessages/coverStep에 미러링(CoverGenerationScreen.tsx:282-288), 마운트 시 hydrate(:137-154)·보강답변 스냅샷 복원(:256-278)·성공 확정 시에만 clearCoverContext(:186-198) | 잔여 공백: musicStore 비영속 → **핫리로드·앱 재시작 시 소실**(2026-09-07 유형). 앨범 모드는 의도적 미보존(:129) | 곡 선택·아티스트 포함·대기 이어보기(hasPendingGeneration :133-134)까지 복원 — 5개 중 유일하게 화면 이탈 보존 완비 |
+| 영상 | VideoDirectorScreen **로컬 useState 전량**: chat·selected(곡)·step·picked* 스타일 파라미터 13종(:79-105) | 뒤로가기 pop 언마운트 → 곡 선택·스타일 조합 전량 소실 | 없음(succeededSigsRef 캐시 시그니처도 세션 로컬 :112). 텍스트 입력물은 없고 전부 선택지 |
+| (공통 관문) Dialogue | currentIndex 로컬(DialogueScreen.tsx:90) | 언마운트 소실 | 2노드 인사 대화뿐, 사용자 입력 없음 — **보존 대상 아님(명기)** |
+
+**F3. 회귀 위험 실측**
+- (a) **잔존 오염**: 작사 store는 이미 영속이라 "새로 시작"과 "이어가기"가 구분 없음 — 현재는 화면이 매번 step 0부터라 덮어써서 가려짐. 복원 도입 시 명시적 초기화 액션 필요. 작곡은 마운트 초기화(:184-186)가 유일한 오염 방어 — 복원과 양립 설계 필요. 커버는 coverTrackId 키·성공 시 클리어로 기해결.
+- (b) **커버 자동 재생성 재차감**: `hasPendingGeneration = coverTrackId && coverStyle != null`(:133-134)이면 마운트 즉시 loading 재개 — **musicStore를 persist할 경우 coverStyle까지 영속되면 앱 재시작 시 자동 생성 재발화(⭐ 재차감) 위험** → persist 대상에서 제외 필수.
+- (c) **계정 전환**: logout이 작업 draft 미청소(F2 공통) — A 로그아웃→B 로그인 시 A의 가사 draft(영속)·커버 대화(메모리) 노출 가능. 현행에도 존재하던 기위험이나 보존 강화로 노출면 확대.
+- (d) 아티스트 photoUri는 로컬 임시 파일 URI — 앱 재시작 후 파일 소멸 가능, AsyncStorage 영속 부적합(메모리 보존만).
+
+## 확정 스펙
+
+### ① 말풍선 아티스트 우선화 [MapScreen.tsx — 로직 수정(고정 아님)]
+- `nextActionDirector` 체인 선두에 아티스트 단계 삽입: **`hasArtist === false ? 'artist' : (!lyricsDone ? 'lyricist' : !musicDone ? 'composer' : 'image')`**. 고정 'artist'가 아닌 이유: 아티스트 기보유자에게 아티스트 말풍선은 무의미(대화가 '내 아티스트 보러가기'로 빠짐 — DialogueScreen.tsx:157-171). "작업 시작 = 아티스트부터"라는 요청 취지를 제작 순서(아티스트→작사→작곡→커버)로 일반화.
+- 레이스 봉합: `hasArtistCharacter`를 boolean→**3상태(null=조회 전)**로. null 동안은 말풍선·펄스 미표시(조회 완료 후 표시 — 보유자에게 아티스트 말풍선 깜빡임 방지). 조회 실패 시 기존대로 false(=아티스트 유도, 무해).
+- 게스트 미표시(user 게이트 :700)·휴식 중 미표시(!isResting) 현행 유지. 로그: `[NextAction] 말풍선 대상 산출 {hasArtist, lyricsDone, musicDone → target}`.
+
+### ② 디렉터 작업 보존 — 커버(v3.202 H-⑤) 패턴을 나머지 4흐름에 이식 + 영속 보강
+공통 원칙: **진행 대화(chatHistory/step)+답변을 store에 미러링 → 마운트 시 hydrate → 완주(발매·저장 성공) 시에만 클리어 + 재진입 환영 버블에 '처음부터 다시' 액션 제공**(이어가기 기본). AsyncStorage persist는 **사용자 텍스트 입력물이 있는 흐름만**(2026-09-07 정책 — 전 흐름 persist는 과잉·(b)(d) 리스크).
+
+- **(A) 작사 [LyricsInputScreen + lyricsStore]**: lyricsStore에 `draftStep`·`draftChat`(ChatMessage[]) 추가, processAnswer/재선택 시 동기 기록. 마운트 시 draftStep>0이면 hydrate(진행도·대화 복원, durationLabel은 duration에서 역산). **partialize에 draftStep/draftChat 포함**(텍스트 답변 = 사용자 생성물, 핫리로드 생존 — 사고 이력 직결). `generatedPrompt`도 partialize 추가(현재 누락 :104-110 — '요청사항으로 돌아가기' 버튼이 재시작 후 소실되는 부수 결함 동시 봉합). 클리어 = 기존 reset() 지점(발매 MusicResultScreen.tsx:524·:589) + '처음부터 다시' 액션(reset 후 step 0). 진입 setStyle('')(:123)은 draft 복원 시 스킵. 로그 `[LyricsDraft]`.
+- **(B) 아티스트 생성 [ArtistInputScreen + characterTaskStore]**: characterTaskStore에 `draft { step, chat, qIndex, styleAnswers, selectedKind, pendingConceptText }` 추가, 변경 시 미러링·마운트 시 hydrate. **키 검증**: 재생성 진입(targetCharacterId)·forceKind가 draft와 다르면 draft 폐기(오염 방지). 기존 '이어서 만들기'(restore/apiError → 의상 재개)는 현행 유지 — draft 복원은 그보다 앞 단계(Q&A 도중)를 커버. 클리어 = 생성 성공 저장(ArtistResultScreen taskStore.reset() 기존 지점 :502·:614·:645·:686 승계) + '처음부터'. **persist는 styleAnswers·pendingConceptText 텍스트만 AsyncStorage 병행**(photoUri 등 파일 URI 제외 — F3(d)). 로그 `[ArtistDraft]`.
+- **(C) 작곡 [MusicGenerationScreen + musicStore]**: musicStore에 `composeDraft { chatHistory, step, answers(editedTitle/editedLyrics/selectedGenre/selectedMood/보컬 3종/서브보컬/persona 선택/suno 파라미터 on·값), lyricsKey }` 단일 스냅샷 추가(커버 coverMessages 관행), `[chatHistory, step]` effect로 미러링·마운트 시 hydrate. **lyricsKey = lyricsSource.lyrics_id ?? lyrics 해시** — 다른 가사로 진입(ComposeLyricsPick handlePick :184-210·연주곡 :234-238) 시 draft 불일치 → 폐기 후 새 대화(잔존 오염 차단). 마운트 artistCharacterId 초기화(:184-186)는 **draft 미복원(새 대화) 분기에서만** 실행. 클리어 = 발매 성공(MusicResult 저장 성공 — lyricsStore.reset()과 동일 지점) + '처음부터'. persist 제외(선택지 위주·editedLyrics 원본은 lyricsStore가 이미 영속 — 기본안). 로그 `[ComposeDraft]`.
+- **(D) 커버 [CoverGenerationScreen — 소폭]**: 화면 이탈 보존은 기완비 — 회귀 검증 중심. 보강 1건: musicStore persist 도입 시 **cover 대화 필드(coverMessages/coverStep/coverExtrasSnapshot/coverLyrics*)만 partialize 포함, coverStyle·coverTrackId는 제외**(F3(b) 자동 재생성 재차감 차단)… 단 coverTrackId 없이는 재시작 복원 문맥이 불완전하므로 **기본안 = 커버는 persist 미적용(메모리 보존 현행 유지)**, 핫리로드 생존은 이월 검토. 로그 기존 `[Cover]` 유지.
+- **(E) 영상 [VideoDirectorScreen + musicStore(or 신규 videoDraft slice)]**: `videoDraft { selectedTrackId/Title, step, chat, picked* 13종 }` store 미러링·hydrate. 마운트 시 draft의 트랙이 내 곡 목록에 없으면(삭제 등) 폐기. **스타일 파라미터는 완주 후에도 sticky 유지**(다음 영상에 이전 취향 승계 — creationMode sticky 관행), step/chat/선곡만 저장·공유 완료 시 클리어 + '처음부터'. persist 제외(전부 선택지). 로그 `[VideoDraft]`.
+- **(공통) 계정 전환 청소**: authStore.logout(:151-157)에 draft 일괄 클리어 추가 — characterTaskStore.reset()·musicStore composeDraft/videoDraft/cover 컨텍스트 클리어. **lyricsStore는 현행대로 유지(기본안)** — 가사 텍스트는 사용자 생성물(유실 사고 이력), 기기 공유 계정 전환 오염보다 보존 우선. 결정 사안 3.
+- Dialogue 관문(2노드 인사)은 보존 제외 명기(F2 표).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| screens/MapScreen.tsx | nextActionDirector에 artist 단계 삽입·hasArtistCharacter 3상태·null 중 말풍선 유보 | frontend-dev | `[NextAction]` |
+| stores/lyricsStore.ts | draftStep/draftChat 추가·partialize에 draft+generatedPrompt 포함 | frontend-dev | `[LyricsDraft]` |
+| screens/LyricsInputScreen.tsx | draft 미러링·hydrate·'처음부터 다시'·setStyle('') 복원 시 스킵 | frontend-dev | `[LyricsDraft]` |
+| stores/characterTaskStore.ts | draft 필드 추가(+텍스트만 AsyncStorage persist 래핑) | frontend-dev | `[ArtistDraft]` |
+| screens/ArtistInputScreen.tsx | draft 미러링·hydrate·키 검증(targetCharacterId/forceKind)·'처음부터' | frontend-dev | `[ArtistDraft]` |
+| stores/musicStore.ts | composeDraft·videoDraft 필드/세터 추가(persist 미도입 — 기본안) | frontend-dev | `[ComposeDraft]`·`[VideoDraft]` |
+| screens/MusicGenerationScreen.tsx | composeDraft 미러링·hydrate·lyricsKey 불일치 폐기·마운트 초기화(:184) 새 대화 분기 한정·'처음부터' | frontend-dev | `[ComposeDraft]` |
+| screens/MusicResultScreen.tsx | 발매 성공 시 composeDraft 클리어(lyricsStore.reset() 동일 지점 2곳) | frontend-dev | `[ComposeDraft]` |
+| screens/VideoDirectorScreen.tsx | videoDraft 미러링·hydrate·트랙 소멸 검증·저장/공유 완료 클리어·스타일 sticky | frontend-dev | `[VideoDraft]` |
+| screens/CoverGenerationScreen.tsx | (수정 최소) 회귀 검증 중심 — 필요 시 '처음부터' 액션 정합만 | frontend-dev | `[Cover]` |
+| stores/authStore.ts | logout 시 draft 일괄 클리어(lyricsStore 제외 — 기본안) | frontend-dev | `[DraftKeep]` |
+
+## 40% 룰 판정
+앱 11파일이나 전부 프론트 단독·서버 무변경, 핵심 공정은 **검증된 v3.202(H-⑤) 패턴의 3회 반복 이식(작사/아티스트/영상) + 작곡 1회(최대 난도)**. 작곡(MusicGenerationScreen 2,478줄·로컬 state 약 30개)이 최대 리스크 — **조건부 가결**: (C) 작곡 draft가 구현 중 대화 커밋(commitExchange :314-)·되감기(rewindRef)와 충돌해 회귀를 만들면, (C)만 "chatHistory/step+가사·장르·분위기 핵심 5필드 축소 보존"으로 강등 또는 차기 분리(replan 규칙)하고 ①·(A)·(B)·(E)·공통 청소는 그대로 출하. 이월: 커버 대화 AsyncStorage 영속(재차감 안전장치 설계 선행), 앨범 모드 커버 보존, Dialogue 관문 보존, 작곡 draft persist.
+
+## test-designer 항목
+1. [unit] MapScreen nextActionDirector: (아티스트 없음)→artist, (있음·가사 없음)→lyricist, (가사 있음·미발매)→composer, (발매)→image, 조회 전(null)→말풍선 미표시, 게스트 미표시, 휴식 중 미표시.
+2. [unit] lyricsStore: draft partialize 왕복(직렬화/복원), generatedPrompt 영속, reset()이 draft까지 초기화. LyricsInput: step 5 이탈→재진입 시 대화·진행도 복원, '처음부터 다시'→step 0+store 초기화, 복원 시 setStyle('') 미실행.
+3. [unit] ArtistInput: Q&A 3답 후 이탈→재진입 복원, 재생성 진입(targetCharacterId 상이)→draft 폐기, forceKind 상이→폐기, 생성 성공 저장→draft 클리어, 기존 '이어서 만들기'(restore/apiError) 회귀.
+4. [unit] MusicGeneration: step N 이탈→재진입 복원(chatHistory·답변), 다른 가사 선택(lyricsKey 상이)→새 대화+artistCharacterId 초기화 실행, 같은 가사 재진입→초기화 미실행, 되감기(rewind)·비파괴 치환 회귀, 발매 성공→composeDraft 클리어.
+5. [unit] VideoDirector: 스타일 5개 선택 후 이탈→재진입 복원, draft 트랙 삭제됨→폐기, 저장 완료→선곡/step 클리어+스타일 sticky 유지.
+6. [unit] logout: characterTask/composeDraft/videoDraft/cover 컨텍스트 클리어, lyricsStore 잔존(기본안), 게스트 재진입 시 말풍선 미표시.
+7. [e2e 회귀 — 정상 완주 5종] ⑴ 아티스트 생성(Q&A→의상→생성→저장) ⑵ 작사 완주(11스텝→프롬프트→가사 생성) ⑶ 작곡 완주(가사 선택→대화→생성→발매, 발매 후 draft·lyricsStore 클리어 확인) ⑷ 커버 완주(곡 선택→대화→생성→확정 — v3.202 보존·성공 클리어 회귀) ⑸ 영상 완주(선곡→스타일→생성→저장). 각각 "도중 뒤로가기→작업실→재진입 이어가기"와 "탭 이동→복귀"를 끼워서 완주.
+8. [e2e] 핫리로드/앱 재시작: 작사 draft(텍스트) 생존 — 2026-09-07 시나리오 재현 테스트. 커버 pending(coverStyle 확정 후 이탈→재진입)이 자동 재생성 1회만 수행(재차감 없음 — 기존 동작 회귀).
+9. [e2e] 말풍선: 신규 계정 로그인 직후 아티스트 디렉터에 표시→아티스트 생성 완료 후 작사로 이동, 아티스트 보유 계정 진입 시 깜빡임 없음.
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **① 말풍선 대상**: 기본안 = 아티스트 미보유 시에만 artist, 보유 시 기존 체인(작사→작곡→커버). "항상 아티스트 고정"을 원하면 지시 1줄(고정 시 보유자는 '내 아티스트' 안내 대화로 빠짐을 감안).
+2. **② persist 범위**: 기본안 = 작사 draft 전체 + 아티스트 텍스트 답변만 AsyncStorage, 작곡·영상·커버는 메모리 store 보존(뒤로가기/탭 이동 커버, 앱 재시작은 미커버). 작곡까지 영속 원하면 지시(재차감·오염 안전장치 추가 공정).
+3. **로그아웃 시 가사 draft**: 기본안 = 유지(사용자 생성물 보존 우선, 현행 동일). 계정 전환 보안 우선(클리어)을 원하면 지시 1줄.
+4. **'처음부터 다시' 노출 위치**: 기본안 = 각 화면 재진입 시 복원 안내 버블에 인라인 액션(디렉터 대화 톤). 별도 확인 팝업(showAlert 2버튼)을 원하면 지시.
+
+규칙: 민감 정보 플레이스홀더(이번 사이클은 앱 단독 — SSH·키·크리덴셜 기재 없음, 원격은 읽기 조회만), 코드 수정·커밋·배포는 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후.
+
+# v3.220 — 앨범 페이지 하단 탭바 유지 + 알림·메시지 미니플레이어 숨김 + 카카오톡 라벨 + '스타' ⭐ 병용
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing 단독 — **서버 무변경**. 사용자 요청 원문 4건: ① 앨범 페이지에서 하단바(차트~작업실) 사라짐, ② 알림·메시지 페이지도 설정 페이지처럼 미니플레이어 숨김(재생 유지), ③ 추천하기 '카카오톡으로 공유'→'카카오톡', ④ 전앱 텍스트 '스타'에 ⭐ 이모지 병용. 주의: **v3.219 미커밋 변경분(stores 4·screens 다수)이 작업 트리에 있는 상태에서 분석** — 본 섹션의 파일:라인은 현재 작업 트리 기준(커밋 시점에 소폭 이동 가능). v3.220 접점 파일 중 v3.219 작업분과 겹치는 것은 App.tsx·MyMusicScreen·MyArtistsScreen·VideoDirectorScreen 4개 — 충돌 없는 별개 지점이나 구현 순서는 v3.219 커밋 후 권장.
+
+## 0단계 findings / Plan verification (현행 코드 직접 정독 — 파일:라인)
+
+**F1. ① 하단바 사라짐 — 원인 실증: AlbumDetail이 RootStack 소속(구조적 확정)**
+- 내비 구조: RootStack(native-stack, App.tsx:581-636) ⊃ MainTabs(Tab.Navigator :320-431, 탭바 = 차트·플레이리스트·피드·검색·작업실) ⊃ StudioStack. **AlbumDetail은 RootStack.Screen(:625, stackHeader '앨범')** — RootStack push는 MainTabs 전체를 덮으므로 Tab.Navigator가 화면 밖 = 탭바 미렌더. 이것이 원인의 전부(옵션·스타일 문제 아님). FeedDetail·UserChannel·ArtistDetail 등 다른 상세도 동일 구조(의도된 관행)이나 사용자는 앨범만 지적.
+- 부수 실증: MiniPlayerWrapper는 NavigationContainer 내 형제(:638)로 AlbumDetail 위에도 렌더되는데 bottom = 탭바 높이(49/54+inset, :252-265) — **현재 앨범 페이지에선 탭바 없는 허공 위에 미니플레이어가 뜨는 시각 결함 동반**(이동 시 자동 해소).
+- 진입 경로 전수(grep AlbumDetail — 5콜사이트+복귀 1): ⑴ 차트 최신앨범 ChartScreen.tsx:313, ⑵ 차트 앨범소속곡 탭 :214(album_id 백엔드 미제공으로 현재 휴면 분기 — :208-212 TODO), ⑶ 마이페이지 앨범행 MyMusicScreen.tsx:832(`getParent()?.navigate`), ⑷ 앨범 생성 직후 :933(동일), ⑸ 채널 앨범 UserChannelScreen.tsx:142(UserChannel 자체가 RootStack — 이미 탭바 없는 문맥). 복귀: AlbumCoverGeneration(RootStack :628)이 goBack으로 AlbumDetail 복귀(CoverGenerationScreen.tsx:1649·1185). **검색(SearchScreen)엔 앨범 진입 없음**(grep 0건 — 지시문의 '검색' 경로는 부존재 확인).
+- 탭바 유지 선례 = **MyMusic 숨김 탭 관행**(App.tsx:407-428): `tabBarButton: () => null` + `tabBarItemStyle: display 'none'`으로 Tab.Navigator 내부에 두고 탭바는 유지, 헤더는 탭 options로 구성, ← 는 BackIcon=navigate('Chart') 고정(:417). 탭 내 스택 선례 = StudioStack + tabPress 리셋(:391-396).
+- 회귀 관련 실측: AlbumDetailScreen은 useRoute/useNavigation 제네릭(:49-51)이라 소속 이동에 스크린 코드 호환. focus 시 재조회(useFocusEffect :106, fetchAlbum dep=albumId :90-105). 내부 goBack 3곳(조회 실패 :99·앨범 삭제 :157·마지막 트랙 제거 :228). Player(모달)·AlbumCoverGeneration·UserChannel로 navigate(:114·:303·:368) — 탭 내부에서 호출해도 RootStack으로 버블링 정상. **딥링크 무영향**: linking config에 AlbumDetail 미등록(:538-547, FeedDetail만). 숨김 탭 이동 시 주의 2건: (a) 탭 스크린은 언마운트되지 않아 albumId 재진입 시 이전 앨범 잔상 — albumId 변경 감지 리셋 필요, (b) Tab backBehavior 미지정(기본 firstRoute) — goBack이 차트로 떨어지므로 origin 복귀는 명시 처리 필요.
+
+**F2. ② 미니플레이어 숨김 관행 — v3.57 route 기반 목록(추정 적중)**
+- `HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike']`(App.tsx:533) + currentRoute 추적(navigationRef.getCurrentRoute().name, onReady/onStateChange :572-579) + 렌더 게이트(:638). 주석 명시: "UI를 숨겨도 재생은 계속된다"(:529-530) — **숨김=렌더만 차단, playerStore 무접촉 = 재생 유지 확인**.
+- 별개 메커니즘: 화면 단위 store 숨김 `setMiniHidden`(v3.82, playerStore.ts:171 → App.tsx:255-259) — Artist 4화면이 focus/blur로 사용(ArtistInput:311-318 등). **알림·메시지는 RootStack 화면이므로 route 목록 방식이 정확한 관행**(설정과 동일 계열).
+- 대상 라우트명 실측: `Notifications`(App.tsx:592, '알림')·`DmInbox`(:591, '메시지')·`DmChat`(:594, 채팅방 — DmInbox에서 push, "메시지 페이지"의 일부로 포함이 자연). getCurrentRoute는 최심 포커스 라우트를 반환하므로 이름 매칭 정상. DmChat은 하단 입력바+키보드 화면(DmChatScreen.tsx:292-300)이라 미니플레이어 겹침 제거 효익이 가장 큼.
+
+**F3. ③ 카카오톡 라벨 — 1줄 확인 완료**
+- components/AppShareModal.tsx:17 `{ key: 'kakao', label: '카카오톡으로 공유' }` → 렌더 :102-104(Button label). '카카오톡으로 공유' 문자열은 전앱에서 이 1곳뿐(주석 :2 동반 수정). v3.212에서 옵션 2종(카카오톡·링크 복사) 축소된 그 라벨.
+
+**F4. ④ '스타' 사용처 전수 인벤토리 — 30건 grep, 사용자 노출 문자열 분류**
+- 기존 관행 3계보 실측: (i) 수량 = `⭐N` 통일 — v3.214 ⑩ 주석이 명문("'스타 n개' → '⭐n'", MyMusicScreen.tsx:415), (ii) 병기 = `스타(⭐)` — ChartScreen.tsx:338·GuestQueueNoticeModal.tsx:25 기구현, (iii) 재화명 상수 CURRENCY='스타'/CURRENCY_ICON='⭐'(constants/currency.ts — 사용처는 StarGuideModal 4곳뿐, 나머지는 전부 리터럴).
+- 오매칭 제외 규칙(확정): `스타일*`(스타일·스타일링·스타일리스트), `스타킹`(ArtistCodyScreen.tsx:535·540 — AI 프롬프트, 비노출), `스타트`·`인스타`·`리스타트`, `톱스타`(data/levels.ts:4·20 — 등급명, 재화 아님), 주석·로그(MyMusicScreen:415, StarGuideModal:1 등), 접근성 라벨(HomeHeaderActions.tsx:102 '스타 안내' — 스크린리더에 이모지 낭독 부적합 → 제외).
+- 사용자 의도 해석: "'스타'가 들어가는 곳에 이모지 별이 들어갈 수 있도록" = 스타 언급 시 ⭐가 보이게(단어 제거 요구 아님). (a) 전면 대체는 "⭐가 부족해요" 등 문장 가독성 훼손, (c) 수량만으론 "스타가 부족해요"류 미커버 → **기본안 = (b)+(c) 하이브리드**(스펙 ④).
+
+## 확정 스펙
+
+### ① 앨범 페이지 탭바 유지 [App.tsx + AlbumDetailScreen + 콜사이트 3파일 — 기본안 = 숨김 탭 이식(MyMusic 관행)]
+- **AlbumDetail을 RootStack(:625)에서 제거하고 MainTabs의 숨김 탭으로 이동**: `tabBarButton: () => null`+`tabBarItemStyle: {display:'none'}`(MyMusic :411-412 동일), 헤더는 탭 options로 headerShown+타이틀 '앨범'+← (stackHeader 시각 규격 승계). 탭바(차트~작업실) 상시 노출 — 활성 탭 하이라이트 없음은 MyMusic 관행과 동일. 대안 (b) 탭별 네이티브 스택화(Studio 관행 정공법)는 차트·마이페이지 헤더 재배선 등 범위 과대로 비채택(이월 후보).
+- **origin 복귀(back)**: 진입 시 `from` 파라미터 명시 — 차트 2곳(ChartScreen:214·:313) `navigate('AlbumDetail', { albumId, from:'Chart' })`(탭 형제 해석으로 자동 전환), 마이페이지 2곳(MyMusicScreen:832·:933) `getParent()?.navigate` → `navigation.navigate('AlbumDetail', { albumId, from:'MyMusic' })`, 채널(UserChannelScreen:142) → `navigate('MainTabs', { screen:'AlbumDetail', params:{ albumId, from:'UserChannel', fromParams:{ authorId, name } } })`. AlbumDetailScreen에 `exitAlbum()` 헬퍼 신설: from==='UserChannel'이면 navigate('UserChannel', fromParams)(재push — 채널 복귀 유지), 그 외 navigate(from ?? 'Chart'). 내부 goBack 3곳(:99·:157·:228)과 헤더 ← 를 전부 exitAlbum으로 교체. **매 진입마다 albumId·from 전체 전달**(파라미터 머지 의존 금지).
+- **잔상 방지**: 탭 스크린은 상주하므로 `useEffect([albumId])`로 album=null·loading=true·manageMode=false 리셋(useFocusEffect 재조회 :106은 현행 유지 — AI 커버 확정 복귀 재조회 경로 보존).
+- 회귀 확인 지점: Player 모달·AlbumCoverGeneration 진입/goBack 복귀(RootStack 버블링 — 복귀 시 MainTabs의 마지막 활성 탭=AlbumDetail 정상), Android 하드웨어 back은 backBehavior 기본(firstRoute→차트) 허용(문서화 — 전역 backBehavior 변경은 회귀면이 넓어 금지), 딥링크 무영향(F1), 차트 :214 휴면 분기도 from 부여. 미니플레이어는 AlbumDetail에서 표시 유지(숨김 목록 미포함 — 탭바 위 정상 안착으로 F1 시각 결함 해소). 로그 `[AlbumNav]`.
+
+### ② 미니플레이어 숨김 확대 [App.tsx 1줄 — v3.57 관행 그대로]
+- `HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat']`(:533). 재생은 유지(렌더 게이트만 — F2 실증). setMiniHidden(store) 방식 미사용(RootStack 화면은 route 목록이 관행). 주석에 v3.220 사유 1줄 추가.
+
+### ③ 추천하기 카카오톡 라벨 [AppShareModal.tsx:17 — 1줄]
+- `label: '카카오톡으로 공유'` → `'카카오톡'`(주석 :2·:15의 표기도 동기화). 동작(네이티브 공유 시트 위임)·키('kakao') 무변경.
+
+### ④ '스타' ⭐ 병용 [11파일 문자열 치환 — 기본안 = (b)병기+(c)수량 하이브리드]
+- 규칙 3조: **R1** 수량 동반(`스타 N`·`스타 N개`) → `⭐N`(v3.214 ⑩ 관행), **R2** 수량 없는 언급 → 해당 문자열의 **첫 '스타'만 `스타(⭐)` 병기**(반복 병기는 소음 — ChartScreen:338 기구현 톤), **R3** 같은 문자열에 ⭐가 이미 있으면 무변경. 리터럴 ⭐ 유지(CURRENCY_ICON 전환은 이월 — 기존 리터럴 관행과 혼재 방지).
+- 치환 매트릭스(파일:라인 — 현행 → 기본안):
+
+| 위치 | 문맥 분류 | 적용 규칙 → 결과 |
+|---|---|---|
+| MyMusicScreen.tsx:372 | Inst 실패 안내 | R2 → '차감된 스타(⭐)는 환불됩니다.' |
+| MyMusicScreen.tsx:447 | 잔액 부족 안내 | R2 → '스타(⭐)가 부족해요. …' (뒤 '스타를 모아보세요'는 유지) |
+| MyMusicScreen.tsx:473 | 곡 공유 멘트 | R1 → '가입 시 ⭐50 추가 증정!' |
+| SettingsScreen.tsx:188 | 지급 완료 본문 | R1 → '⭐10을 드렸어요.'(타이틀은 기 ⭐10 — R3) |
+| ArtistLoadingScreen.tsx:534 | 부족 팝업 타이틀 | R2 → '스타(⭐)가 부족해요'(본문은 기 ⭐15 — R3) |
+| VideoDirectorScreen.tsx:525 | 402 안내 | R2 → '스타(⭐)가 부족해요. …' |
+| ChartScreen.tsx:38 | 튜토리얼 타이틀·desc | 타이틀 '스타'→'⭐ 스타'(StarGuideModal 헤드 :52 관행), desc R2 → '잔여 스타(⭐)와 …' |
+| ChartScreen.tsx:39·40 | 튜토리얼 desc 2건 | R2 → '… 스타(⭐)를 받아보세요' |
+| MyArtistsScreen.tsx:258·335 | 부족 팝업 타이틀 2건 | R2 → '스타(⭐)가 부족해요'(본문 :259·:335는 기 ⭐ — R3) |
+| DirectorLineupScreen.tsx:84 | 402 안내 | R2 → '스타(⭐)가 부족해요. …' |
+| AppShareModal.tsx:91 | 추천 안내 | R1×2 → '두 사람 모두 ⭐50을 받아요!' / '⭐50 추가 증정!' |
+| components/feed/FeedCard.tsx:267 | 피드 공유 멘트 | R1 → '⭐50 추가 증정!' |
+| 무변경(R3) | ChartScreen:338-339·GuestQueueNoticeModal:25-26·AttendanceModal:145·TrackShareDownloadSheet:62·StarGuideModal 전체 | 기 병기/⭐ 포함 |
+| 제외 | HomeHeaderActions:102(a11y)·ArtistCodyScreen:535·540(프롬프트 '스타킹')·levels.ts('톱스타')·currency.ts CURRENCY 값·주석/로그 전부 | F4 규칙 |
+
+- 서버 발신 에러 메시지(response.data.error 패스스루)에 '스타'가 올 수 있으나 서버 무변경 원칙상 범위 외(명기).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 추적자 |
+|---|---|---|---|
+| App.tsx | ① AlbumDetail RootStack 제거→MainTabs 숨김 탭(헤더·←)·② HIDE_MINIPLAYER_ROUTES 3개 추가·주석 | frontend-dev | `[AlbumNav]` |
+| screens/AlbumDetailScreen.tsx | ① exitAlbum 헬퍼(goBack 3곳+헤더 ←)·albumId 변경 리셋 effect | frontend-dev | `[AlbumNav]` |
+| screens/ChartScreen.tsx | ① from:'Chart' 2곳(:214·:313)·④ 튜토리얼 문안 3건 | frontend-dev | `[AlbumNav]` |
+| screens/MyMusicScreen.tsx | ① getParent 제거+from:'MyMusic' 2곳·④ 2건(:372·:447·:473) | frontend-dev | `[AlbumNav]` |
+| screens/UserChannelScreen.tsx | ① MainTabs 중첩 navigate+fromParams | frontend-dev | `[AlbumNav]` |
+| components/AppShareModal.tsx | ③ 라벨 1줄·④ :91 | frontend-dev | — |
+| screens/SettingsScreen.tsx·ArtistLoadingScreen.tsx·VideoDirectorScreen.tsx·MyArtistsScreen.tsx·DirectorLineupScreen.tsx·components/feed/FeedCard.tsx | ④ 문자열 치환 각 1-2건 | frontend-dev | — |
+
+## 40% 룰 판정
+**가결**. ②③④는 문자열·상수 수준(구조 무변경). 유일한 구조 변경 = ①이며 앱 내 검증 선례(MyMusic 숨김 탭 :407-428) 1:1 이식 + 콜사이트 5곳·goBack 3곳의 기계적 치환. 최대 리스크는 ①의 back 동선(특히 UserChannel 재push 복귀)과 탭 상주 잔상 — 실패 시 UserChannel 진입만 RootStack 잔류(이중 등록 없이 해당 콜사이트만 현행 유지 = 채널 문맥은 탭바 없음 허용)로 축소하는 후퇴선 명시. 이월: 탭별 네이티브 스택 정공법 전환, FeedDetail 등 타 상세 화면 탭바 정책 통일 여부, ⭐ 리터럴의 CURRENCY_ICON 일원화.
+
+## test-designer 항목
+1. [unit] ① AlbumDetail 진입 4경로(차트 최신앨범·차트 앨범곡(모킹)·마이페이지 앨범행·앨범 생성 직후): 탭바 노출 + albumId·from 파라미터 전달 확인.
+2. [unit] ① exitAlbum: from=Chart→차트, from=MyMusic→마이페이지, from=UserChannel→채널 재push(fromParams), from 결측→차트 폴백. 내부 goBack 3경로(조회 실패·앨범 삭제·마지막 트랙 제거)가 동일 헬퍼 경유.
+3. [unit] ① 앨범 A→나가기→앨범 B 진입: 잔상 없음(리셋 effect)·재조회 1회. AI 커버 확정 goBack 복귀 시 focus 재조회로 커버 갱신(기존 회귀).
+4. [unit] ② HIDE_MINIPLAYER_ROUTES: 재생 중 Notifications·DmInbox·DmChat 진입 시 미니플레이어 미렌더 + playerStore 재생 상태 불변, 이탈 시 재노출. Settings·AudioSpike 기존 회귀.
+5. [unit] ③ SHARE_BUTTONS 라벨 '카카오톡', handleShare('kakao') 동작 불변.
+6. [unit] ④ 치환 매트릭스 전건 스냅샷 + 오매칭 가드: '스타일'·'스타킹'·'톱스타'·a11y 라벨 '스타 안내' 무변경 grep 검증.
+7. [e2e] ① 차트→최신앨범→곡 재생(Player 모달)→닫기→탭바 유지→뒤로→차트 / 마이페이지→앨범→뒤로→마이페이지 / 채널→앨범→뒤로→채널. Android 하드웨어 back(앨범→차트 착지) 문서 스모크.
+8. [e2e] ① 앨범 화면에서 미니플레이어가 탭바 바로 위에 안착(허공 결함 해소), 하단 탭 5개 터치로 즉시 이탈 가능.
+9. [e2e] ② DmChat 키보드 입력 중 미니플레이어 미간섭, 백그라운드 재생·잠금화면 컨트롤 유지. 미니플레이어 표시 화면 회귀(차트·플레이리스트·피드·검색·작업실 Map·마이페이지·AlbumDetail).
+10. [e2e] ④ 별 이모지 렌더(iOS·Android·웹 각 1회 스모크 — 기존 ⭐ 리터럴 다수라 저위험).
+
+## 사용자 결정 사안 (기본안 명시 — 미지시 시 기본안 진행)
+1. **① 구현 방식**: 기본안 = 숨김 탭 이식(MyMusic 관행, 소규모). Android 하드웨어 back이 앨범→차트로 떨어짐(헤더 ←는 origin 복귀 정상)을 감수. 탭별 스택 정공법(back 완전 보존·범위 확대)을 원하면 지시 1줄.
+2. **② DmChat 포함 여부**: 기본안 = 포함(알림·메시지 목록·채팅방 3화면). 채팅방은 표시 유지 원하면 지시 1줄.
+3. **④ 치환 강도**: 기본안 = R1(수량 ⭐N)+R2(첫 언급 병기 스타(⭐))+R3(기⭐ 무변경). (a) '스타' 전면 ⭐ 대체 또는 (c) 수량만 치환을 원하면 지시 1줄.
+4. **④ 튜토리얼 타이틀**: 기본안 = '스타'→'⭐ 스타'. 원문 고정(v3.213 "문안 = 사용자 원문" 이력) 원하면 제외 지시.
+
+규칙: 민감 정보 플레이스홀더(앱 단독 사이클 — SSH·키·크리덴셜 기재 없음), 코드 수정·커밋·배포는 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후. v3.219 미커밋분 위에서 분석했으므로 구현 착수 전 v3.219 커밋 선행 권장.

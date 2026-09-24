@@ -107,20 +107,69 @@ const STEPS: StepConfig[] = [
 
 type Props = NativeStackScreenProps<any, 'LyricsInput'>;
 
+// v3.219 [LyricsDraft]: 곡 길이 라벨 역산(duration → '2분' 등) — draft 복원 시 durationLabel 재구성
+const DURATION_LABEL_BY_SEC: Record<number, string> = {
+  30: '30초', 60: '1분', 120: '2분', 180: '3분', 240: '4분', 300: '5분',
+};
+
 export default function LyricsInputScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const store = useLyricsStore();
-  const [step, setStep] = useState(0);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { type: 'director', text: '어떤 장르의 곡을 만들까요?' },
-  ]);
+  // v3.219 [LyricsDraft]: 마운트 시점 store 스냅샷 — draft가 있으면 진행도·대화를 hydrate(이어서).
+  // draft는 아래 미러링 effect가 스텝마다 기록하고, 발매(lyricsStore.reset())·'처음부터 다시'에만 지운다.
+  const initialStore = useRef(useLyricsStore.getState()).current;
+  const hasResumableDraft = initialStore.draftStep > 0 && initialStore.draftChat.length > 0;
+  const [step, setStep] = useState(hasResumableDraft ? initialStore.draftStep : 0);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
+    hasResumableDraft
+      ? (initialStore.draftChat as ChatMessage[])
+      : [{ type: 'director', text: '어떤 장르의 곡을 만들까요?' }]
+  );
   const [customInput, setCustomInput] = useState('');
   const scrollRef = useRef<ScrollView>(null);
 
-  const [durationLabel, setDurationLabel] = useState('');
+  const [durationLabel, setDurationLabel] = useState(
+    hasResumableDraft ? DURATION_LABEL_BY_SEC[initialStore.duration] ?? '' : ''
+  );
+  // v3.219 [LyricsDraft]: 복원 안내 버블(인라인 '처음부터 다시' 액션) 노출 여부
+  const [showResumeNotice, setShowResumeNotice] = useState(hasResumableDraft);
+
+  useEffect(() => {
+    if (__DEV__ && hasResumableDraft) {
+      console.info('[LyricsDraft] draft 복원 — 이어서 진행', {
+        step: initialStore.draftStep, chatLen: initialStore.draftChat.length,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
-  useEffect(() => { store.setStyle(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // v3.219 [LyricsDraft]: draft 복원 진입에서는 스킵(진행 중 대화의 store 상태 훼손 금지)
+  useEffect(() => {
+    if (!hasResumableDraft) store.setStyle('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // v3.219 [LyricsDraft]: 진행 대화를 store에 미러링 — 재진입 복원 원천(커버 v3.202 H-⑤ 패턴).
+  // lyricsStore는 AsyncStorage persist라 텍스트 답변이 핫리로드·앱 재시작에도 생존(2026-09-07 정책).
+  useEffect(() => {
+    const s = useLyricsStore.getState();
+    s.setDraftStep(step);
+    s.setDraftChat(chatHistory);
+  }, [step, chatHistory]);
+
+  // v3.219 [LyricsDraft]: '처음부터 다시' — store(답변·결과·draft) 초기화 후 1번 질문부터
+  const handleRestartFromScratch = () => {
+    if (__DEV__) console.info('[LyricsDraft] 처음부터 다시 — store·draft 초기화');
+    store.reset();
+    useLyricsStore.getState().setStyle(''); // 진입 초기화와 동치(잔존 style 차단)
+    setStep(0);
+    setChatHistory([{ type: 'director', text: STEPS[0].question }]);
+    setDurationLabel('');
+    setCustomInput('');
+    setReselectStep(null);
+    setShowResumeNotice(false);
+  };
   const [reselectStep, setReselectStep] = useState<number | null>(null);
   // v3.204(④): 재선택 모달 렌더는 공용 AnswerEditModal로 이관 — 키보드 리프트·동적 maxHeight·
   // 자유 입력(trim·빈값 disabled)은 모달 내부가 담당. 반영 로직(handleReselectChoice)은 유지.
@@ -154,6 +203,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
   }, [chatHistory]);
 
   const processAnswer = (answer: string, currentStep: number) => {
+    // v3.219 [LyricsDraft]: 이어서 답변 시작 — 복원 안내 버블 접기
+    if (showResumeNotice) setShowResumeNotice(false);
     // 0=장르, 1=분위기, 2=듀엣, 3=내용, 4=키워드, 5=시점, 6=언어, 7=구조, 8=랩, 9=길이, 10=추가요청
     switch (currentStep) {
       case 0: store.setGenre(answer); break;
@@ -220,6 +271,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
 
   const handleReselectChoice = (choice: string) => {
     if (reselectStep == null) return;
+    // v3.219 [LyricsDraft]: 재선택도 "이어서" 진행 — 복원 안내 버블 접기
+    if (showResumeNotice) setShowResumeNotice(false);
     // store 업데이트 — v3.110: processAnswer 와 동일한 스텝 매핑으로 통일 (기존 off-by-one 수정)
     switch (reselectStep) {
       case 0: store.setGenre(choice); break;
@@ -359,6 +412,22 @@ export default function LyricsInputScreen({ navigation }: Props) {
             </TouchableOpacity>
           </View>
         ))}
+        {/* v3.219 [LyricsDraft]: 복원 안내 버블 — 디렉터 대화 톤 + 인라인 '처음부터 다시' 액션 */}
+        {showResumeNotice && (
+          <View style={[styles.messageBubbleRow, styles.directorRow]}>
+            <View style={styles.smallPortraitContainer}>
+              <Image source={LYRICIST_PORTRAIT} style={styles.smallPortraitImage} />
+            </View>
+            <View style={[styles.messageBubble, styles.directorBubble]}>
+              <AppText style={[styles.messageText, styles.directorText]}>
+                진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+              </AppText>
+              <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
+                <AppText style={styles.restartInlineBtnText}>처음부터 다시</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* 이전에 완성한 프롬프트가 있으면 바로 이동 버튼 표시 */}
@@ -586,6 +655,21 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  // v3.219 [LyricsDraft]: 복원 안내 버블 인라인 '처음부터 다시' 액션
+  restartInlineBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  restartInlineBtnText: {
+    color: colors.accent.primary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   // v3.204(④): reselect* 스타일은 components/AnswerEditModal.tsx로 이관(그대로 추출)
   bookEntryButton: {

@@ -26,6 +26,8 @@ import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
+// v3.219 [VideoDraft]: 대화 draft(선곡·진행·대화) 미러링 + 스타일 sticky — musicStore 보존
+import { useMusicStore, type VideoDraft, type VideoStylePrefs } from '../stores/musicStore';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -75,34 +77,59 @@ const coverUriOf = (t: MyTrack | null): string | null => {
   return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
 };
 
-export default function VideoDirectorScreen({ navigation }: any) {
-  const [chat, setChat] = useState<ChatMessage[]>([
-    { type: 'director', text: '안녕하세요! 영상 디렉터예요.\n곡을 고르면 커버와 가사가 어우러진 영상을 만들어 드릴게요. 어떤 곡으로 만들까요?\n\n선택한 답변을 탭하면 그 단계부터 다시 고를 수 있어요.' },
-  ]);
+const INITIAL_VIDEO_GREETING: ChatMessage = {
+  type: 'director',
+  text: '안녕하세요! 영상 디렉터예요.\n곡을 고르면 커버와 가사가 어우러진 영상을 만들어 드릴게요. 어떤 곡으로 만들까요?\n\n선택한 답변을 탭하면 그 단계부터 다시 고를 수 있어요.',
+};
+
+export default function VideoDirectorScreen({ navigation, route }: any) {
+  // v3.219 [VideoDraft]: 마운트 시점 draft/스타일 sticky 스냅샷 — 커버(v3.202 H-⑤) 패턴.
+  // draft(선곡·step·대화)는 재진입 이어가기용(저장/공유 완료·'처음부터'에 클리어),
+  // stylePrefs는 완주 후에도 유지(다음 영상에 이전 취향 승계 — creationMode sticky 관행).
+  const initialStore = useRef(useMusicStore.getState()).current;
+  const resumeDraft: VideoDraft | null =
+    initialStore.videoDraft &&
+    initialStore.videoDraft.chat.some((m) => m.type === 'user') &&
+    initialStore.videoDraft.step !== 'making' &&
+    initialStore.videoDraft.step !== 'done'
+      ? initialStore.videoDraft
+      : null;
+  const stylePrefs: VideoStylePrefs | null = initialStore.videoStylePrefs;
+
+  const [chat, setChat] = useState<ChatMessage[]>(
+    resumeDraft ? (resumeDraft.chat as ChatMessage[]) : [INITIAL_VIDEO_GREETING]
+  );
   const [tracks, setTracks] = useState<MyTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(true);
-  const [selected, setSelected] = useState<MyTrack | null>(null);
-  const [step, setStep] = useState<Step>('pick');
+  const [selected, setSelected] = useState<MyTrack | null>(
+    // v3.219 [VideoDraft]: 곡 선택 복원(최소 스냅샷) — 목록 로드 후 실측 검증·보강(트랙 소멸 시 폐기)
+    resumeDraft && resumeDraft.selectedTrackId
+      ? ({ id: resumeDraft.selectedTrackId, title: resumeDraft.selectedTrackTitle || '' } as MyTrack)
+      : null
+  );
+  const [step, setStep] = useState<Step>(resumeDraft ? (resumeDraft.step as Step) : 'pick');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [madeFormat, setMadeFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
-  // 스타일 선택값
-  const [pickedFormat, setPickedFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
-  const [pickedLayout, setPickedLayout] = useState<'full' | 'center'>('full');
-  const [pickedShape, setPickedShape] = useState<'square' | 'circle'>('square');
+  // v3.219 [VideoDraft]: 복원 안내 버블(인라인 '처음부터' 액션) 노출 여부
+  const [showResumeNotice, setShowResumeNotice] = useState(!!resumeDraft);
+  // 스타일 선택값 — v3.219 [VideoDraft]: sticky 스타일이 있으면 기본값으로 복원
+  const [pickedFormat, setPickedFormat] = useState<'sns' | 'wide' | 'kakao' | null>(stylePrefs?.pickedFormat ?? null);
+  const [pickedLayout, setPickedLayout] = useState<'full' | 'center'>(stylePrefs?.pickedLayout ?? 'full');
+  const [pickedShape, setPickedShape] = useState<'square' | 'circle'>(stylePrefs?.pickedShape ?? 'square');
   // v3.209: 'solid' = 단색 배경(앱 내부 모드 — API 로는 bg=color&bgalpha=100 매핑)
-  const [pickedBg, setPickedBg] = useState<'blur' | 'clean' | 'color' | 'solid'>('blur');
-  const [pickedBgBlur, setPickedBgBlur] = useState<'light' | 'mid' | 'strong'>('mid');
-  const [pickedBgColor, setPickedBgColor] = useState<string>('1B1035');
-  const [pickedBgAlpha, setPickedBgAlpha] = useState<string>('45');
-  const [pickedFont, setPickedFont] = useState<string>('basic');
-  const [pickedBold, setPickedBold] = useState(false);
-  const [pickedItalic, setPickedItalic] = useState(false);
-  const [pickedColor, setPickedColor] = useState<string>('FFFFFF');
+  const [pickedBg, setPickedBg] = useState<'blur' | 'clean' | 'color' | 'solid'>(stylePrefs?.pickedBg ?? 'blur');
+  const [pickedBgBlur, setPickedBgBlur] = useState<'light' | 'mid' | 'strong'>(stylePrefs?.pickedBgBlur ?? 'mid');
+  const [pickedBgColor, setPickedBgColor] = useState<string>(stylePrefs?.pickedBgColor ?? '1B1035');
+  const [pickedBgAlpha, setPickedBgAlpha] = useState<string>(stylePrefs?.pickedBgAlpha ?? '45');
+  const [pickedFont, setPickedFont] = useState<string>(stylePrefs?.pickedFont ?? 'basic');
+  const [pickedBold, setPickedBold] = useState(stylePrefs?.pickedBold ?? false);
+  const [pickedItalic, setPickedItalic] = useState(stylePrefs?.pickedItalic ?? false);
+  const [pickedColor, setPickedColor] = useState<string>(stylePrefs?.pickedColor ?? 'FFFFFF');
   // v3.209: 자막 테두리 — 유무(기본 있음)·색(기본 검정 = 현행 서버 하드코딩과 동일)
-  const [pickedOutline, setPickedOutline] = useState(true);
-  const [pickedOutlineColor, setPickedOutlineColor] = useState<string>('000000');
+  const [pickedOutline, setPickedOutline] = useState(stylePrefs?.pickedOutline ?? true);
+  const [pickedOutlineColor, setPickedOutlineColor] = useState<string>(stylePrefs?.pickedOutlineColor ?? '000000');
   // v3.183(대표): 자막 위치 — near(이미지 가까이)/mid/low. 플레이어 스타일 기본=near
-  const [pickedLyricsMode, setPickedLyricsMode] = useState<'scroll' | 'line'>('scroll');
+  const [pickedLyricsMode, setPickedLyricsMode] = useState<'scroll' | 'line'>(stylePrefs?.pickedLyricsMode ?? 'scroll');
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -175,23 +202,103 @@ export default function VideoDirectorScreen({ navigation }: any) {
           cover_image_url: t.cover_image_url, is_public: t.is_public !== false,
         }));
         setTracks(list);
+        // v3.221: 마이페이지 다운로드(영상) 진입 — initialTrackId 프리셋(명시 진입 의도가
+        // draft 복원보다 우선). 목록에 있으면 해당 곡으로 선곡 단계 통과, 비공개면 안내 후 pick 유지.
+        const presetId = route?.params?.initialTrackId ? String(route.params.initialTrackId) : null;
+        if (presetId) {
+          const preset = list.find((t) => t.id === presetId);
+          if (__DEV__) console.info('[VideoDirector] initialTrackId 프리셋', { presetId, found: !!preset });
+          if (preset) {
+            useMusicStore.getState().clearVideoDraft();
+            setShowResumeNotice(false);
+            if (preset.is_public === false) {
+              showAlert('공개 곡만 가능해요', '공유 영상은 차트에 공개된 곡으로만 만들 수 있어요.\n마이페이지에서 곡을 공개로 전환한 뒤 다시 시도해주세요.');
+            } else {
+              setSelected(preset);
+              setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
+                { type: 'director', text: '좋아요! 어떤 형태의 영상으로 만들까요?' }]);
+              setStep('format');
+            }
+            setLoadingTracks(false);
+            return;
+          }
+        }
+        // v3.219 [VideoDraft]: 복원한 선곡을 실측 목록으로 검증·보강 — 트랙 소멸(삭제 등)이면
+        // draft 폐기 후 처음부터(오표시·404 방지). 존재하면 커버 포함 전체 스냅샷으로 교체.
+        if (resumeDraft?.selectedTrackId) {
+          const full = list.find((t) => t.id === resumeDraft.selectedTrackId);
+          if (full) {
+            setSelected(full);
+          } else {
+            console.warn('[VideoDraft] 복원 트랙이 목록에 없음 — draft 폐기', { trackId: resumeDraft.selectedTrackId });
+            useMusicStore.getState().clearVideoDraft();
+            setSelected(null);
+            setChat([INITIAL_VIDEO_GREETING]);
+            setStep('pick');
+            setShowResumeNotice(false);
+          }
+        }
       } catch (err: any) {
         console.error('[VideoDirector] 내 곡 로드 실패', { status: err?.response?.status });
       } finally {
         setLoadingTracks(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // v3.219 [VideoDraft]: 대화 미러링(커버 v3.202 H-⑤ 패턴) — 사용자 진행이 있을 때만 기록.
+  // 생성 중(making)·완료(done)는 미러링 제외 — 재진입 시 마지막 선택 지점(생성 직전)으로 복원.
+  useEffect(() => {
+    if (step === 'making' || step === 'done') return;
+    if (!chat.some((m) => m.type === 'user')) return;
+    useMusicStore.getState().setVideoDraft({
+      selectedTrackId: selected?.id ?? null,
+      selectedTrackTitle: selected?.title ?? null,
+      step,
+      chat,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat, step, selected]);
+
+  // v3.219 [VideoDraft]: 스타일 sticky 미러링 — 완주 후에도 유지(다음 영상 기본값)
+  useEffect(() => {
+    useMusicStore.getState().setVideoStylePrefs({
+      pickedFormat, pickedLayout, pickedShape, pickedBg, pickedBgBlur, pickedBgColor,
+      pickedBgAlpha, pickedFont, pickedBold, pickedItalic, pickedColor,
+      pickedOutline, pickedOutlineColor, pickedLyricsMode,
+    });
+  }, [
+    pickedFormat, pickedLayout, pickedShape, pickedBg, pickedBgBlur, pickedBgColor,
+    pickedBgAlpha, pickedFont, pickedBold, pickedItalic, pickedColor,
+    pickedOutline, pickedOutlineColor, pickedLyricsMode,
+  ]);
+
+  // v3.219 [VideoDraft]: '처음부터' — draft 폐기 후 선곡부터(스타일 sticky는 유지)
+  const handleRestartFromScratch = () => {
+    if (__DEV__) console.info('[VideoDraft] 처음부터 — draft 폐기·선곡부터');
+    useMusicStore.getState().clearVideoDraft();
+    setSelected(null);
+    setVideoUrl(null);
+    setChat([INITIAL_VIDEO_GREETING]);
+    setStep('pick');
+    setShowResumeNotice(false);
+  };
 
   const pushDirector = (text: string) => setChat((p) => [...p, { type: 'director', text }]);
   // user 답변엔 되돌아갈 step 을 기록
-  const pushUser = (text: string, fromStep: Step) => setChat((p) => [...p, { type: 'user', text, step: fromStep }]);
+  const pushUser = (text: string, fromStep: Step) => {
+    // v3.219 [VideoDraft]: 이어서 답변 시작 — 복원 안내 버블 접기
+    setShowResumeNotice(false);
+    setChat((p) => [...p, { type: 'user', text, step: fromStep }]);
+  };
 
   // v3.182: 내 답변 탭 → 그 단계로 롤백 (해당 답변 포함 이후 대화 제거)
   const handleEditChoice = (msgIndex: number) => {
     const msg = chat[msgIndex];
     if (!msg || msg.type !== 'user' || !msg.step || step === 'making') return;
     if (__DEV__) console.info('[VideoDirector] 답변 수정 — 롤백', { toStep: msg.step });
+    setShowResumeNotice(false); // v3.219 [VideoDraft]: 수정 시작도 "이어서" — 안내 버블 접기
     setChat(chat.slice(0, msgIndex));
     setVideoUrl(null);
     setStep(msg.step);
@@ -474,6 +581,9 @@ export default function VideoDirectorScreen({ navigation }: any) {
         await MediaLibrary.saveToLibraryAsync(uri);
         showAlert('저장 완료', '영상이 사진 앨범에 저장됐어요.');
       }
+      // v3.219 [VideoDraft]: 저장 완료 = 완주 — 선곡/step/대화 draft 클리어(스타일 sticky는 유지)
+      useMusicStore.getState().clearVideoDraft();
+      if (__DEV__) console.info('[VideoDraft] 저장 완료 — draft 클리어(스타일 sticky 유지)');
     } catch (err: any) {
       console.error('[VideoDirector] 기기 저장 실패', { message: err?.message });
       showAlert('오류', '영상을 저장하지 못했어요. 잠시 후 다시 시도해주세요.');
@@ -498,6 +608,9 @@ export default function VideoDirectorScreen({ navigation }: any) {
             UTI: 'public.mpeg-4',
             dialogTitle: '영상 공유',
           });
+          // v3.219 [VideoDraft]: 공유 완료 = 완주 — draft 클리어(스타일 sticky는 유지)
+          useMusicStore.getState().clearVideoDraft();
+          if (__DEV__) console.info('[VideoDraft] 공유 완료 — draft 클리어(스타일 sticky 유지)');
         } else {
           showAlert('안내', '이 기기에서는 공유 시트를 열 수 없어요.');
         }
@@ -563,6 +676,23 @@ export default function VideoDirectorScreen({ navigation }: any) {
             </TouchableOpacity>
           )
         ))}
+        {/* v3.219 [VideoDraft]: 복원 안내 버블 — 디렉터 대화 톤 + 인라인 '처음부터' 액션 */}
+        {showResumeNotice && (
+          <View style={styles.directorRow}>
+            <View style={styles.portraitContainer}>
+              <Image source={VIDEO_PORTRAIT} style={styles.portraitImage} />
+            </View>
+            <View style={styles.directorBubble}>
+              <AppText style={styles.directorName}>영상 디렉터</AppText>
+              <AppText style={styles.directorText}>
+                진행하던 영상 만들기를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+              </AppText>
+              <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
+                <AppText style={styles.restartInlineBtnText}>처음부터</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         {step === 'making' && (
           <View style={styles.makingRow}>
             <ActivityIndicator size="small" color={colors.accent.primary} />
@@ -834,6 +964,12 @@ const styles = StyleSheet.create({
   },
   directorName: { fontSize: 12, fontWeight: '700', color: colors.accent.primary, marginBottom: 4 },
   directorText: { fontSize: 14, color: colors.text.primary, lineHeight: 20 },
+  // v3.219 [VideoDraft]: 복원 안내 버블 인라인 '처음부터' 액션
+  restartInlineBtn: {
+    marginTop: 8, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.accent.primary,
+    borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12,
+  },
+  restartInlineBtnText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
   msgRow: { flexDirection: 'row', marginBottom: 10, alignItems: 'flex-end' },
   msgRowUser: { justifyContent: 'flex-end' },
   bubble: { maxWidth: '78%', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 9 },

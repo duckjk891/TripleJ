@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// v3.219 [LyricsDraft]: 작사 디렉터 진행 대화 draft — LyricsInputScreen ChatMessage와 구조 동일
+// (구조적 타이핑 호환). 이탈·재진입 시 진행도·대화를 복원하고, 발매(reset())·'처음부터 다시'에만 지운다.
+export interface LyricsDraftChatMessage {
+  type: 'director' | 'user';
+  text: string;
+  step?: number;
+}
+
 interface LyricsState {
   genre: string;
   mood: string;
@@ -22,6 +30,10 @@ interface LyricsState {
   /** v3.144 — 작업본의 출처 가사 자산 id(lyrics_assets). 작업본과 함께 영속 —
    *  musicStore.lyricsSource(비영속)가 리로드로 끊겨도 DB 연결·장르/분위기 승계 유지 */
   sourceAssetId: string;
+  /** v3.219 [LyricsDraft]: 진행 중 작사 대화 스텝(0=시작 전) — 재진입 이어가기 판별 키 */
+  draftStep: number;
+  /** v3.219 [LyricsDraft]: 진행 중 작사 대화 전체(텍스트 답변 포함 — 2026-09-07 정책상 영속) */
+  draftChat: LyricsDraftChatMessage[];
   isLoading: boolean;
   error: string | null;
   setGenre: (v: string) => void;
@@ -41,6 +53,8 @@ interface LyricsState {
   setGeneratedTitle: (v: string) => void;
   setGeneratedLyrics: (v: string) => void;
   setSourceAssetId: (v: string) => void;
+  setDraftStep: (v: number) => void;
+  setDraftChat: (v: LyricsDraftChatMessage[]) => void;
   setIsLoading: (v: boolean) => void;
   setError: (v: string | null) => void;
   reset: () => void;
@@ -64,6 +78,8 @@ const initialState = {
   generatedTitle: '',
   generatedLyrics: '',
   sourceAssetId: '',
+  draftStep: 0,
+  draftChat: [] as LyricsDraftChatMessage[],
   isLoading: false,
   error: null,
 };
@@ -93,6 +109,8 @@ export const useLyricsStore = create<LyricsState>()(
       setGeneratedTitle: (generatedTitle) => set({ generatedTitle }),
       setGeneratedLyrics: (generatedLyrics) => set({ generatedLyrics }),
       setSourceAssetId: (sourceAssetId) => set({ sourceAssetId }),
+      setDraftStep: (draftStep) => set({ draftStep }),
+      setDraftChat: (draftChat) => set({ draftChat }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setError: (error) => set({ error }),
       reset: () => set(initialState),
@@ -101,12 +119,17 @@ export const useLyricsStore = create<LyricsState>()(
       name: 'aidol-lyrics-draft',
       storage: createJSONStorage(() => AsyncStorage),
       // 결과물 + 재생성에 필요한 입력만 영속 (로딩/에러 등 휘발 상태 제외)
+      // v3.219 [LyricsDraft]: 진행 대화 draft(텍스트 답변 = 사용자 생성물 — 핫리로드 생존)와
+      // generatedPrompt(기존 partialize 누락 — '요청사항으로 돌아가기'가 재시작 후 소실되던
+      // 부수 결함)도 함께 영속한다.
       partialize: (s) => ({
         genre: s.genre, mood: s.mood, content: s.content, perspective: s.perspective,
         language: s.language, structure: s.structure, keywords: s.keywords,
         duration: s.duration, hasRap: s.hasRap, isDuet: s.isDuet, reference: s.reference,
-        tempo: s.tempo, generatedTitle: s.generatedTitle, generatedLyrics: s.generatedLyrics,
+        tempo: s.tempo, generatedPrompt: s.generatedPrompt,
+        generatedTitle: s.generatedTitle, generatedLyrics: s.generatedLyrics,
         sourceAssetId: s.sourceAssetId,
+        draftStep: s.draftStep, draftChat: s.draftChat,
       }),
     }
   )

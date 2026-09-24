@@ -1,7 +1,7 @@
 // [TrackActionSheet] 곡 더보기(⋮) 액션 시트 — 재생 / 좋아요 / 재생목록에 추가 / 플레이리스트에 담기.
 // 차트·검색 등 곡 목록 화면이 같은 메뉴·동작을 쓰도록 공용화(플레이리스트 담기 시트, 비회원 담기 안내 포함).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
+import { ScrollView, Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,6 +101,9 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
                     <AppText variant="footnote" tone="secondary" numberOfLines={1}>{track.artist_name || '알 수 없는 아티스트'}</AppText>
                   </View>
                 </View>
+                {/* v3.218 ②: 항목 증가(차트 토글 등)로 maxHeight 초과 시 하단이 잘리던 문제 —
+                    목록을 ScrollView 로 감싸 넘치면 스크롤(Android·iOS 공통). */}
+                <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
                 <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = track; onClose(); onPlay(t); }}>
                   <Feather name="play" size={20} color={colors.text.secondary} />
                   <AppText variant="body">재생</AppText>
@@ -128,6 +131,7 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
                     <AppText variant="body" style={ex.danger ? { color: colors.status.error } : undefined}>{ex.label}</AppText>
                   </TouchableOpacity>
                 ))}
+                </ScrollView>
               </>
             ) : null}
           </View>
@@ -159,7 +163,7 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
 
 const styles = StyleSheet.create({
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl, padding: spacing.xl, maxHeight: '60%' },
+  sheet: { backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl, padding: spacing.xl, maxHeight: '78%' },
   actionSheetHead: {
     flexDirection: 'row', alignItems: 'center',
     paddingBottom: spacing.md, marginBottom: spacing.sm,

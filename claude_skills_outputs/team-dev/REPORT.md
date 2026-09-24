@@ -2882,3 +2882,96 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - **소셜로그인 실계정 완주**: 구글·카카오 로그인→차트 착지까지 — 사용자만 가능(실계정).
 - **C 런타임 429**(composer 쿨다운 — v3.215 이월분): 쿨다운 상태 필요, 실사용 확인.
 - 기능 이월: 소셜 가입 ref 전달(oauth state), `$sample 500` 캡 상향/페이지네이션, 품절 638건 취급 재론, admin 임포트 브랜드 직납·로컬 이미지 모드, F6 맞춤법 3곳 사용자 확정, AdMob 앱 ID 재빌드 산출물 검수(1.1.6 2차).
+
+## v3.217 (2026-09-24) — 웹 재생 브라우저 확장(단일 element·인앱 탈출)·차트 공개↔숨김·대표 아티스트 지정·iOS 웹 시트 가림·보이스 validate 500 픽스·외부 API 헬스체크 관리자·가상 착장 폴백
+
+**요청(7건)**: ① 웹(사파리/인앱) 재생 연속성·백그라운드 대응 ② 마이페이지 곡 ⋮에 차트 숨기기/업로드 ③ 대표 아티스트 지정 ④ iOS 웹 하단 팝업(시트) 가림 ⑤ '내 목소리 만들기' 샘플 등록 500 ⑥ 외부 API 상태 관리자 확인 ⑦ 가상 캐릭터 착장 미표시.
+
+### 수행 결과
+
+- **① 웹 재생**: expo-av 웹 우회 — `webAudioElement.ts` 신설, **단일 HTMLAudioElement 재사용**+세대 가드, `ended` 핸들러에서 프리페치 URL **동기 src 교체 연속재생**(XHR/await 0), mediaSession 트랙 sync를 store.track **구독 단일 지점**으로 일원화(PlayerScreen 전환 5경로 개별 호출 제거 — 잠금화면 메타 잔존 결함 동시 해소). 네이티브 = createTrackSound 팩토리 1줄 위임(동작 등가·무변경). **인앱 탈출**: browserEnv.ts+InAppEscapeBanner 신설+public/index.html 인라인 — 카카오톡 `kakaotalk://web/openExternal`(query·hash 보존) 자동 시도+1.5s 배너 폴백, Android 기타 인앱 Chrome intent 버튼, iOS 안내 문구. 한계 명기: 인앱 웹뷰 내 백그라운드 재생 불가(탈출이 대응), iOS 화면꺼짐 중 자동 다음곡 보장 불가(실기기 판정 이월), iOS 크롬 강제 불가·무의미(WebKit 동일).
+- **② MyMusic ⋮ 양방향**: 공개곡 "차트에서 숨기기"(확인 팝업→`PUT /tracks/{id} {is_public:false}`→즉시 로컬 갱신+재동기화) ↔ 비공개곡 "차트에 업로드"(현행) 상호 배타. report_blinded 400 등 서버 메시지 표출 보강. 서버 무변경(차트 응답 조립 시점 재필터라 숨김 즉시 반영).
+- **③ 대표 아티스트**: 생성 완료(justCreated·is_default=false)에서만 showAlert 팝업 → `patchArtist({is_default:true})`, 첫 아티스트(서버 자동 대표) 생략·1회 가드. MyArtists "대표" 배지+비대표 카드 "대표로 지정" 액션 복원(v3.163 제거분), MyMusic 아티스트 요약 = is_default 우선→최신 생성 폴백 복원.
+- **④ public/index.html 신설**: viewport-fit=cover(웹 insets.bottom 실값 공급 → insets 기반 시트 9곳 일괄 회복)+100dvh(@supports 폴백)+인앱 스크립트 인라인. **1차 게이트 FAIL 1건 발견**: :7 주석 속 `%LANG_ISO_CODE%·%WEB_TITLE%` 문자열이 expo의 첫 1회 치환을 소진 → dist title/lang 미치환 잔존 — **발견 즉시 주석 % 제거 픽스 후 `expo export` 재실행으로 실치환 재검증(통과)**. 개별 보정: LyricsPromptReview insets 하한, App.tsx 미니플레이어 웹 54 정합·웹 탭바 54+insets, 래퍼 iframe 100dvh.
+- **⑤ 보이스 validate 500**: 로그·Mongo 실측 = 게이트웨이가 **긴 presigned URL 거부**(Inst v3.210 동일 유형·body code 500). 짧은 토큰 302 라우트 이식 — `GET /api/voice-clone/audio/{clone_id}/{kind}/{token}`(무인증·hmac 토큰 대조·kind 화이트리스트·만료 410·성공 302) 신설 + voice_clone_service `_presign` 4곳 → 짧은 URL 헬퍼 교체. **서버 배포 완료(사용자 실행), '진주1' 실재시도 awaiting_verify 도달 실증 — 가설 확정**. ⭐ 환불 경로 hunk 0(회귀 없음).
+- **⑥ 외부 API 헬스체크**: routes/admin_health.py 신설(전 라우트 admin 전용) — **active 12종**(suno 크레딧·openai/anthropic/gemini/xai models·replicate·S3·SES·PG/Mongo/Redis/ES — 무과금 확인 엔드포인트만, 키는 헤더 전달·응답 미노출)+**passive 6종**(kling·seedance·kits·sync·rekognition·voice validate 24h 집계 — ⑤ 상시 감시 연동), Redis 10분 캐시+force. admin_web **"시스템" 탭**(Health.jsx·상태 배지 표·60s 폴링) 배포·검증 — **401 게이트·무효 토큰 404 확인**.
+- **⑦ 가상 착장**: MusicResult 스냅샷 폴백 — 실사 슬롯 부재 시 virtual_sheet_object_name/virtual_used_items+characterId 포함(서버 `_build_character_snapshot` 재조립이 가상 cid도 커버). 기존 발매곡 소급 없음(백필 이월 → v3.218 ①에서 1곡 처리).
+
+### 검증
+
+- **1차 게이트(TESTPLAN v3.217)**: 앱 11(A-8 FAIL→픽스 후 재검증)+서버 5+admin 1 = **17 PASS / 1 FAIL → 수정 후 통과**. tsc exit 0, py_compile 4파일, expo export·admin npm build 통과, diff 격리(매트릭스 한정·타 트리 오염 0).
+- **배포**: 서버 4파일(voice_clone.py·voice_clone_service.py·admin_health.py 신설·main.py 2줄)+admin SPA — **사용자 실행, _orig=라이브 pull·md5 대조**(MD5SUMS·DEPLOY.md, 배포 직전 라이브 재대조 절차 준수). **웹(Pages) 2회 배포**.
+- 실측: 보이스 실재시도 awaiting_verify 도달, 헬스체크 응답(suno detail 크레딧 수치)·캐시/force, 302 라우트 무효 토큰 404, suno 크레딧 프로브 사전 실증(GET 1회·무과금).
+
+### 미검증 이월 (완료 조건 명시)
+
+- **실기기 D군(iOS)**: 하단 시트 9곳 사파리 툴바 미가림(④), 화면꺼짐 중 재생 유지·ended 곡 전환 실판정(개선 후에도 보장 불가 — 판정 기록), 잠금화면 메타 곡 전환 추종, 카카오톡 링크 자동 탈출(또는 배너)·Android intent(hash 이중 fragment 확인)·iOS 기타 인앱 안내.
+- **보이스 본인확인 이후 단계**: verify→generate 완주·⭐ 과금/실패 환불 회귀(awaiting_verify까지만 실증).
+- 기능 이월: 기존 곡 스냅샷 전수 백필(1곡은 v3.218 처리), 헬스체크 주기 수집·알림, kling/kits/fal/sync active 승격, PlayerScreen↔playback 재생 경로 이원화 통합, wondera/lalal 키·라우트 정리.
+
+특이사항: 민감 정보 플레이스홀더(<SSH_HOST>=maidol-ec2 별칭만, API 키·크리덴셜·크레딧 외 수치 미기재). A-8 치환자 파손은 expo 치환기가 String.replace 1회 치환인 데서 온 함정 — public/index.html 주석에 % 치환자 문자열 금지 관행화.
+
+## v3.218 (2026-09-24) — '방학하면 바다가자' 착장 백필 + TrackActionSheet 하단 잘림 + 튜토리얼 하이라이트 단순화 (PLAN·TESTPLAN 별도 섹션 없음 — 본 기록이 정본)
+
+**요청(2건+파생)**: ① 곡 '방학하면 바다가자' 스타일링 탭 착장 미표시 ② 곡 ⋮ 시트 하단 잘림. (+튜토리얼 하이라이트 형태 — 사용자 피드백 3회)
+
+### 수행 결과
+
+- **① 착장 백필**: 해당 곡의 착장 스냅샷이 빈 값(실사 슬롯 기준 오저장 — v3.217 ⑦ 결함의 기존 곡 잔재) → **가상 슬롯 3종으로 스냅샷 교체 백필**(+Redis 트랙 캐시 삭제).
+- **② TrackActionSheet**: maxHeight 60%→**78%** + 항목 목록 **ScrollView 래핑**(차트 토글 등 항목 증가로 넘칠 때 스크롤 — Android·iOS 공통).
+- **TutorialOverlay 하이라이트 개편**(사용자 피드백 3회 반영): pill(원형) 제거→둥근 사각(radius 12), 이중 딤 띠 제거, 링·글로우 제거 — 최종 단순화.
+
+### 검증
+
+- ① 백필 후 스타일링 탭 **실노출 스크린샷 검증**. ② TrackActionSheet·TutorialOverlay 로컬 실측 스크린샷 검증.
+- planner 최종 재확인(본 기록 전): diff 실측 — TrackActionSheet 8줄(ScrollView·78%)·TutorialOverlay 25줄(단순화) 결과 소재와 일치, 이상 없음.
+
+### 미검증 이월
+
+- 실기기: 시트 스크롤 실동작(항목 최다 조합)·튜토리얼 전 스텝 하이라이트 형태 확인.
+- 유사 빈 스냅샷 기존 곡 **전수** 백필(이번은 1곡 지정 백필 — 대상 조회 스크립트 이월).
+
+특이사항: 오케스트레이터 직행 소규모 사이클이라 PLAN 미작성 — 본 REPORT가 정본. ① 백필은 프로덕션 데이터 변경(사용자 승인 관행 하 수행).
+
+## v3.219 (2026-09-24) — 작업실 '작업 시작' 말풍선 아티스트 우선화 + 5개 디렉터 작업 중 상태 보존(이탈·재진입 이어가기)
+
+**요청(2건)**: ① 클릭 유도 말풍선("클릭해서 작업 시작!")이 작사 디렉터에 붙음 → 아티스트 디렉터로 ② 각 디렉터 작업 도중 뒤로가기/타 페이지 이동 시 작업 내용이 처음으로 초기화.
+
+### 수행 결과
+
+- **① 말풍선**: 원인 = nextActionDirector 체인(작사→작곡→커버)에 **artist 단계 자체가 부재**. 아티스트 **미보유 시 artist 선두 삽입** + hasArtistCharacter를 **3상태(null=조회 전)**로 — null 동안 말풍선·펄스 유보(보유자 깜빡임 레이스 봉합), 게스트·휴식 중 미표시 현행 유지. `[NextAction]` 로그.
+- **② 상태 보존 — 커버(v3.202 H-⑤) 패턴을 4흐름 이식**: **(A) 작사** lyricsStore draftStep/draftChat + **AsyncStorage persist**(partialize 포함 — 핫리로드 생존, 2026-09-07 사고 직결) + `generatedPrompt` partialize 누락 봉합, hydrate·복원 시 setStyle('') 스킵·'처음부터 다시' 버블. **(B) 아티스트** characterTaskStore draft(persist는 텍스트 9필드만 — 파일 URI 제외), targetCharacterId/forceKind 키 불일치 폐기, v3.105 '이어서 만들기' 우선 유지. **(C) 작곡** composeDraft(**lyricsKey** 메모리 — 다른 가사 진입 시 폐기, 마운트 artistCharacterId 초기화는 새 대화 분기 한정으로 v3.156a와 양립, 답변 28필드 hydrate). **(D) 커버** = hunk 0(무접촉 — musicStore persist 미도입으로 자동 재생성·재차감 경로 원천 부재). **(E) 영상** videoDraft(making/done **이중 제외** — 재진입 무한 스피너·재차감 차단, 트랙 실측 검증 후 소멸 시 폐기, **스타일 sticky 14필드 별도 유지** — 완주 후 다음 영상 승계). 공통: authStore.logout에서 draft 일괄 청소(**lyricsStore는 보존** — 기본안·사용자 생성물 우선), MusicResult 발매 성공 2곳 clearComposeDraft.
+
+### 검증
+
+- **1차 게이트(TESTPLAN v3.219): 12/12 PASS, FAIL 0** — 말풍선 3상태·작사 draft persist·아티스트 partialize 격리(파일 URI 미포함 grep)·작곡 마운트 분기·영상 making 제외·logout 청소·tsc exit 0·diff 격리(v3.219 추적자 6종 = 매트릭스 10파일 한정, 병존 v3.217 미커밋분 오염 0) 전수 충족.
+
+### 미검증 이월 (완료 조건 명시)
+
+- **웹 E2E**: 테스트 계정 API 로그인 401(팀 관행 비밀번호 불통 — 1회 시도 후 중단, 비밀번호 재확인 필요) → draft 복원 실측 이월(토큰 → /#token= 진입 → 작사 3답 → 이탈 → 복원 확인).
+- **실기기**: 정상 완주 5종(아티스트/작사/작곡/커버/영상 — 도중 뒤로가기·탭 이동 끼워 완주+발매 후 draft·lyricsStore 동시 클리어), 핫리로드/앱 재시작 draft 생존(2026-09-07 재현), 커버 pending 자동 재생성 1회·재차감 없음, 말풍선 실표시(신규→아티스트, 생성 후 작사 이동, 보유 계정 무깜빡임), apiError 재진입 시 draft 복원과 '이어서 만들기' 버튼 관계.
+
+특이사항: 앱 단독·서버 무변경(원격은 읽기 조회만 — 민감 정보 기재 없음). 커버 대화 AsyncStorage 영속·앨범 모드 보존·작곡 draft persist는 이월(재차감 안전장치 설계 선행).
+
+## v3.221 (2026-09-24) — 마이페이지 ⋮ 다운로드 [영상·음원] 2택 + 공유 항목 임시 숨김 (오케스트레이터 직접 — PLAN 없음, 본 기록이 정본)
+
+**요청**: 마이페이지 곡 ⋮ 다운로드를 [영상, 음원] 2택으로(영상은 영상 디렉터 연결), 공유 항목은 임시 숨김.
+
+### 수행 결과
+
+- **다운로드 2택 다이얼로그**(showAlert — 앱 다이얼로그 관행): [영상] → MainTabs>Studio>**VideoDirector initialTrackId 프리셋 신설** 이동(App.tsx 파라미터 타입 확장), [음원] → downloadTrackMp3 즉시 실행.
+- **downloadTrackMp3·saveTrackFileToDevice 모듈 헬퍼 추출**(TrackShareDownloadSheet) — 시트 내부는 위임 호출, 시트 밖(마이페이지)에서 재사용. 로그인 가드·성공/실패 안내 헬퍼 내 포함.
+- **VideoDirector initialTrackId**: 목록 로드 후 프리셋 곡 발견 시 **clearVideoDraft(명시 진입 우선)**+복원 안내 억제+선곡 통과(format 단계 직행), 비공개 곡은 안내 팝업(공개 전환 유도).
+- **공유 임시 숨김**: extraItems에서 공유 **항목만 제거(미노출)** — TrackShareDownloadSheet 렌더·sdMode 상태·공유 기능 전부 보존(복원 = 1줄).
+
+### 검증 (planner 최종 diff 정합 재검 — 본 기록 전 수행)
+
+- 4파일(TrackShareDownloadSheet.tsx·MyMusicScreen.tsx·App.tsx·VideoDirectorScreen.tsx) v3.221 diff 전량 정독: ① 공유 숨김 = **항목 미노출 방식 확인**(시트 렌더·상태·기능 잔존 — MyMusicScreen:957 유지) ② mp3 헬퍼 = 기존 saveToDevice/handleDownloadMp3 로직 **문자 등가 이식**, 로그인 가드 헬퍼 내 보존(시트 close 시점만 API 호출 전으로 앞당김 — 동작 등가) ③ 프리셋 vs draft: 발견 시 clearVideoDraft+notice 억제 후 프리셋 대화로 재구성 → v3.219 미러링이 새 draft로 일관 기록 — **충돌 없음**. 내비 경로 정합(MyMusic=MainTabs 탭 → getParent=RootStack → 중첩 navigate). App.tsx의 v3.221 hunk는 타입 확장 1줄뿐. `tsc --noEmit` exit 0 재실측. **이상 없음**.
+- 관찰 2건(비차단): (a) 프리셋 곡이 **비공개**+기존 draft 병존 시 로컬 화면은 draft 지점 유지(코드 주석 'pick 유지'와 상이 — 데이터 유실·재차감 없음, 무해) (b) 프리셋 적용이 마운트 effect 한정 — VideoDirector가 Studio 스택에 **이미 마운트된 채** 재진입하면 파라미터만 갱신되고 프리셋 미적용 가능(Studio 탭 tabPress가 Map 리셋이라 통상 언마운트 — 실기기 확인 이월).
+
+### 미검증 이월
+
+- 실기기: 2택→영상 디렉터 프리셋 착지·음원 저장 완주(OS 공유 시트), 관찰 (a)(b) 실동작 확인.
+- 공유 항목 복원 시점 결정(사용자) — 복원은 extraItems 1줄.
+
+특이사항: 앱 단독·서버 무변경. 커밋은 오케스트레이터 승인 후(현재 v3.217~v3.221 미커밋분 작업 트리 병존 — v3.219 A-12 격리 검증 완료 상태).

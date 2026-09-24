@@ -15,6 +15,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import api from '../services/api';
 import {
   listArtists,
+  patchArtist,
   spendExtraSlot,
   artistSheetUrl,
   parseVoicePreset,
@@ -76,6 +77,8 @@ export default function MyArtistsScreen({ navigation }: any) {
   const [slotConfirmVisible, setSlotConfirmVisible] = useState(false);
   // v3.105: [＋추가] 진입 confirm — 생성 시 ⭐ 소모를 입력 시작 전에 고지 (대표 지적)
   const [addConfirm, setAddConfirm] = useState<{ forceKind?: SlotKind } | null>(null);
+  // v3.217 ③: 대표 지정 진행 중인 cid — 중복 PATCH 방지 + 카드 버튼 스피너
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
   // ArtistResult가 탭 헤더에 주입한 ‹ 가 남아 이중 화살표가 되지 않도록 정리 (VoiceManage 관행)
   useLayoutEffect(() => {
@@ -215,6 +218,34 @@ export default function MyArtistsScreen({ navigation }: any) {
     useCharacterTaskStore.getState().clearResult();
     if (a.characterId) navigation.navigate('ArtistResult', { characterId: a.characterId });
     else navigation.navigate('ArtistResult', { slot: a.slot });
+  };
+
+  // v3.217 ③: 대표 지정 복원 — PATCH /character/{cid} {is_default:true}(서버가 나머지 자동 해제).
+  // 레거시(me 폴백) 카드는 cid가 없어 대상 제외(서버 대표 체계 밖 — 배지·액션 미노출).
+  const handleSetDefault = (a: ArtistEntry) => {
+    if (!a.characterId || a.isDefault || settingDefaultId) return;
+    const cid = a.characterId;
+    const name = a.name || '이름 없는 아티스트';
+    showAlert('대표 아티스트', `'${name}'을(를) 대표 아티스트로 지정할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '대표로 지정',
+        onPress: async () => {
+          setSettingDefaultId(cid);
+          try {
+            await patchArtist(cid, { is_default: true });
+            // 서버가 본인 set 후 나머지 전부 false — 로컬 목록도 동일 규칙으로 즉시 반영
+            setArtists((prev) => prev.map((x) => ({ ...x, isDefault: x.characterId === cid })));
+            if (__DEV__) console.info('[MyArtists] 대표 지정 완료', { characterId: cid });
+          } catch (err: any) {
+            console.error('[MyArtists] 대표 지정 실패', { status: err?.response?.status, message: err?.message });
+            showAlert('오류', err?.response?.data?.error || '대표 지정에 실패했어요. 잠시 후 다시 시도해주세요.');
+          } finally {
+            setSettingDefaultId(null);
+          }
+        },
+      },
+    ]);
   };
 
   const slotsFull = slots.used >= slots.max;
@@ -385,7 +416,12 @@ export default function MyArtistsScreen({ navigation }: any) {
                     <AppText style={styles.cardName} numberOfLines={1}>
                       {displayGender ? `${displayName} · ${displayGender}` : displayName}
                     </AppText>
-                    {/* v3.163(대표): 대표 지정 개념 제거 — 배지 표시 안 함 */}
+                    {/* v3.163 제거 → v3.217 ③ 복원: 대표 배지(isDefault 매핑 재사용) */}
+                    {a.isDefault && (
+                      <View style={styles.defaultBadge}>
+                        <AppText style={styles.defaultBadgeText}>대표</AppText>
+                      </View>
+                    )}
                   </View>
                   {voiceLabel && (
                     <AppText
@@ -397,6 +433,22 @@ export default function MyArtistsScreen({ navigation }: any) {
                     >
                       {voiceLabel}
                     </AppText>
+                  )}
+                  {/* v3.217 ③: 비대표 서버 카드 — "대표로 지정" 액션(레거시 cid 없는 카드 제외) */}
+                  {!a.isDefault && a.characterId && (
+                    <TouchableOpacity
+                      style={styles.setDefaultBtn}
+                      onPress={() => handleSetDefault(a)}
+                      disabled={!!settingDefaultId}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      accessibilityLabel={`${displayName} 대표로 지정`}
+                    >
+                      {settingDefaultId === a.characterId ? (
+                        <ActivityIndicator size="small" color={colors.accent.primary} />
+                      ) : (
+                        <AppText style={styles.setDefaultText}>대표로 지정</AppText>
+                      )}
+                    </TouchableOpacity>
                   )}
                 </View>
                 <AppText style={styles.cardChevron}>›</AppText>
@@ -505,6 +557,9 @@ const styles = StyleSheet.create({
   defaultBadgeText: { color: colors.text.primary, fontSize: 10, fontWeight: '700' },
   cardVoice: { color: colors.text.muted, fontSize: 11, marginTop: 4 },
   cardVoiceWarn: { color: '#cc8844', fontWeight: '600' },
+  // v3.217 ③: 비대표 카드 "대표로 지정" 액션
+  setDefaultBtn: { alignSelf: 'flex-start', marginTop: 6 },
+  setDefaultText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
   cardChevron: { color: colors.text.muted, fontSize: 24, fontWeight: '300', paddingHorizontal: 2 },
 
   addCard: {
