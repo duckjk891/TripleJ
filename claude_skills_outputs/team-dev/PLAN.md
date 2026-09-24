@@ -5561,3 +5561,561 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 3. **H-3 원본 사진 보호**: **즉시 차단**(서버 배포 시점에 적용). APK 1.1.8의 실사 옷 갈아입기·'사용한 사진' 표시는 1.1.9까지 일시 제한 — REPORT·사용자 안내에 명시, 웹은 동시 대응.
 4. **회수 보관 기간**: **기간 제한 없음** — recoverable 목록은 저장(consume) 또는 사용자 닫기(dismiss) 전까지 계속 노출. 오래된 job 대량 노출 방지를 위한 목록 상한(예: 최근 N건)은 자율 확정 가능.
 5. W0(H-1) 구현 완료(1조, tsc 0) — photoIntent 표기는 `'photo' | 'text' | null`로 확정.
+
+---
+
+# v3.228 — 작사·작곡(연주곡 포함)·이미지(커버·다듬기)·영상 디렉터에 아티스트 디렉터 수준의 "자동 도착 알림 · 중복 생성 차단 · 서버 재시작으로 멈춘 작업 환불 정리" 확장
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD ea39dac = 태그 `checkpoint-pre-v3228`, 앱 1.1.9). 서버 = `<SSH_HOST>`(maidol-ec2) `/home/ubuntu/maidol/backend_9004/`(git 아님, 이미지 베이크, 컨테이너 09:24:51Z 기동). **서버 실측은 전부 읽기 전용**: 라이브 파일 scp 다운로드, 컨테이너 안 python stdin 실행(쓰기 0, 서버에 파일 생성 0). 출처: [P]=planner 실측, [O]=오케스트레이터 전달(재확인함).
+사용자 요청 원문: "그럼 만약에 작업이 이상해질껄 대비해서 지금 상태를 체크해놓고. 작사, 작곡, 이미지, 영상 디렉터 모두 아티스트 디렉터 처럼 자동도착알림, 중복생성차단, 서버 재시작으로 멈춘 환불정리 반영해줄래?"
+유지 원칙(ea39dac 사용자 결정): 진행 화면 안내는 **"작업이 끝날 때까지 이 화면을 벗어나지 마세요"** 그대로. 자동 회수는 실수 이탈 대비 안전장치이며, 버튼·문구로 이탈을 권장하지 않는다. "만드는 중" 표시와 도착 알림은 허용.
+
+## 체크포인트(롤백 기준 — 생성 완료, [P] 재확인)
+- 앱: 태그 `checkpoint-pre-v3228` → ea39dac(`git rev-parse checkpoint-pre-v3228^{commit}` = ea39dac).
+- 서버 이미지: `maidol-app:checkpoint-pre-v3228` = `latest` = sha256:3f32481b5e68…(09:24:47Z 빌드).
+- 서버 소스: `/home/ubuntu/maidol/backups/backend_9004_app_pre_v3228_20260924T094437Z.tgz`(5.8MB, `app/` 전체 — generate.py·upload.py·tracks.py·main.py 포함 확인).
+- 현재 서버 파일 md5([P] 09:4xZ): generate.py `8786687e43753f6be8bf8f3988072052` · upload.py `0a3e5927f8457c94cc8bb01466ab0c4f`(v3.227 반영본) · tracks.py `811381c087da9db43dc592fc7ac174e5` · main.py `78ab70741f8dc476e879c330608e0bc7`(mtime 09:24:41Z, 내용은 07:22본과 동일) · services/inst_service.py `d6c95351a7b264da5b82fc331d675f93` · services/points_service.py `3ad6a322b0b316b92145bc0b0afd9b93`.
+- 다른 세션 변경 파일(오늘 09:24Z): main.py·admin_items.py·admin_stats.py·analytics.py. **이번 사이클 반영 대상과 겹치지 않음. main.py는 건드리지 않는다.**
+
+## 0단계 findings / Plan verification (파일:라인)
+
+### 0-1. 디렉터별 현황표 (현재 코드)
+| 디렉터 | 서버 엔드포인트 | 과금 시점 | 환불 훅 | 작업 상태 저장 | 결과 저장 위치 | 앱 재진입 경로 |
+|---|---|---|---|---|---|---|
+| 작사 | `POST /api/generate/lyrics/`(동기) generate.py:536-612 | 피로 429(:553) 뒤 `spend_points("lyrics",5,uuid)` :560 | 같은 요청의 except만 :606-608 | **없음** | `save=true`면 `lyrics_assets` 자동 저장(:593-603). 응답 `lyrics_id` | 없음. LyricsLoading은 마운트마다 새 POST(LyricsLoadingScreen.tsx:74-167) |
+| 작곡 | `POST /api/generate/`(201, BackgroundTasks) generate.py:615-779 · `POST /{id}/start/` :782-879 | 피로(:646) 뒤 spend :650 → doc insert :734 → 백그라운드 :751 | 러너 except에서 원자 claim 환불 `refund_generation_points` :273-306, :397-404 | `generations`(status pending→processing→completed/failed, point_ref·refunded) | generations doc(→ 발매 시 tracks `upload-from-generation`) | MusicLoading `resumeGenerationId`(MusicLoadingScreen.tsx:298-306) · GenerationHistory 진행중 탭(GenerationHistoryScreen.tsx:143-154) |
+| 연주곡(Inst.) | `POST /tracks/{id}/instrumental`(202) tracks.py:3045-3207 | 곡별 active claim(upsert) :3149-3171 뒤 spend :3182 | 러너 except `refund_instrumental_points`(inst_service.py:150-185, :485-501) | `inst_jobs`(active, status, refunded) | 새 트랙 자동 발매 | InstLoading `resume`(MyMusicScreen.tsx:487-502 409 분기) |
+| 이미지(커버) | `POST /upload/generate-cover`(동기 150~180초) upload.py:344-679 | 피로(:392-396) 뒤 spend :403 | 같은 요청 except :674-676 | **없음**(성공 후에만 `cover_sessions` insert :642) | cover_sessions(보관함) | v3.202 I-lite: ERR_NETWORK 시 `GET /upload/cover-sessions` 시각 휴리스틱 폴링(CoverGenerationScreen.tsx:337-379) |
+| 이미지(다듬기) | `POST /upload/refine-cover`(동기 132~141초) upload.py:942-1132 | 세션 로드(:970) → spend :1027 | refine 예외만 :1044-1047. **MinIO·Mongo 저장 실패(:1070-1117)는 환불 없음** | **없음** | cover_sessions.cover_refine_history | v3.204 `GET /upload/cover-history/{id}` 버전 비교 폴링(:1244-1285) |
+| 영상 | `POST /tracks/{id}/share-video`(동기) tracks.py:2424-2593 | 캐시 미스(:2542) → 피로(:2551) → spend :2563 | 같은 요청 except :2576-2583 | **없음**(MinIO 객체 존재 = 캐시) | MinIO `share/v8/…` | 없음. VideoDraft는 'making' 제외(VideoDirectorScreen.tsx:90-96) |
+
+공통 인프라 실측:
+- uvicorn **단일 워커**(Dockerfile CMD, `--workers` 없음 — 주석으로 의도 명시) — [P].
+- 재시작 복구는 **character_jobs만** 존재(main.py:536-567, 30분 기준). generations·inst_jobs·동기 요청은 기동 복구 없음(MV는 paused 전환만 :523-534) — [P].
+- nginx `proxy_read_timeout 320s`(sites-enabled/maidol-api:13), api.maidol.ai.kr은 Cloudflare 미경유(직결 A 3.37.146.1) — [P].
+- 앱 axios 기본 timeout 600초(services/api.ts:18), 영상만 300초(VideoDirectorScreen.tsx:543). 자동 재시도 인터셉터 없음 — [P].
+- `spend_points`는 **비멱등**: 잔액 차감(:202-206)을 먼저 하고 이벤트 기록은 best-effort. 이벤트 유니크 인덱스(user_id, action, track_id=ref, day)(points_service.py:53-57)에 걸리면 DuplicateKey를 경고로 삼키고 **차감은 유지**(:214-225) — [P].
+
+실측 수치(컨테이너 읽기 전용 집계, 최근 30일) — [P]:
+- 작곡 소요(created→completed): 일반 n=7 p50 66s, 최대 76s / 보이스클론 n=2 114~135s. suno 폴링 상한은 일반 5분, 보이스클론 20분(suno_generator.py:297-299).
+- 연주곡: n=4, p50 111s, 최대 128s.
+- 작사(spend→자산 저장): n=10, p50 18s, 최대 35s.
+- 커버(spend→세션 생성): n=13, p50 153s, p99 177s, 최대 178s.
+- 영상: 이력 문서가 없어 측정 불가. ffmpeg 상한 600초(share_video.py:58)이고, 주석에 "300초 초과 실사고 2건(v3.215)".
+- 현재 멈춘 과금 작업: generations pending/processing 중 point_ref 보유 **0건**(pending 8건은 전부 point_ref=None 초안 — **정리 대상이 아님**), inst_jobs active **0건**, character_jobs processing 0건.
+- 인덱스: generations·cover_sessions·inst_jobs 모두 `_id_`만 있음.
+
+### 0-2. 영상 중복 과금 실측 결과 (요청 항목) — **확정: 중복 차감 경로가 있음 + 이미 발생한 정황 1건**
+1. **코드 경로(확정)**
+   - 진행 중 요청을 막는 장치가 없다. 캐시 판정은 MinIO 완성본 존재 여부뿐이다(tracks.py:2542). 완성본은 인코딩이 끝난 뒤에야 올라간다(share_video.py:1128-1145).
+   - 그래서 인코딩 중에 같은 조합을 다시 요청하면 캐시 미스가 난다. 결과는 **재차감 + ffmpeg 이중 실행**(heavy 슬롯 2개를 서로 뺏음 → 둘 다 느려짐)이다.
+   - 두 번째 인코딩은 업로드 직전 재확인에서 `concurrent cache detected — skip upload`로 업로드만 건너뛴다. **환불은 하지 않는다**(share_video.py:1128-1135).
+2. **이벤트 기록 유실(확정)**
+   - 과금 ref는 조합별로 결정적이다: `share_video:{track}:{fmt}[:스타일]`(tracks.py:2559-2562).
+   - 같은 날(KST) 두 번째 차감은 이벤트 insert가 DuplicateKey로 실패한다. 경고로 삼켜지므로 **포인트 내역·관리자 통계에 나타나지 않는다**(points_service.py:214-225).
+3. **재요청을 부르는 조건(확정)**
+   - 앱 요청 timeout은 300초(VideoDirectorScreen.tsx:543)로 서버 ffmpeg 상한 600초·nginx 320초보다 짧다.
+   - 300초를 넘기면 앱이 "영상 생성에 실패했어요. 잠시 후 다시 시도해주세요"를 띄우고 'format' 단계로 되돌아간다(:569-574). 서버는 계속 인코딩 중이다.
+   - 사용자가 같은 조합을 다시 고르면 재차감된다.
+   - 웹에서는 자막 위치 카드 더블클릭(handlePickSubPos :477-484 → proceedGeneration)으로 요청 2건이 나갈 수 있다. 비용 확인이 없는(videoCost=null) 경로에는 in-flight 가드가 없다.
+   - 화면을 나갔다가 다시 들어와도 'making' draft가 복원되지 않아 재요청할 수 있다.
+4. **데이터 정황([P] 잔액 대사)**
+   - 39개 계정 중 36개는 `잔액 = Σpoint_events`가 정확히 맞는다. 나머지 3개가 어긋난다.
+   - **`2f85f76c`(오늘 06:30 가입한 베타 신규 사용자) −⭐5**
+     - 그날 결정적 ref로 차감된 건은 share_video 한 건뿐이다(07:00:28Z). 나머지 차감은 전부 uuid ref라 중복될 수 없다.
+     - MinIO 완성본은 07:02:47Z에 생성됐다. 07:03:26Z 재시작 전에 완료된 것이다.
+     - 따라서 **07:00:28~07:02:47 사이에 같은 조합 요청이 한 번 더 들어와 기록 없이 ⭐5가 차감됐다고 보는 것이 유일하게 일관된 설명**이다. 대안(upload +5 적립 이벤트는 들어갔는데 잔액 반영만 실패)은 가능성이 낮다.
+     - 도커 로그는 07:03 재생성 때 사라져 직접 확정할 수 없다.
+   - `c19acda4`(대표 계정 추정) −⭐5: 같은 날 share_video 재요청이 여러 번 있어 후보가 여러 개다.
+   - `18bd8131` −1: 영상과 무관(성격 다름).
+5. 결론: **중복 과금 가능성은 "미검증"에서 "구조 확정 + 실발생 정황 1건"으로 올린다**. 이번 사이클의 과금 사고 FAIL 게이트 1순위다.
+
+### 0-3. 기타 과금·유실 실측 — [P]
+- **커버 재진입 이중 과금 경로(신규 발견)**
+  - CoverGeneration은 `coverTrackId && coverStyle != null`이면 마운트할 때 자동으로 `doGenerate`를 호출한다(CoverGenerationScreen.tsx:134-135, :330-334).
+  - coverStyle은 성공·실패가 확정될 때만 해제된다. 그래서 **생성 중에 화면을 나갔다가(뒤로가기·작업실) 이미지 디렉터로 다시 들어오면 새로 요청하고 ⭐5를 다시 낸다**. 첫 요청은 서버에서 계속 진행 중이다.
+  - musicStore는 persist하지 않으므로 같은 세션 안의 이동에서만 생긴다.
+- **다듬기(refine) 버전 경합 이중 차감**(9/22 실사고): 같은 세션에서 200초 이내 연속 차감 1건. 버전 번호를 락 없이 산정한다(upload.py:1052-1064).
+- **작곡 멈춤**
+  - 서버가 재시작하면 generations가 processing에 영구히 남고 환불도 없다.
+  - MusicLoading 폴링에는 **상한이 없고**, 404·403·400이 아니면 계속 돈다(MusicLoadingScreen.tsx:121-134). 사용자는 무한 대기 화면을 보게 된다.
+- **연주곡 멈춤**
+  - 재시작 시 inst_jobs `active:true`가 영구히 남는다. 결과는 **그 곡의 Inst. 요청이 영원히 409**("이미 진행 중")이고 환불도 없다.
+  - 앱은 10분 뒤 'timeout' 문구만 보여준다(InstLoadingScreen.tsx:124-130).
+- **작사·커버 동기 요청 중 재시작**: 차감만 되고 환불되지 않는다(except 훅이 돌지 않음).
+  - 30일 기준 "차감 후 자산·세션도 없고 환불도 없는" 고아 건은 작사 4건(08-31 3건, 09-07 1건), 커버 1건(09-01)이다.
+  - 전부 c19acda4(대표 계정 추정)이고, 원인(재시작·자산 저장 실패·배포 과도기)은 확정할 수 없다. **보정은 하지 않는다**(사용자 결정 3의 기본안).
+- **v3.227 잔재 문구(정책 위반)**: "나가 있어도 계속 만들어져요"가 2곳 남아 있다.
+  - components/GenerationJobCard.tsx:43
+  - services/generationTracker.ts:594(아티스트 중복 가드 팝업)
+  - ea39dac 결정(이탈 권장 금지)에 어긋나므로 이번에 정리한다.
+- **generationTracker 확장점 상태**: `registerKind`는 **주석으로만 예고**돼 있고 구현은 없다(generationTracker.ts 전체가 artist 전용이고 `listUserArtistJobs`가 kind='artist'로 고정). stores/generationJobStore.ts:15 `TrackedJobKind = 'artist'`.
+- 작업실 말풍선 탭 경로
+  - `handleDirectorPress`는 artist를 **제외한** 디렉터에 휴식(피로) 게이트를 먼저 건다(MapScreen.tsx:591-618).
+  - 생성이 끝나면 곧바로 사다리 쿨다운이 시작된다. 그래서 **"완성! 눌러서 확인" 말풍선을 누르면 휴식 다이얼로그가 결과 확인을 가로막는다**. 도착 말풍선은 피로 게이트를 우회해야 한다.
+
+### 0-4. 요구 3종 충족도·갭
+| 디렉터 | 자동 도착 알림 | 중복 생성 차단 | 재시작으로 멈춘 작업 환불 정리 |
+|---|---|---|---|
+| 아티스트(v3.227 모범) | O(전역 추적·말풍선·카드·알림 1회) | O(앱 가드 + 서버 409, 사용자별 락) | O(30분 lazy sweep + 기동 복구) |
+| 작사 | X(응답을 잃으면 결과를 알 수 없음. 자산은 저장돼도 모름) | X(재진입·재생성 시 재차감) | X(동기 요청이 죽으면 환불 없음) |
+| 작곡 | △(GenerationHistory에서 수동 확인만) | X(사용자별 제한 없음. 웹 새로고침 뒤 재작곡 = 재차감) | X(processing 영구화 + 무환불 + 앱 무한 대기) |
+| 연주곡 | △(MyMusic focus 재확인 :400-420) | O(곡별 active claim) | X(active 영구화 → 곡 영구 잠김 + 무환불) |
+| 커버 | △(I-lite 시각 휴리스틱, 3분 한정) | X(재진입 자동 재요청 = 이중 과금) | X |
+| 다듬기 | △(버전 비교 휴리스틱) | △(화면 ref 가드뿐. 서버는 경합) | X(+ 저장 실패 무환불) |
+| 영상 | X | X(0-2 확정) | X |
+
+## 설계 결정 (자율 확정 — 근거 기록)
+
+### D1. 동기 요청형(작사·커버·다듬기·영상): **동기 유지 + 서버 요청 원장(in-flight ledger)**. job화(202+폴링)는 채택하지 않는다.
+- **비용·리스크 비교**
+  - job화하려면 4개 엔드포인트의 응답 계약을 바꾸거나 새 async 엔드포인트를 병설해야 한다. 앱 4개 흐름의 요청·결과 수신도 다시 짜야 한다(CoverGeneration 2,038줄의 모드 전환, VideoDirector 대화 단계 포함).
+  - 게다가 APK 1.1.9는 구계약을 쓴다. 그러니 병설이 필수이고 서버 코드가 이중화된다.
+  - 반면 동기 처리는 클라이언트가 끊겨도 서버에서 끝까지 수행된다. Starlette는 연결이 끊겨도 핸들러를 취소하지 않고, to_thread도 계속 돈다. 0-2의 07:02:47 완성과 I-lite 실측이 근거다. 따라서 **원장만 있으면 job화한 것과 같은 회수가 가능**하다.
+- **방식**
+  - 앱이 요청마다 `X-Gen-Request-Id`(32hex)를 발급해 헤더로 보낸다. 요청을 **보내기 전에** 로컬 추적 레코드를 만든다.
+  - 서버는 과금 전에 원장 문서를 만들고(processing, `boot_id`, 과금 정보), 성공하면 done+result, 실패하면 failed+환불로 확정한다.
+  - 응답을 잃으면(ERR_NETWORK·timeout·새로고침·앱 종료) 앱은 `GET /api/generate/jobs/req/{request_id}`로 **정확히** 회수한다. 시각 휴리스틱(I-lite·cover-history)은 구서버 폴백으로만 남긴다.
+- **멱등**: 같은 request_id가 다시 오면 진행 중일 때는 409(같은 job), 완료 후에는 200 재생(`replayed:true`, 무과금)으로 답한다. 클라이언트 재시도가 구조적으로 재차감을 못 한다.
+
+### D2. 서버 공통 모듈 **`app/services/gen_jobs.py`(신규)** + 라우트별 얇은 연결 — 디렉터별 개별 구현은 채택하지 않는다.
+- 근거: 판정(살아 있음·죽음), 사용자별 락, 원자 환불, 소비·확인 표시, 회수 목록 직렬화가 6개 kind에서 같다. character.py v3.227(:1219-1340)에 같은 로직이 이미 한 벌 있다. 다섯 번 복제하면 불일치가 생긴다.
+- **main.py 비접촉**
+  - 새 라우터 파일을 만들면 `include_router`(main.py) 수정이 필요하다. 그래서 회수·조회·확인 API는 **기존 `generate.py` 라우터(`/api/generate`)** 에 둔다. 경로는 `/jobs/...`(2세그먼트)라 기존 `/{gen_id}` GET과 충돌하지 않는다. 그래도 **기존 `/{gen_id}` 계열보다 파일 앞쪽에 정의**한다.
+  - 인덱스는 lazy로 프로세스당 1회 만든다(character.py 관행).
+  - 기동 복구도 main.py 대신 **첫 호출 시 1회 전역 sweep**(`asyncio.create_task`)으로 한다.
+- **죽은 작업 판정 = `boot_id` 불일치(즉시) + kind별 상한(보조)**
+  - uvicorn 단일 워커이므로 이전 프로세스가 만든 processing은 **절대 끝날 수 없다**. 재시작 뒤 첫 조회에서 즉시 실패+환불로 확정한다(아티스트의 30분 대기보다 낫고, 30분 동안 새 생성이 잠기지도 않음).
+  - `BOOT_ID = f"{hostname}:{pid}:{uuid4().hex[:8]}"`(모듈 import 시 1회).
+  - boot_id가 없는 레거시 문서는 상한 경과로만 판정한다.
+  - 전제(단일 워커)는 모듈 docstring과 기동 로그에 명시한다. 이 전제가 깨지면(`--workers` 추가) boot 판정을 꺼야 하므로 env `GEN_JOBS_BOOT_CHECK=0`을 제공한다.
+- **kind별 상한**(살아 있는 프로세스에서 멈춘 경우의 보조 판정, 실측 기반)
+
+  | kind | 상한 | 근거 |
+  |---|---|---|
+  | lyrics | 10분 | p50 18s, 최대 35s |
+  | cover | 15분 | p99 177s, 앱 timeout 600s |
+  | cover_refine | 15분 | 132~141s |
+  | video | 25분 | ffmpeg 600s + heavy 슬롯 대기 + 다운로드·업로드 |
+  | music | 30분 | suno 폴링 상한 20분(보이스클론) + 다운로드·정규화 |
+  | inst | 30분 | 실측 최대 128s + 폴링 여유 |
+
+  - 앱의 "평소보다 오래 걸리고 있어요" 문구 기준은 p90의 약 2배로 둔다: 작사 1분, 커버·다듬기 5분, 작곡 3분(보이스클론 6분), 연주곡 4분, 영상 6분.
+- **환불 정확성**
+  - 원장은 **과금 전에** 만들고(charged=false), 차감에 성공하면 charged=true로 바꾼다.
+  - sweep 환불 조건은 `refunded≠true` 원자 claim AND (charged=true OR `point_events`에 `spend:{action}`·track_id=point_ref 존재)이다. 두 단계 사이에서 프로세스가 죽어도 이중 환불이나 미환불이 생기지 않는다.
+  - generations·inst_jobs는 기존 원자 환불 함수(`refund_generation_points`, `refund_instrumental_points`)를 재사용한다(순환 import를 피해 **함수 안에서 lazy import**).
+- **소비·확인(consume/ack) 영속 — 오늘 사고 교훈 반영**
+  - 모든 신규 문서에 `consume_tracked:true`를 넣는다. 회수 대상은 `consume_tracked && acked_at 없음`뿐이다.
+  - 사용자가 결과 화면을 연 순간 앱이 `POST …/ack`로 **서버에 `acked_at`을 영속 기록**한다. 이후 결과물(가사 자산·커버 세션·곡·영상)을 지워도 다시 배달되지 않는다.
+  - 작곡은 발매(`result_track_id` 존재)도 소비로 본다.
+  - 레거시(배포 전) 문서는 `consume_tracked`가 없으므로 자동으로 제외된다. 추가 하한으로 `RECOVERABLE_SINCE_V3228`(배포 당일 스테이징 확정 시각 UTC)을 AND로 건다. 경계는 신코드가 쓴 문서 여부이므로 **실질적으로 배포 시각과 같다**.
+- **킬스위치**
+  - env `GEN_JOBS_KINDS`(기본 `lyrics,music,inst,image,video`). 목록에서 빠진 kind는 원장·409 게이트 없이 기존 동작으로 돌아간다.
+  - 컨테이너 재생성만 하면 되고 재빌드는 필요 없다(v3.227 `CHAR_GPT_REF_INDEX` 관행).
+  - sweep·환불 로직은 킬스위치와 무관하게 동작한다(안전 측).
+
+### D3. 중복 차단 범위 — "사용자당 디렉터(그룹)별 진행 중 1건"(아티스트와 동일), 과금 전 409
+| 그룹 | 대상 | 비고 |
+|---|---|---|
+| lyrics | 작사 | |
+| music | 작곡(`start_music_gen` 경로, `/start/`) | 초안(start_music_gen=false)은 무과금이라 **게이트 제외** |
+| inst | 연주곡 | **기존 곡별 claim 유지**(사용자별로는 막지 않음. 원곡이 다르면 병행 허용). 대신 죽은 active를 먼저 정리해 영구 잠김을 해소 |
+| image | 커버 + 다듬기 | 하나의 슬롯. 다듬기 버전 경합(0-3)이 구조적으로 사라짐 |
+| video | 영상(조합 무관) | **캐시 히트는 게이트 전에 무과금으로 즉시 반환 — 불변** |
+
+- **완성됐지만 확인 안 한 결과(done-unacked)는 새 생성을 막지 않는다.**
+  - 근거: 아티스트는 저장(슬롯) 전까지 결과가 자산이 아니라서 막았다. 나머지는 서버가 이미 자산으로 보관한다(가사 보관함·생성 이력·커버 보관함·영상 캐시·Inst 트랙). 막으면 사용자 불편만 생긴다.
+- **게이트 순서(기존 순서 보존)**: 검증 400 → 스트라이크 403 → (보이스 만료 400) → **피로 429 → 진행 중 409 → 잔액 402** → 처리.
+  - 사용자별·그룹별 `asyncio.Lock` 안에서 [sweep → 진행 중 조회 → 원장 insert → spend]를 수행한다(character.py `_user_gen_lock` 관행).
+- **409 본문(구 APK 호환)**: `{error:<한국어 안내>, detail:<같은 문장>, code:"generation_in_progress", kind, job_id, request_id, created_at, meta}`.
+  - 구앱의 오류 표시 경로(작사·작곡은 `detail`, 커버는 `error`)가 사람이 읽을 수 있는 문장을 보여준다.
+  - 신앱은 `code`로 판정한다. 아티스트 409(`error:"generation_in_progress"`)와는 필드가 다르므로 앱 파서는 둘 다 받는다.
+- 영상 과금 ref를 **시도별 고유값**으로 바꾼다: `share_video:{track}:{fmt}[:스타일]:{job8}`. 이벤트 유실(0-2-2)이 없어지고 대사가 맞게 된다. 배포 시점에 진행 중인 구 ref가 없으면(사전 점검) 하위호환 문제는 없다.
+
+### D4. 앱 — `registerKind` 어댑터 실구현(아티스트 경로 동작 불변)
+- **스토어** `stores/generationJobStore.ts`
+  - `TrackedJobKind`에 `'lyrics'|'music'|'inst'|'cover'|'cover_refine'|'video'`를 추가한다.
+  - 선택 필드를 추가한다: `requestId?`, `serverJobId?`, `meta?`, `genResult?`, `ackedAt?`, `director?`.
+  - persist 키 `maidol-generation-jobs-v1`은 유지한다(필드 추가만, 마이그레이션 불필요).
+  - 아티스트 선택자(`listUserArtistJobs` 등)는 그대로 둔다(kind='artist' 필터). 새로 `listUserGenJobs(kinds?)`와 `useDirectorJob(director)`를 추가한다. 우선순위는 processing → done-unacked → failed-unacked.
+- **코어** `services/generationTracker.ts`(1조 전유)
+  - tick이 모든 kind의 processing을 순회한다. kind별로 `adapter.fetch`를 호출하고, 아티스트는 기존 코드 경로를 그대로 탄다.
+  - 알림·말풍선은 kind 공용으로 일반화한다(뷰어가 보고 있는 job 제외, 알림은 한 번에 1개).
+  - `refreshRecoverable`에서 `GET /api/generate/jobs/recoverable`도 함께 병합한다(서버 기능 판정을 엔드포인트별로 캐시. 404면 구서버로 보고 조용히 건너뜀).
+  - kind별 상한이 지나면 recoverable을 한 번 호출한다(서버 lazy sweep 유도).
+  - **404 유예(동기 kind)**: 요청 후 120초 안의 404는 "아직 도착 전"으로 보고 processing을 유지한다. 120초가 지나도 404면 요청이 서버에 닿지 않은 것이다(원장은 과금 전에 생성). 레코드를 조용히 지우고, 뷰어가 열려 있으면 "요청이 전달되지 않았어요. 별은 차감되지 않았어요. 다시 시도해 주세요"를 띄운다.
+  - 네트워크 오류·5xx·timeout은 **절대 실패로 표시하지 않는다**(v3.227 원칙).
+- **어댑터 레지스트리** `services/genJobs/index.ts`(1조) + kind별 파일. 파일 소유: `lyrics.ts`·`music.ts`·`inst.ts`는 1조, `cover.ts`(cover·cover_refine)·`video.ts`는 2조. 계약:
+  ```ts
+  export type GenKind = 'lyrics'|'music'|'inst'|'cover'|'cover_refine'|'video';
+  export interface GenJobSnapshot { jobId: string; requestId?: string|null; kind: GenKind; status: 'processing'|'done'|'failed'|'unknown';
+    createdAtMs?: number; result?: any; error?: string|null; refunded?: boolean|null; acked?: boolean; meta?: any }
+  export interface GenKindAdapter {
+    kind: GenKind; director: 'lyricist'|'composer'|'image'|'video'; capMs: number; slowMs: number;
+    fetch(job: TrackedJob): Promise<GenJobSnapshot|null>;          // null = 404
+    open(job: TrackedJob, navigation?: any): Promise<void>;         // done → 결과 화면(+ack) / processing → 뷰어
+    text: { busyTitle: string; busyBody: string; doneTitle: string; doneBody: string; failTitle: string };
+  }
+  registerKind(adapter); registerGenJob({ kind, requestId?, serverJobId?, meta }); markGenJobDone(key, result, { acked }); ackGenJob(key);
+  guardGeneration(kind, { navigation, where }): boolean; newRequestId(): string; setViewerJob(key|null);
+  ```
+- **요청 시점 규약**
+  - 동기 kind: `registerGenJob`(requestId)을 **POST 직전**에 호출하고, 헤더 `X-Gen-Request-Id`를 붙인다.
+  - 작곡·연주곡: 201·202 수신 직후(generation_id, inst job_id)에 호출한다. 작곡 POST에도 헤더를 붙여, 응답을 잃은 경우에도 서버의 `client_request_id`로 회수할 수 있게 한다.
+  - 화면이 성공 응답을 직접 받으면 `markGenJobDone(…, { acked:true })` → `ackGenJob`(서버 ack) 순으로 처리하고 레코드를 즉시 정리한다. 회수 목록에 뜨는 것은 응답을 잃은 건뿐이다.
+- **도착 알림 문구**(showAlert, 알림 화면 집합은 v3.227 `NOTIFY_ROUTES`. 생성 화면에서는 말풍선만)
+
+  | kind | doneTitle | doneBody | 버튼 |
+  |---|---|---|---|
+  | lyrics | 가사가 완성됐어요 | 완성된 가사를 확인해 주세요. | [나중에]/[지금 보기] |
+  | music | 곡이 완성됐어요 | 완성된 곡을 들어보고 발매해 주세요. | |
+  | inst | Inst. 버전이 완성됐어요 | 내 곡에 추가됐어요. | |
+  | cover | 커버 이미지가 완성됐어요 | 완성된 이미지를 확인해 주세요. | |
+  | cover_refine | 이미지 다듬기가 끝났어요 | 다듬은 이미지를 확인해 주세요. | |
+  | video | 영상이 완성됐어요 | 미리 보고 저장하거나 공유해 보세요. | |
+
+  - 실패(서버 확정): "{작업}을 끝내지 못했어요". 본문은 refunded면 "사용된 별은 자동으로 환불됐어요", 미과금이면 "별은 차감되지 않았어요". [확인] → ack.
+  - "저작권" 표현과 이탈 권장 표현은 쓰지 않는다.
+- **도착 시 이동 화면**
+  - lyrics
+    - `GET /lyrics/{lyrics_id}`(없으면 원장 result의 본문)로 lyricsStore(generatedTitle·generatedLyrics·sourceAssetId)와 musicStore.lyricsSource를 채운다(LyricsLoadingScreen.tsx:97-109 성공 경로와 같게).
+    - 그다음 `LyricsResult`로 이동한다.
+  - music: `GenerationHistoryScreen.hydrateStores`를 `utils/musicHydrate.ts`로 추출해 재사용한다(동작 불변). → `MusicResult {alreadySaved:false}`.
+  - inst: `InstLoading {trackId, title, resume:true, nonce}` — 완료 카드와 미리듣기는 기존 화면이 그대로 처리한다.
+  - cover
+    - 로컬 meta에 trackId가 있고 앨범 모드가 아니면 `CoverGeneration {recoverJobId}` 결과 모드로 연다(선곡 복원).
+    - 다른 기기에서 회수했거나 앨범 모드면 `CoverLibrary`로 보낸다(최신순이라 맨 위에 보임).
+  - cover_refine: `CoverGeneration {recoverJobId}` → `GET /upload/cover-history/{session}`로 로드해 새 버전을 보여준다.
+  - video: `VideoDirector {initialTrackId, recoverJobId}` → 'done' 단계로 연다(video_url 사용, 캐시 URL이라 무과금 재생).
+- **작업실(MapScreen, 1조 전유)**
+  - 작사·작곡·이미지·영상 디렉터 모두에 v3.227 아티스트 말풍선 슬롯을 일반화한다: processing은 "만드는 중… (n분)", done은 "완성! 눌러서 확인". 작곡 디렉터는 music·inst 중 우선순위가 가장 높은 1건을 보여준다.
+  - **말풍선 탭과, 추적 job이 있는 디렉터의 탭은 피로 게이트보다 먼저 job 처리로 분기한다**(0-3 가로막힘 해소).
+  - 튜토리얼 표시 중에는 숨긴다. isNext 말풍선과는 같은 슬롯을 대체하며(동시 렌더 0), 휴식 티켓과는 병존한다.
+  - `DIRECTOR_ANCHOR_BY_TYPE`(MapScreen.tsx:79-86)와 `TUTORIAL_STEPS`(:69)는 **변경하지 않는다**.
+- **중복 가드(앱, 과금 게이트보다 먼저)**: `guardGeneration(kind)`가 true면 return한다. 팝업은 "이미 {가사를 쓰는/곡을 만드는/이미지를 만드는/영상을 만드는} 중이에요 — 완성된 뒤에 새로 만들 수 있어요." [닫기]/[진행 상황 보기]이다. 적용 지점:
+  - 작사: LyricsPromptReview `handleGenerate` 첫 줄, LyricsResult `handleRegenerate` 첫 줄, LyricsLoading doGenerate(최종 방어)
+  - 작곡: MusicGeneration `handleGenerate` 첫 줄, MusicLoading doGenerate(최종)
+  - 커버: CoverGeneration `handleStyleConfirm`·자동 재진입 경로(:330-334)·`handleRefine` 첫 줄
+  - 영상: VideoDirector `startGeneration` 첫 줄 + `proceedGeneration`에 **in-flight ref 가드**(더블클릭 차단)
+  - 연주곡: 기존 곡별 409 resume 유지 + 추적 중이면 InstLoading resume로 보냄
+- **진행 뷰어 재진입([진행 상황 보기]·말풍선)**: POST 없이 추적만 한다.
+  - `LyricsLoading {jobId}` — 새 resume 모드. 마운트 시 POST를 하지 않는다.
+  - `MusicLoading {resumeGenerationId}` — 기존
+  - `InstLoading {resume:true}` — 기존
+  - `CoverGeneration {recoverJobId}` — 로딩 모드로 들어가며 **자동 doGenerate를 억제**한다
+  - `VideoDirector {initialTrackId, recoverJobId}` — 'making' 단계
+- **문구 정리**: GenerationJobCard.tsx:43은 "탭하면 진행 상황을 볼 수 있어요."로, generationTracker.ts:594는 "완성된 뒤에 새로 만들 수 있어요."로 바꾼다("나가 있어도 계속 만들어져요" 삭제).
+- **새 kind용 카드 컴포넌트는 만들지 않는다.** 근거: 범위(40% 룰). 표시는 작업실 말풍선, 앱 내 알림 1회, 기존 목록 화면(GenerationHistory·CoverLibrary·가사 보관함·내 곡)으로 충분하다.
+
+## 확정 스펙
+
+### 서버 S1 (backend-dev — 스테이징 `/private/tmp/server_staging_v3228/`에서만 작업)
+1. **`app/services/gen_jobs.py`(신규)**
+   - 상수: `BOOT_ID`, `KIND_CFG`(kind → group, cap_min, point action), `RECOVERABLE_SINCE_V3228`, `ENABLED_GROUPS`(env `GEN_JOBS_KINDS`), `BOOT_CHECK`(env `GEN_JOBS_BOOT_CHECK`, 기본 1).
+   - 컬렉션 `gen_jobs`(동기 kind 전용):
+     ```
+     {_id, user_id, kind, group, request_id|null, status:processing|done|failed, boot_id, created_at, updated_at, completed_at,
+      point_action, point_cost, point_ref, charged, refunded, error, meta{}, result{}, response{}(재생용, ≤64KB),
+      consume_tracked:true, acked_at, swept_reason}
+     ```
+   - 인덱스(lazy 1회, 로그 `[GenJobs][migration]`):
+     - `gen_jobs (user_id, group, status, created_at)`
+     - `gen_jobs (user_id, request_id)` unique partial(request_id 존재)
+     - `generations (user_id, status, created_at)`
+     - `generations (user_id, client_request_id)` sparse
+     - `inst_jobs (user_id, active, created_at)`
+   - 함수(전부 never-raise, 로그 추적자 `[GenJobs]`):
+     - `normalize_request_id(hdr)`: `^[0-9a-f]{32}$` 외에는 None
+     - `user_lock(user_id, group)`
+     - `gate_and_begin(user_id, kind, request_id, meta)` → `(early_response|None, job)`. 락 안에서 다음 순서로 처리한다:
+       1. sweep_user
+       2. request_id 중복(processing이면 409 같은 job, done이면 200 재생, failed면 409 `request_already_failed`)
+       3. 그룹 진행 중(살아 있는 것만)이면 409
+       4. insert processing(charged=false)
+     - `mark_charged(job, ref)`
+     - `finish(job, result, response)`: processing일 때만 done으로 바꾼다. 이미 sweep된 경우는 `late_result` 저장 + 경고 `late-complete`.
+     - `fail(job, error, refund=True)`
+     - `refund_once(…)`
+     - `is_dead(doc, kind)`: boot 불일치 또는 상한 초과
+     - `sweep_user(user, groups)`, `sweep_doc(kind, doc)`, `ensure_boot_sweep()`(프로세스당 1회 전역: gen_jobs·generations·inst_jobs)
+     - `recoverable(user, kinds)`, `ack(user, kind, job_id)`, `serialize(kind, doc)`
+   - sweep 대상
+     - gen_jobs: status=processing
+     - **generations**: status∈{pending, processing} **AND point_ref≠None AND refunded≠true**. 초안(point_ref=None)은 절대 건드리지 않는다.
+       - 처리: `status:"failed"`, `error_message:"서버 점검으로 작업이 중단됐어요. 사용한 별은 자동으로 환불됐어요."`
+       - `refund_generation_points` 호출
+       - session_id가 있으면 `creation_log.append_event(GEN_RESPONSE, status failed, error "server_restart|hard_cap")`(best-effort — v3.200 "실패도 사실이다")
+     - **inst_jobs**: active=true AND status∈{pending, processing} → status failed, active false, error_message, `refund_instrumental_points`
+2. **`app/routes/generate.py`**
+   - (a) **파일 앞쪽**에 다음 엔드포인트를 둔다.
+     - `GET /jobs/recoverable?kinds=`
+       - 응답 `{jobs:[Job], count, swept}`
+       - Job = `{job_id, request_id, kind, status, created_at(ISO Z), elapsed_sec, meta, result|null, error|null, refunded}`
+       - 상한: kind별 done+processing 10건, failed(24h·미확인) 합계 5건
+       - music done = completed·result_track_id 없음·미확인
+     - `GET /jobs/req/{request_id}`(본인 gen_jobs + generations.client_request_id, 없으면 404, 조회 대상 문서는 sweep_doc)
+     - `POST /jobs/{kind}/{job_id}/ack`
+       - 200 `{job_id, kind, acked:true, already}`
+       - 404(없음·타인·형식)
+       - 409 `{code:"job_processing"}`
+       - 환불 없음
+   - (b) 작사: 피로 429(:553) 뒤 → gate_and_begin → spend 성공이면 mark_charged, 402면 fail(refund=False) 후 402 → 생성 성공이면 finish(result `{lyrics_id,title,lyrics≤20KB}`, response) → 예외면 fail(refund) + 기존 500 응답. 응답에 `gen_job_id`·`request_id`를 가산한다.
+   - (c) 작곡 create(:615)
+     - `will_start_music`일 때만: 피로 뒤 사용자 락 안에서 sweep → 진행 중 generations(point_ref≠None, 살아 있음)가 있으면 409 → spend → doc insert.
+     - doc에 `boot_id`, `consume_tracked:true`, `client_request_id`, `acked_at:None`를 가산한다.
+     - `/start/`(:782)도 같은 게이트를 적용하고, update에 `boot_id` 가산.
+   - (d) `GET /{gen_id}`(:930)·`GET /`(:898): 반환 전에 해당 문서(목록은 사용자 단위) sweep_doc/sweep_user를 한다. MusicLoading 무한 대기가 사라진다.
+3. **`app/routes/upload.py`**
+   - generate-cover: 피로 뒤 gate(group image) → spend → 성공 시 finish(result `{cover_session_id, object_name, image_url, image_model}`) / 예외 시 fail(refund) + 기존 500.
+   - refine-cover: 현재 커버 로드 뒤 gate(group image, meta `{cover_session_id, base_version}`) → spend. **락 안에서 세션을 다시 읽어** 버전을 산정한다. MinIO·Mongo 저장 실패(:1070-1117)도 fail(refund)로 환불한다(기존 무환불 버그 수정).
+   - `cover-history`·`cover-sessions`는 변경하지 않는다(v3.202·v3.204 폴백 유지).
+4. **`app/routes/tracks.py`**
+   - share-video
+     - 캐시 히트 경로(:2542-2546)는 **불변**(게이트 전에 무과금 반환).
+     - 피로 뒤 gate(group video, meta `{track_id, format, style: _style_kw, video_url}`) → spend(ref에 job8을 붙인 고유값) → 성공 시 finish(response 그대로) / 실패 시 fail(refund) + 기존 502.
+     - `concurrent cache detected` 경로는 이제 발생할 수 없다(동일 사용자). 다른 사용자가 같은 조합을 동시에 만들면 기존처럼 업로드만 건너뛴다(각자 과금·성공).
+   - instrumental: claim 전에 이 track의 죽은 active job을 sweep_doc한다. upsert `$setOnInsert`에 `boot_id`, `consume_tracked:true`를 가산한다. status 엔드포인트(:3210)도 sweep_doc한다.
+5. **main.py·inst_service.py·suno_generator.py·points_service.py·character.py 무변경.** character의 boot_id 전환은 백로그다.
+6. 로그 추적자:
+   - `[GenJobs] begin kind= user= job= req=`
+   - `dup-blocked kind= active=`
+   - `replay req=`
+   - `done`
+   - `failed refunded=`
+   - `swept kind= reason=dead_boot|hard_cap refunded=`
+   - `boot-sweep n=`
+   - `recoverable user= n=`
+   - `ack`
+   - `late-complete`
+   - `[GenJobs][migration] index`
+
+### 앱 (웨이브별 — 아래 조 분담)
+- 1조 코어: 위 D4의 스토어·코어·레지스트리·`services/genJobsService.ts`(recoverable·req·ack·newRequestId)·Map·문구 정리.
+- 동기 kind 요청은 `api.post(url, body, { headers: { 'X-Gen-Request-Id': rid } })` 한 줄로 추가한다(서비스 함수 시그니처에 선택 인자 `requestId`).
+- 409 파서: `data.code === 'generation_in_progress' || data.error === 'generation_in_progress'`이면 adopt(해당 job을 추적기에 편입)하고 뷰어로 전환한다(같은 대상이면 이어보기, 다르면 팝업 [진행 상황 보기]).
+- 구서버(엔드포인트 404) 폴백: 원장 조회를 쓰지 않고 v3.202 I-lite·v3.204 cover-history 폴링을 그대로 쓴다. 헤더는 무해하게 무시된다.
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 웨이브 | 로그 추적자 |
+|---|---|---|---|---|
+| 서버 app/services/gen_jobs.py (신규) | D2 공통 모듈 | 백엔드 | S1 | `[GenJobs]` |
+| 서버 app/routes/generate.py | jobs API 3종·작사 원장·작곡 게이트/boot_id/조회 sweep | 백엔드 | S1 | `[GenJobs]`, `[star-econ]` |
+| 서버 app/routes/upload.py | 커버·다듬기 원장/409·다듬기 락 내 버전·저장 실패 환불 | 백엔드 | S1 | `[GenJobs]`, `[RefineCover]` |
+| 서버 app/routes/tracks.py | 영상 원장/409/고유 ref·Inst sweep/boot_id | 백엔드 | S1 | `[GenJobs]`, `[share-video]`, `[inst]` |
+| 서버 main.py·admin_*·analytics·points_service·character.py | **변경 없음** | — | — | — |
+| stores/generationJobStore.ts | kind 확장·선택자 | 1조 | W0 | `[GenJobStore]` |
+| services/generationTracker.ts | 다중 kind tick·알림·recoverable 병합·guardGeneration·문구(:594) | 1조 | W0 | `[GenTracker] kind=` |
+| services/genJobs/index.ts·lyrics.ts·music.ts·inst.ts (신규) | 레지스트리·어댑터 | 1조 | W0(index)·W1·W3 | `[GenJob:<kind>]` |
+| services/genJobs/cover.ts·video.ts (신규, 1조가 스텁 생성 → 2조 소유) | 어댑터 | 2조 | W0(video)·W2(cover) | `[GenJob:video]`, `[GenJob:cover]` |
+| services/genJobsService.ts (신규) | API 3종·newRequestId | 1조 | W0 | `[GenJobs]` |
+| components/GenerationJobCard.tsx | 문구(:43) | 1조 | W0 | — |
+| screens/MapScreen.tsx | 4개 디렉터 말풍선·탭 분기(피로 게이트 앞) | **1조 전유** | W0 | `[Map] job-bubble` |
+| screens/VideoDirectorScreen.tsx | in-flight ref·헤더·원장 추적·recoverJobId 진입·409 adopt | **2조 전유** | W0 | `[VideoDirector]`, `[GenJob:video]` |
+| screens/MusicLoadingScreen.tsx·MusicGenerationScreen.tsx·GenerationHistoryScreen.tsx·utils/musicHydrate.ts(신규)·services/musicService.ts | 등록·가드·hydrate 추출·헤더 | 1조 | W1 | `[MusicLoading]`, `[GenJob:music]` |
+| screens/InstLoadingScreen.tsx·MyMusicScreen.tsx·services/trackService.ts | 등록·ack·헤더 | 1조 | W1 | `[Inst]`, `[GenJob:inst]` |
+| screens/CoverGenerationScreen.tsx | 헤더·원장 추적·recoverJobId(자동 doGenerate 억제)·다듬기 원장·가드 | **2조 전유** | W2 | `[Cover]`, `[GenJob:cover]` |
+| screens/LyricsLoadingScreen.tsx·LyricsPromptReviewScreen.tsx·LyricsResultScreen.tsx·services/lyricsService.ts | 헤더·resume 모드·가드·도착 hydrate | 1조 | W3 | `[LyricsLoading]`, `[GenJob:lyrics]` |
+
+충돌 방지
+- 2조는 generationTracker·store·MapScreen·genJobs/index.ts를 **읽기만** 한다(export API 사용).
+- 1조의 W0 **인터페이스 커밋**(타입·레지스트리·스텁 cover.ts/video.ts, 동작 변화 없음)이 들어간 뒤 2조가 착수한다.
+- `services/musicService.ts`와 `trackService.ts`는 1조만, `upload`·`video` 관련 호출은 화면 파일 안(2조)에서 처리한다.
+
+## 조 분담 (할당문)
+- **백엔드(backend-dev) — S1 전체**
+  - `/private/tmp/server_staging_v3228/`에 `orig/`(라이브 generate.py·upload.py·tracks.py + 참조용 points_service·inst_service·character.py)·`deploy/`·`diffs/`·`tests/`·`scripts/`·`DEPLOY.md`를 만든다. **v3.227 DEPLOY.md 형식**을 따른다.
+  - 스텁·페이크 Mongo로 단위 테스트를 작성한다. 과금 FAIL 게이트 T1~T7은 필수다.
+  - `scripts/predeploy_probe_v3228.py`(읽기 전용: 진행 중 작업 0건 확인 + 잔액 대사 기준선 저장)를 만든다.
+  - 서버 쓰기는 하지 않는다.
+- **1조(frontend-dev A) — W0 코어 → W1 작곡·연주곡 → W3 작사**
+  1. 인터페이스 커밋(동작 불변) → 2조에 통지
+  2. Map 말풍선·탭 분기·문구 정리·recoverable 병합
+  3. W1 music·inst
+  4. W3 lyrics
+
+  아티스트 경로(ArtistLoading·ArtistInput·MyArtists·ArtistCody 가드)는 **동작 불변**이다. v3.227 test-designer 17~20을 회귀로 다시 돌린다.
+- **2조(frontend-dev B) — W0 영상 → W2 이미지(커버·다듬기)**
+  - W0 영상: 먼저 in-flight ref 가드만 담은 단독 커밋(서버 무관 즉시 효과), 이어서 원장 추적·recoverJobId.
+  - W2: CoverGeneration 원장 추적 + **재진입 자동 doGenerate 억제**(0-3) + 다듬기 원장.
+  - v3.202 I-lite·v3.204 폴링은 구서버 폴백으로 보존한다.
+- **오케스트레이터**: S1 배포 창 운영(아래), 웨이브별 tsc 0 → test-designer 게이트 → 웹 배포. APK는 마지막에 1회(결정 5).
+
+## 서버 스테이징·배포 절차 (v3.227 DEPLOY.md 관행)
+0. **[동시 작업 경고]** 오늘 다른 세션이 4회 재배포했다(07:03·08:36·09:02·09:24). main.py·admin_items·admin_stats·analytics를 수정 중이다.
+   - 배포 **직전에** 반영 대상 3파일(generate.py·upload.py·tracks.py)을 다시 내려받아 `MD5SUMS.orig`와 대조한다.
+   - 다르면 새 현재본에 `diffs/` 3-way를 다시 적용한다(`patch --dry-run` 먼저). 준비본으로 덮어쓰지 않는다. 그다음 테스트를 재실행하고 md5를 갱신한다.
+   - **디렉터리 통째 scp와 main.py 반영은 금지**한다.
+1. 오케스트레이터 사전 점검(읽기 전용)
+   - `ssh … md5sum routes/generate.py routes/upload.py routes/tracks.py; test ! -e services/gen_jobs.py`
+   - `predeploy_probe_v3228.py`를 stdin으로 실행해 다음을 확인한다.
+     - generations(point_ref 보유) pending·processing = 0
+     - inst_jobs active = 0
+     - 최근 10분 docker 로그에 `[star-econ] (lyrics|cover|cover_refine|share_video) spend` 뒤 완료 로그가 없는 건 = 0
+     - 잔액 대사 기준선 저장(현재 불일치 3계정 = 기준. 배포 후 **증가 0**이 기준)
+   - 0이 아니면 끝날 때까지 기다린다(작사 1분, 커버 3분, 영상 10분).
+2. 사용자 1줄(백업 `.bak_pre_v3228` + 원본 md5 가드 + scp + 반영 md5 확인)
+   - routes 3파일 → `app/routes/`, gen_jobs.py → `app/services/`
+   - `test ! -e services/gen_jobs.py`
+   - `.bak_pre_v3228`가 이미 있으면 중단(재실행 방지)
+   - 형식은 v3.227 §3-1과 같다. 명령 전문은 backend-dev가 DEPLOY.md §3-1에 md5를 채워 작성한다.
+3. 오케스트레이터
+   - `docker logs` 보존은 사용자가 1줄로 실행한다(v3.227 §3-2 관행).
+   - `sudo docker build -t maidol-app:latest .`
+   - 이미지 안 md5 확인: 4파일 + **main.py = 현재본 md5**(다른 세션 변경 유지 확인)
+   - `docker rm -f maidol-app && docker run -d --name maidol-app --network host --restart unless-stopped --env-file .env -e S3_REGION=ap-northeast-2 maidol-app:latest`
+   - health 200 대기
+4. 스모크(무과금 우선)
+   - health
+   - `GET /api/generate/jobs/recoverable`: 무토큰 401, 테스트 계정 200 `count:0`, 로그 `[GenJobs][migration]`·`boot-sweep n=0`
+   - `GET /api/generate/jobs/req/<임의32hex>` 404
+   - ack 형식 오류 404
+   - 기존 API 회귀: `/api/generate/`(목록), `/api/generate/{id}`, `/api/tracks/{id}/instrumental/status`, `/api/upload/cover-sessions`, share-video **캐시 히트 조합**(무과금 200 `cached:true`)
+   - 과금 스모크(사용자 승인 시, 테스트 계정 ⭐): 작사 동시 2요청 → 1건 200 + 1건 409, ⭐-5 1회, 대사 불변
+5. 롤백은 아래 절을 따른다.
+
+## 롤백 절차
+- **앱**
+  - 웨이브 단위: `git revert <웨이브 커밋 범위>` → 웹 재배포.
+  - 전체: `git revert --no-edit checkpoint-pre-v3228..HEAD`(히스토리 보존) 또는 태그 체크아웃 빌드(`git worktree add /tmp/rb checkpoint-pre-v3228`)로 웹 재배포.
+  - APK는 1.1.9(태그 시점 빌드)를 유지한다.
+  - 영속 스토어 호환: 새 필드는 선택 필드라 구버전 앱이 무시한다. kind≠artist 레코드는 구버전 선택자에서 걸러진다(`kind==='artist'` 필터).
+- **서버 — 1순위(재빌드 없음)**: 킬스위치 `-e GEN_JOBS_KINDS=`(빈 값)를 추가해 재생성한다. 원장과 409 게이트는 꺼지고, 죽은 작업 환불 sweep은 유지된다.
+- **서버 — 2순위(파일)**
+  - 사용자 1줄: `ssh maidol-ec2 'set -e; cd /home/ubuntu/maidol/backend_9004/app; for f in routes/generate.py routes/upload.py routes/tracks.py; do cp -p "$f.bak_pre_v3228" "$f"; done; md5sum routes/generate.py routes/upload.py routes/tracks.py'` → 원본 md5 확인
+  - 오케스트레이터: 재빌드·재생성
+  - `services/gen_jobs.py`는 남아 있어도 무해하다(import하는 곳이 없음).
+- **서버 — 3순위(이미지 즉시 복귀)**: `sudo docker rm -f maidol-app && sudo docker run -d --name maidol-app --network host --restart unless-stopped --env-file .env -e S3_REGION=ap-northeast-2 maidol-app:checkpoint-pre-v3228`
+  - **주의**: 09:24Z 이후 다른 세션이 배포한 변경이 함께 사라진다. 실행 전에 `docker image ls`·현재 main.py md5로 확인하고, 그 세션 소유자에게 알린다.
+- **서버 — 4순위(소스 전체)**: `tar -xzf /home/ubuntu/maidol/backups/backend_9004_app_pre_v3228_20260924T094437Z.tgz -C /home/ubuntu/maidol/backend_9004/`(사용자 실행) → 재빌드.
+  - 3순위와 같은 주의가 필요하다. `app/` 전체를 덮어쓰므로 **비상시에만** 쓴다.
+- **데이터**
+  - 새 컬렉션 `gen_jobs`, 새 필드(`boot_id`, `consume_tracked`, `client_request_id`, `acked_at`, `swept_reason`)와 인덱스는 구 코드가 무시하므로 무해하다.
+  - **이미 실행된 환불은 되돌리지 않는다**(정당한 환불).
+
+## 40% 룰 판정
+**초과 — 사이클 규모 기준 (파일별 변경률은 모두 40% 미만으로 통제)**
+- 파일별 추정 변경률
+  - generationTracker.ts(709줄): 코어 일반화 약 25%. 어댑터는 별도 파일이라 이 파일 재작성은 없다.
+  - LyricsLoadingScreen(322줄): 약 30%(resume 모드)
+  - MusicLoading: 약 15%
+  - CoverGeneration(2,038줄): 약 7%
+  - VideoDirector(1,073줄): 약 11%
+  - MapScreen(1,234줄): 약 6%
+  - 서버: generate.py +15%, upload.py +8%, tracks.py +3%, gen_jobs.py 신규 약 450줄
+- 사이클 전체 규모: 앱 약 20파일(신규 8), 서버 4파일(신규 1). 평소 규모를 넘으므로 → **웨이브 분할**.
+- 웨이브
+  - **S1(서버 1회 배포, 킬스위치 포함)**
+    - 근거: 서버 배포마다 컨테이너를 재생성하면 진행 중 작업이 죽는다. 이번 사이클이 없애려는 사고 유형 그 자체다. 게다가 오늘 이미 5회 재생성됐다.
+    - 서버 변경은 kind별로 가산적이다. 구 APK·구 웹과 호환되고(409는 실제 중복일 때만), kind별 킬스위치로 부분 롤백할 수 있다.
+    - 테스트에서 특정 kind가 FAIL하면 그 kind는 `GEN_JOBS_KINDS`에서 빼고 배포한다.
+  - **W0(최우선·과금)**: 2조 영상 in-flight 가드(서버 무관, 즉시 웹 배포 가능) → 1조 코어·Map·문구 → 2조 영상 원장 추적. S1 배포 뒤 웹 배포.
+  - **W1**: 작곡·연주곡(1조)
+  - **W2**: 이미지 커버·다듬기(2조, W1과 병렬 개발 가능 — 파일 충돌 없음)
+  - **W3**: 작사(1조)
+  - 각 웨이브는 S1 위에서 독립적으로 웹 배포할 수 있다. 구서버에서도 폴백으로 동작한다.
+- 이월(백로그)
+  - character_jobs의 boot_id 전환(30분 대기 해소)
+  - `spend_points` 이벤트 DuplicateKey를 error로 격상하고 관리자 경보를 붙이는 일(points_service 공용 — 전 kind 영향)
+  - 로그 호스트 볼륨 마운트(v3.227 결정 7 미처리 — 이번 영상 사고 원인도 로그 유실로 확정 불가)
+  - share-video 비소유자 과금 정책(공개 곡이면 타인도 생성 가능)
+  - 네이티브 푸시 알림
+
+## test-designer 항목 (과금 사고 FAIL 게이트 우선 — T1~T8 하나라도 FAIL이면 해당 kind 배포 중단)
+1. **T1 [api][FAIL] 영상 중복 과금**
+   - 같은 조합 동시 2요청 → 200 1건 + 409 `generation_in_progress` 1건, ⭐-5 정확히 1회, ffmpeg 1회(`[heavy] start` 1회).
+   - 다른 조합으로 동시 요청해도 409(사용자당 1건). 완료 뒤 같은 조합은 캐시 히트 200 `cached:true`(무과금·무피로·게이트 미진입).
+   - **잔액 대사 `잔액 = Σpoint_events` 유지**(고유 ref라 이벤트 유실 0).
+   - 캐시 히트는 쿨다운 중에도 200(v3.214 회귀).
+2. **T2 [api][FAIL] 다듬기 경합**: 같은 세션 동시 2요청 → 1건만 차감. 버전 번호 충돌 0(v{N} 덮어쓰기 없음). MinIO put 실패를 주입하면 환불 1회.
+3. **T3 [api][FAIL] 커버·작사·작곡 동시 2요청**: 각 1건 차감 + 409. 작곡 초안(`start_music_gen=false`)은 409 없음·무과금. `/start/`도 게이트 적용.
+4. **T4 [api][FAIL] 죽은 작업 환불(재시작 시뮬레이션)**
+   - gen_jobs·generations·inst_jobs에 다른 boot_id로 processing 문서를 둔다(charged=true) → 첫 조회에서 failed + 환불 **정확히 1회**. sweep을 2번 호출하고 recoverable·gate·GET이 동시에 돌아도 1회.
+   - charged=false이고 spend 이벤트가 없으면 **환불 0**. spend 이벤트는 있지만 charged=false(중간에 죽음)이면 환불 1회.
+   - **초안 generations(point_ref=None) 불변**(현재 8건 실데이터 형태로 테스트).
+   - inst active 해제 → 같은 곡 재요청 가능.
+   - 작곡 sweep 시 creation_log에 GEN_RESPONSE failed 기록.
+5. **T5 [api][FAIL] 멱등**
+   - 같은 `X-Gen-Request-Id` 재전송: processing 중이면 409(같은 job), done 뒤면 200 `replayed:true`·무과금, failed 뒤면 409 `request_already_failed`.
+   - 형식 오류 헤더는 무시(새 id).
+   - 타인의 request_id 조회 → 404.
+6. **T6 [api][FAIL] 게이트 순서**: 피로 429 → 409 → 402 순서. 429·402일 때 원장 잔재 없음, 또는 failed·미과금·recoverable 비노출. 스트라이크 403, 보이스 만료 400 선행 유지.
+7. **T7 [api][FAIL] 소비·재배달 방지(오늘 사고 교훈)**
+   - done 뒤 ack → recoverable 비노출. 이후 결과물(가사 자산·커버 세션·generation·Inst 트랙)을 삭제해도 **재배달 0**.
+   - 작곡 발매(result_track_id) → 비노출.
+   - 레거시(consume_tracked 없음) 문서 **전부 비노출**: 운영 스냅샷 형태의 페이크 데이터 58 completed generations 등.
+   - RECOVERABLE_SINCE 경계.
+8. **T8 [ops][FAIL] 배포 전후 잔액 대사**: 불일치 계정이 기준선 3개(c19acda4 −5, 2f85f76c −5, 18bd8131 −1)에서 **늘지 않음**.
+9. **[api] recoverable 계약**
+   - kind별 필드
+   - 상한 10/5
+   - 살아 있는 processing의 elapsed_sec
+   - failed 24h·refunded 플래그
+   - ack 409(processing)·404(타인)
+   - 킬스위치 `GEN_JOBS_KINDS=`일 때 게이트·원장 없음 + sweep 동작
+10. **[unit] 앱 추적기**
+    - 동기 kind 404 유예 120초(이후 조용히 정리 + 뷰어 안내 "별은 차감되지 않았어요")
+    - 네트워크 오류·5xx·timeout은 실패 표시 없이 백오프만
+    - 서버 failed일 때만 실패·환불 문구
+    - kind별 상한 경과 시 recoverable 1회
+    - 알림 1회·뷰어 job 제외·NOTIFY_ROUTES 밖에서는 말풍선만
+    - 아티스트 레코드·선택자 불변
+11. **[e2e] kind별 이탈·복귀**(폰 웹 + APK)
+    - 요청 → 실수 이탈(탭 전환·뒤로·웹 새로고침) → 작업실 해당 디렉터 말풍선 "만드는 중… (n분)" → 완성 → "완성! 눌러서 확인" + 작업실에서 알림 1회 → 탭 → 올바른 결과 화면 → ack → 말풍선 사라짐 → 재시작해도 다시 안 뜸.
+    - kind별 결과 화면
+      - 가사: LyricsResult 본문·제목·자산 연결(작곡 PATCH 동기화 동작)
+      - 곡: MusicResult 비교 카드·발매
+      - Inst: 완료 카드
+      - 커버: 결과 + 곡 적용
+      - 다듬기: 새 버전
+      - 영상: 미리보기·저장
+    - **디렉터가 휴식 중이어도 말풍선 탭이 결과로 간다**(피로 다이얼로그 없음).
+12. **[e2e] 중복 가드 앱**
+    - 진행 중 재진입·재생성 시도 → 팝업 "이미 … 중이에요", 요청 0건·⭐ 불변.
+    - **커버 생성 중 작업실 → 이미지 디렉터 재진입 → 자동 재요청 0건**(0-3 회귀 봉합).
+    - 영상 자막 위치 카드 더블클릭 → 요청 1건.
+    - 다른 기기에서 409 → adopt 후 진행 표시.
+13. **[e2e] 재시작**: 스테이징 유닛 + 운영 관측
+    - 작곡 중 재시작 → MusicLoading이 다음 폴링에서 실패 화면 + "사용한 별은 자동으로 환불됐어요", GenerationHistory 실패 표시
+    - 연주곡 → InstLoading 실패 문구 + 곡 잠김 해제
+    - 동기 kind → 앱 재진입 시 실패·환불 알림 1회
+14. **[회귀]**
+    - v3.203 연주곡 생성·duration 게이트
+    - v3.202 I-lite(구서버 폴백)·커버 대화 영속·성공 시에만 컨텍스트 클리어
+    - v3.204 refine 이중 제출 가드·cover-history 폴링(폴백)
+    - v3.214 영상 과금·캐시 무과금·피로 게이트
+    - v3.219 디렉터 작업 보존 draft(VideoDraft 'making' 제외 유지, ArtistInput draft)
+    - v3.227 아티스트 추적기 전체(test 17~20)
+    - 튜토리얼 앵커·TUTORIAL_STEPS 불변(말풍선은 튜토리얼 중 숨김)
+    - 피로 429 다이얼로그 12곳
+    - creation_log(작곡 GEN_REQUEST·GEN_RESPONSE)
+    - 작사 자산 자동 저장·v3.144 sourceAssetId 영속
+    - GenerationHistory 이어보기·삭제
+    - MyMusic Inst focus 재확인
+    - v3.223 재생 큐 무관
+15. **[정책 문구]**
+    - `grep -rn "나가 있어도\|나가도 계속\|나가서 다른" 2_housing/{screens,components,services}` → VoiceCloneWizard(:604, 범위 밖 — 결정 6)만 남음
+    - 진행 화면 8곳 "작업이 끝날 때까지 이 화면을 벗어나지 마세요" 유지
+    - 알림 문구에 "저작권"·이모지 없음(⭐ 제외)
+    - 모든 팝업은 showAlert
+    - MAIDOL 표기
+
+## 사용자 결정 사안 (기본안 명시 — 지시가 없으면 기본안으로 진행)
+1. **서버 배포 방식**: 기본안 = S1 1회 배포(킬스위치 포함) + 사용자 scp 1줄. 대안은 영상·이미지 먼저(S1a), 작사·작곡 나중(S1b)의 2회 배포(재생성 1회 추가).
+2. **작곡 중복 차단 강도**: 기본안 = 사용자당 동시 작곡 1곡(아티스트와 같음). 대안은 동시 2곡까지 허용.
+3. **과거 불일치·고아 과금 보정**
+   - 기본안: `2f85f76c`(오늘 가입한 베타 사용자, 영상 중복 차감 정황 −⭐5)에 ⭐5를 보정 지급한다(관리자 admin_adjust, 사유 "v3.228 영상 중복 차감 보정" — **사용자가 관리자 웹에서 실행**).
+   - c19acda4(대표 계정 추정)의 −5, 작사 고아 4건, 커버 고아 1건은 보정하지 않는다.
+4. **완성됐지만 확인 안 한 결과가 새 생성을 막는지**: 기본안 = 막지 않음(D3 근거). 알림과 말풍선만 표시한다.
+5. **APK**: 기본안 = 웨이브마다 웹을 먼저 배포하고 APK는 W3 뒤 1회(1.2.0 후보). 구 APK 1.1.9는 409 안내 문장만 보이고 기능은 호환된다.
+6. **보이스 클론 마법사 문구**("이 화면을 나가도 계속 진행되고", VoiceCloneWizardScreen.tsx:604): 디렉터 5종 밖이라 기본안 = 유지. 통일을 원하면 지시.
+7. **로그 호스트 볼륨 마운트**(v3.227 결정 7 미처리): 기본안 = S1 재생성 때 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 추가(docker run 옵션 변경 — 사용자 승인 필요). 이번 영상 사고도 로그 유실 때문에 확정하지 못했다.
+
+규칙: 서버 수정은 server_staging_v3228에서만 한다(라이브 원본 pull + orig 보존 + 배포 직전 md5 재대조). 프로덕션 쓰기(scp·build·재생성·보정 지급·env)는 사용자 승인·실행 뒤에 한다. main.py는 건드리지 않는다. 민감 정보는 플레이스홀더로 쓴다. 팝업은 showAlert, 표기는 MAIDOL로 한다. 이탈을 권장하는 문구는 쓰지 않는다. 코드 수정과 커밋은 이 계획이 승인된 뒤 team-dev 루프에서 한다.
+
+### v3.228 사용자 결정 (2026-09-24, 오케스트레이터 기록 — 본문과 충돌 시 이 소절이 우선)
+1. **진행 방식**: 전체 진행 — 서버 S1 단일 배포(사용자 scp 1줄, kill switch `GEN_JOBS_KINDS`), 앱 W0(영상 과금+공통) → W1(작곡·연주곡) → W2(이미지) → W3(작사), 웨이브별 웹 선배포, APK는 W3 후 1.2.0 1회. 40% 룰 초과는 사용자 승인으로 해소.
+2. **영상 중복 차감 의심 ⭐5(user 2f85f76c)**: 사용자가 관리자 웹에서 직접 지급 — 팀은 데이터 쓰기 금지. c19acda4 과거 미설명 차감은 조정하지 않음.
+3. **로그 볼륨**: S1 재생성 시 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 추가(디렉터리 생성·권한은 DEPLOY.md 1줄 명령에 포함 — 사용자 실행).
+4. **작곡 동시 생성**: 사용자당 진행 중 1곡(과금 전 409). 완성됐지만 미확인 결과는 새 생성을 막지 않음.
+5. 기본값 확정: 미확인 결과 비차단, 보이스 클론 문구 유지(4개 디렉터 범위 밖), "나가 있어도 계속 만들어져요" 잔존 2곳(GenerationJobCard.tsx:43, generationTracker.ts:594)은 이번에 "벗어나지 마세요" 원칙으로 교체.

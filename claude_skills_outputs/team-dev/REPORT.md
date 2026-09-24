@@ -3066,3 +3066,123 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 분류율 정의 차이(엄격 92.0% / 가방 BAG 포함 96.7%), 색상 없는 874건 이미지 기반 보강, 색상 옵션 중복 문서 표시 병합, 장소 사진 preview 보호, 생성 완료 푸시 알림, 추적기 어댑터로 커버·영상·Inst 이관.
 
 **특이**: 버전 번호가 다른 세션의 분석 수집 커밋(03b1d2d)과 겹침. 서버에 다른 세션이 main.py 등을 .bak 없이 수정·배포(07:03·08:36) → 이번 반영은 배포 직전 현재본 재수신 위에 패치·main.py 제외·디렉터리 통째 scp 금지로 충돌을 회피했다.
+
+## v3.228 (2026-09-24) — 작사·작곡(연주곡)·이미지(커버·다듬기)·영상 디렉터에 자동 도착 알림·중복 생성 차단·재시작 멈춤 환불 정리 확장 (PLAN 정본 = PLAN.md `# v3.228`)
+
+**요청**: "그럼 만약에 작업이 이상해질껄 대비해서 지금 상태를 체크해놓고. 작사, 작곡, 이미지, 영상 디렉터 모두 아티스트 디렉터 처럼 자동도착알림, 중복생성차단, 서버 재시작으로 멈춘 환불정리 반영해줄래?"
+- 유지 원칙(ea39dac 결정): 진행 화면 안내는 "작업이 끝날 때까지 이 화면을 벗어나지 마세요" 그대로. 자동 회수는 실수 이탈 대비 안전장치이며, 이탈을 권장하지 않는다.
+
+**체크포인트(롤백 기준)**
+- 앱: 태그 `checkpoint-pre-v3228` = ea39dac
+- 서버 이미지
+  - `maidol-app:checkpoint-pre-v3228`(3f32481b5e68, 09:24Z)
+  - `maidol-app:pre-v3228-live`(fc5ae5e93291 = 배포 직전 실행 이미지, 다른 세션의 10:25Z 반영분 포함)
+- 서버 소스 tgz: `backups/backend_9004_app_pre_v3228_20260924T094437Z.tgz`
+- 파일 백업: `routes/{generate,upload,tracks}.py.bak_pre_v3228`
+- 배포 직전 docker 로그 보존: `maidol-app_pre_v3228_20260924T155831Z.log`
+
+**원인(실측 — planner 0단계, 서버 읽기 전용)**
+- 재시작 복구는 character_jobs에만 있었다(main.py:536-567).
+  - 작곡: 재시작하면 generations가 processing에 영구히 남고 환불도 없었다. 앱 폴링에는 상한이 없어 무한 대기했다.
+  - 연주곡: inst_jobs active가 영구히 남아 그 곡이 영구 409가 되고 환불도 없었다.
+  - 작사·커버·다듬기·영상(동기 요청): 처리 중에 프로세스가 죽으면 차감만 되고 환불되지 않았다.
+- **영상 중복 과금 확정**
+  - 캐시 판정이 완성본 존재 여부뿐이라, 인코딩 중에 다시 요청하면 캐시 미스로 재차감 + ffmpeg 이중 실행이 일어났다.
+  - 과금 ref가 결정적이라 두 번째 차감의 이벤트가 DuplicateKey로 삼켜졌다. 결과적으로 **기록 없는 차감**이 됐다.
+  - 앱 timeout 300초가 서버 600초·nginx 320초보다 짧아 "실패" 표시 → 재요청을 유도했다.
+  - 잔액 대사 결과 39개 계정 중 36개는 정확히 맞았다. 2f85f76c −⭐5는 07:00:28 영상 과금 → 07:02:47 완성 사이에 같은 조합 요청이 한 번 더 들어온 정황이다(로그 소실로 직접 증명은 불가).
+- **커버 재진입 이중 과금**: 생성 중 이탈 후 다시 들어오면 마운트 시 자동 doGenerate가 돌아 재차감됐다(CoverGeneration :134-135, :330-334). 다듬기는 락 없이 버전을 산정해 경합이 생겼다(9/22 실사고).
+- 작업실에서는 완성 직후 디렉터가 휴식 게이트에 걸려 도착 확인을 가로막는 구조였다.
+- v3.227 잔재 문구 "나가 있어도 계속 만들어져요" 2곳이 있었다.
+
+**설계(요지)**
+- 동기 요청은 동기로 유지한다. 대신 앱이 `X-Gen-Request-Id`를 발급하고, 서버는 과금 **전에** 원장(`gen_jobs`)을 기록한다. 응답을 잃어도 정확히 회수할 수 있고, 같은 id로는 재차감이 불가능하다(멱등).
+- 공통 모듈 `app/services/gen_jobs.py`
+  - 단일 워커 전제 `boot_id` 판정: 재시작 전 job은 첫 조회에서 즉시 failed + 환불 1회.
+  - kind별 상한은 보조 판정이다: 작사 10분, 커버·다듬기 15분, 영상 25분, 작곡·연주곡 30분.
+  - 사용자·그룹별 진행 중 1건이면 과금 전에 409.
+  - 결과 확인은 `acked_at`으로 영속 기록한다. 레거시 문서(`consume_tracked` 없음)는 회수 대상에서 제외한다.
+  - 킬스위치 env `GEN_JOBS_KINDS`.
+  - main.py는 변경하지 않았다(API는 generate.py 라우터 `/api/generate/jobs/*`, 인덱스·기동 sweep은 lazy).
+- 영상 과금 ref는 시도별 고유값으로 바꿨다. 캐시 히트는 게이트 전에 무과금 반환하는 동작 그대로다.
+- 앱: 추적기에 `registerKind` 어댑터를 실구현했다(lyrics·music·inst·cover·cover_refine·video). 작업실 4개 디렉터 말풍선(피로 게이트보다 먼저 분기), 앱 내 도착 알림 1회, kind별 결과 화면 이동과 ack를 넣었다. 아티스트 경로는 동작 불변이다.
+
+**수행(커밋 — 모두 origin/frontend 푸시)**
+- `19d55e1` 추적기 레지스트리 인터페이스(동작 무변경)
+- `0f15d6e` **W0 공통**: 작업실 말풍선·도착 알림·스냅샷 매퍼·이탈 권장 문구 2곳 정리
+- `2653b9c` **영상 연타 가드**(과금 POST 1회 보장 — 서버 무관 즉시 효과)
+- `039829f` 공통 보완(살아 있는 요청 판정·discard·replaceKey·settle)
+- `56c7f27` 영상 원장 연동(요청 id·회수·409 adopt)
+- `e387341` **W1** 작곡·연주곡(등록·가드·hydrate 추출 `utils/musicHydrate.ts`·ack)
+- `35b8bf7` **W2** 커버·다듬기: 원장 연동, **재진입 자동 재요청 봉쇄**(recoverJobId), 다듬기 원장. I-lite와 cover-history는 구서버 폴백으로 보존.
+- `8b64d12` **W3** 작사(요청 id·resume 모드·가드·도착 시 가사 복원)
+- `03e15e2` 게이트 후속 보완 4건
+- `d50ff97` 앱 1.2.0
+- 웨이브 5묶음은 누적 tsc 0을 확인한 뒤 분할 커밋했다.
+- **서버 S1**(스테이징 server_staging_v3228: generate.py·upload.py·tracks.py·gen_jobs.py 신규)
+  - 2026-09-24 15:59Z 배포
+  - 사용자 1줄 명령(md5 가드·`.bak_pre_v3228`·로그 폴더 10001:10001)
+  - 오케스트레이터: 로그 보존·롤백 태그·빌드 → 이미지 내 md5 4개 일치 + 다른 세션 main.py·admin_stats 유지 확인
+  - **재생성 직전 진행 중 0 재확인**(character_jobs·과금 generations·inst 0, 최근 3분 동기 생성 요청 0)
+  - 재생성: **로그 볼륨 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 적용**(v3.227 결정 7 해소)
+  - health 200(6초). `[GenJobs] module loaded groups=image,inst,lyrics,music,video boot_check=True`
+
+**검증**
+- tester 게이트
+  - W0-1 영상: 과금 POST 1회 보장
+  - W0 1조 공통
+  - S1 서버 스테이징: **T1~T7 PASS 32/32**(영상·다듬기·커버·작사·작곡 동시 요청 1차감, 죽은 작업 1회 환불·초안 불변, 멱등, 게이트 순서, 소비·재배달 방지)
+  - v3.228 앱 전체(구·신서버 두 모드): 과금 FAIL 게이트 앱 측 T1·T3·T5·T7 PASS, **이중 과금 경로 0**
+  - 후속 보완: 하니스 29/43/25/15/10 + 영상 재현 스크립트
+- 운영 스모크
+  - 기존 API 200·catalog 200
+  - 다른 세션: admin/stats·admin/items 401, analytics 405(등록 유지)
+  - 신규 `/api/generate/jobs/recoverable`·`/jobs/req/{rid}` 무토큰 401
+  - v3.227 유지: 원본 사진 404, character recoverable 401
+  - 호스트에 `gen_jobs.log` 생성
+- **T8 잔액 대사**: 배포 전 기준선(10:27Z)은 불일치 3계정 {18bd8131:−1, c19acda4:−5, 2f85f76c:−5}. 배포 후(15:59:47Z) 41계정 중 **같은 3계정·같은 값(증가 0)**.
+- planner 스팟체크(작업트리 정독 — git 미사용, 서버 읽기 전용)
+  - `services/genJobs/{index,runtime,lyrics,music,inst,cover,video}.ts`·`genJobsService.ts`·`utils/musicHydrate.ts` 존재
+  - `TrackedJobKind = 'artist' | GenJobKind`
+  - 어댑터 6종 `registerKind` 등록
+  - `guardGeneration` 적용 8지점: LyricsPromptReview·LyricsResult·LyricsLoading·MusicGeneration·MusicLoading·CoverGeneration(생성·다듬기)·VideoDirector
+  - VideoDirector `busyRef`·`proceedingRef`
+  - CoverGeneration `recoverJobId` 진입
+  - MapScreen `useDirectorJob` 4개 디렉터
+  - `TUTORIAL_STEPS`·`DIRECTOR_ANCHOR_BY_TYPE` 존재(불변)
+  - 이탈 권장 문구는 VoiceCloneWizard:604(범위 밖 — PLAN 결정 6)만 남음
+  - app.json 1.2.0
+  - 서버: gen_jobs.py·`.bak_pre_v3228` 3개 존재, 로그 볼륨 bind 마운트 확인, `GEN_JOBS_KINDS` 미설정(기본 전 kind), 16:02Z 기준 컨테이너 로그 Traceback 0
+- 5분 오류 확인은 오케스트레이터 별도 기록(추가 전달 예정).
+
+**이월·남은 절차**
+1. W0~W3 웹 배포 — 사용자 `cd /Users/pearl/homepage/maidol && ./deploy.sh app`(미실행). 서버가 먼저 반영돼 있고 구웹과 호환된다(409는 실제 중복일 때만, 안내 문장 포함).
+2. APK 1.2.0 EAS 빌드 진행 중. 구 APK 1.1.9는 호환되며 새 기능만 없다.
+3. 실기기 E2E(과금 — 사용자): 영상·작곡·커버·작사 각 1회 실생성 → 실수 이탈 → 작업실 말풍선 → 도착 알림 → 결과 → 재시작 뒤 재배달 없음. 중복 시도 팝업·⭐ 불변.
+4. 운영 재시작 관찰: 다음 재배포 때 진행 중이던 job이 즉시 failed+환불(`[GenJobs] swept reason=dead_boot`)되는지, 로그 볼륨 존속(A4).
+5. 2f85f76c ⭐5 보정 지급 — 사용자가 관리자 웹에서 실행(사유 "v3.228 영상 중복 차감 보정").
+
+**백로그**
+- 서버(경미)
+  - ack kind 불일치 404 미적용
+  - 배포 전 초안을 `/start/`로 시작한 작곡의 recoverable 필터(created_at → started_at 권장)
+  - 같은 rid 재전송이 피로 429에 가려질 수 있음
+  - 상한 초과 뒤 늦게 끝난 작업의 무료 결과
+  - 커버 핸들러 try 범위 밖 약 150줄(예외 시 15분 슬롯 잠김 뒤 환불)
+  - 앨범 커버(albums.py) 원장 미적용
+  - 작곡 차감~doc 기록 사이 수 ms 틈
+  - character_jobs의 boot_id 전환
+  - `spend_points` 이벤트 DuplicateKey 격상·경보(공용)
+  - share-video 비소유자 과금 정책
+- 앱
+  - 다른 기기·재설치로 회수한 커버는 트랙 연결 불가(보관함으로 이동)
+  - 구서버 회수는 같은 세션 한정
+  - 영상 회수의 드문 이중 안내
+  - "벗어나지 마세요" 문구가 13곳이라 기준을 갱신해야 함(PLAN의 '8곳'은 과소 집계)
+  - TESTPLAN W0-U1 문구 갱신
+  - 생성 완료 푸시 알림
+
+**특이**
+- 이번 사이클에 다른 세션이 서버를 6회 재배포했다. 이번 반영은 배포 직전 현재본 md5 가드, main.py 비접촉, 디렉터리 통째 scp 금지로 충돌을 피했다. 재배포마다 진행 중 작업이 죽고 로그가 사라지는 문제가 이번 사이클 설계(boot_id 즉시 환불)와 로그 볼륨 도입의 근거다. **서버 배포 조율 창구 일원화**를 권고한다.
+- 영상 중복 과금 1건(2f85f76c)은 정황만 있고 로그 소실로 확정할 수 없었다. 로그 볼륨 적용 이후에는 같은 유형을 `[GenJobs]`·`[star-econ]` 로그로 추적할 수 있다.
+- **재시작 후 5분 오류 확인(오케스트레이터, 16:04:13Z — 재시작 15:59:14Z 기준 4분 59초)**: traceback/exception 0, 5xx 응답 0, health 200, `[GenJobs] module loaded … groups=image,inst,lyrics,music,video` 1회, 호스트 `gen_jobs.log` 동일 기록 — TESTPLAN S1-P5 충족.
