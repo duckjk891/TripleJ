@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -13,9 +13,9 @@ import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
-import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, hasArtistPhotoSource } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
+import { useOutfitStore, type AppliedItem, type CodyDraftItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { useWishlistStore } from '../stores/wishlistStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
@@ -23,20 +23,24 @@ import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { listArtists } from '../services/characterService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { guardArtistGeneration } from '../services/generationTracker';
 import { colors } from '../theme/colors';
-// v3.227(D 추출 1단계): 피커 모달·공용 타입/헬퍼는 components/cody/*로 이동(동작 무변경).
+// v3.227(D·E): 피커 모달은 components/cody/*, 타입·순수 함수는 utils/codyCatalog, 조회는 services/catalogService.
 import CodyPickerModal from '../components/cody/CodyPickerModal';
+import { getSampleItems } from '../components/cody/codyShared';
+import { getCatalog } from '../services/catalogService';
 import {
   ACCESSORY_SUBCATS,
-  EMPTY_DRILL,
-  SAMPLE_ITEMS,
+  CATEGORIES,
+  DEFAULT_VIEW,
+  brandNameOf,
+  normalizeArtistGender,
   type AdItem,
   type Cat,
-  type DrillState,
-} from '../components/cody/codyShared';
+  type CodyViewState,
+} from '../utils/codyCatalog';
 
-// v3.206: 카테고리 개편 — Cat 타입·ACCESSORY_SUBCATS는 components/cody/codyShared.ts로 이동.
-const CATEGORIES: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
+// v3.206: 카테고리 개편 — Cat·CATEGORIES·ACCESSORY_SUBCATS는 utils/codyCatalog.ts.
 const GRID_BASIC_CATS: Cat[] = ['상의', '하의', '신발'];
 const LOCKED_CATS: string[] = ['헤어스타일', '헤어컬러', '안경', '문신'];
 
@@ -73,15 +77,22 @@ const WEAR_STYLE_HINTS: Record<string, string> = {
   '어깨에 메기': "'어깨에 메기'=한쪽 어깨에 걸쳐 멘 채",
 };
 
-// v3.205(⑤): 아티스트 성별 정규화 — '남성'/'남자'/'남' → '남', '여성'/'여자'/'여' → '여'.
-// 구계정·자유 입력 등 판별 실패는 null → 자동 필터 미적용·칩 미노출(전량 노출, 안전).
-const normalizeArtistGender = (raw?: string | null): '남' | '여' | null => {
-  const t = (raw || '').trim();
-  if (!t) return null;
-  if (t.startsWith('남')) return '남';
-  if (t.startsWith('여')) return '여';
-  return null;
-};
+// v3.227(E): draft 영속용 최소 필드(텍스트/id만)
+const toDraftItem = (i: AdItem): CodyDraftItem => ({
+  id: i.id,
+  name: i.name,
+  product_name: i.product_name,
+  brand: i.brand,
+  advertiser_nickname: i.advertiser_nickname,
+  image_object_name: i.image_object_name,
+  product_url: i.product_url,
+  color: i.color,
+  gender: i.gender,
+  category: i.category,
+  sub_category: i.sub_category,
+  color_family: i.color_family,
+  price_krw: i.price_krw,
+});
 
 export default function ArtistCodyScreen({ navigation, route }: any) {
   const taskStore = useCharacterTaskStore();
@@ -149,9 +160,24 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // v3.206: 악세서리 통합 피커 — pickerCat이 현재 서브탭('모자'|'가방') 슬롯을 가리킨다.
   // pickerItems에는 모자+가방 실아이템 전체를 보관하고 서브탭이 앞단 필터로 동작.
   const [accessoryMode, setAccessoryMode] = useState(false);
-  // v3.90: 전체 | 위시리스트 탭 + 5단계 드릴다운 상태
+  // v3.90: 전체 | 위시리스트 탭
   const [pickerTab, setPickerTab] = useState<'all' | 'wish'>('all');
-  const [drill, setDrill] = useState<DrillState>(EMPTY_DRILL);
+  // v3.227(D): 카테고리별 보기(모아보기/펼쳐보기)·대분류·필터·정렬 — 피커를 닫아도 카테고리별로 기억.
+  // (모아보기에서 들어간 브랜드 groupBrand만 피커를 열 때 초기화 — 기존 드릴다운 리셋 관행)
+  const [views, setViews] = useState<Partial<Record<Cat, CodyViewState>>>({});
+  const currentView = (pickerCat && views[pickerCat]) || DEFAULT_VIEW;
+  const updateViewFor = (cat: Cat, patch: Partial<CodyViewState>) =>
+    setViews((prev) => ({ ...prev, [cat]: { ...(prev[cat] || DEFAULT_VIEW), ...patch } }));
+  const updateView = (patch: Partial<CodyViewState>) => {
+    if (pickerCat) updateViewFor(pickerCat, patch);
+  };
+  const resetGroupBrand = (cat: Cat) => {
+    if (views[cat]?.groupBrand) updateViewFor(cat, { groupBrand: null });
+  };
+  // v3.227(E): 복원한 draft 아이템 중 카탈로그에서 사라진(판매 종료) 것 — 표시는 하되 적용 전 경고
+  const [staleIds, setStaleIds] = useState<Set<string>>(new Set());
+  // 빠른 카테고리 전환(스트립) 시 늦게 도착한 이전 응답이 목록을 덮지 않게 요청 번호로 가드
+  const pickerReqRef = useRef(0);
   // v3.205(⑤)→v3.207(⑩): 아티스트 성별 자동 필터 — 서버 캐릭터 gender(1순위) →
   // apiResult.gender → pendingGender → artistProfileStore 4단 폴백.
   // 앱 재시작 후엔 apiResult/pendingGender가 비어(characterTaskStore persist 미등록) null이 되던
@@ -201,66 +227,81 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     return () => { cancelled = true; };
   }, [isLoggedIn]);
 
+  const syncWish = (items: AdItem[]) => {
+    // 실아이템 위시 여부 일괄 조회 (샘플/미로그인은 스킵) — wishlistStore.sync 시그니처 불변(1조 C)
+    const ids = items.filter((i) => !i.id.startsWith('sample_')).map((i) => i.id);
+    if (isLoggedIn && ids.length > 0) useWishlistStore.getState().sync(ids);
+  };
+
+  // v3.227(D): 카탈로그 조회 — catalogService(GET /ads/catalog → 404·오류 시 /ads/active 폴백, 캐시 10분).
+  // 둘 다 실패하거나 0건이면 SAMPLE 폴백(v3.216 관행 그대로).
   const openPicker = async (cat: Cat) => {
+    const req = ++pickerReqRef.current;
     setAccessoryMode(false);
     setPickerCat(cat);
     setPickerTab('all');
-    setDrill(EMPTY_DRILL);
+    resetGroupBrand(cat);
     setGenderFilterOn(true); // v3.205(⑤): 피커 열 때마다 성별 필터 기본 ON 복귀
     setPickerLoading(true);
     try {
-      const res = await api.get('/business/ads/active', { params: { category: cat } });
-      const items: AdItem[] = res.data?.items || [];
-      setPickerItems(items.length > 0 ? items : SAMPLE_ITEMS[cat]);
-      // 실아이템 위시 여부 일괄 조회 (샘플/미로그인은 store가 알아서 스킵)
-      if (isLoggedIn && items.length > 0) {
-        useWishlistStore.getState().sync(items.map((i) => i.id));
-      }
+      const { items, source } = await getCatalog(cat);
+      if (req !== pickerReqRef.current) return;
+      if (__DEV__) console.info('[ArtistCody] 카테고리 조회', { category: cat, n: items.length, source });
+      setPickerItems(items.length > 0 ? items : getSampleItems(cat));
+      syncWish(items);
     } catch (err: any) {
+      if (req !== pickerReqRef.current) return;
       console.error('[ArtistCody] 카테고리 조회 실패', { category: cat, status: err?.response?.status });
-      setPickerItems(SAMPLE_ITEMS[cat]);
+      setPickerItems(getSampleItems(cat));
     } finally {
-      setPickerLoading(false);
+      if (req === pickerReqRef.current) setPickerLoading(false);
     }
   };
 
-  // v3.216 ④: 악세서리 피커 — category=모자 + category=가방 2호출 합산.
-  // (구주석 "서버가 모자/가방 400 거부"는 구정보 — v3.206부터 business.py ALLOWED에 모자·가방 허용.)
-  // 무필터 전량 조회는 서버 $sample 500 캡 때문에 대량 시드 후 모자·가방이 표본 일부만 랜덤 노출되던
-  // 문제가 있어 카테고리별 호출로 각각 500 표본을 확보한다.
-  // 서브카테고리 실데이터 0건은 렌더 시 SAMPLE 폴백(sourceItems 파생).
-  const openAccessoryPicker = async () => {
+  // v3.216 ④: 악세서리 피커 — 모자 + 가방 카탈로그를 각각 조회해 합산(서브탭이 앞단 필터).
+  // v3.227: 한쪽만 실패해도 다른 쪽은 표시, 서브카테고리 실데이터 0건은 렌더 시 SAMPLE 폴백.
+  const openAccessoryPicker = async (initialSub: Cat = '모자') => {
+    const req = ++pickerReqRef.current;
     setAccessoryMode(true);
-    setPickerCat('모자'); // 기본 서브탭: 모자
+    setPickerCat(initialSub); // 기본 서브탭: 모자(스트립에서 가방 칸으로 들어오면 가방)
     setPickerTab('all');
-    setDrill(EMPTY_DRILL);
+    resetGroupBrand(initialSub);
     setGenderFilterOn(true);
     setPickerLoading(true);
     try {
-      const [hatRes, bagRes] = await Promise.all([
-        api.get('/business/ads/active', { params: { category: '모자' } }),
-        api.get('/business/ads/active', { params: { category: '가방' } }),
-      ]);
-      const items: AdItem[] = [...(hatRes.data?.items || []), ...(bagRes.data?.items || [])];
+      const results = await Promise.allSettled(ACCESSORY_SUBCATS.map((c) => getCatalog(c)));
+      if (req !== pickerReqRef.current) return;
+      const items: AdItem[] = [];
+      results.forEach((r, idx) => {
+        if (r.status === 'fulfilled') items.push(...r.value.items);
+        else console.error('[ArtistCody] 카테고리 조회 실패', { category: ACCESSORY_SUBCATS[idx], status: (r.reason as any)?.response?.status });
+      });
       if (__DEV__) console.info('[ArtistCody] 악세서리 카테고리 조회', { hatBag: items.length });
-      setPickerItems(items);
-      if (isLoggedIn && items.length > 0) {
-        useWishlistStore.getState().sync(items.map((i) => i.id));
-      }
-    } catch (err: any) {
-      console.error('[ArtistCody] 카테고리 조회 실패', { category: '악세서리(모자+가방)', status: err?.response?.status });
-      setPickerItems([]); // 0건 → 서브탭별 SAMPLE 폴백
+      setPickerItems(items); // 0건 → 서브탭별 SAMPLE 폴백
+      syncWish(items);
     } finally {
-      setPickerLoading(false);
+      if (req === pickerReqRef.current) setPickerLoading(false);
     }
   };
 
-  // v3.206: 악세서리 피커 서브탭 전환 — 드릴다운만 리셋(탭/아이템은 유지)
+  // v3.206: 악세서리 피커 서브탭 전환 — 모아보기 브랜드만 리셋(탭/아이템은 유지)
   const switchAccessorySub = (sub: Cat) => {
     if (pickerCat === sub) return;
     if (__DEV__) console.info('[ArtistCody] accessory subcat', { sub });
     setPickerCat(sub);
-    setDrill(EMPTY_DRILL);
+    resetGroupBrand(sub);
+  };
+
+  // v3.227(E): 선택 스트립 탭 → 해당 카테고리 피커로 전환(모자/가방은 악세서리 서브탭)
+  const jumpToCategory = (to: Cat) => {
+    if (to === pickerCat) return;
+    console.info('[ArtistCody] strip jump', { from: pickerCat, to });
+    if (ACCESSORY_SUBCATS.includes(to)) {
+      if (accessoryMode) switchAccessorySub(to);
+      else openAccessoryPicker(to);
+    } else {
+      openPicker(to);
+    }
   };
 
   const closePicker = () => {
@@ -297,6 +338,88 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     Linking.openURL(url).catch(() => showAlert('알림', '링크를 열 수 없어요'));
   };
 
+  // ── v3.227(E) 선택 draft — 화면을 나갔다 들어와도 고른 옷·옵션·디렉팅 유지(outfitStore 영속) ──
+  // 복원 키 = 흐름(sheet/outfit)·대상 아티스트(targetCharacterId)·실사/가상. 키가 다르면 폐기.
+  // 비우는 때: ① 새 시트 시작(ArtistInput이 outfitStore.clear() → sheet draft 동반 삭제)
+  //           ② 적용 후 ArtistResult 도달(ArtistResult가 착용 목록을 서버값으로 다시 채워 appliedAt 표식이
+  //              사라짐 → 다음 진입 때 폐기). 생성 실패로 돌아온 경우는 표식이 남아 있어 그대로 복원(재시도용).
+  const draftMode: 'sheet' | 'outfit' = isSheetMode ? 'sheet' : 'outfit';
+  const draftCharacterId = taskStore.targetCharacterId ?? null;
+  const draftKind = taskStore.characterKind;
+  const [draftReady, setDraftReady] = useState(false);
+
+  // 복원한 아이템이 카탈로그에서 사라졌는지(판매 종료) 확인 — 전량 카탈로그(source='catalog')일 때만 판정
+  const checkStale = async (restored: Partial<Record<Cat, AdItem>>, isAlive: () => boolean) => {
+    const targets = (Object.entries(restored) as [Cat, AdItem][]).filter(([, it]) => !!it && !it.id.startsWith('sample_'));
+    const stale = new Set<string>();
+    await Promise.all(
+      targets.map(async ([cat, it]) => {
+        try {
+          const r = await getCatalog(cat);
+          if (r.source === 'catalog' && !r.items.some((x) => x.id === it.id)) stale.add(it.id);
+        } catch {
+          // 조회 실패는 판정 보류(경고 없음)
+        }
+      }),
+    );
+    if (!isAlive()) return;
+    if (stale.size > 0) console.warn('[ArtistCody] draft 아이템 판매 종료', { ids: [...stale] });
+    setStaleIds(stale);
+  };
+
+  useEffect(() => {
+    let alive = true;
+    const restore = () => {
+      const { codyDraft: d, codyOptions: o, items: applied } = useOutfitStore.getState();
+      if (d) {
+        const keyOk = d.mode === draftMode && d.characterId === draftCharacterId && d.kind === draftKind;
+        const reachedResult = d.appliedAt != null && !applied.some((it) => it.appliedAt === d.appliedAt);
+        if (!keyOk || reachedResult) {
+          console.info('[ArtistCody] draft discard', { reason: !keyOk ? 'key' : 'applied', mode: d.mode });
+          useOutfitStore.getState().clearCodyDraft();
+        } else {
+          const restored: Partial<Record<Cat, AdItem>> = {};
+          for (const c of CATEGORIES) {
+            const it = d.items[c];
+            if (it && it.id) restored[c] = { ...it, color_family: it.color_family ?? null };
+          }
+          setSelected(restored);
+          if (o) {
+            setItemOptions((o.itemOptions || {}) as Partial<Record<Cat, Record<string, string>>>);
+            setFreeDirecting((o.freeDirecting || '').slice(0, FREE_DIRECTING_MAX));
+          }
+          console.info('[ArtistCody] draft restore', { n: Object.keys(restored).length, mode: d.mode });
+          checkStale(restored, () => alive);
+        }
+      }
+      setDraftReady(true);
+    };
+    let unsub: (() => void) | undefined;
+    if (useOutfitStore.persist.hasHydrated()) restore();
+    else unsub = useOutfitStore.persist.onFinishHydration(() => restore());
+    return () => {
+      alive = false;
+      unsub?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 선택·옵션·디렉팅이 바뀔 때마다 기록(복원 완료 전에는 쓰지 않음 — 빈 값으로 덮어쓰기 방지)
+  useEffect(() => {
+    if (!draftReady) return;
+    const items: Record<string, CodyDraftItem> = {};
+    for (const c of CATEGORIES) if (selected[c]) items[c] = toDraftItem(selected[c]!);
+    const hasOptions = Object.values(itemOptions).some((o) => o && Object.keys(o).length > 0);
+    if (Object.keys(items).length === 0 && !hasOptions && !freeDirecting.trim()) {
+      if (useOutfitStore.getState().codyDraft) useOutfitStore.getState().clearCodyDraft();
+      return;
+    }
+    useOutfitStore.getState().setCodyDraft(
+      { mode: draftMode, characterId: draftCharacterId, kind: draftKind, items, updatedAt: Date.now() },
+      { itemOptions: itemOptions as Record<string, Record<string, string>>, freeDirecting },
+    );
+  }, [draftReady, selected, itemOptions, freeDirecting, draftMode, draftCharacterId, draftKind]);
+
   const pickItem = (item: AdItem) => {
     if (!pickerCat) return;
     setSelected((prev) => ({ ...prev, [pickerCat]: item }));
@@ -316,7 +439,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     .map((c) => [c, selected[c]] as const)
     .filter(([, item]) => !!item);
 
-  const handleApply = async () => {
+  const handleApply = async (opts: { skipStaleCheck?: boolean } = {}) => {
+    // v3.227 A-보완: 추적 중인 아티스트 생성(processing·완성 미확인)이 있으면 팝업 후 중단(피로 게이트·잔액 체크 앞)
+    if (guardArtistGeneration({ navigation, where: 'ArtistCody' })) return;
     // sheet 모드: 시트 없어도 진행 (옷+사진으로 처음부터 만듦). 옷 미선택은 디폴트 fallback.
     if (!isSheetMode && !apiResult) {
       showAlert('오류', '먼저 캐릭터 시트가 필요해요.');
@@ -324,6 +449,20 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
     if (!isSheetMode && selectedEntries.length === 0) {
       showAlert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
+      return;
+    }
+    // v3.227(E): 복원한 선택 중 판매가 끝난(카탈로그에서 사라진) 아이템 — 적용 전 경고
+    const staleSel = selectedEntries.filter(([, it]) => !!it && staleIds.has(it.id));
+    if (!opts.skipStaleCheck && staleSel.length > 0) {
+      console.info('[ArtistCody] 판매 종료 아이템 적용 경고', { cats: staleSel.map(([c]) => c) });
+      showAlert(
+        '판매가 끝난 아이템이 있어요',
+        `${staleSel.map(([c, it]) => `${c}: ${it!.name}`).join('\n')}\n\n지금은 목록에 없는 아이템이에요. 그대로 만들까요?`,
+        [
+          { text: '다시 고르기', style: 'cancel' },
+          { text: '그대로 진행', onPress: () => handleApply({ ...opts, skipStaleCheck: true }) },
+        ],
+      );
       return;
     }
     // v3.118: 아티스트 디렉터 휴식(쿨다운) 게이트 — 적용(생성 요청) 전 사전 확인.
@@ -337,7 +476,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           status: fatigueStatus,
           remainingSec: remain,
           director: 'artist',
-          onCleared: () => handleApply(), // 해제 후 같은 선택으로 재시도
+          onCleared: () => handleApply(opts), // 해제 후 같은 선택으로 재시도
         });
         return;
       }
@@ -362,7 +501,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       const optStr = opts && Object.keys(opts).length > 0
         ? ` (${Object.entries(opts).map(([k, v]) => `${k}:${v}`).join(', ')})`
         : '';
-      const brand = item.advertiser_nickname ? `${item.advertiser_nickname} ` : '';
+      // v3.227(D): 실제 브랜드(brand 우선, advertiser_nickname 폴백) — '브랜드샵' 같은 판매자 계정명 금지
+      const brandName = brandNameOf(item);
+      const brand = brandName ? `${brandName} ` : '';
       return `${cat}="${brand}${item.name}${optStr}"`;
     };
     const clothingItems = selectedEntries
@@ -384,11 +525,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     // 사용자가 하의를 선택했는지 → 별도 강력 constraint 추가
     const hasBottomSelected = explicitCats.has('하의');
     const bottomItem = selectedEntries.find(([cat]) => cat === '하의')?.[1];
-    const bottomName = bottomItem ? `${bottomItem.advertiser_nickname || ''} ${bottomItem.name}`.trim() : '';
+    const bottomName = bottomItem ? `${brandNameOf(bottomItem)} ${bottomItem.name}`.trim() : '';
 
     // v3.80: 가상화(그림) 모드 — "사진 기반" 지시문 대신 컨셉 기반 문구.
     // 화풍 지시는 서버가 style_preset/style_image로 처리하므로 프롬프트에 넣지 않음(중복 주입 금지).
     const isVirtualKind = isSheetMode && taskStore.characterKind === 'virtual';
+    // v3.227 H-1: 실사 sheet의 사진 포함 여부 — 새 사진(photoUri) 또는 서버 원본 재사용(reuseOriginalObjectName).
+    // 1단계·【필수 유지】 문구 분기
+    const hasPhoto = hasArtistPhotoSource(taskStore);
     // v3.122: 가상(캐릭터) 아티스트 꾸미기 — outfit 모드에서 cartoon 경로(v223 use_saved_sheet).
     // 기준 이미지는 서버가 저장된 시트에서 로드하므로 프롬프트에는 화풍 유지 지시만 보강.
     const isVirtualOutfit = !isSheetMode && taskStore.characterKind === 'virtual';
@@ -396,8 +540,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (isSheetMode) {
       if (isVirtualKind) {
         parts.push('【1단계 — 신규 캐릭터 시트 생성】 설명된 컨셉을 바탕으로 새 캐릭터 시트를 처음부터 생성합니다. (사진이 첨부된 경우 인물의 인상만 참고). 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
-      } else {
+      } else if (hasPhoto) {
         parts.push('【1단계 — 신규 캐릭터 시트 생성】 첨부된 사용자 사진을 기반으로 새 캐릭터 시트를 처음부터 생성합니다. 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
+      } else {
+        // v3.227 H-1: 실사 텍스트 전용(사진 없음) — 사진 전제 문구 대신 설명된 외모 기반
+        parts.push('【1단계 — 신규 캐릭터 시트 생성】 설명된 외모를 기반으로 새 캐릭터 시트를 처음부터 생성합니다. 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
       }
     } else {
       parts.push('【1단계 — 의상 완전 제거】 캐릭터가 현재 입고 있는 모든 의상(상의/하의/신발/모자/안경/악세서리)을 완전히 벗긴 깨끗한 빈 캔버스 상태로 리셋하세요. 특히 시트에 그려진 다리 옷(검정 레깅스/타이츠/스판/스키니/쫄바지 등 fitted한 다리 옷)을 모두 지워야 합니다. 절대 기존 옷을 그대로 두고 그 위에 새 옷을 겹쳐 그리지 마세요.');
@@ -485,8 +632,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (isSheetMode) {
       if (isVirtualKind) {
         parts.push('【필수 유지】 설명된 컨셉의 얼굴 인상·체형을 일관되게 유지하세요. standing pose 자세 유지.');
-      } else {
+      } else if (hasPhoto) {
         parts.push('【필수 유지】 얼굴 인상·체형은 첨부된 사용자 사진을 따라 그리세요. standing pose 자세 유지.');
+      } else {
+        // v3.227 H-1: 실사 텍스트 전용(사진 없음) — 사진 전제 문구 대신 설명된 외모 유지(가상 분기와 같은 형태)
+        parts.push('【필수 유지】 설명된 외모(얼굴 인상·체형)를 일관되게 유지하세요. standing pose 자세 유지.');
       }
     } else {
       parts.push('【필수 유지】 캐릭터의 얼굴 인상·체형·standing pose는 반드시 유지.');
@@ -504,14 +654,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     const desc = parts.join('\n\n');
 
     // 적용된 아이템 영구 보관 — ArtistResult에서 시트 하단에 표시 + 외부 링크 노출
+    const appliedStamp = Date.now();
     const appliedItems: AppliedItem[] = selectedEntries.map(([cat, item]) => ({
       cat: cat as string,
       name: item!.name,
-      brand: item!.advertiser_nickname,
+      brand: brandNameOf(item!) || undefined,
       productUrl: item!.product_url,
       imageObjectName: item!.image_object_name,
       options: itemOptions[cat as Cat],
-      appliedAt: Date.now(),
+      appliedAt: appliedStamp,
     }));
     // 9004 옷 입히기는 image_object_name이 있는 상의/하의/신발만 이미지 첨부 → 정확도 ↑.
     // 누락 항목은 텍스트(desc)로만 묘사돼서 결과가 흔들릴 수 있으니 경고.
@@ -525,6 +676,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       );
     }
     useOutfitStore.getState().setItems(appliedItems);
+    // v3.227(E): draft에 적용 표식 — 결과 화면 도달(착용 목록 재동기화) 뒤 다음 진입에서 비운다.
+    // 선택 0건(sheet 기본형)이면 표식을 남길 착용 목록이 없으므로 draft를 바로 비운다.
+    {
+      const { codyDraft, codyOptions } = useOutfitStore.getState();
+      if (codyDraft && appliedItems.length > 0) {
+        useOutfitStore.getState().setCodyDraft({ ...codyDraft, appliedAt: appliedStamp }, codyOptions);
+      } else if (codyDraft) {
+        useOutfitStore.getState().clearCodyDraft();
+      }
+    }
 
     // v3.107: 대기열 타이머 폐지 — 요청 즉시 ArtistLoading으로 직행해 API 호출·결과 표시
     if (isSheetMode) {
@@ -579,6 +740,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     };
   }, [navigation, route?.params?.returnToCover]);
 
+  const photoSource = hasArtistPhotoSource(taskStore);
+
   return (
     <View style={styles.container}>
       <AppText style={[styles.title, { paddingTop: 12 }]}>
@@ -589,6 +752,21 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           ? '옷·모자·가방을 골라주세요. 사진과 함께 한 번에 아티스트로 만들어요. (미선택 카테고리는 기본형 적용)'
           : '원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.'}
       </AppText>
+      {/* v3.227 H-1: 실사 sheet — 이번 생성에 얼굴 사진(새 사진 또는 이전 사진 재사용)이 들어가는지 명시(사진 소실 시 조용한 텍스트 생성 인지) */}
+      {isSheetMode && taskStore.characterKind !== 'virtual' ? (
+        <View style={styles.photoBadgeRow}>
+          <View style={[styles.photoBadge, !photoSource && styles.photoBadgeText]}>
+            <Feather
+              name={photoSource ? 'camera' : 'type'}
+              size={11}
+              color={photoSource ? colors.accent.primary : colors.text.secondary}
+            />
+            <AppText style={[styles.photoBadgeLabel, !photoSource && styles.photoBadgeLabelText]}>
+              {photoSource ? '얼굴 사진 포함' : '설명으로 만들기'}
+            </AppText>
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         <View style={styles.grid}>
@@ -605,9 +783,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 <AppText style={styles.catSub} numberOfLines={1}>
                   {sel ? sel.name : '고르기'}
                 </AppText>
-                {sel?.advertiser_nickname ? (
+                {sel && brandNameOf(sel) ? (
                   <AppText style={styles.catBrand} numberOfLines={1}>
-                    {sel.advertiser_nickname}
+                    {brandNameOf(sel)}
                   </AppText>
                 ) : null}
               </TouchableOpacity>
@@ -623,13 +801,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 ? accSelected.map((it) => it.name).join(' · ')
                 : '모자·가방 고르기';
             const accBrands = [
-              ...new Set(accSelected.map((it) => it.advertiser_nickname).filter(Boolean)),
+              ...new Set(accSelected.map((it) => brandNameOf(it)).filter(Boolean)),
             ].join(' · ');
             return (
               <TouchableOpacity
                 key="악세서리"
                 style={[styles.catCard, accSelected.length > 0 && styles.catCardSelected]}
-                onPress={openAccessoryPicker}
+                onPress={() => openAccessoryPicker()}
                 onLongPress={() => {
                   if (accSelected.length > 0) ACCESSORY_SUBCATS.forEach((c) => clearItem(c));
                 }}
@@ -738,9 +916,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                   <AppText style={styles.summaryChipText}>
                     {item!.name}
                   </AppText>
-                  {item!.advertiser_nickname ? (
+                  {brandNameOf(item!) ? (
                     <AppText style={styles.summaryChipBrand}>
-                      {item!.advertiser_nickname}
+                      {brandNameOf(item!)}
                     </AppText>
                   ) : null}
                 </TouchableOpacity>
@@ -773,7 +951,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               styles.applyBtn,
               !isSheetMode && selectedEntries.length === 0 && { opacity: 0.4 },
             ]}
-            onPress={handleApply}
+            onPress={() => handleApply()}
             disabled={!isSheetMode && selectedEntries.length === 0}
           >
             <AppText style={styles.applyBtnText}>
@@ -791,15 +969,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         pickerLoading={pickerLoading}
         pickerTab={pickerTab}
         setPickerTab={setPickerTab}
-        drill={drill}
-        setDrill={setDrill}
+        view={currentView}
+        updateView={updateView}
         genderFilterOn={genderFilterOn}
         setGenderFilterOn={setGenderFilterOn}
         artistGender={artistGender}
         selected={selected}
+        staleIds={staleIds}
         isLoggedIn={isLoggedIn}
         closePicker={closePicker}
         switchAccessorySub={switchAccessorySub}
+        jumpToCategory={jumpToCategory}
         pickItem={pickItem}
         handleWishToggle={handleWishToggle}
         openItemLink={openItemLink}
@@ -812,6 +992,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
   title: { color: colors.text.primary, fontSize: 18, fontWeight: '700', paddingHorizontal: 16 },
   subtitle: { color: colors.text.secondary, fontSize: 13, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
+  // v3.227 H-1: 사진 포함 / 설명으로 만들기 배지
+  photoBadgeRow: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
+  photoBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  photoBadgeText: { borderColor: colors.border.default },
+  photoBadgeLabel: { color: colors.text.primary, fontSize: 11, fontWeight: '700' },
+  photoBadgeLabelText: { color: colors.text.secondary },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   catCard: {

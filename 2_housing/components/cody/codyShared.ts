@@ -1,51 +1,11 @@
-// v3.227(D 추출 1단계): ArtistCodyScreen 피커 공용 타입·상수·헬퍼·스타일 — 동작 무변경 이동.
-// 원본: screens/ArtistCodyScreen.tsx (v3.226) — 타입/헬퍼 :33-39·:75-119·:121-166, 스타일 :1369-1525를 그대로 옮김.
+// v3.227(D·E): 꾸미기 피커 공용 — SAMPLE 폴백 데이터·이미지 URL·공용 스타일.
+// 타입·순수 함수(브랜드·성별·세부 분류·색상·필터·그룹)는 utils/codyCatalog.ts로 이동했다.
+// (v3.90 5단계 드릴다운 — 플랫폼 › 브랜드 › 성별 › 제품 — 은 v3.227에서 폐지: 판매자 계정(무신사·
+//  지그재그·브랜드샵)이 아니라 실제 브랜드 단위 '모아보기/펼쳐보기'로 대체)
 import { StyleSheet } from 'react-native';
 import { BACKEND_BASE_URL } from '../../services/api';
 import { colors } from '../../theme/colors';
-
-// v3.206: 카테고리 개편 — 활성 선택 슬롯은 상의/하의/신발/모자/가방.
-// 그리드에는 모자·가방을 '악세서리' 통합 카드 1장으로 노출(내부 슬롯은 분리 → 동시 선택 가능).
-// 나머지(헤어스타일/헤어컬러/안경/문신)는 잠금 카드(Feather lock)로만 노출 — 선택 불가, Cat에서 제외.
-export type Cat = '상의' | '하의' | '신발' | '모자' | '가방';
-export const ACCESSORY_SUBCATS: Cat[] = ['모자', '가방'];
-
-export interface AdItem {
-  id: string;
-  name: string;
-  image_object_name?: string;
-  product_url?: string;
-  advertiser_nickname?: string;
-  // v3.90(MAIDOL v147/v148): 5단계 드릴다운용 패싯 필드 — ad_items 원본 그대로 내려옴
-  brand?: string;
-  gender?: string;        // '남성용' | '여성용' | '공용'
-  product_name?: string;
-  color?: string;
-  category?: string;
-  is_active?: boolean;
-}
-
-// v3.90: 5단계 드릴다운 — 플랫폼 › 브랜드 › 성별 › 제품 › 색상(leaf). MAIDOL ItemSelectModal 이식.
-export type DrillLevel = 'platform' | 'brand' | 'gender' | 'product';
-export type DrillState = Record<DrillLevel, string | null>;
-export const EMPTY_DRILL: DrillState = { platform: null, brand: null, gender: null, product: null };
-
-export const platformOf = (i: AdItem) => i.advertiser_nickname || '기타';
-export const brandOf = (i: AdItem) => i.brand || i.advertiser_nickname || '기타';
-export const productOf = (i: AdItem) => i.product_name || i.name || '기타';
-// 성별 멤버십: 공용(및 미지정)은 남/여 모두에 포함
-export const genderMatches = (i: AdItem, g: string) => {
-  const ig = i.gender || '공용';
-  if (ig === '공용') return true;
-  if (g === '남') return ig === '남성용';
-  if (g === '여') return ig === '여성용';
-  return false;
-};
-export const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
-
-// v3.205(⑤): 성별 데이터가 실재하는 카테고리만 자동 필터(상의 남69/여87/공용1, 하의 남74/여71,
-// 신발 남65/여88 — 프로덕션 /business/ads/active 실측). 나머지는 무필터(전량 사라지는 사고 방지).
-export const GENDER_FILTER_CATS: Cat[] = ['상의', '하의', '신발'];
+import { enrichItem, type AdItem, type Cat } from '../../utils/codyCatalog';
 
 // 광고 0개일 때 노출할 더미 샘플 (UX 데모용) — 카테고리당 5개
 // advertiser_nickname은 가상 브랜드명 (실제 광고주가 등록되면 그 브랜드명으로 자동 교체)
@@ -88,6 +48,13 @@ export const SAMPLE_ITEMS: Record<Cat, AdItem[]> = {
     { id: 'sample_bag_5', name: '가죽 클러치', advertiser_nickname: 'NOIR' },
   ],
 };
+
+// SAMPLE도 세부 분류·색상 계열을 계산해 둔다(대분류 칩·필터가 같은 경로로 동작)
+const sampleCache: Partial<Record<Cat, AdItem[]>> = {};
+export function getSampleItems(cat: Cat): AdItem[] {
+  if (!sampleCache[cat]) sampleCache[cat] = SAMPLE_ITEMS[cat].map((i) => enrichItem(i, cat));
+  return sampleCache[cat]!;
+}
 
 export function adImageUrl(objectName?: string): string | null {
   if (!objectName) return null;
@@ -205,7 +172,7 @@ export const pickerStyles = StyleSheet.create({
   genderChipText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700' },
   genderChipTextActive: { color: colors.accent.primary },
 
-  // v3.90: 드릴다운 브레드크럼
+  // v3.90 드릴다운 브레드크럼 → v3.227: 모아보기 브레드크럼(전체 브랜드 › 브랜드)
   crumbRow: {
     flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
     paddingHorizontal: 4, paddingBottom: 8, gap: 4,
@@ -221,25 +188,6 @@ export const pickerStyles = StyleSheet.create({
   },
   drillBackText: { color: colors.text.secondary, fontSize: 11, fontWeight: '600' },
 
-  // v3.90: 패싯 타일 (플랫폼/브랜드/성별/제품)
-  facetBox: {
-    marginBottom: 10, padding: 10, borderRadius: 12,
-    backgroundColor: colors.bg.surface1,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  facetLabel: {
-    color: colors.text.secondary, fontSize: 11, fontWeight: '700',
-    marginBottom: 8, letterSpacing: 0.3,
-  },
-  facetTiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  facetTile: {
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
-    backgroundColor: colors.bg.surface2,
-    borderWidth: 1, borderColor: colors.border.subtle,
-    maxWidth: '100%',
-  },
-  facetTileText: { color: colors.text.primary, fontSize: 12, fontWeight: '600' },
-
   // v3.90: 위시 하트 버튼 (이미지 우상단)
   wishBtn: {
     position: 'absolute', top: 6, right: 6,
@@ -253,4 +201,27 @@ export const pickerStyles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
   },
   inactiveBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+
+  // v3.227(D): 가격 텍스트(상품 카드)
+  itemPrice: { color: colors.text.primary, fontSize: 12, fontWeight: '800', marginTop: 3 },
+  // v3.227(D): 모아보기 브랜드 그룹 카드
+  groupCard: {
+    flex: 1, margin: 6, padding: 10,
+    backgroundColor: colors.bg.surface1, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  groupCardPicked: { borderColor: colors.accent.primary },
+  groupThumbs: { flexDirection: 'row', gap: 4, marginBottom: 8 },
+  groupThumb: { flex: 1, aspectRatio: 1, borderRadius: 6, backgroundColor: '#fff' },
+  groupThumbEmpty: { backgroundColor: colors.bg.surface2 },
+  groupBrand: { color: colors.text.primary, fontSize: 13, fontWeight: '800' },
+  groupCount: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
+  resultCount: { color: colors.text.muted, fontSize: 11, paddingHorizontal: 4, paddingBottom: 6 },
+  emptyResetBtn: {
+    alignSelf: 'center', marginTop: 12,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  emptyResetText: { color: colors.text.primary, fontSize: 12, fontWeight: '700' },
 });

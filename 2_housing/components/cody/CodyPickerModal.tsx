@@ -1,25 +1,37 @@
-// v3.227(D 추출 1단계): 꾸미기 아이템 선택 모달 — ArtistCodyScreen :976-1300(JSX)과
-// :286-291(위시 store 구독)·:671-696(성별 자동 필터)·:705(기선택 id)·:763-770(위시 탭 목록)에서 동작 무변경 이동.
-// 피커 state(카테고리·탭·드릴·성별 토글·아이템·로딩)와 open/pick/close 핸들러는 화면이 소유하고 props로 받는다.
-import { useEffect, type Dispatch, type SetStateAction } from 'react';
+// v3.227(D·E): 꾸미기 아이템 선택 모달.
+// 구성(위→아래): 헤더 · E 선택 스트립 · [전체 | 내 위시리스트] 탭 · 악세서리 [모자 | 가방] 서브탭 ·
+//   (전체) 필터 바(보기 전환·대분류·성별/색상/가격/브랜드) + 브랜드 모아보기/펼쳐보기 그리드 · (위시) 위시 그리드.
+// 피커 state(카테고리·탭·보기/필터·성별 토글·아이템·로딩)와 open/pick/close/jump 핸들러는 화면이 소유하고
+// props로 받는다(피커를 닫아도 카테고리별 보기·필터 유지 — PLAN D). 여기서는 파생 계산만 한다.
+import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { View, TouchableOpacity, Image, Modal, FlatList, ActivityIndicator } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../ui';
 import { useWishlistStore, type WishItem } from '../../stores/wishlistStore';
 import { colors } from '../../theme/colors';
-import CodyFilterBar from './CodyFilterBar';
-import BrandGroupGrid from './BrandGroupGrid';
+import { getSubCategoryOrder } from '../../services/catalogService';
 import {
+  DEFAULT_VIEW,
   GENDER_FILTER_CATS,
-  SAMPLE_ITEMS,
-  adImageUrl,
+  activeFilterCount,
+  applyFilters,
+  brandFacets,
+  brandNameOf,
+  colorFacets,
   genderMatches,
-  pickerStyles as styles,
+  pinPicked,
+  priceFacets,
+  subCategoryFacets,
   type AdItem,
   type Cat,
-  type DrillState,
-} from './codyShared';
+  type CodyViewState,
+} from '../../utils/codyCatalog';
+import CodyPickerTabs from './CodyPickerTabs';
+import CodyFilterBar from './CodyFilterBar';
+import BrandGroupGrid from './BrandGroupGrid';
+import SelectedItemsStrip from './SelectedItemsStrip';
+import { adImageUrl, getSampleItems, pickerStyles as styles } from './codyShared';
 
 interface Props {
   pickerCat: Cat | null;
@@ -28,15 +40,17 @@ interface Props {
   pickerLoading: boolean;
   pickerTab: 'all' | 'wish';
   setPickerTab: Dispatch<SetStateAction<'all' | 'wish'>>;
-  drill: DrillState;
-  setDrill: Dispatch<SetStateAction<DrillState>>;
+  view: CodyViewState;
+  updateView: (patch: Partial<CodyViewState>) => void;
   genderFilterOn: boolean;
   setGenderFilterOn: Dispatch<SetStateAction<boolean>>;
   artistGender: '남' | '여' | null;
   selected: Partial<Record<Cat, AdItem>>;
+  staleIds: Set<string>;
   isLoggedIn: boolean;
   closePicker: () => void;
   switchAccessorySub: (sub: Cat) => void;
+  jumpToCategory: (cat: Cat) => void;
   pickItem: (item: AdItem) => void;
   handleWishToggle: (item: { id: string }) => void;
   openItemLink: (item: { id: string; product_url?: string }) => void;
@@ -49,15 +63,17 @@ export default function CodyPickerModal({
   pickerLoading,
   pickerTab,
   setPickerTab,
-  drill,
-  setDrill,
+  view,
+  updateView,
   genderFilterOn,
   setGenderFilterOn,
   artistGender,
   selected,
+  staleIds,
   isLoggedIn,
   closePicker,
   switchAccessorySub,
+  jumpToCategory,
   pickItem,
   handleWishToggle,
   openItemLink,
@@ -70,22 +86,22 @@ export default function CodyPickerModal({
   const wishListLoading = useWishlistStore((s) => s.listLoading);
   const wishListError = useWishlistStore((s) => s.listError);
 
-  // ── v3.205(⑤) 성별 자동 필터 — 드릴 소스 목록에 선적용(패싯 수치도 필터 후 기준) ──
-  // genderMatches 재사용: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
+  // ── v3.205(⑤) 성별 자동 필터 — 목록에 선적용(대분류·색상 등 패싯 수치도 필터 후 기준) ──
+  // genderMatches: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
   // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
   const genderFilterActive =
     !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat) && genderFilterOn;
-  // v3.206: 악세서리 피커 — 서브탭(모자|가방)이 baseItems 앞단 필터.
+  // v3.206: 악세서리 피커 — 서브탭(모자|가방)이 앞단 필터.
   // 해당 서브카테고리 실데이터 0건이면 SAMPLE 폴백(장신구 아닌 모자/가방 샘플).
-  const accessorySubItems =
-    accessoryMode && pickerCat ? pickerItems.filter((i) => i.category === pickerCat) : null;
-  const sourceItems =
-    accessorySubItems !== null
-      ? (accessorySubItems.length > 0 ? accessorySubItems : SAMPLE_ITEMS[pickerCat!])
-      : pickerItems;
-  const baseItems = genderFilterActive
-    ? sourceItems.filter((i) => genderMatches(i, artistGender!))
-    : sourceItems;
+  const sourceItems = useMemo(() => {
+    if (!(accessoryMode && pickerCat)) return pickerItems;
+    const sub = pickerItems.filter((i) => i.category === pickerCat);
+    return sub.length > 0 ? sub : getSampleItems(pickerCat);
+  }, [accessoryMode, pickerCat, pickerItems]);
+  const baseItems = useMemo(
+    () => (genderFilterActive ? sourceItems.filter((i) => genderMatches(i, artistGender!)) : sourceItems),
+    [genderFilterActive, sourceItems, artistGender],
+  );
   useEffect(() => {
     if (__DEV__ && genderFilterActive && !pickerLoading) {
       console.info('[ArtistCody] 성별 자동 필터', {
@@ -97,7 +113,29 @@ export default function CodyPickerModal({
     }
   }, [genderFilterActive, pickerLoading, artistGender, pickerCat, baseItems.length, pickerItems.length]);
 
-  // v3.123: 기선택 아이템 id — 전체 탭(BrandGroupGrid)·위시 탭 공용
+  // ── v3.227(D) 대분류·색상·가격·브랜드 필터(클라이언트) + 패싯 개수(자기 축 제외 기준) ──
+  const v = view || DEFAULT_VIEW;
+  const filtered = useMemo(() => applyFilters(baseItems, v), [baseItems, v]);
+  const facets = useMemo(() => {
+    const forSub = applyFilters(baseItems, v, 'sub');
+    return {
+      subTotal: forSub.length,
+      // 칩 순서: 서버 catalog의 sub_categories 우선, 폴백(active·SAMPLE)이면 앱 규칙 순서
+      sub: pickerCat ? subCategoryFacets(forSub, pickerCat, getSubCategoryOrder(pickerCat)) : [],
+      color: colorFacets(applyFilters(baseItems, v, 'colors')),
+      price: priceFacets(applyFilters(baseItems, v, 'prices')),
+      brand: v.mode === 'all' ? brandFacets(applyFilters(baseItems, v, 'brands')) : [],
+      hasColor: baseItems.some((i) => !!i.color_family),
+      hasPrice: baseItems.some((i) => typeof i.price_krw === 'number' && i.price_krw > 0),
+    };
+  }, [baseItems, v, pickerCat]);
+  const resetFilters = () => {
+    if (__DEV__) console.info('[ArtistCody] filter reset', { category: pickerCat });
+    updateView({ sub: null, colors: [], prices: [], brands: [], groupBrand: null });
+  };
+  const hasNarrowing = activeFilterCount(v) > 0 || !!v.sub;
+
+  // v3.123: 기선택 아이템 id — 전체 탭·위시 탭 공용
   const pickedId = pickerCat ? selected[pickerCat]?.id : undefined;
 
   // 위시리스트 탭: 현재 카테고리의 내 찜 목록 (store엔 전 카테고리 보관)
@@ -105,9 +143,26 @@ export default function CodyPickerModal({
     ? wishItemsAll.filter((it) => it.category === pickerCat)
     : [];
   // v3.123: 위시 탭도 기선택 우선 정렬
-  const wishItemsForCat = pickedId
-    ? [...wishItemsForCatRaw].sort((a, b) => (a.id === pickedId ? -1 : b.id === pickedId ? 1 : 0))
-    : wishItemsForCatRaw;
+  const wishItemsForCat = pinPicked(wishItemsForCatRaw, pickedId);
+
+  const filterBar = pickerCat ? (
+    <CodyFilterBar
+      pickerCat={pickerCat}
+      view={v}
+      updateView={updateView}
+      subTotal={facets.subTotal}
+      subFacets={facets.sub}
+      colorFacets={facets.color}
+      priceFacets={facets.price}
+      brandFacets={facets.brand}
+      hasColor={facets.hasColor}
+      hasPrice={facets.hasPrice}
+      artistGender={artistGender}
+      genderFilterOn={genderFilterOn}
+      setGenderFilterOn={setGenderFilterOn}
+      onReset={resetFilters}
+    />
+  ) : null;
 
   // 카테고리별 아이템 선택 모달
   return (
@@ -128,7 +183,14 @@ export default function CodyPickerModal({
               <AppText style={styles.modalClose}>✕</AppText>
             </TouchableOpacity>
           </View>
-          <CodyFilterBar
+          {/* v3.227(E): 선택 아이템 스트립 — 탭하면 해당 카테고리 피커로 전환 */}
+          <SelectedItemsStrip
+            selected={selected}
+            currentCat={pickerCat}
+            staleIds={staleIds}
+            onJump={jumpToCategory}
+          />
+          <CodyPickerTabs
             pickerTab={pickerTab}
             setPickerTab={setPickerTab}
             isLoggedIn={isLoggedIn}
@@ -136,9 +198,6 @@ export default function CodyPickerModal({
             wishListError={wishListError}
             wishItemsForCat={wishItemsForCat}
             pickerCat={pickerCat}
-            artistGender={artistGender}
-            genderFilterOn={genderFilterOn}
-            setGenderFilterOn={setGenderFilterOn}
             accessoryMode={accessoryMode}
             selected={selected}
             switchAccessorySub={switchAccessorySub}
@@ -148,12 +207,16 @@ export default function CodyPickerModal({
             <BrandGroupGrid
               pickerLoading={pickerLoading}
               pickerCat={pickerCat}
-              sourceItems={sourceItems}
-              baseItems={baseItems}
+              sourceCount={sourceItems.length}
+              baseCount={baseItems.length}
               genderFilterActive={genderFilterActive}
               artistGender={artistGender}
-              drill={drill}
-              setDrill={setDrill}
+              view={v}
+              updateView={updateView}
+              filterBar={filterBar}
+              filtered={filtered}
+              hasNarrowing={hasNarrowing}
+              onResetFilters={resetFilters}
               pickedId={pickedId}
               wished={wished}
               wishBusy={wishBusy}
@@ -185,6 +248,8 @@ export default function CodyPickerModal({
             ) : (
               <FlatList
                 data={wishItemsForCat}
+                initialNumToRender={8}
+                windowSize={5}
                 keyExtractor={(item) => item.id}
                 numColumns={2}
                 renderItem={({ item }) => {
@@ -228,9 +293,10 @@ export default function CodyPickerModal({
                         </TouchableOpacity>
                       </View>
                       <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
-                      {item.advertiser_nickname ? (
+                      {/* v3.227: 실제 브랜드(brand 우선, advertiser_nickname 폴백) */}
+                      {brandNameOf(item) ? (
                         <AppText style={styles.itemBrand} numberOfLines={1}>
-                          {item.advertiser_nickname}
+                          {brandNameOf(item)}
                         </AppText>
                       ) : null}
                       {/* v3.109: 판매처 링크 — 위시 탭에도 동일 노출(판매종료 아이템도 링크는 유효) */}

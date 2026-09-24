@@ -1,93 +1,165 @@
-// v3.227(D 추출 1단계): 피커 상단 [전체 | 내 위시리스트] 탭 + 성별 필터 칩(v3.205/207) +
-// 악세서리 [모자 | 가방] 서브탭(v3.206) — ArtistCodyScreen :994-1068에서 동작 무변경 이동.
-import type { Dispatch, SetStateAction } from 'react';
-import { View, TouchableOpacity } from 'react-native';
+// v3.227(D): 피커 '전체' 탭 상단 컨트롤 — [브랜드 모아보기 | 브랜드 펼쳐보기] 보기 전환, 대분류 칩(개수·0건 숨김),
+// 필터 행([성별 칩](v3.205/207 그대로) · 색상 ▾ · 가격 ▾ · 브랜드 ▾(펼쳐보기 전용) · 활성 개수 배지 · 초기화),
+// 펼친 필터 패널, 안내 문구, 펼쳐보기 정렬. 데이터가 지원하는 축만 노출(색상/가격 정보가 없으면 숨김).
+import { useState, type Dispatch, type SetStateAction } from 'react';
+import { View, TouchableOpacity, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import { showAlert } from '../../utils/appAlert';
-import type { WishItem } from '../../stores/wishlistStore';
 import { colors } from '../../theme/colors';
 import {
-  ACCESSORY_SUBCATS,
+  COLOR_SWATCHES,
   GENDER_FILTER_CATS,
+  MULTI,
+  PRICE_BUCKETS,
+  activeFilterCount,
   genderLabel,
-  pickerStyles as styles,
-  type AdItem,
   type Cat,
-} from './codyShared';
+  type CodySort,
+  type CodyViewMode,
+  type CodyViewState,
+  type FacetCount,
+} from '../../utils/codyCatalog';
+import { pickerStyles } from './codyShared';
+
+type Panel = 'color' | 'price' | 'brand' | null;
 
 interface Props {
-  pickerTab: 'all' | 'wish';
-  setPickerTab: Dispatch<SetStateAction<'all' | 'wish'>>;
-  isLoggedIn: boolean;
-  wishListLoaded: boolean;
-  wishListError: unknown;
-  wishItemsForCat: WishItem[];
-  pickerCat: Cat | null;
+  pickerCat: Cat;
+  view: CodyViewState;
+  updateView: (patch: Partial<CodyViewState>) => void;
+  subTotal: number;
+  subFacets: FacetCount[];
+  colorFacets: FacetCount[];
+  priceFacets: FacetCount[];
+  brandFacets: FacetCount[];
+  hasColor: boolean;
+  hasPrice: boolean;
   artistGender: '남' | '여' | null;
   genderFilterOn: boolean;
   setGenderFilterOn: Dispatch<SetStateAction<boolean>>;
-  accessoryMode: boolean;
-  selected: Partial<Record<Cat, AdItem>>;
-  switchAccessorySub: (sub: Cat) => void;
+  onReset: () => void;
 }
 
+const SORTS: { key: CodySort; label: string }[] = [
+  { key: 'rec', label: '추천순' },
+  { key: 'low', label: '낮은 가격순' },
+  { key: 'high', label: '높은 가격순' },
+];
+
+const toggleIn = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
+
 export default function CodyFilterBar({
-  pickerTab,
-  setPickerTab,
-  isLoggedIn,
-  wishListLoaded,
-  wishListError,
-  wishItemsForCat,
   pickerCat,
+  view,
+  updateView,
+  subTotal,
+  subFacets,
+  colorFacets,
+  priceFacets,
+  brandFacets,
+  hasColor,
+  hasPrice,
   artistGender,
   genderFilterOn,
   setGenderFilterOn,
-  accessoryMode,
-  selected,
-  switchAccessorySub,
+  onReset,
 }: Props) {
+  const [panel, setPanel] = useState<Panel>(null);
+  const [brandQuery, setBrandQuery] = useState('');
+  const activeCount = activeFilterCount(view);
+  const showBrandFilter = view.mode === 'all' && (brandFacets.length > 1 || view.brands.length > 0);
+  const showSubChips = subFacets.length > 1 || !!view.sub;
+
+  const setMode = (mode: CodyViewMode) => {
+    if (mode === view.mode) return;
+    if (__DEV__) console.info('[ArtistCody] view mode', { category: pickerCat, mode });
+    if (mode === 'group' && panel === 'brand') setPanel(null);
+    updateView({ mode, groupBrand: null });
+  };
+  const togglePanel = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
+
+  const q = brandQuery.trim().toLowerCase();
+  const brandList = brandFacets
+    .filter((b) => !q || b.label.toLowerCase().includes(q))
+    // 선택한 브랜드는 목록 맨 앞(검색 중에도 해제할 수 있게)
+    .sort((a, b) => Number(view.brands.includes(b.key)) - Number(view.brands.includes(a.key)));
+  // 선택했지만 현재 조건에서 0건이 된 브랜드도 해제할 수 있게 노출
+  const orphanBrands = view.brands.filter((b) => !brandFacets.some((f) => f.key === b));
+
   return (
-    <>
-      {/* v3.90: 전체 | 위시리스트 탭 */}
-      <View style={styles.pickerTabs}>
-        <TouchableOpacity
-          style={[styles.pickerTab, pickerTab === 'all' && styles.pickerTabActive]}
-          onPress={() => setPickerTab('all')}
-        >
-          <AppText style={[styles.pickerTabText, pickerTab === 'all' && styles.pickerTabTextActive]}>
-            전체
-          </AppText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.pickerTab, pickerTab === 'wish' && styles.pickerTabActive]}
-          onPress={() => setPickerTab('wish')}
-        >
-          <Feather
-            name="heart"
-            size={12}
-            color={pickerTab === 'wish' ? colors.accent.primary : colors.text.muted}
-          />
-          <AppText style={[styles.pickerTabText, pickerTab === 'wish' && styles.pickerTabTextActive]}>
-            {' '}내 위시리스트{isLoggedIn && wishListLoaded && !wishListError ? ` (${wishItemsForCat.length})` : ''}
-          </AppText>
-        </TouchableOpacity>
+    <View style={s.wrap}>
+      {/* 보기 전환: 브랜드 모아보기 | 브랜드 펼쳐보기 */}
+      <View style={s.segRow}>
+        {(['group', 'all'] as CodyViewMode[]).map((m) => {
+          const active = view.mode === m;
+          return (
+            <TouchableOpacity key={m} style={[s.seg, active && s.segActive]} onPress={() => setMode(m)}>
+              <Feather
+                name={m === 'group' ? 'grid' : 'list'}
+                size={12}
+                color={active ? colors.text.primary : colors.text.muted}
+              />
+              <AppText style={[s.segText, active && s.segTextActive]}>
+                {m === 'group' ? ' 브랜드 모아보기' : ' 브랜드 펼쳐보기'}
+              </AppText>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* 대분류 칩 — '전체' + 세부 분류(개수, 0건 숨김) */}
+      {showSubChips && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
+          <TouchableOpacity
+            style={[s.chip, !view.sub && s.chipActive]}
+            onPress={() => updateView({ sub: null })}
+          >
+            <AppText style={[s.chipText, !view.sub && s.chipTextActive]}>전체 {subTotal}</AppText>
+          </TouchableOpacity>
+          {subFacets.map((f) => {
+            const active = view.sub === f.key;
+            return (
+              <TouchableOpacity
+                key={f.key}
+                style={[s.chip, active && s.chipActive]}
+                onPress={() => {
+                  if (__DEV__) console.info('[ArtistCody] sub category', { category: pickerCat, sub: active ? null : f.key });
+                  updateView({ sub: active ? null : f.key });
+                }}
+              >
+                <AppText style={[s.chipText, active && s.chipTextActive]}>
+                  {f.label} {f.count}
+                </AppText>
+              </TouchableOpacity>
+            );
+          })}
+          {view.sub && !subFacets.some((f) => f.key === view.sub) ? (
+            <TouchableOpacity style={[s.chip, s.chipActive]} onPress={() => updateView({ sub: null })}>
+              <AppText style={[s.chipText, s.chipTextActive]}>{view.sub} 0</AppText>
+            </TouchableOpacity>
+          ) : null}
+        </ScrollView>
+      )}
+
+      {/* 필터 행 */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
         {/* v3.205(⑤)→v3.207(⑩): 성별 필터 칩 — 대상 카테고리(상의/하의/신발)에서 상시 노출.
-            성별 판별 시 = 기존 "◯◯용만/전체 보기" 토글, 미상 시 = "성별 미설정" 안내 칩(발견성). */}
-        {pickerCat && GENDER_FILTER_CATS.includes(pickerCat) ? (
+            성별 판별 시 = "◯◯용만/전체 보기" 토글, 미상 시 = "성별 미설정" 안내 칩(발견성). */}
+        {GENDER_FILTER_CATS.includes(pickerCat) ? (
           artistGender ? (
             <TouchableOpacity
-              style={[styles.genderChip, genderFilterOn && styles.genderChipActive]}
+              style={[pickerStyles.genderChip, genderFilterOn && pickerStyles.genderChipActive]}
               onPress={() => setGenderFilterOn((v) => !v)}
               accessibilityLabel="성별 필터 전환"
             >
-              <AppText style={[styles.genderChipText, genderFilterOn && styles.genderChipTextActive]}>
+              <AppText style={[pickerStyles.genderChipText, genderFilterOn && pickerStyles.genderChipTextActive]}>
                 {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
               </AppText>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.genderChip}
+              style={pickerStyles.genderChip}
               onPress={() => {
                 if (__DEV__) console.info('[ArtistCody] 성별 자동 필터 — 미설정 칩 탭(안내)');
                 showAlert(
@@ -97,33 +169,252 @@ export default function CodyFilterBar({
               }}
               accessibilityLabel="성별 미설정 안내"
             >
-              <AppText style={styles.genderChipText}>성별 미설정 · 전체 표시</AppText>
+              <AppText style={pickerStyles.genderChipText}>성별 미설정 · 전체 표시</AppText>
             </TouchableOpacity>
           )
         ) : null}
-      </View>
+        {hasColor && (
+          <TouchableOpacity
+            style={[s.chip, (view.colors.length > 0 || panel === 'color') && s.chipActive]}
+            onPress={() => togglePanel('color')}
+          >
+            <AppText style={[s.chipText, view.colors.length > 0 && s.chipTextActive]}>
+              색상{view.colors.length ? ` ${view.colors.length}` : ''}
+            </AppText>
+            <Feather name={panel === 'color' ? 'chevron-up' : 'chevron-down'} size={12} color={colors.text.secondary} />
+          </TouchableOpacity>
+        )}
+        {hasPrice && (
+          <TouchableOpacity
+            style={[s.chip, (view.prices.length > 0 || panel === 'price') && s.chipActive]}
+            onPress={() => togglePanel('price')}
+          >
+            <AppText style={[s.chipText, view.prices.length > 0 && s.chipTextActive]}>
+              가격{view.prices.length ? ` ${view.prices.length}` : ''}
+            </AppText>
+            <Feather name={panel === 'price' ? 'chevron-up' : 'chevron-down'} size={12} color={colors.text.secondary} />
+          </TouchableOpacity>
+        )}
+        {showBrandFilter && (
+          <TouchableOpacity
+            style={[s.chip, (view.brands.length > 0 || panel === 'brand') && s.chipActive]}
+            onPress={() => togglePanel('brand')}
+          >
+            <AppText style={[s.chipText, view.brands.length > 0 && s.chipTextActive]}>
+              브랜드{view.brands.length ? ` ${view.brands.length}` : ''}
+            </AppText>
+            <Feather name={panel === 'brand' ? 'chevron-up' : 'chevron-down'} size={12} color={colors.text.secondary} />
+          </TouchableOpacity>
+        )}
+        {activeCount > 0 && (
+          <TouchableOpacity
+            style={s.resetBtn}
+            onPress={() => {
+              setPanel(null);
+              setBrandQuery('');
+              onReset();
+            }}
+            accessibilityLabel="필터 초기화"
+          >
+            <View style={s.countBadge}>
+              <AppText style={s.countBadgeText}>{activeCount}</AppText>
+            </View>
+            <AppText style={s.resetText}>초기화</AppText>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
 
-      {/* v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방] — baseItems 앞단 필터, 각 1개씩 동시 선택 */}
-      {accessoryMode && (
-        <View style={styles.subcatRow}>
-          {ACCESSORY_SUBCATS.map((sub) => {
-            const active = pickerCat === sub;
-            const picked = selected[sub];
+      {/* 펼친 필터 패널 */}
+      {panel === 'color' && hasColor && (
+        <View style={s.panel}>
+          {colorFacets.length === 0 && view.colors.length === 0 ? (
+            <AppText style={s.note}>지금 조건에서 고를 수 있는 색상이 없어요.</AppText>
+          ) : null}
+          <View style={s.wrapRow}>
+            {[
+              ...colorFacets,
+              ...view.colors.filter((c) => !colorFacets.some((f) => f.key === c)).map((c) => ({ key: c, label: c, count: 0 })),
+            ].map((f) => {
+              const active = view.colors.includes(f.key);
+              return (
+                <TouchableOpacity
+                  key={f.key}
+                  style={[s.swatchChip, active && s.chipActive]}
+                  onPress={() => updateView({ colors: toggleIn(view.colors, f.key) })}
+                >
+                  {f.key === MULTI ? (
+                    <View style={[s.swatch, s.swatchMulti]}>
+                      <View style={[s.swatchHalf, { backgroundColor: '#F29CB7' }]} />
+                      <View style={[s.swatchHalf, { backgroundColor: '#3D7BE0' }]} />
+                    </View>
+                  ) : (
+                    <View style={[s.swatch, { backgroundColor: COLOR_SWATCHES[f.key] || colors.bg.surface2 }]} />
+                  )}
+                  <AppText style={[s.chipText, active && s.chipTextActive]}>
+                    {f.label} {f.count}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+      {panel === 'price' && hasPrice && (
+        <View style={s.panel}>
+          <View style={s.wrapRow}>
+            {[
+              ...priceFacets,
+              ...view.prices.filter((p) => !priceFacets.some((f) => f.key === p)).map((p) => ({ key: p, label: PRICE_BUCKETS.find((b) => b.key === p)?.label || p, count: 0 })),
+            ].map((f) => {
+              const active = view.prices.includes(f.key);
+              return (
+                <TouchableOpacity
+                  key={f.key}
+                  style={[s.chip, active && s.chipActive]}
+                  onPress={() => updateView({ prices: toggleIn(view.prices, f.key) })}
+                >
+                  <AppText style={[s.chipText, active && s.chipTextActive]}>
+                    {f.label} {f.count}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+      {panel === 'brand' && showBrandFilter && (
+        <View style={s.panel}>
+          <View style={s.searchBox}>
+            <Feather name="search" size={13} color={colors.text.muted} />
+            <TextInput
+              style={s.searchInput}
+              value={brandQuery}
+              onChangeText={setBrandQuery}
+              placeholder="브랜드 검색"
+              placeholderTextColor={colors.text.muted}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+          <ScrollView style={s.brandScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+            <View style={s.wrapRow}>
+              {[...orphanBrands.map((b) => ({ key: b, label: b, count: 0 })), ...brandList].map((f) => {
+                const active = view.brands.includes(f.key);
+                return (
+                  <TouchableOpacity
+                    key={f.key}
+                    style={[s.chip, active && s.chipActive]}
+                    onPress={() => {
+                      if (__DEV__) console.info('[ArtistCody] brand filter', { brand: f.key, on: !active });
+                      updateView({ brands: toggleIn(view.brands, f.key) });
+                    }}
+                  >
+                    <AppText style={[s.chipText, active && s.chipTextActive]} numberOfLines={1}>
+                      {f.label} {f.count}
+                    </AppText>
+                  </TouchableOpacity>
+                );
+              })}
+              {brandList.length === 0 && orphanBrands.length === 0 ? (
+                <AppText style={s.note}>검색 결과가 없어요.</AppText>
+              ) : null}
+            </View>
+          </ScrollView>
+        </View>
+      )}
+
+      {/* 안내 — 정보 없는 상품이 빠진다는 사실을 숨기지 않는다 */}
+      {view.prices.length > 0 || view.colors.length > 0 ? (
+        <AppText style={s.note}>
+          {[view.prices.length > 0 ? '가격 정보가 있는 상품만' : '', view.colors.length > 0 ? '색상 정보가 있는 상품만' : '']
+            .filter(Boolean)
+            .join(' · ')}{' '}
+          보여요.
+        </AppText>
+      ) : null}
+
+      {/* 펼쳐보기 정렬 — 가격 정보가 있을 때만 */}
+      {view.mode === 'all' && hasPrice && (
+        <View style={s.sortRow}>
+          {SORTS.map((o) => {
+            const active = view.sort === o.key;
             return (
-              <TouchableOpacity
-                key={sub}
-                style={[styles.subcatSeg, active && styles.subcatSegActive]}
-                onPress={() => switchAccessorySub(sub)}
-              >
-                <AppText style={[styles.subcatSegText, active && styles.subcatSegTextActive]}>
-                  {sub}
-                  {picked ? ` · ${picked.name}` : ''}
-                </AppText>
+              <TouchableOpacity key={o.key} onPress={() => updateView({ sort: o.key })} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <AppText style={[s.sortText, active && s.sortTextActive]}>{o.label}</AppText>
               </TouchableOpacity>
             );
           })}
         </View>
       )}
-    </>
+    </View>
   );
 }
+
+const s = StyleSheet.create({
+  wrap: { paddingBottom: 6 },
+  segRow: {
+    flexDirection: 'row', gap: 6, marginBottom: 8,
+    padding: 3, borderRadius: 10, backgroundColor: colors.bg.surface1,
+  },
+  seg: {
+    flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    paddingVertical: 7, borderRadius: 8,
+  },
+  segActive: { backgroundColor: colors.bg.surface2 },
+  segText: { color: colors.text.muted, fontSize: 12, fontWeight: '600' },
+  segTextActive: { color: colors.text.primary, fontWeight: '800' },
+
+  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingBottom: 8, paddingRight: 4 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    maxWidth: 220,
+  },
+  chipActive: { borderColor: colors.accent.primary },
+  chipText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700' },
+  chipTextActive: { color: colors.text.primary },
+
+  resetBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12,
+  },
+  countBadge: {
+    minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4,
+    backgroundColor: colors.accent.primary, justifyContent: 'center', alignItems: 'center',
+  },
+  countBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  resetText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700', textDecorationLine: 'underline' },
+
+  panel: {
+    marginBottom: 8, padding: 10, borderRadius: 12,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  swatchChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  swatch: {
+    width: 14, height: 14, borderRadius: 7,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
+  },
+  swatchMulti: { flexDirection: 'row', overflow: 'hidden' },
+  swatchHalf: { flex: 1 },
+  searchBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, marginBottom: 8, borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  searchInput: { flex: 1, color: colors.text.primary, fontSize: 13, paddingVertical: 7 },
+  brandScroll: { maxHeight: 180 },
+  note: { color: colors.text.muted, fontSize: 11, marginBottom: 6 },
+  sortRow: { flexDirection: 'row', gap: 14, paddingVertical: 4, paddingHorizontal: 2 },
+  sortText: { color: colors.text.muted, fontSize: 12, fontWeight: '600' },
+  sortTextActive: { color: colors.text.primary, fontWeight: '800' },
+});
