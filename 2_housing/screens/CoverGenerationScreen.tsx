@@ -35,6 +35,17 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
 import { Feather } from '@expo/vector-icons';
+// v3.228 W2 [GenJob:cover]: 서버 원장(request_id) 연동 — 추적기 공개 API(1조) + cover 어댑터(2조, import 시 registerKind)
+import {
+  newRequestId, registerGenJob, adoptGenJob, markGenJobDone, guardGeneration, openGenJob,
+  discardGenJob, endGenRequest, setViewerJob, releaseViewerJob, settleGenJob,
+} from '../services/generationTracker';
+import {
+  genRequestHeaders, parseGenInProgress, isRequestAlreadyFailed, genLedgerFields,
+} from '../services/genJobsService';
+import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../services/genJobs';
+import { fetchImageJob, COVER_CAP_MS, COVER_TEXT, COVER_REFINE_TEXT } from '../services/genJobs/cover';
+import { useGenerationJobStore, listUserGenJobs } from '../stores/generationJobStore';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -63,6 +74,263 @@ const resetCoverExtras = (syncStore = true) => {
   coverExtras.charKind = null; coverExtras.virtualArtStyle = null;
   if (syncStore) syncCoverExtrasToStore();
 };
+
+// v3.202(H-⑤): 성공 확정 시에만 커버 컨텍스트 전체 클리어 (v3.228 W2: 화면 밖 요청 완료에서도 쓰도록 모듈 스코프)
+const clearCoverContextStore = () => {
+  const s = useMusicStore.getState();
+  s.setCoverTrackId(null);
+  s.setCoverTrackTitle(null);
+  s.setCoverStyle(null);
+  // v3.80 승계: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
+  s.setCoverCharacterObjectName(null);
+  s.setCoverMessages(null);
+  s.setCoverStep(null);
+  s.setCoverExtrasSnapshot(null);
+  s.setCoverLyricsExcerpt(null);
+  s.setCoverLyricsId(null);
+};
+
+// ── v3.202(I-lite): 네트워크 단절/타임아웃 판정 — 서버 generate-cover는 150~180s 동기 처리라
+// 클라이언트 연결이 먼저 끊겨도(실측 11/44/153s ERR_NETWORK) 서버는 완성 + ⭐ 차감을 마친다. ──
+const isRecoverableNetErr = (err: any) =>
+  !err?.response &&
+  (err?.code === 'ERR_NETWORK' ||
+    err?.code === 'ECONNABORTED' ||
+    /network|timeout/i.test(String(err?.message || '')));
+// v3.228 W2: 게이트웨이 오류(HTML 502/503/504 — 서버 JSON 본문 없음)도 서버 처리 여부 미확정 → 결과 확인 대상
+const isGatewayErr = (err: any) => {
+  const st = err?.response?.status;
+  const data = err?.response?.data;
+  return (st === 502 || st === 503 || st === 504) && !(data && typeof data === 'object' && data.error);
+};
+
+// 서버 시각은 타임존 표기 없는 UTC — 'Z' 보정 파싱 (AppealModal fmtDate 관행)
+const parseCoverTs = (iso?: string | null) => {
+  if (!iso) return NaN;
+  return new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z').getTime();
+};
+
+// v3.202(I-lite) 1회분: GET /upload/cover-sessions — threshold(요청 시각-120s) 이후 완성 세션 중 최신 1건
+const pollCoverSessionsOnce = async (threshold: number, attempt: number): Promise<any | null> => {
+  try {
+    const res = await api.get('/upload/cover-sessions', { params: { page: 1, limit: 5 } });
+    const covers: any[] = res.data?.covers || [];
+    const found = covers
+      .filter((c) => c?.cover_object_name && parseCoverTs(c?.created_at) >= threshold)
+      .sort((a, b) => parseCoverTs(b?.created_at) - parseCoverTs(a?.created_at))[0];
+    if (found) {
+      console.log('[Cover] 폴링 복구 성공', { attempt, cover_session_id: found.cover_session_id, created_at: found.created_at });
+      return found;
+    }
+    console.log('[Cover] 폴링 복구 — 완성본 미발견', { attempt, count: covers.length });
+  } catch (pollErr: any) {
+    console.warn('[Cover] 폴링 복구 조회 실패', { attempt, status: pollErr?.response?.status, code: pollErr?.code });
+  }
+  return null;
+};
+
+const coverSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** v3.228 W2: 결과 표시용 정규화 — POST 응답·cover-sessions 항목·원장 result(cover·cover_refine) 공용 */
+interface CoverSuccessData {
+  objectName: string | null;
+  imageUrlPath: string | null;
+  sessionId: string | null;
+  imageModel?: string;
+  version: number;
+  createdAt?: string | null;
+  /** 응답을 직접 받지 못하고 회수함 — 잔액 동기화·전체 이력 재조회 */
+  recovered: boolean;
+}
+const coverDataFrom = (r: any, recovered: boolean): CoverSuccessData => ({
+  objectName: r?.object_name ?? r?.cover_object_name ?? null,
+  imageUrlPath: r?.image_url ?? null,
+  sessionId: r?.cover_session_id ? String(r.cover_session_id) : null,
+  imageModel: r?.image_model ?? undefined,
+  version: typeof r?.current_version === 'number' ? r.current_version : 0,
+  createdAt: r?.created_at ?? null,
+  recovered,
+});
+
+type CoverGenOutcome =
+  | { kind: 'success'; data: CoverSuccessData }
+  | { kind: 'fatigue'; err: any }
+  | { kind: 'adopted'; key: string; snap: GenJobSnapshot }
+  | { kind: 'failed'; message: string };
+
+/**
+ * v3.228 W2: 진행 중 커버 생성 1건(모듈 스코프 — 화면 재마운트에도 유지).
+ * 재진입 시 새 POST(=재과금) 대신 이 요청에 합류(attach)해 결과를 받는다(0-3 이중 과금 경로 봉합).
+ * 스토어 부수효과(성공 시 컨텍스트 클리어·실패 시 coverStyle 해제)는 러너가 1회 수행, 화면은 UI만 반영.
+ */
+interface ActiveCoverGen {
+  genKey: string;
+  requestId: string;
+  startedAt: number;
+  albumId: string | null;
+  trackId: string;
+  title: string;
+  style: string;
+  charObjectName: string | null;
+  /** 결과를 보여줄(부착된) 화면 인스턴스 토큰 — null = 화면 밖(추적기 도착 알림) */
+  owner: number | null;
+  notice: string | null;
+  onNotice: ((n: string | null) => void) | null;
+  promise: Promise<CoverGenOutcome>;
+}
+let activeCoverGen: ActiveCoverGen | null = null;
+let coverScreenSeq = 0;
+
+const setGenNotice = (e: ActiveCoverGen, n: string | null) => {
+  e.notice = n;
+  e.onNotice?.(n);
+};
+
+const logCoverDupBlock = (reason: string, extra?: Record<string, unknown>) => {
+  console.warn('[Cover] 중복 요청 차단', { reason, ...extra });
+};
+
+
+/**
+ * v3.228 W2: 응답 미확정(ERR_NETWORK·timeout·게이트웨이 5xx) 결과 확인 — 재요청 없음(무과금).
+ * 매 회차 ① 서버 원장(GET /generate/jobs/req/{rid}) ② 원장이 없으면(구서버·킬스위치) v3.202 I-lite cover-sessions.
+ * 기한 = v3.202 리듬(15s×12 ≈ 3분), 원장이 processing 이면 서버 상한(15분)까지 연장.
+ * 앨범 모드는 기존에도 I-lite 없음 — 원장이 없으면 즉시 종료(구서버 동작 보존).
+ */
+async function recoverCoverResult(e: ActiveCoverGen): Promise<
+  | { kind: 'found'; data: CoverSuccessData; result: any; serverJobId: string | null }
+  | { kind: 'failed'; error: string | null; refunded: boolean | null; notCharged: boolean | null }
+  | { kind: 'none' }
+> {
+  const POLL_INTERVAL_MS = 15000;
+  const isAlbum = !!e.albumId;
+  const threshold = e.startedAt - 120000;
+  let deadline = Date.now() + 12 * POLL_INTERVAL_MS;
+  let ledgerSeen = false;
+  let attempt = 0;
+  while (Date.now() <= deadline) {
+    attempt++;
+    await coverSleep(POLL_INTERVAL_MS);
+    let snap: GenJobSnapshot | null | undefined;
+    try {
+      snap = await fetchImageJob({ kind: 'cover', requestId: e.requestId });
+    } catch {
+      snap = undefined; // 네트워크·5xx — 다음 회차
+    }
+    if (snap?.status === 'done' && snap.result) {
+      const data = coverDataFrom(snap.result, true);
+      if (data.objectName) {
+        console.info('[GenJob:cover] 원장 완성 확인', { attempt, jobId: e.genKey });
+        return { kind: 'found', data, result: snap.result, serverJobId: snap.jobId };
+      }
+    }
+    if (snap?.status === 'failed') {
+      return { kind: 'failed', error: snap.error ?? null, refunded: snap.refunded ?? null, notCharged: snap.notCharged ?? null };
+    }
+    if (snap?.status === 'processing') {
+      if (!ledgerSeen) {
+        ledgerSeen = true;
+        deadline = Math.max(deadline, e.startedAt + COVER_CAP_MS);
+        console.info('[GenJob:cover] 서버 원장 진행 중 — 상한까지 추적', { jobId: e.genKey });
+      }
+      continue;
+    }
+    if (isAlbum) {
+      if (snap === null) return { kind: 'none' };
+      continue;
+    }
+    const found = await pollCoverSessionsOnce(threshold, attempt);
+    if (found) {
+      return {
+        kind: 'found',
+        data: coverDataFrom(found, true),
+        result: {
+          cover_session_id: found.cover_session_id ?? null, object_name: found.cover_object_name,
+          image_url: found.image_url ?? null, image_model: found.image_model ?? null,
+        },
+        serverJobId: null,
+      };
+    }
+  }
+  return { kind: 'none' };
+}
+
+/** v3.228 W2: 커버 생성 요청 러너(모듈 스코프 — 화면 이탈과 무관하게 끝까지 수행, 결과는 부착 화면이 반영) */
+async function runCoverGenerate(e: ActiveCoverGen, payload: Record<string, any>): Promise<CoverGenOutcome> {
+  const isAlbum = !!e.albumId;
+  try {
+    const res = await api.post('/upload/generate-cover', payload, {
+      timeout: 600000, // GPT Image 2는 캐릭터 ref 포함 시 5분 이상 걸리기도 함 → 10분
+      headers: genRequestHeaders(e.requestId),
+    });
+    console.log('[Cover] generate-cover OK', Date.now() - e.startedAt, 'ms');
+    const data = coverDataFrom(res.data, false);
+    markGenJobDone(e.genKey, {
+      cover_session_id: data.sessionId, object_name: data.objectName,
+      image_url: data.imageUrlPath, image_model: data.imageModel ?? null,
+    }, { acked: e.owner !== null, serverJobId: genLedgerFields(res.data).genJobId });
+    // v3.202(H-⑤): 컨텍스트 클리어는 성공 경로에서만
+    if (!isAlbum) clearCoverContextStore();
+    return { kind: 'success', data };
+  } catch (err: any) {
+    console.warn('[Cover] generate-cover FAIL', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.response?.status,
+      data: err?.response?.data,
+    });
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    // v3.118: 커버(image) 디렉터 피로 429 — 과금 전 게이트(원장 없음)
+    if (isDirectorFatigued(err)) {
+      discardGenJob(e.genKey, 'cover-429');
+      if (!isAlbum) useMusicStore.getState().setCoverStyle(null);
+      return { kind: 'fatigue', err };
+    }
+    // v3.228 W2: 409 generation_in_progress(커버·다듬기 한 슬롯) — 이 요청은 원장 전 거절(무과금), 진행 중 job 편입
+    const inProgress = parseGenInProgress(err, 'cover');
+    if (inProgress) {
+      logCoverDupBlock('server-409', { kind: inProgress.kind, jobId: inProgress.jobId });
+      const key = adoptGenJob(inProgress, { replaceKey: e.genKey });
+      if (!isAlbum) useMusicStore.getState().setCoverStyle(null);
+      return { kind: 'adopted', key, snap: inProgress };
+    }
+    // v3.202(I-lite)+v3.228: 응답 미확정 — 실패 확정 전에 결과 확인(재생성 호출 금지 = 재차감 금지)
+    if (isRecoverableNetErr(err) || isGatewayErr(err)) {
+      console.log('[Cover] 응답 미확정 — 결과 확인 시작', { code: err?.code, status, elapsedMs: Date.now() - e.startedAt });
+      setGenNotice(e, '이미지가 거의 다 됐어요, 잠시만요…');
+      const r = await recoverCoverResult(e);
+      setGenNotice(e, null);
+      if (r.kind === 'found') {
+        // 완성본 회수 = 성공 처리 — 재생성 호출 없음(⭐ 재차감 없음)
+        markGenJobDone(e.genKey, r.result, { acked: e.owner !== null, serverJobId: r.serverJobId });
+        if (!isAlbum) clearCoverContextStore();
+        usePointsStore.getState().fetchBalance(); // 서버는 이미 처리 완료 — 잔액 표시 동기화
+        return { kind: 'success', data: r.data };
+      }
+      // 화면 추적 종료 → 이후는 전역 추적기가 원장으로 판정(구서버는 유예 뒤 조용히 정리)
+      endGenRequest(e.genKey);
+      if (!isAlbum) useMusicStore.getState().setCoverStyle(null);
+      usePointsStore.getState().fetchBalance();
+      if (r.kind === 'failed') {
+        // 화면이 보고 있으면 실패 확인 처리, 화면 밖이면 추적기가 도착 알림으로 안내
+        if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: r.error, refunded: r.refunded });
+        return { kind: 'failed', message: `${COVER_TEXT.failTitle}. ${failureBody(r.error, r.refunded, r.notCharged)}` };
+      }
+      console.warn('[Cover] 폴링 복구 실패 — 결과 미확정');
+      return { kind: 'failed', message: `커버 이미지 결과를 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}` };
+    }
+    // 서버가 명시적으로 답한 실패 — 원장 있는 5xx 는 서버 실패 확정(서버 환불 처리), 그 외는 원장 전 거절
+    if (typeof status === 'number' && status >= 500 && genLedgerFields(data).genJobId) {
+      if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: data?.error ?? null });
+    } else {
+      discardGenJob(e.genKey, isRequestAlreadyFailed(err) ? 'cover-request-already-failed' : `cover-${status ?? 'error'}`);
+    }
+    // v3.202(H-⑤): 실패 확정 — coverStyle만 해제(곡·대화·보강 답변·아티스트 선택 보존)
+    if (!isAlbum) useMusicStore.getState().setCoverStyle(null);
+    return { kind: 'failed', message: data?.error || err?.message || '커버 생성에 실패했습니다.' };
+  }
+}
 
 // v3.169(대표): 인물 표정 선택지 — 아티스트 포함 시 구도 다음 질문
 const EXPRESSION_OPTIONS = ['환하게 웃는', '은은한 미소', '시크한 무표정', '아련한 눈빛', '강렬한 카리스마'];
@@ -133,13 +401,20 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 실패 확정 시 coverStyle을 지워(catch) 재진입 자동 doGenerate(재차감)를 막는다.
   const hasPendingGeneration =
     !albumMode && !!musicStore.coverTrackId && musicStore.coverStyle != null;
+  // v3.228 W2: 회수 진입(recoverJobId — 작업실 말풍선·도착 알림·가드 [진행 상황 보기]) / 진행 중 요청 합류
+  const recoverAtMount = !!(route.params as any)?.recoverJobId;
+  const attachAtMount = useRef(
+    !recoverAtMount && !!activeCoverGen && (activeCoverGen.albumId ?? null) === (albumMode?.albumId ?? null)
+  ).current;
   // v3.202(H-⑤): 진행 중이던 대화가 store에 영속돼 있으면 이어서 복원 (성공 확정 시에만 클리어)
   const initialStore = useRef(useMusicStore.getState()).current;
   const hasResumableDialogue =
     !albumMode && !hasPendingGeneration && (initialStore.coverMessages?.length ?? 0) > 0;
 
   // 화면 모드: dialogue(대화) / loading(생성중) / result(결과)
-  const [mode, setMode] = useState<ScreenMode>(hasPendingGeneration ? 'loading' : 'dialogue');
+  const [mode, setMode] = useState<ScreenMode>(
+    hasPendingGeneration || recoverAtMount || attachAtMount ? 'loading' : 'dialogue'
+  );
 
   // 대화 관련 — v3.202(H-⑤): 재진입 시 store 영속본으로 hydrate
   const [step, setStep] = useState(hasResumableDialogue ? (initialStore.coverStep ?? 0) : 0);
@@ -184,19 +459,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   // v3.202(H-⑤): 성공 확정 시에만 커버 컨텍스트 전체 클리어 (실패는 coverStyle만 해제해
   // 재진입 자동 재요청(재차감)을 막고, 대화·곡 선택·아티스트 선택은 보존 → 이어서 수정 가능)
-  const clearCoverContext = () => {
-    const s = useMusicStore.getState();
-    s.setCoverTrackId(null);
-    s.setCoverTrackTitle(null);
-    s.setCoverStyle(null);
-    // v3.80 승계: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
-    s.setCoverCharacterObjectName(null);
-    s.setCoverMessages(null);
-    s.setCoverStep(null);
-    s.setCoverExtrasSnapshot(null);
-    s.setCoverLyricsExcerpt(null);
-    s.setCoverLyricsId(null);
-  };
+  // v3.228 W2: 구현은 모듈 스코프 clearCoverContextStore(화면 밖 요청 완료에서도 1회 수행)
+  const clearCoverContext = clearCoverContextStore;
 
   // 로딩/결과 관련
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
@@ -289,15 +553,17 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   }, [chatHistory, step]);
 
   // 트랙 조회 (앨범 모드는 곡 선택 단계가 없어 불필요)
+  const loadTracks = async () => {
+    try {
+      const res = await api.get('/tracks/my', { params: { page: 1, limit: 50, sort: 'created_at' } });
+      setTracks(res.data.tracks || []);
+    } catch { setTracks([]); }
+    finally { setTrackLoading(false); }
+  };
   useEffect(() => {
     if (hasPendingGeneration || albumMode) return;
-    (async () => {
-      try {
-        const res = await api.get('/tracks/my', { params: { page: 1, limit: 50, sort: 'created_at' } });
-        setTracks(res.data.tracks || []);
-      } catch { setTracks([]); }
-      finally { setTrackLoading(false); }
-    })();
+    loadTracks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // v3.120: 앨범 모드 — 곡 선택 없이 캐릭터(아티스트 포함) 확인부터 시작.
@@ -327,58 +593,164 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     return () => { pulse.stop(); clearInterval(msgInterval); };
   }, [mode]);
 
-  // 대기 완료 후 자동 생성
+  // ── v3.228 W2: 화면 인스턴스·추적 뷰어 ──
+  const tokenRef = useRef(0);
+  if (tokenRef.current === 0) tokenRef.current = ++coverScreenSeq;
+  const mountedRef = useRef(true);
+  const viewerKeyRef = useRef<string | null>(null);
+  // 원장 추적(409 편입·회수) 중 로딩 문구 — recoveryNotice(연결 불안정)와 구분
+  const [trackNotice, setTrackNotice] = useState<{ text: string; note: string } | null>(null);
+  // handleStyleConfirm 은 피로 조회 await 뒤 doGenerate — 칩 연타·다이얼로그 연타 재진입 봉인
+  const styleConfirmBusyRef = useRef(false);
+  const viewJob = (key: string | null) => {
+    if (key) setViewerJob(key);
+    else releaseViewerJob(viewerKeyRef.current);
+    viewerKeyRef.current = key;
+  };
   useEffect(() => {
-    if (hasPendingGeneration) {
-      doGenerate(musicStore.coverTrackId!, musicStore.coverTrackTitle || '', musicStore.coverStyle || '');
-    }
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const e = activeCoverGen;
+      if (e && e.owner === tokenRef.current) {
+        // 화면 이탈 — 요청은 계속, 완료는 전역 추적기 도착 알림(또는 재진입 화면이 합류)
+        e.owner = null;
+        e.onNotice = null;
+      }
+      if (viewerKeyRef.current) {
+        releaseViewerJob(viewerKeyRef.current); // 다른 화면의 뷰어는 건드리지 않음
+        viewerKeyRef.current = null;
+      }
+    };
   }, []);
 
-  // ── v3.202(I-lite): 네트워크 단절/타임아웃 복구 — 서버 generate-cover는 150~180s 동기 처리라
-  // 클라이언트 연결이 먼저 끊겨도(실측 11/44/153s ERR_NETWORK) 서버는 완성 + ⭐ 차감을 마친다.
-  // 즉시 실패 확정 대신 GET /upload/cover-sessions(upload.py:1150, 백엔드 무변경) 폴링으로
-  // 완성본을 회수한다(재생성 호출 금지 = 재차감 금지). 판정 기준: 요청 시각(t0) - 120s(클럭
-  // 오차 허용) 이후 created_at 인 cover_object_name 보유 세션 중 최신 1건. 15s×최대 12회(≈3분). ──
-  const isRecoverableNetErr = (err: any) =>
-    !err?.response &&
-    (err?.code === 'ERR_NETWORK' ||
-      err?.code === 'ECONNABORTED' ||
-      /network|timeout/i.test(String(err?.message || '')));
-
-  const tryRecoverFromCoverSessions = async (requestStartMs: number) => {
-    const POLL_INTERVAL_MS = 15000;
-    const POLL_MAX = 12;
-    // 서버 시각은 타임존 표기 없는 UTC — 'Z' 보정 파싱 (AppealModal fmtDate 관행)
-    const parseTs = (iso?: string | null) => {
-      if (!iso) return NaN;
-      return new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z').getTime();
-    };
-    const threshold = requestStartMs - 120000;
-    for (let attempt = 1; attempt <= POLL_MAX; attempt++) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      try {
-        const res = await api.get('/upload/cover-sessions', { params: { page: 1, limit: 5 } });
-        const covers: any[] = res.data?.covers || [];
-        const found = covers
-          .filter((c) => c?.cover_object_name && parseTs(c?.created_at) >= threshold)
-          .sort((a, b) => parseTs(b?.created_at) - parseTs(a?.created_at))[0];
-        if (found) {
-          console.log('[Cover] 폴링 복구 성공', {
-            attempt, cover_session_id: found.cover_session_id, created_at: found.created_at,
-          });
-          return found;
-        }
-        console.log('[Cover] 폴링 복구 — 완성본 미발견', { attempt, count: covers.length });
-      } catch (pollErr: any) {
-        console.warn('[Cover] 폴링 복구 조회 실패', {
-          attempt, status: pollErr?.response?.status, code: pollErr?.code,
-        });
-      }
+  // v3.228 W2: 성공 결과 반영(UI만 — 스토어 부수효과는 러너가 수행). 회수 결과는 전체 버전 이력 재조회.
+  const applyCoverSuccess = (d: CoverSuccessData) => {
+    setErrorMsg(null);
+    setCoverObjectName(d.objectName);
+    setCoverImageUrl(
+      d.imageUrlPath
+        ? (d.imageUrlPath.startsWith('http') ? d.imageUrlPath : `${BACKEND_BASE_URL}${d.imageUrlPath}`)
+        : d.objectName ? coverPreviewUrl(d.objectName) : null
+    );
+    // v3.89: cover_session_id 보관 → refine 세션 (옛 응답에 없으면 refine UI 비활성 — defensive)
+    if (d.sessionId && d.objectName) {
+      console.log('[Cover] refine 세션 시작 cover_session_id:', d.sessionId);
+      setCoverSessionId(d.sessionId);
+      setCoverHistory([{
+        version: d.version,
+        object_name: d.objectName,
+        refine_prompt: null,
+        image_model: d.imageModel,
+        created_at: d.createdAt || new Date().toISOString(),
+      }]);
+    } else {
+      console.log('[Cover] cover_session_id 없음 — refine 비활성');
     }
-    return null;
+    setCurrentVersion(d.version);
+    setViewVersion(d.version);
+    setMode('result');
+    if (d.recovered && d.sessionId) void refreshCoverHistory(d.sessionId);
   };
 
-  const doGenerate = async (trackId: string, title: string, style: string) => {
+  // v3.228 W2: 회수 결과의 전체 버전 이력(GET /upload/cover-history/{session}) — 실패는 단건 표시 유지
+  const refreshCoverHistory = async (sessionId: string) => {
+    try {
+      const res = await api.get(`/upload/cover-history/${sessionId}`);
+      if (!mountedRef.current) return;
+      const h = res.data?.cover_refine_history;
+      if (Array.isArray(h) && h.length > 0) setCoverHistory(h);
+      const v = res.data?.current_version;
+      if (typeof v === 'number') {
+        setCurrentVersion(v);
+        setViewVersion(v);
+      }
+      const obj = res.data?.cover_object_name;
+      if (typeof obj === 'string' && obj) setCoverObjectName(obj);
+    } catch (err: any) {
+      console.warn('[Cover] 버전 이력 재조회 실패(단건 유지)', { status: err?.response?.status });
+    }
+  };
+
+  // v3.228 W2: 러너 결과 → 화면 반영
+  const applyCoverOutcome = async (e: ActiveCoverGen, o: CoverGenOutcome) => {
+    if (o.kind === 'success') {
+      applyCoverSuccess(o.data);
+      return;
+    }
+    if (o.kind === 'adopted') {
+      void trackAdoptedImageJob(o.key, o.snap);
+      return;
+    }
+    if (o.kind === 'fatigue') {
+      // v3.118: 커버(image) 디렉터 피로 429 — 실패 화면 미진입·무과금 (서버 ⭐5 차감 전 게이트).
+      // 동일 다이얼로그로 스킵 안내, 해제되면 같은 인자로 재시도 (아티스트 슬롯 선택은 ref로 복원).
+      const gateRemain = Math.max(0, Math.floor(o.err?.response?.data?.cooldown_remaining_sec ?? 0));
+      console.log('[Cover] [fatigue:image] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+      let fatigueStatus: FatigueStatus | null = null;
+      try {
+        fatigueStatus = await getFatigueStatus('image');
+      } catch (statusErr: any) {
+        console.warn('[Cover] [fatigue:image] 상태 조회 실패:', statusErr?.response?.status);
+      }
+      showFatigueCooldownDialog({
+        status: fatigueStatus,
+        remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+        director: 'image',
+        cancelText: '돌아가기',
+        onCancel: () => doRegenerate(), // 스타일 대화 화면으로 복귀 (에러 화면 미진입)
+        onCleared: () => {
+          // 스킵으로 해제 — 같은 인자로 재시도 (⭐ 커버 비용은 재시도에서 정상 차감)
+          if (lastCharObjRef.current) musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
+          doGenerate(e.trackId, e.title, e.style);
+        },
+      });
+      // v3.202(H-③): 대화 와이프 제거 — 기존 대화에 휴식 안내만 append, 스타일 단계(2)로 복귀.
+      // (coverStyle 해제는 러너가 수행 — 재진입 자동 재요청 방지)
+      setMode('dialogue');
+      setStep(2);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'director', text: '잠깐 쉬는 중이에요. 휴식이 끝나면 다시 만들어드릴게요!', echoOfStep: 2 },
+      ]);
+      return;
+    }
+    // v3.202(H-⑤): 실패 확정 — 곡 선택·대화·보강 답변·아티스트 선택은 보존 → '다시 생성하기'로 이어서 수정 가능.
+    setErrorMsg(o.message);
+    setMode('result');
+  };
+
+  // v3.228 W2: 진행 중 요청에 합류 — 새 POST 없음. 결과는 이 화면(owner)이 반영.
+  const attachCoverGen = async (e: ActiveCoverGen) => {
+    e.owner = tokenRef.current;
+    e.onNotice = (n) => {
+      if (mountedRef.current && e.owner === tokenRef.current) setRecoveryNotice(n);
+    };
+    setRecoveryNotice(e.notice);
+    setTrackNotice(null);
+    setErrorMsg(null);
+    lastCharObjRef.current = e.charObjectName;
+    setMode('loading');
+    viewJob(e.genKey);
+    const o = await e.promise;
+    if (!mountedRef.current || e.owner !== tokenRef.current) return;
+    e.owner = null;
+    e.onNotice = null;
+    if (viewerKeyRef.current === e.genKey) viewJob(null);
+    setRecoveryNotice(null);
+    await applyCoverOutcome(e, o);
+  };
+
+  const doGenerate = (trackId: string, title: string, style: string) => {
+    // v3.228 W2: 진행 중 요청이 있으면 새 POST 금지(재과금 경로) — 같은 화면 대상이면 그 요청에 합류
+    const cur = activeCoverGen;
+    if (cur) {
+      logCoverDupBlock('in-flight', { jobId: cur.genKey });
+      if ((cur.albumId ?? null) === (albumMode?.albumId ?? null) && cur.owner !== tokenRef.current) {
+        void attachCoverGen(cur);
+      }
+      return;
+    }
     // 재생성 시 사용할 수 있도록 로컬에 보존 (앨범 모드는 트랙 개념 없음)
     if (!albumMode && !selectedTrack) {
       setSelectedTrack({ id: trackId, title } as MyTrack);
@@ -386,6 +758,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setMode('loading');
     setErrorMsg(null);
     setRecoveryNotice(null);
+    setTrackNotice(null);
     // v3.89: 새 생성 시작 — 이전 refine 세션/히스토리 폐기 (MAIDOL v58 Q4-a 관행:
     // 재생성마다 백엔드가 신규 cover_session을 발급하므로 옛 세션은 버림)
     setCoverSessionId(null);
@@ -397,156 +770,236 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     // 재생성 시 선택 유지를 위해 ref에 백업 (handleStyleConfirm에서 복원).
     const charObjectName = useMusicStore.getState().coverCharacterObjectName;
     lastCharObjRef.current = charObjectName;
-    const t0 = Date.now(); // v3.202(I-lite): 폴링 복구 판정 기준 시각 — catch에서도 사용
-    try {
-      // v3.150(대표): 장르/분위기 자동 주입 제거 — 이미지에 왜 필요한지 불명확(대표 지적).
-      // 사용자가 원하면 배경/자유 서술로 직접 표현한다.
-      // v3.120: 앨범 모드 — 서버 generate-cover는 곡 기준이라 앨범 정보를 모름 →
-      // 앨범 제목(title)·수록곡 제목들을 user_prompt 힌트로 전달 (트랙 모드는 기존 그대로)
-      const albumHint = albumMode
-        ? [
-            '앨범 커버 이미지',
-            albumMode.trackTitles?.length
-              ? `수록곡: ${albumMode.trackTitles.slice(0, 20).join(', ')}`
-              : '',
-          ].filter(Boolean).join('. ')
-        : '';
-      const payload = {
-        title: title || (albumMode ? '새 앨범' : '새로운 곡'),
-        style: style || undefined,
-        user_prompt: albumMode ? [style, albumHint].filter(Boolean).join('. ') : (style || undefined),
-        // v3.80: 선택한 슬롯(실사/가상)의 object_name — 미포함이면 undefined
-        character_object_name: charObjectName || undefined,
-        image_model: 'gpt_image_2',
-        // v3.150: 대화 보강 답변 — 전부 선택사항 (undefined=미주입)
-        shot: coverExtras.shot || undefined,
-        expression: coverExtras.expression || undefined, // v3.169 — 인물 표정
-        palette: coverExtras.palette || undefined,
-        background_prompt: coverExtras.bgPrompt || undefined,
-        background_object_name: coverExtras.bgObjectName || undefined,
-        lyrics_excerpt: coverExtras.lyricsExcerpt || undefined,
-        // v3.152: 실사/가상 분기 — 가상이면 화풍 라벨 동봉 (서버가 일러스트 강제 프롬프트로 전환)
-        character_kind: charObjectName ? (coverExtras.charKind || 'real') : undefined,
-        character_art_style: charObjectName && coverExtras.charKind === 'virtual'
-          ? (coverExtras.virtualArtStyle || undefined) : undefined,
-      };
-      console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
-      const res = await api.post('/upload/generate-cover', payload, {
-        timeout: 600000, // GPT Image 2는 캐릭터 ref 포함 시 5분 이상 걸리기도 함 → 10분
+    const t0 = Date.now(); // v3.202(I-lite): 폴링 복구 판정 기준 시각
+    // v3.150(대표): 장르/분위기 자동 주입 제거 — 이미지에 왜 필요한지 불명확(대표 지적).
+    // 사용자가 원하면 배경/자유 서술로 직접 표현한다.
+    // v3.120: 앨범 모드 — 서버 generate-cover는 곡 기준이라 앨범 정보를 모름 →
+    // 앨범 제목(title)·수록곡 제목들을 user_prompt 힌트로 전달 (트랙 모드는 기존 그대로)
+    const albumHint = albumMode
+      ? [
+          '앨범 커버 이미지',
+          albumMode.trackTitles?.length
+            ? `수록곡: ${albumMode.trackTitles.slice(0, 20).join(', ')}`
+            : '',
+        ].filter(Boolean).join('. ')
+      : '';
+    const payload = {
+      title: title || (albumMode ? '새 앨범' : '새로운 곡'),
+      style: style || undefined,
+      user_prompt: albumMode ? [style, albumHint].filter(Boolean).join('. ') : (style || undefined),
+      // v3.80: 선택한 슬롯(실사/가상)의 object_name — 미포함이면 undefined
+      character_object_name: charObjectName || undefined,
+      image_model: 'gpt_image_2',
+      // v3.150: 대화 보강 답변 — 전부 선택사항 (undefined=미주입)
+      shot: coverExtras.shot || undefined,
+      expression: coverExtras.expression || undefined, // v3.169 — 인물 표정
+      palette: coverExtras.palette || undefined,
+      background_prompt: coverExtras.bgPrompt || undefined,
+      background_object_name: coverExtras.bgObjectName || undefined,
+      lyrics_excerpt: coverExtras.lyricsExcerpt || undefined,
+      // v3.152: 실사/가상 분기 — 가상이면 화풍 라벨 동봉 (서버가 일러스트 강제 프롬프트로 전환)
+      character_kind: charObjectName ? (coverExtras.charKind || 'real') : undefined,
+      character_art_style: charObjectName && coverExtras.charKind === 'virtual'
+        ? (coverExtras.virtualArtStyle || undefined) : undefined,
+    };
+    console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
+    // v3.228 W2: 서버 원장 요청 ID — POST 직전 발급·추적 등록(응답 유실·재진입·앱 재시작 후 회수)
+    const requestId = newRequestId();
+    const genKey = registerGenJob({
+      kind: 'cover',
+      requestId,
+      meta: albumMode
+        ? { title: payload.title, album_id: albumMode.albumId, album_title: albumMode.albumTitle }
+        : { title: payload.title, track_id: trackId || null, track_title: title || null },
+    });
+    const e = {
+      genKey, requestId, startedAt: t0, albumId: albumMode?.albumId ?? null,
+      trackId, title, style, charObjectName, owner: null, notice: null, onNotice: null,
+    } as unknown as ActiveCoverGen;
+    e.promise = runCoverGenerate(e, payload)
+      .catch((err: any): CoverGenOutcome => {
+        console.error('[Cover] 러너 예외', { message: err?.message });
+        return { kind: 'failed', message: err?.message || '커버 생성에 실패했습니다.' };
+      })
+      .finally(() => {
+        if (activeCoverGen === e) activeCoverGen = null;
       });
-      console.log('[Cover] generate-cover OK', Date.now() - t0, 'ms');
-      const objectName: string | null = res.data?.object_name ?? null;
-      setCoverImageUrl(
-        res.data?.image_url
-          ? `${BACKEND_BASE_URL}${res.data.image_url}`
-          : objectName
-            ? coverPreviewUrl(objectName)
-            : null
-      );
-      setCoverObjectName(objectName);
-      // v3.89: cover_session_id 보관 → refine 세션 시작 (version 0 = 원본).
-      // 옛 백엔드 응답에 cover_session_id가 없으면 refine UI 비활성 (defensive).
-      const sessionId: string | null = res.data?.cover_session_id ?? null;
-      if (sessionId && objectName) {
-        console.log('[Cover] refine 세션 시작 cover_session_id:', sessionId);
-        setCoverSessionId(sessionId);
-        setCoverHistory([{
-          version: 0,
-          object_name: objectName,
-          refine_prompt: null,
-          image_model: res.data?.image_model,
-          created_at: new Date().toISOString(),
-        }]);
-        setCurrentVersion(0);
-        setViewVersion(0);
-      } else {
-        console.log('[Cover] cover_session_id 없음 — refine 비활성');
-      }
-      setMode('result');
-      // v3.202(H-⑤): 컨텍스트 클리어는 성공 경로에서만 (기존 finally 클리어가 실패 시 재개를
-      // 막던 문제의 픽스 — 실패는 catch에서 coverStyle만 해제해 대화·선택을 보존한다)
-      if (!albumMode) clearCoverContext();
-    } catch (err: any) {
-      console.warn('[Cover] generate-cover FAIL', {
-        message: err?.message,
-        code: err?.code,
-        status: err?.response?.status,
-        data: err?.response?.data,
-      });
-      // v3.118: 커버(image) 디렉터 피로 429 — 실패 화면 미진입·무과금 (서버 ⭐5 차감 전 게이트).
-      // 동일 다이얼로그로 스킵 안내, 해제되면 같은 인자로 재시도 (아티스트 슬롯 선택은 ref로 복원).
-      if (isDirectorFatigued(err)) {
-        const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
-        console.log('[Cover] [fatigue:image] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
-        let fatigueStatus: FatigueStatus | null = null;
-        try {
-          fatigueStatus = await getFatigueStatus('image');
-        } catch (statusErr: any) {
-          console.warn('[Cover] [fatigue:image] 상태 조회 실패:', statusErr?.response?.status);
-        }
-        showFatigueCooldownDialog({
-          status: fatigueStatus,
-          remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
-          director: 'image',
-          cancelText: '돌아가기',
-          onCancel: () => doRegenerate(), // 스타일 대화 화면으로 복귀 (에러 화면 미진입)
-          onCleared: () => {
-            // 스킵으로 해제 — 같은 인자로 재시도 (⭐ 커버 비용은 재시도에서 정상 차감)
-            if (lastCharObjRef.current) musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
-            doGenerate(trackId, title, style);
-          },
-        });
-        // v3.202(H-③): 대화 와이프 제거 — 기존 대화에 휴식 안내만 append, 스타일 단계(2)로 복귀.
-        // coverStyle만 해제(재진입 자동 재요청 방지) — 곡·아티스트·보강 답변은 보존.
-        if (!albumMode) musicStore.setCoverStyle(null);
-        setMode('dialogue');
-        setStep(2);
-        setChatHistory((prev) => [
-          ...prev,
-          { type: 'director', text: '잠깐 쉬는 중이에요. 휴식이 끝나면 다시 만들어드릴게요!', echoOfStep: 2 },
-        ]);
-      } else {
-        // v3.202(I-lite): 네트워크 단절/타임아웃 — 실패 확정 전에 서버 완성본 폴링 회수 시도
-        if (!albumMode && isRecoverableNetErr(err)) {
-          console.log('[Cover] 네트워크 단절 감지 — cover-sessions 폴링 복구 시작', {
-            code: err?.code, elapsedMs: Date.now() - t0,
-          });
-          setRecoveryNotice('이미지가 거의 다 됐어요, 잠시만요…');
-          const found = await tryRecoverFromCoverSessions(t0);
-          setRecoveryNotice(null);
-          if (found) {
-            // 완성본 회수 = 성공 처리 — 재생성 호출 없음(⭐ 재차감 없음)
-            const obj: string = found.cover_object_name;
-            setCoverObjectName(obj);
-            setCoverImageUrl(found.image_url ? `${BACKEND_BASE_URL}${found.image_url}` : coverPreviewUrl(obj));
-            const ver = typeof found.current_version === 'number' ? found.current_version : 0;
-            if (found.cover_session_id) {
-              setCoverSessionId(String(found.cover_session_id));
-              setCoverHistory([{
-                version: ver,
-                object_name: obj,
-                refine_prompt: null,
-                image_model: found.image_model,
-                created_at: found.created_at || undefined,
-              }]);
-            }
-            setCurrentVersion(ver);
-            setViewVersion(ver);
-            setMode('result');
-            clearCoverContext();
-            usePointsStore.getState().fetchBalance(); // 서버는 이미 차감 완료 — 잔액 표시 동기화
-            return;
-          }
-          console.warn('[Cover] 폴링 복구 실패 — 오류 확정');
-        }
-        // v3.202(H-⑤): 실패 확정 — coverStyle만 해제(재진입 자동 재요청·재차감 방지).
-        // 곡 선택·대화·보강 답변·아티스트 선택은 보존 → '다시 생성하기'로 이어서 수정 가능.
-        if (!albumMode) musicStore.setCoverStyle(null);
-        setErrorMsg(err?.response?.data?.error || err?.message || '커버 생성에 실패했습니다.');
-        setMode('result');
-      }
-    }
+    activeCoverGen = e;
+    console.info('[GenJob:cover] 접수', { jobId: genKey, album: !!albumMode });
+    void attachCoverGen(e);
   };
+
+  // ── v3.228 W2: 원장 job 추적(409 편입·회수 진입) — POST 없음 ──
+  type ImageTrackOutcome =
+    | { kind: 'done'; jobKind: string; result: any; serverJobId: string | null }
+    | { kind: 'failed'; error: string | null; refunded: boolean | null; notCharged: boolean | null }
+    | { kind: 'expired' } | { kind: 'gone' } | { kind: 'unmounted' };
+
+  const trackImageJob = async (key: string): Promise<ImageTrackOutcome> => {
+    const start = useGenerationJobStore.getState().jobs[key]?.startedAt ?? Date.now();
+    const deadline = Math.max(start + COVER_CAP_MS, Date.now() + 60 * 1000);
+    while (Date.now() <= deadline) {
+      if (!mountedRef.current) return { kind: 'unmounted' };
+      const rec = useGenerationJobStore.getState().jobs[key];
+      if (!rec) return { kind: 'gone' }; // 추적기가 정리(원장 없음·확인 완료)
+      if (rec.lastStatus === 'done' && rec.genResult) {
+        return { kind: 'done', jobKind: rec.kind, result: rec.genResult, serverJobId: rec.serverJobId ?? null };
+      }
+      if (rec.lastStatus === 'failed') {
+        return { kind: 'failed', error: rec.error ?? null, refunded: rec.refunded ?? null, notCharged: rec.notCharged ?? null };
+      }
+      let snap: GenJobSnapshot | null | undefined;
+      try {
+        snap = await fetchImageJob({
+          kind: rec.kind === 'cover_refine' ? 'cover_refine' : 'cover',
+          requestId: rec.requestId ?? null, serverJobId: rec.serverJobId ?? null,
+        });
+      } catch {
+        snap = undefined;
+      }
+      if (snap?.status === 'done' && snap.result) {
+        return { kind: 'done', jobKind: rec.kind, result: snap.result, serverJobId: snap.jobId };
+      }
+      if (snap?.status === 'failed') {
+        return { kind: 'failed', error: snap.error ?? null, refunded: snap.refunded ?? null, notCharged: snap.notCharged ?? null };
+      }
+      await coverSleep(10000);
+    }
+    return { kind: 'expired' };
+  };
+
+  const applyTrackedImage = (key: string, o: ImageTrackOutcome) => {
+    if (o.kind === 'unmounted') return;
+    if (viewerKeyRef.current === key) viewJob(null);
+    setTrackNotice(null);
+    if (o.kind === 'done') {
+      const data = coverDataFrom(o.result, true);
+      if (!data.objectName) {
+        setErrorMsg(`결과를 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
+        setMode('result');
+        return;
+      }
+      console.info('[GenJob:cover] 결과 도착', { jobId: key, kind: o.jobKind });
+      // 결과를 보여줌 = 확인(로컬 정리 + 서버 ack). 로컬 레코드가 없으면 서버 job id 로 ack 만
+      const rec = useGenerationJobStore.getState().jobs[key];
+      settleGenJob(o.jobKind === 'cover_refine' ? 'cover_refine' : 'cover', rec ? key : o.serverJobId, 'done', { result: o.result });
+      usePointsStore.getState().fetchBalance();
+      applyCoverSuccess(data);
+      return;
+    }
+    if (o.kind === 'failed') {
+      const isRefine = useGenerationJobStore.getState().jobs[key]?.kind === 'cover_refine';
+      const text = isRefine ? COVER_REFINE_TEXT : COVER_TEXT;
+      console.info('[GenJob:cover] 서버 실패 확정', { jobId: key, refunded: o.refunded });
+      settleGenJob(isRefine ? 'cover_refine' : 'cover', key, 'failed', { error: o.error, refunded: o.refunded });
+      usePointsStore.getState().fetchBalance();
+      setErrorMsg(`${text.failTitle}. ${failureBody(o.error, o.refunded, o.notCharged)}`);
+      setMode('result');
+      return;
+    }
+    if (o.kind === 'gone') {
+      // 추적기가 정리(원장 없음) — 추적기가 뷰어에 중립 안내를 이미 띄움. 대화로 복귀
+      setMode('dialogue');
+      return;
+    }
+    setErrorMsg(`결과를 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
+    setMode('result');
+  };
+
+  // 409 편입 — 커버면 이 화면에서 추적, 다듬기(같은 슬롯)면 안내 후 대화로
+  const trackAdoptedImageJob = async (key: string, snap: GenJobSnapshot) => {
+    if (snap.kind === 'cover_refine') {
+      setMode('dialogue');
+      setStep(2);
+      showAlert(COVER_REFINE_TEXT.busyTitle, COVER_REFINE_TEXT.busyBody, [
+        { text: '닫기', style: 'cancel' },
+        { text: '진행 상황 보기', onPress: () => { void openGenJob(key, navigation); } },
+      ]);
+      return;
+    }
+    setMode('loading');
+    setTrackNotice({
+      text: '이미 만들고 있는 이미지가 있어요',
+      note: '그 이미지가 완성되면 바로 보여드릴게요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+    });
+    viewJob(key);
+    applyTrackedImage(key, await trackImageJob(key));
+  };
+
+  // 회수 진입 — done: 결과 화면(+ack) / processing: 로딩 추적 / failed: 안내(+ack)
+  const startImageRecovery = (key: string) => {
+    const cur = activeCoverGen;
+    if (cur && cur.genKey === key) {
+      console.info('[GenJob:cover] 회수 진입 — 진행 중 요청에 합류', { jobId: key });
+      void attachCoverGen(cur);
+      return;
+    }
+    const job = useGenerationJobStore.getState().jobs[key];
+    if (!job || (job.kind !== 'cover' && job.kind !== 'cover_refine')) {
+      console.warn('[GenJob:cover] 회수 대상 없음', { jobId: key });
+      setMode((m) => (m === 'loading' ? 'dialogue' : m));
+      return;
+    }
+    if (refineSubmitGuardRef.current || (cur && cur.owner === tokenRef.current)) {
+      logCoverDupBlock('recover-while-busy', { jobId: key });
+      return;
+    }
+    const trackId = job.meta?.track_id ? String(job.meta.track_id) : null;
+    if (!albumMode && trackId) setSelectedTrack({ id: trackId, title: String(job.meta?.track_title ?? '') } as MyTrack);
+    console.info('[GenJob:cover] 회수 진입', { jobId: key, kind: job.kind, status: job.lastStatus });
+    if (job.lastStatus === 'processing') {
+      setMode('loading');
+      setErrorMsg(null);
+      setTrackNotice({
+        text: job.kind === 'cover_refine' ? '요청하신 부분을 다듬는 중이에요' : '커버 이미지를 만들고 있어요',
+        note: '작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+      });
+      viewJob(key);
+      void (async () => applyTrackedImage(key, await trackImageJob(key)))();
+      return;
+    }
+    if (job.lastStatus === 'done') {
+      applyTrackedImage(key, { kind: 'done', jobKind: job.kind, result: job.genResult, serverJobId: job.serverJobId ?? null });
+      return;
+    }
+    applyTrackedImage(key, { kind: 'failed', error: job.error ?? null, refunded: job.refunded ?? null, notCharged: job.notCharged ?? null });
+  };
+
+  const recoverJobParam: string | null = (route.params as any)?.recoverJobId
+    ? String((route.params as any).recoverJobId) : null;
+  useEffect(() => {
+    if (recoverJobParam) startImageRecovery(recoverJobParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recoverJobParam]);
+
+  // v3.228 W2: 재진입(0-3 이중 과금 경로 봉합) — 기존 "대기 완료 후 자동 생성"(마운트 시 doGenerate = 새 POST·⭐ 재차감)
+  // 제거. 진행 중 요청이 있으면 합류, 없으면 추적 레코드로 회수, 둘 다 없으면 스타일 단계로 복귀(자동 재요청 0).
+  useEffect(() => {
+    if (recoverAtMount) return; // 회수 effect 가 처리
+    const e = activeCoverGen;
+    if (e && (e.albumId ?? null) === (albumMode?.albumId ?? null)) {
+      console.info('[Cover] 재진입 — 진행 중 요청에 합류(재요청 없음)', { jobId: e.genKey });
+      void attachCoverGen(e);
+      return;
+    }
+    if (!hasPendingGeneration) return;
+    const tracked = listUserGenJobs(['cover']).find((j) => j.lastStatus === 'processing' || j.lastStatus === 'done');
+    if (tracked) {
+      console.info('[Cover] 재진입 — 추적 중인 커버 회수(재요청 없음)', { jobId: tracked.jobId });
+      startImageRecovery(tracked.jobId);
+      return;
+    }
+    logCoverDupBlock('reentry-no-inflight');
+    musicStore.setCoverStyle(null);
+    setMode('dialogue');
+    setStep(2);
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'director', text: '진행하던 커버 작업을 이어서 확인하지 못했어요. 스타일을 다시 골라 주시면 새로 만들어 드릴게요.', echoOfStep: 2 },
+    ]);
+    loadTracks(); // 곡 변경(step 0) 되감기 대비
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // v3.80: /character/me 조회 — 실사·가상 시트 모두 확보. 하나라도 있으면 "아티스트 포함?" 질문.
   // v3.120: 트랙 모드(곡 선택 후)·앨범 모드(마운트 직후) 공용으로 추출.
@@ -1155,6 +1608,18 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.118: 커버(image) 디렉터 휴식(쿨다운) 사전 게이트 — 서버 429(⭐ 차감 전)와 동일 다이얼로그.
   // v3.169(대표 확정): refine도 ⭐ 과금(서버 v244) — 피로 게이트는 여전히 미적용(생성만 카운트).
   const handleStyleConfirm = async (style: string) => {
+    // v3.228 W2: 연타·다이얼로그 연타 재진입(피로 조회 await 사이) + 진행 중 요청 + 추적 중 job(커버·다듬기 한 슬롯)
+    if (styleConfirmBusyRef.current) { logCoverDupBlock('style-confirm-reentry'); return; }
+    if (activeCoverGen) { logCoverDupBlock('in-flight', { jobId: activeCoverGen.genKey }); return; }
+    if (guardGeneration('cover', { navigation, where: 'CoverGeneration' })) { logCoverDupBlock('tracked-job'); return; }
+    styleConfirmBusyRef.current = true;
+    try {
+      await handleStyleConfirmInner(style);
+    } finally {
+      styleConfirmBusyRef.current = false;
+    }
+  };
+  const handleStyleConfirmInner = async (style: string) => {
     setStyleInput(style);
     // v3.120: 앨범 모드는 트랙 선택이 없음 — 컨텍스트는 albumMode 파라미터에서
     const trackId = albumMode ? null : (selectedTrack?.id || musicStore.coverTrackId);
@@ -1246,11 +1711,37 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // (9/22 03:05 이중 차감 실측). 실패 확정 대신 GET /upload/cover-history/{id}를 15초×최대 12회
   // (v3.202 I-lite와 동일 리듬) 폴링해 current_version > 요청 직전 기준선이면 완성본을 회수한다
   // — 재요청 금지 = 재차감 금지. 응답 계약: {current_version, cover_object_name, cover_refine_history}.
-  const tryRecoverRefineFromHistory = async (sessionId: string, baseVersion: number, rp: string) => {
+  // v3.228 W2: 매 회차 서버 원장(GET /generate/jobs/req/{rid}) 먼저 — done 이면 cover-history 로 반영, failed 면
+  // 서버 확정 실패(환불 여부는 서버 값), processing 이면 서버 상한(15분)까지 연장. 원장 없음(구서버)은 기존 폴링 그대로.
+  const tryRecoverRefineFromHistory = async (
+    sessionId: string, baseVersion: number, rp: string, requestId?: string | null
+  ): Promise<{ kind: 'recovered'; obj: string; version: number } | { kind: 'failed'; error: string | null; refunded: boolean | null; notCharged: boolean | null } | { kind: 'none' }> => {
     const POLL_INTERVAL_MS = 15000;
-    const POLL_MAX = 12;
-    for (let attempt = 1; attempt <= POLL_MAX; attempt++) {
+    const startedAt = Date.now();
+    let deadline = startedAt + 12 * POLL_INTERVAL_MS;
+    let ledgerSeen = false;
+    for (let attempt = 1; Date.now() <= deadline; attempt++) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      if (requestId) {
+        let snap: GenJobSnapshot | null | undefined;
+        try {
+          snap = await fetchImageJob({ kind: 'cover_refine', requestId });
+        } catch {
+          snap = undefined;
+        }
+        if (snap?.status === 'failed') {
+          return { kind: 'failed', error: snap.error ?? null, refunded: snap.refunded ?? null, notCharged: snap.notCharged ?? null };
+        }
+        if (snap?.status === 'processing') {
+          if (!ledgerSeen) {
+            ledgerSeen = true;
+            deadline = Math.max(deadline, startedAt + COVER_CAP_MS);
+            console.info('[GenJob:cover] 다듬기 원장 진행 중 — 상한까지 추적', { attempt });
+          }
+          continue;
+        }
+        // done·원장 없음 → cover-history 로 결과 반영(기존 경로)
+      }
       try {
         const res = await api.get(`/upload/cover-history/${sessionId}`);
         const currentVersionSrv: number | null =
@@ -1273,7 +1764,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             ]);
           }
           usePointsStore.getState().fetchBalance(); // 서버는 이미 차감 완료 — 잔액 표시 동기화
-          return true;
+          return { kind: 'recovered', obj, version: currentVersionSrv };
         }
       } catch (pollErr: any) {
         console.warn('[Cover] refine 폴링 복구 조회 실패', {
@@ -1281,7 +1772,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         });
       }
     }
-    return false;
+    return { kind: 'none' };
   };
 
   // v3.89: 미세조정 — 텍스트 지시로 현재 커버를 다듬어 새 버전 생성 (multi-turn i2i)
@@ -1295,6 +1786,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
     if (rp.length > REFINE_PROMPT_MAX_LEN) {
       showAlert('입력 확인', `수정 요청은 ${REFINE_PROMPT_MAX_LEN}자 이하로 입력해주세요.`);
+      return;
+    }
+    // v3.228 W2: 추적 중 이미지 job(커버·다듬기 한 슬롯)이 있으면 [닫기]/[진행 상황 보기] — 과금 확인보다 먼저
+    if (activeCoverGen) { logCoverDupBlock('refine-while-cover-in-flight', { jobId: activeCoverGen.genKey }); return; }
+    if (guardGeneration('cover_refine', { navigation, where: 'CoverGeneration.refine' })) {
+      logCoverDupBlock('refine-tracked-job');
       return;
     }
     // v3.204(⑤): 이중 제출 봉인 — confirm await 앞에서 세팅, 취소·완료·실패 전 경로 finally 해제
@@ -1314,11 +1811,24 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
       const t0 = Date.now();
       const baseVersion = currentVersion; // v3.204(⑤): 폴링 회수 판정 기준선 (요청 직전 버전)
+      // v3.228 W2: 서버 원장 요청 ID — POST 직전 발급·추적 등록(이탈해도 도착 알림 → 회수 진입으로 결과 확인)
+      const requestId = newRequestId();
+      const genKey = registerGenJob({
+        kind: 'cover_refine',
+        requestId,
+        meta: {
+          cover_session_id: coverSessionId, base_version: baseVersion,
+          ...(albumMode
+            ? { album_id: albumMode.albumId, album_title: albumMode.albumTitle }
+            : { track_id: selectedTrack?.id || musicStore.coverTrackId || null, track_title: selectedTrack?.title || null }),
+        },
+      });
+      viewJob(genKey);
       try {
         const res = await api.post(
           '/upload/refine-cover',
           { cover_session_id: coverSessionId, refine_prompt: rp },
-          { timeout: 600000 } // 이미지 모델이 느릴 수 있음 — generate와 동일하게 10분
+          { timeout: 600000, headers: genRequestHeaders(requestId) } // 이미지 모델이 느릴 수 있음 — generate와 동일하게 10분
         );
         // defensive 파싱 — 서버 응답이 예상과 다르면 기존 버전 유지
         const newObj: string | null = res.data?.cover_object_name ?? null;
@@ -1346,6 +1856,11 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         }
         usePointsStore.getState().fetchBalance(); // v3.169: ⭐ 차감 반영
         setRefineInput('');
+        // 화면을 벗어난 뒤 도착했으면 ack 하지 않음 → 추적기가 작업실에서 도착 알림(회수 진입으로 확인)
+        markGenJobDone(genKey, {
+          cover_session_id: coverSessionId, cover_object_name: newObj,
+          image_url: res.data?.image_url ?? null, current_version: newVer,
+        }, { acked: mountedRef.current, serverJobId: genLedgerFields(res.data).genJobId });
       } catch (err: any) {
         console.error('[Cover] refine-cover FAIL', {
           cover_session_id: coverSessionId,
@@ -1354,13 +1869,40 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           status: err?.response?.status,
           data: err?.response?.data,
         });
+        // v3.228 W2: 409 generation_in_progress(커버·다듬기 한 슬롯) — 원장 전 거절(무과금), 진행 중 job 편입
+        const inProgress = parseGenInProgress(err, 'cover_refine');
+        if (inProgress) {
+          logCoverDupBlock('refine-server-409', { kind: inProgress.kind, jobId: inProgress.jobId });
+          const adoptedKey = adoptGenJob(inProgress, { replaceKey: genKey });
+          const text = inProgress.kind === 'cover' ? COVER_TEXT : COVER_REFINE_TEXT;
+          showAlert(text.busyTitle, text.busyBody, [
+            { text: '닫기', style: 'cancel' },
+            { text: '진행 상황 보기', onPress: () => { void openGenJob(adoptedKey, navigation); } },
+          ]);
+          return;
+        }
         // v3.204(⑤): 네트워크 단절/타임아웃 — 실패 확정 전에 서버 완성본 폴링 회수 시도
-        if (isRecoverableNetErr(err)) {
+        // (v3.228: 게이트웨이 HTML 5xx 도 서버 처리 여부 미확정 → 같은 경로)
+        if (isRecoverableNetErr(err) || isGatewayErr(err)) {
           setRefinePollingNotice('연결이 불안정했어요. 서버에서 완성본을 확인하고 있어요…');
-          const recovered = await tryRecoverRefineFromHistory(coverSessionId, baseVersion, rp);
+          const recovered = await tryRecoverRefineFromHistory(coverSessionId, baseVersion, rp, requestId);
           setRefinePollingNotice(null);
-          if (recovered) {
+          if (recovered.kind === 'recovered') {
             setRefineInput(''); // 회수 = 성공 처리 (재요청 없음 = 재차감 없음)
+            markGenJobDone(genKey, {
+              cover_session_id: coverSessionId, cover_object_name: recovered.obj, current_version: recovered.version,
+            }, { acked: mountedRef.current });
+            return;
+          }
+          endGenRequest(genKey); // 화면 확인 종료 → 이후는 전역 추적기가 원장으로 판정
+          if (recovered.kind === 'failed') {
+            settleGenJob('cover_refine', genKey, 'failed', { error: recovered.error, refunded: recovered.refunded });
+            usePointsStore.getState().fetchBalance();
+            showAlert(
+              '미세조정 실패',
+              `${COVER_REFINE_TEXT.failTitle}. ${failureBody(recovered.error, recovered.refunded, recovered.notCharged)}` +
+                '\n기존 버전은 그대로 유지돼요.'
+            );
             return;
           }
           console.warn('[Cover] refine 폴링 복구 실패 — 오류 확정');
@@ -1372,6 +1914,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           );
           return;
         }
+        // 서버가 명시적으로 답한 실패 — 원장 있는 5xx 는 서버 실패 확정(서버 환불 처리), 그 외는 원장 전 거절
+        const st = err?.response?.status;
+        if (typeof st === 'number' && st >= 500 && genLedgerFields(err?.response?.data).genJobId) {
+          settleGenJob('cover_refine', genKey, 'failed', { error: err?.response?.data?.error ?? null });
+        } else {
+          discardGenJob(genKey, isRequestAlreadyFailed(err) ? 'refine-request-already-failed' : `refine-${st ?? 'error'}`);
+        }
         showAlert(
           '미세조정 실패',
           (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
@@ -1379,6 +1928,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         );
       } finally {
         setRefining(false);
+        if (viewerKeyRef.current === genKey) viewJob(null);
       }
     } finally {
       refineSubmitGuardRef.current = false;
@@ -1464,7 +2014,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </View>
           </Animated.View>
           {/* v3.202(I-lite): 네트워크 단절 복구 폴링 중에는 디렉터 대기 안내로 대체 */}
-          <AppText style={styles.loadingText}>{recoveryNotice ?? LOADING_STEPS[loadingMsgIndex].message}</AppText>
+          <AppText style={styles.loadingText}>{recoveryNotice ?? trackNotice?.text ?? LOADING_STEPS[loadingMsgIndex].message}</AppText>
           <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
 
           {/* 스텝 인디케이터 */}
@@ -1503,7 +2053,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             <AppText style={styles.loadingNoteText}>
               {recoveryNotice
                 ? '연결이 잠시 불안정했어요. 서버에서 완성된 이미지를 확인하고 있어요.\n추가 비용 없이 그대로 가져올게요.'
-                : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+                : trackNotice
+                  ? trackNotice.note
+                  : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
             </AppText>
           </View>
         </View>
