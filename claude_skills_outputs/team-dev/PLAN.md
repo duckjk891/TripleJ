@@ -5282,3 +5282,282 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 4. **재시작 복원 1회 안내(토스트/배지)**: 기본안 = 미도입(팝업 최소화 — 복원은 '내 재생목록' 탭으로 확인). 원하면 앱내 다이얼로그 규칙(showAlert)로 1회 노출 지시.
 
 규칙: 서버 무변경(라이브 EC2는 이번 분석에서 읽기 전용 grep만), 민감 정보 플레이스홀더(`<SSH_HOST>`=maidol-ec2), 코드 수정·커밋은 이 계획 승인 후 team-dev 루프에서, git 커밋은 오케스트레이터 승인 후.
+
+# v3.227 — 아티스트 생성 결과 회수(이탈·복귀 재개) + 원격 로거 폭주 차단 + 위시 조회 경량화 + 꾸미기 피커 통합(브랜드 모아보기/펼쳐보기·대분류·필터·선택 스트립) + 얼굴 반영(사진 소실 가드·gpt_image_2 참조 인덱스) + 원본 얼굴사진 공개 노출 차단 + 비밀번호 찾기 SES 실발송 전환 점검
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 4df2636 v3.226, 앱 1.1.8). **착수 전 작업트리 점검(2026-09-24)**: `git status --short -- 2_housing` = 미추적 문서 4건(MAIDOL_to_AIDOL_이식_로드맵_v42.md·디자인_품질_진단_v41.md·피그마_퍼스트_워크플로우_v40.md·피드백_소셜확산_계획서_v39.md)과 scratchpad/ 산출물뿐 — **수정(M)된 추적 파일 0건, 타 세션 미커밋 코드 작업 없음**. `git log -3` = 4df2636 / 931dbd4 / e88ffdb(v3.225~226) — 본 계획의 파일:라인은 이 HEAD 기준. 서버 실측 = `<SSH_HOST>`(maidol-ec2) 읽기 전용(파일 grep·sed, 컨테이너 내 mongo read-only 집계, IMDS·SES 읽기 API, DNS dig). 서버 파일 쓰기 0건(집계 스크립트는 /tmp에 올렸다가 삭제). .env는 **키 이름만** 확인. 출처 표기: [O]=오케스트레이터 추적(재조사 안 함), [P]=planner 실측.
+
+## [최우선] H-1 근본원인 확정 — v3.219 [ArtistDraft] 회귀 (W0로 분리해 A~G보다 먼저 배포)
+- 사용자 증상: 얼굴 사진을 올려 만들었는데 **ArtistResult '만들 때 사용한 사진'(ArtistResultScreen.tsx:940-950)이 뜨지 않고 얼굴 인증도 안 떴다**.
+- [O] 확정 증거: 아티스트 "샘플"(characters 6ab4c5d18e018aff8332553c, real, 06:40:17Z)의 original_photo_object_name = 빈 문자열. sheet.png 6,124,198 bytes = **2차 job 6ab4c22b(source=text, photo=False) 결과와 바이트 크기 일치** → "샘플" = 사진 없이 생성된 2차 결과를 저장한 것. 1차 job 6ab4c16e(사진+텍스트, 06:21:30 face gate→verify match=True 정상 발동)의 결과와 원본(`characters/temp/<uid>/original_90a11746.jpg`)은 서버 temp에 남아 있고 **어떤 아티스트에도 연결되지 않음(실제 유실은 1차 1건)**.
+- [P] 코드 경로 확정: ⑴ `characterTaskStore.ts:169-172` partialize = draft만 → photoUri·portraitConfirmed는 메모리 전용. ⑵ `ArtistInputScreen.tsx:161` resumableDraft 복원 시 step/qIndex가 **사진 단계를 이미 지난 상태**(questioning/style)로 되살아나고, `:203` 로컬 `photoUri`는 null로 시작 → 사진을 다시 달라는 UI 없이 질문을 이어갈 수 있다. ⑶ 질문을 마치면 `handleStartGeneration` → **`:593 taskStore.setInput({ photoUri, photoName, … })`이 null로 store 값을 덮어쓴다**(가상 경로 `:513 handleStyleConfirm`도 같은 형태). ⑷ 실사 텍스트 전용(v161)은 정상 기능이라 `:562` 가드(사진 없으면 텍스트 필수)만 통과하면 앱·서버 누구도 막지 않음 → `ArtistLoadingScreen.tsx:180-188` hasPhoto=false → FormData에 file 없음 → 서버 `character.py:1384-1392` face gate는 `contents is not None`일 때만 돌아서 **얼굴 인증 미발동**, ⭐10 과금 → `:246-259` upload-original-photo도 hasPhoto일 때만이라 스킵 → save에 original_photo_object_name 없음 → '사용한 사진' 미노출. v3.219(37a2304, 09-24 10:26) 이전에는 재진입 시 draft 복원이 없어 사진부터 다시 받았다 = 사용자 말 "원래는 떴다"와 일치.
+- **W0 수정(앱 단독, 1조 선행 분리 커밋·빌드)**:
+  1. draft에 `photoIntent: 'photo' | 'text' | null` + `photoName` 추가 — `handlePickPhoto` 확약 확인(:394-399)에서 'photo', `handleTextOnly`(:426-435)에서 'text'. URI는 계속 영속하지 않음(파일 소멸).
+  2. 복원 시 `photoIntent==='photo' && !photoUri`면 **사진 단계로 되돌림**(step='welcome', selectedKind 유지, qIndex·styleAnswers는 보존해 재업로드 후 멈췄던 질문으로 복귀). 복원 chat의 "사진 선택: …" 버블은 디렉터 버블 "이어서 만들려면 얼굴 사진을 다시 올려주세요"로 교체. 사진 단계에서는 [사진 올리기](확약 다이얼로그 재표시 = 본인 사진 재확인 유지) / [사진 없이 설명으로 만들기](명시적 전환 → photoIntent='text')만 제공 — **사진 없이 사진 단계 뒤로 진행 불가**.
+  3. `setInput` 호출부(:513, :593)는 **photoUri가 있을 때만** photoUri/photoName을 넘긴다(null로 덮어쓰기 금지). 텍스트 전용 명시 선택 때만 handleTextOnly가 비운다.
+  4. 생성 직전 가드(`ArtistLoadingScreen.tsx` sheet 분기 :173-188, API 호출 전): `characterKind==='real' && photoIntent==='photo'(taskStore로 전달) && !photoUri`면 **요청 없이 중단**(⭐ 차감 0) → failApi + showAlert "얼굴 사진이 확인되지 않아 만들지 않았어요. 사진을 다시 올려주세요(별은 사용되지 않았어요)" → ArtistInput 사진 단계로.
+  5. 로그 `[ArtistDraft] photo-intent restore {intent, hasUri}`, `[ArtistLoading] blocked: photo intent without photo`.
+  - 서버 원본 재사용(아래 H-1 서버 항목)은 W1 옵션이며, 쓰더라도 [이전 사진 사용] 선택 시 확약 다이얼로그를 다시 띄우고 얼굴 게이트(바이트 SHA 기반)는 서버에서 그대로 돌게 한다 — 인증 우회 없음.
+- W0 회귀 E2E(핵심 여정 — test-designer 1순위): 사진 업로드 → 이탈 3종(작업실 복귀 / 웹 새로고침 / 백그라운드 3분 후 복귀) → 이어서 진행 → 사진 단계 재요구 확인 → 재업로드 → 생성 시 서버 로그 **source=photo… photo=True·face gate 발동**, save에 **original_photo_object_name 채워짐**, ArtistResult **'만들 때 사용한 사진' 노출**. 음성 케이스: 재업로드 없이 진행 불가, 가드 발동 시 ⭐ 불변. 텍스트 전용 명시 선택은 기존대로 동작.
+
+## 0단계 findings / Plan verification (파일:라인)
+
+**A. 생성 결과 유실 — 서버는 끝까지 만들고, 앱이 받기를 포기한 뒤 버린다**
+- [O] job 6ab4c16e(사진+텍스트)·6ab4c22b(텍스트만) 둘 다 서버 done, 각 ⭐10 차감. 폰 브라우저 백그라운드→복귀 때 조회가 연속 Network Error로 실패.
+- [P] 폴링 `screens/ArtistLoadingScreen.tsx:57-82` — 5초 간격·180틱, **연속 오류 3회면 포기(:77)**. 화면이 다시 보이는지 확인하지 않고 지연(백오프)도 없어, 복귀 직후 네트워크가 되살아나기 전 1초 만에 3회를 모두 써버린다. 포기 시 문구 :77 + 공통 catch(:571-574)가 **"사용된 별은 자동으로 환불됩니다"를 덧붙인다 — 서버는 성공했으니 환불 없음 = 잘못된 안내**.
+- [P] **결과 확정 단계가 전부 앱 쪽에 있다**: done 이후 upload-original-photo(:246-259) → `/character/save`(:290 — 슬롯 생성·영구 경로 복사) → ArtistResult. 앱이 중간에 끊기면 결과가 `characters/temp/{uid}/*.png`에 남는다(서버 `character.py:684-730` `_store_temp_sheet`). 이 temp 결과를 다시 찾을 방법이 없다: job_id를 저장하지 않고(`characterTaskStore.ts:169-172` partialize=draft만), 서버에는 목록 조회가 없다(`character.py` 라우트: GET /job/{id}(:1713)만 있음). /save가 job을 "소비됨"으로 표시하지도 않는다(:1892-2000에 character_jobs 접근 0).
+- [P] 서버 job 문서 필드(실측): status·object_name·original_object_name(사진 원본 temp 경로)·preview_url·mode·character_id·art_style(_key)·point_ref·refunded·created/completed_at. 전체 64건, 최근 7일 done 6건. **인덱스는 _id 하나뿐**. 소비 여부를 과거 데이터로 추정하는 방법(characters.updated_at 20분 이내 변경)은 유실 2건까지 "소비됨"으로 오판해 **쓸 수 없음** → 소비 표시는 배포 이후에만 믿을 수 있다.
+- [P] 재기동 부작용(F에도 해당): 백그라운드 작업은 프로세스 메모리에서 돌기 때문에(`BackgroundTasks`, character.py:1422-1440) 재기동하면 **진행 중 job은 'processing'으로 멈춘다**. 이를 정리하는 코드는 **다음 기동 때 30분 넘은 job만** 실패+환불 처리한다(`main.py:535-567`). 30분 안 된 job은 그다음 재기동까지 멈춘 채 별만 차감된 상태로 남는다.
+
+**B. 원격 로거 폭주** — [O] 원인 추적 그대로. [P] 라인 확인: `utils/remoteLogger.ts:124-143` _enqueue(큐가 20 이상이면 즉시 _flush :142), `:145-170` _flush(401·422만 버림 :161, 나머지는 큐로 되돌림 :166-167, **동시 실행 방지 없음**, _inEmit는 불리언 하나라 겹친 flush에서는 무력 :58/:153/:169), 주기 flush 5초(:286-288). 서버는 토큰이 만료·무효면 403을 준다(`app/auth.py:28-32`), 세션이 없으면 401(:40-41). 참고로 get_current_user는 `?token=` 쿼리도 받는다(:18-21).
+
+**C. 위시 조회 실패** — [P] `stores/wishlistStore.ts:47-68` sync가 `GET /wishlist/check?item_ids=<콤마 결합>`. 호출부 `ArtistCodyScreen.tsx:306`(카테고리 최대 500개 — 서버 `$sample 500`), `:337`(모자+가방 1,252개). ID 24자+%2C라 500개면 URL ≈13.5KB, 1,252개면 ≈34KB. 서버 쪽 `wishlist.py:131-150`에는 크기 제한이 없다. **그런데 이미 `GET /wishlist/`(:153 — 내 위시 전량, 보통 수십 건)가 있으므로 check 없이 wished 맵을 채울 수 있다** → 서버 변경 없이 해결 가능.
+
+**D. 피커 데이터·UI (ad_items 실측, 활성·비숨김 4,674건)**
+- 출처(seed_source): `fashion_brands_csv` 4,219(v3.216 브랜드샵, 소유 계정 1개 = 닉네임 '브랜드샵', 80브랜드) / `item_images_csv` 449(6개 플랫폼 계정 무신사·29cm·W컨셉·에이블리·지그재그·크림, 182브랜드) / 표기 없음 6(수동 등록 2계정).
+- 카테고리별 합계: **상의 1,501 · 하의 1,421 · 신발 500 · 모자 629 · 가방 623**. 필드가 채워진 비율: name·product_name·brand·gender·color·image·product_url 100%. `price_krw`는 브랜드 데이터 4,196/4,219에만 있고 플랫폼 데이터는 0% (가격 3,000~950,000, 중앙값 72,000). **세부 분류(sub_category) 필드 없음.** color는 자유 텍스트라 표기가 584가지(BLACK/Black/블랙/black 등)이고, '기본' 1,055·'단일색상' 243은 실제로 색이 없다는 뜻.
+- 성별: 브랜드 데이터 여성용 1,999 / 남성용 921 / 공용 1,299, 플랫폼 데이터 여성용 241 / 남성용 208.
+- **서버 목록 API `business.py:406-448` `/ads/active`는 `$sample 500` 랜덤 추출** → 상의·하의는 열 때마다 약 1/3만 무작위로 보인다(브랜드를 모아서 보여주는 것 자체가 불가능). 쿼리 파라미터는 category 하나뿐, 페이지네이션 없음. 상의 500건 응답 = **345KB, 압축 없음**(nginx `gzip on`이지만 gzip_types 기본값에 JSON이 없음 — nginx.conf:46-53 실측, FastAPI GZip 미들웨어도 없음).
+- **두 데이터가 따로 보이는 이유**: 앱 드릴다운 첫 단계 '플랫폼' = `advertiser_nickname`(`ArtistCodyScreen.tsx:95` platformOf). 그래서 무신사·29cm…와 **'브랜드샵'이 같은 줄에 나란히 선택지로 뜬다**(:716-721 facetOptions). 그 뒤 단계: 브랜드 › 성별 › 제품 › 색상(:702-714, v3.90 5단계).
+- 브랜드 표기 오류: 카드 배지(:1162-1166)·카테고리 카드(:798-800, :931-933)·**생성 프롬프트 fmt(:454)·하의 지시문(:476)·appliedItems.brand(:599)**가 모두 advertiser_nickname을 쓴다. 그래서 브랜드샵 상품은 "브랜드샵 우먼즈룩 …"으로 프롬프트에 들어가고 카드에도 '브랜드샵'으로 표시된다(실제 브랜드명은 brand 필드에 있음).
+- 세부 분류 규칙 가능성(상품명 키워드 규칙, 로컬 시험): 분류 성공률 **상의 93.2% · 하의 96.7% · 신발 82.2% · 모자 99.7% · 가방 98.7% (전체 94.7%)**, 나머지는 '기타'. 주의: 규칙 순서가 중요하다(티셔츠를 셔츠보다 먼저, 맨투맨/스웨트셔츠를 셔츠보다 먼저). 색상 계열 13종 정규화(텍스트 규칙 — 색이 '기본'이면 상품명에서 추출): **3,617/4,674 = 77% 분류, 874건은 '색상 정보 없음'**.
+- 데이터 무결성: 이미지 60건 무작위 표본 전부 200(image/*), image_object_name 중복 0. (brand, category, name) 중복 290그룹·초과 문서 306, (product_url, color) 중복 213 — 색상 옵션을 문서 단위로 넣은 결과이며 동일 상품이 중복 노출됨(표시 단계에서 합치기는 백로그). color 값에 **'색상미표기_NNNN'·'Women'·'Men'·'Long' 같은 파싱 잔재**가 있음 → 표시할 때 숨김. 플랫폼 데이터 3건은 admin_hidden=False(노출 정상).
+- 튜토리얼 앵커: ArtistCody에는 앵커가 없다(grep 0). Map(MapScreen.tsx:66-90)은 이번에 건드리지 않는다.
+
+**E. 선택 상태** — [P] `ArtistCodyScreen.tsx:204` `selected`(컴포넌트 state, 카테고리당 1개). 피커를 닫거나 탭을 바꿔도 화면이 떠 있는 동안은 유지된다. **화면을 다시 들어오면 사라진다**(적용 시에만 `outfitStore.setItems`(:616)로 AppliedItem 저장 — 모양이 다르고, 새 시트 생성 시 clear(ArtistInputScreen.tsx:590)).
+
+**F. 비밀번호 찾기 메일 — SES 전환은 v3.207에 이미 구현·배포돼 있고, 스위치만 꺼져 있다**
+- [P] 코드: `app/services/mailer.py`(sesv2 boto3, 기본 자격 체인 = 인스턴스 롤, run_in_executor, 실패하면 dev 폴백). 라우트 `app/routes/auth.py:419-475`(request)·`:477-`(confirm), 코드는 bcrypt 해시로 **Redis `pwreset:code:{ekey}`에 TTL 15분**(:394-396), 시도 5회·시간당 5회 제한. 설정 키 `config.py:232-244`: MAIL_ENABLED·SES_REGION·MAIL_FROM·PASSWORD_RESET_CODE_TTL_MINUTES·PASSWORD_RESET_MAX_ATTEMPTS·PASSWORD_RESET_HOURLY_LIMIT.
+- [P] **라이브 상태: mail_enabled=False**(컨테이너 settings 불리언 확인). 서버 .env에 MAIL_*/SES_* 키 자체가 없음(키 이름 grep: REDIS_*·AWS_FACE_*·AWS_FACE_USE_IAM_ROLE만 있음) → **지금 사용자는 재설정 메일을 받지 못한다. 코드는 서버 로그에만 찍힌다(dev 폴백)**. 앱은 계정 존재를 노출하지 않으려고 항상 200을 주므로 사용자에게는 "보냈다"고 보인다.
+- [P] IAM: IMDS 역할 **maidol-ec2 존재**(리전 ap-northeast-2). 같은 역할로 sesv2 GetAccount/GetEmailIdentity/ListEmailIdentities 호출 → **AccessDenied** → 역할에 SES 권한이 없다(적어도 읽기 권한은 확정 없음, SendEmail 권한도 부여 흔적 없음). 관리자 헬스체크 SES 항목(admin_health.py:194-206)도 같은 이유로 실패 중일 것.
+- [P] DNS(maidol.ai.kr, Cloudflare NS): **TXT(SPF) 없음·MX 없음·_dmarc 없음·_amazonses 없음**. DKIM CNAME은 셀렉터가 무작위라 조회로 확인 불가 → 도메인 검증은 콘솔에서 확인 필요(미검증으로 추정).
+- [P] 재기동 영향: .env는 이미지에 들어가지 않고(.dockerignore:21-24), 컨테이너 생성 시점의 `--env-file`로 들어간다 → **`docker restart`로는 반영되지 않고, 컨테이너를 다시 만들어야 한다**(기존 배포와 같은 `docker rm -f` + `docker run … --env-file .env`, REPORT.md:3387). Redis는 별도 컨테이너 aimu-redis(`--appendonly yes`, docker-compose.yml:48, 09-17부터 가동) → **앱 컨테이너 재생성과 무관하게 재설정 코드·로그인 세션 유지** — 진행 중인 재설정 링크(코드)는 무효화되지 않음. 이미지 재빌드 불필요(코드 변경 0).
+
+**G. 웹 배포 스크립트** — [P] `/Users/pearl/homepage/maidol/deploy.sh`: `app` = 2_housing에서 `rm -rf dist && npx expo export --platform web` → homepage/maidol/app로 복사 → assets/node_modules를 vendor-assets로 이름 변경하고 번들 해시 갱신 → index.html을 app.html로 바꾸고 app-shell(PC 래퍼)을 index로 → `wrangler pages deploy --project-name=maidol-app`(app.maidol.ai.kr). `landing` = www → project maidol(maidol.ai.kr). `all`(**인자를 안 주면 기본값**) = 둘 다. 전제: wrangler Cloudflare 로그인 상태, **2_housing 작업트리 그대로 빌드됨(커밋되지 않은 변경도 포함)** → 커밋 후, 작업트리가 깨끗할 때 실행.
+
+**H. 얼굴 반영 (추가 항목 — [O] 추적 + [P] 설계 근거)**
+- H-1 사진 소실 경로(코드로 확정): `ArtistInputScreen.tsx:201-204` photoUri는 **로컬 state이고 v3.219 draft 영속에서 빠져 있다**(`characterTaskStore.ts:169-172`). draft는 생성에 성공해야만 지워진다(ArtistResult reset). 그래서 실패 후 아티스트 만들기에 다시 들어오면 **Q&A는 복원되지만 사진은 null**이고, `handleStartGeneration`(:559-)이 **`setInput({ photoUri: null … })`(:593)으로 store에 남아 있던 사진까지 덮어쓴다**. 사진이 없으면 텍스트 전용 경로로 조용히 진행되고(:562는 텍스트가 있으면 통과), 과금된다. 폰 웹에서 페이지가 새로 로드된 경우에도 메모리 store가 비어 같은 결과. 그런데 ArtistCody는 실사 모드에서 사진 유무와 상관없이 "【필수 유지】 얼굴 인상·체형은 첨부된 사용자 사진을 따라"(ArtistCodyScreen.tsx:582-586)를 프롬프트에 넣는다 → 사용자도 모델도 사진이 있다고 여기게 됨. 서버에는 이전 사진이 남아 있다: job.original_object_name(`characters/temp/{uid}/original_{8hex}.jpg`, character.py:704-716).
+- H-2 서버 구조: `character.py:1307-1308` 실사는 gpt_image_2로 고정(v217 [ModelPin] — **도입 사유는 앱팀 요청 "모델 선택 없이 하나로 고정"**(TripleJ-backend APP_TEAM_HANDOFF_v216.md:190-200). 얼굴 동일성 비교에서 나온 결정이 아님). `character_generator.py:948-985` `_build_inline_images`는 "[인물 사진]:" 같은 역할 라벨 텍스트를 이미지 앞에 붙이지만, **gpt_image_2 분기(:1233-1245)는 inlineData 바이트만 추출** → 라벨이 사라진다. 그런데 Step B 프롬프트(:1403-1406)는 "[인물 사진] 라벨이 붙은 이미지는…"이라고 라벨이 있다고 가정 → 모델이 어느 이미지가 얼굴인지 알 수 없다. CHARACTER_SYSTEM_INSTRUCTION은 Gemini 경로(:1250-1253)에만 전달된다. `openai_image.py:94-125` `_call_edits`는 모든 참조를 `ref_{i}.png`/image/png로 표기(원본은 jpg). 사진은 이미 첫 번째로 들어간다(:960-962 순서: 사진→상의→하의→신발). **텍스트 우선 조항**: `:936-942` "사용자 설명과 사진이 충돌하면 사용자 설명을 우선" + 앱 Q&A가 사진이 있어도 머리·얼굴·피부·체형을 묻고(ArtistInputScreen.tsx:90-110, buildFinalText :128-140) "머리는 …, 얼굴은 …"을 보낸다 → **긴 생머리→단발, 둥근 얼굴→갸름한 얼굴 변화는 답변이 사진을 덮어쓴 결과일 수도 있다**(서버가 user_text를 로그에 남기지 않아 확인 불가 — 이번에 길이·해시·키워드 로그 추가).
+- **OpenAI 공식 문서 확인(WebFetch)**: `input_fidelity`는 "gpt-image-2와 gpt-image-2-2026-04-21은 이 파라미터를 무시한다"(API reference Create image edit). 프롬프트 가이드에는 "input_fidelity does not work for this model because output is already high fidelity by default". 실제로 gpt-image-2에 input_fidelity를 보내면 **400 `invalid_input_fidelity_model`**(pydantic-ai 이슈 #5413). → **입력 충실도 상향은 쓸 수 없음(보내면 실패)**. 공식 권장: "Reference each input by index and description ("Image 1: … Image 2: …")", "Preserve her exact likeness, expression, hairstyle, and proportions … lock what must not change". 이미지는 최대 16장, PNG/WebP/JPG 허용.
+- H-3 [보안]: `character.py:2440-2461` preview 프록시는 **인증 없이** faces/·evidence/만 막는다 → `characters/{uid}/original_*`(영구, upload-original-photo :575-581)와 `characters/temp/{uid}/original_*`가 토큰 없이 200([O] curl). 원본을 쓰는 앱 코드: `ArtistLoadingScreen.tsx:95-118` appendMinioImageToForm(웹 fetch·네이티브 downloadAsync, 인증 없음), `ArtistResultScreen.tsx:305-315, :434-435`(원본 사진을 `<Image uri>`로 표시). 관리자 웹은 `/api/admin/media` 프록시를 쓰므로(admin_moderation.py:76-91) 영향 없음. 시트·아이템 이미지(tracks.py:1624 등 공개 사용)는 공개 유지.
+
+## 확정 스펙
+
+### A. 생성 결과 회수 [서버+앱, 1조+백엔드]
+- **서버(character.py)**
+  1) `GET /api/character/jobs/recoverable` — 내 job 중 `consumed_at`·`dismissed_at`이 없고 `created_at >= max(now-7d, RECOVERABLE_SINCE)`인 것. done → {job_id, mode, status, object_name, preview_url, original_object_name, character_id, art_style(_key), created_at, completed_at}, processing → {job_id, mode, status, created_at}. 조회 시 **30분 넘은 processing은 즉시 failed+환불로 정리**(main.py:549-563의 claim+`refund_character_job_points` 재사용 — 재기동을 기다리지 않는 lazy 정리. voice 만료 lazy 체크 관행과 같음). 최신순 최대 10건. 로그 `[CharJob] recoverable user=… n=…`.
+  2) `/character/save`(:1892) 성공 경로 끝에 best-effort `character_jobs.update_one({user_id, object_name: body.sheet_object_name}, {$set:{consumed_at}})` — 정상 생성 흐름이 자동으로 소비 표시를 남긴다.
+  3) `POST /api/character/job/{job_id}/dismiss` — 본인 done job만, `dismissed_at` 설정(결과 버리기). **환불 없음**(성공 결과가 전달된 것이므로 — 실패만 환불하는 기존 정책과 일치).
+  4) 인덱스 `character_jobs (user_id, created_at)` — **main.py는 건드리지 않는다**(07:03Z에 다른 세션이 .bak 없이 수정·배포함). character.py 안에서 recoverable을 처음 호출할 때 프로세스당 1회 create_index(멱등, 모듈 플래그).
+  5) 상수 `RECOVERABLE_SINCE`: 기본 = 배포 시각(과거 job은 소비 여부를 알 수 없어 다시 나타나지 않게 함). **사용자가 오늘 유실 2건을 "살리기"로 결정하면 `2026-09-24T06:00:00Z`로 설정** → 두 건이 해당 사용자의 회수 목록에 자동으로 뜬다. 06:00Z 이후 타 사용자 done job이 있으면 배포 직전 읽기 전용 조회로 확인해 보고한다.
+- **앱**
+  1) `characterTaskStore`: 영속 필드 `activeJob: {jobId, mode:'sheet'|'outfit', kind, targetCharacterId, pendingName, pendingGender, pendingAge, legacyContract, startedAt}`(텍스트만 — 2026-09-07 보존 정책) 추가. POST로 job_id를 받자마자 기록하고, save 성공·dismiss·failed 수신 시 비운다. partialize에 activeJob 추가.
+  2) `pollCharacterJob`(:57-82) 재작성: 화면이 보일 때만 오류를 센다(웹 `document.visibilityState`, 네이티브 AppState). 보이게 되면 1.5초 기다렸다가 즉시 1회 조회. 연속 오류는 5→10→20→40→60초 백오프. 포기 기준을 "오류 3회"에서 **"화면에 보인 상태로 누적 3분 연속 실패" 또는 job 생성 후 20분 경과**로 변경. 404는 즉시 종료. 로그 `[ArtistLoading] poll resume/visible/backoff`.
+  3) 포기·이탈 시 문구: "생성은 서버에서 계속되고 있어요. 완성되면 '내 아티스트'에서 받아볼 수 있어요." — **환불 문구 제거**(:77, :571-574 — 서버가 실제로 실패했을 때만 환불 안내).
+  4) ArtistLoading 재진입(resume 모드): store에 activeJob이 있으면 POST 없이 폴링만. done 이후 처리(save → ArtistResult)는 공통 함수 `finalizeCharacterJob(job, ctx)`로 추출해 신규·재개·회수가 같은 경로를 쓴다(upload-original-photo는 사진 파일이 메모리에 있을 때만, 없으면 job.original_object_name을 save의 original_photo_object_name으로 보냄).
+  5) 회수 UI: `MyArtistsScreen` 상단과 `ArtistInputScreen` welcome에 "완성된 아티스트가 도착했어요 (n)" 카드(미리보기 썸네일) → [아티스트로 저장](finalize — 409 슬롯 초과면 기존 확장 다이얼로그 재사용) / [버리기](dismiss, showAlert 확인). processing이면 "만드는 중" 카드 + 탭하면 ArtistLoading resume. 조회 시점: 두 화면 focus 때, 로그인 사용자만, 30초 스로틀. `services/characterService.ts`에 listRecoverableJobs·dismissJob 추가. 서버 404(구서버)면 조용히 무시.
+  6) outfit 모드도 같은 activeJob/resume을 적용(회수 목록에서는 mode=real/cartoon + character_id로 대상 아티스트 갱신 저장).
+
+### B. 원격 로거 [앱 단독, 1조]
+- `_flush`: **401·403·422는 전부 버림(drop)**. 추가로 401·403이면 `_authBlockedToken = 현재 토큰`으로 로거를 일시정지(같은 토큰인 동안 enqueue·flush 무동작, authStore 토큰이 바뀌면 해제).
+- 한 번에 하나만 실행: `_inflight: Promise|null` — 실행 중이면 새 flush는 무동작(임계치 트리거 포함). `_inEmit` 불리언은 카운터로 바꾸거나 inflight로 대체.
+- 실패 백오프: 네트워크·5xx면 `_nextAllowedAt = now + min(5s·2^n, 5분)`. 연속 5회 실패 시 서킷 차단 10분(큐는 MAX_QUEUE로 자르고 유지). 성공하면 초기화.
+- 임계치 즉시 flush(:142)는 백오프·서킷·inflight 조건을 모두 통과할 때만.
+- 목표 수치: 만료 토큰 상태에서 **분당 요청 ≤1**(첫 403 이후 0).
+
+### C. 위시 조회 [앱 단독, 1조]
+- `wishlistStore.sync(itemIds)`의 **시그니처는 유지**(2조 호출부를 바꾸지 않기 위해). 내부를 `GET /wishlist/` 1회로 교체해 wished 맵을 채운다(서버 쿼리스트링 없음): 목록 id → true, 넘겨받은 itemIds 중 목록에 없는 것 → false. 60초 이내 재호출은 캐시(피커를 열 때마다 호출돼도 1회). `/wishlist/check`는 더 이상 쓰지 않는다(서버 라우트는 그대로 둠 — 구버전 앱 호환).
+- 로그 `[wishlistStore] sync via list { listed, requested }`.
+
+### D. 꾸미기 피커 통합 + 대분류·필터 [서버+앱, 2조+백엔드]
+- **서버**: 신규 `GET /api/business/ads/catalog?category=`(ALLOWED 5종, 인증 없음 — /ads/active와 같음). 전량 반환(`$sample` 없음), 정렬은 source_rank 오름차순 후 created_at. 필요한 필드만 추림: `{id, name, product_name, brand(없으면 advertiser_nickname), gender, color(잔재 값은 빈 문자열), color_family, sub_category, price_krw|null, image_object_name, product_url, source:'brand'|'platform'}`. 응답은 **gzip**(Accept-Encoding: gzip이면 라우트 안에서 gzip.compress + Content-Encoding 헤더 — 전역 GZip 미들웨어는 오디오 Range 스트리밍을 깨뜨릴 수 있어 쓰지 않음). 상의 1,501건 예상 ≈330KB → gzip 후 약 50~70KB. `/ads/active`는 그대로 유지(구버전 앱·PlayerScreen 등).
+- 신규 `app/services/item_taxonomy.py`: `classify_sub_category(category, name)`(규칙 순서가 중요 — 이번에 시험한 규칙표를 그대로 옮기고 보강: 상의 = 아우터·가디건·후드·맨투맨·니트·원피스·나시·티셔츠·셔츠/블라우스·기타 / 하의 = 스커트·반바지·데님·슬랙스·트레이닝/조거·카고/와이드·팬츠·기타 / 신발 = 스니커즈·부츠·로퍼/구두·샌들/슬리퍼·기타 / 모자 = 볼캡·버킷햇·비니·베레모/기타 / 가방 = 백팩·크로스백·토트백·숄더백·미니/파우치·기타), `color_family(color, name)`(13계열: 블랙·화이트·아이보리/크림·그레이·네이비·블루·베이지/브라운·그린·레드/버건디·핑크·퍼플·옐로/오렌지·멀티, 없으면 null). **응답을 만들 때 계산하고 DB에는 쓰지 않는다**(4.7k건이라 비용 무시할 수준, 규칙은 재배포로 개선, 프로덕션 DB 쓰기 0). 이미지 기반 색상 채우기(874건 미상)는 백로그.
+- **앱 UX(피커 모달 재구성)**
+  - 상단: E 선택 스트립 → [전체 | 내 위시리스트] 탭(유지) → (전체 탭) 보기 전환 [브랜드 모아보기 | 브랜드 펼쳐보기].
+  - 대분류 칩 가로 스크롤: '전체' + sub_category(개수 표시, 0건은 숨김). 악세서리는 v3.206 [모자 | 가방] 세그먼트를 유지하고 그 아래에 해당 대분류 칩.
+  - 필터 행: [성별 칩](v3.205/207 자동 필터를 그대로 이식 — 기본 ON, '◯◯용만/전체 보기', 성별 미설정 안내 칩 유지) · [색상 ▾](계열 스와치 다중 선택, '색상 정보 없음' 상품은 색상 필터를 켜면 제외) · [가격 ▾](~3만/3~5만/5~10만/10만~, 가격 없는 상품은 가격 필터를 켜면 제외하고 "가격 정보가 있는 상품만" 안내) · [브랜드 ▾](펼쳐보기 전용, 검색 가능한 다중 선택). 활성 필터 개수 배지와 [초기화].
+  - **모아보기**: 필터·대분류 적용 후 브랜드별 그룹 카드(브랜드명·상품 수·썸네일 3장), 상품 수 내림차순 → 탭하면 해당 브랜드의 상품 그리드, 상단 브레드크럼 "전체 브랜드 › {브랜드}"와 뒤로. **플랫폼 단계 폐지 — 무신사/지그재그/브랜드샵 구분 없이 brand 단위로 통합.**
+  - **펼쳐보기**: 필터 적용된 전체 상품 그리드, 정렬 [추천순(source_rank) | 낮은 가격순 | 높은 가격순](가격순에서 가격 없는 상품은 뒤로).
+  - 상품 카드: 배지 = `brand`(advertiser_nickname은 폴백일 때만), 상품명, 색상 텍스트(잔재 값 숨김), 가격(있을 때 "72,000원"), 판매처 보기·하트 유지, 선택됨 표시(v3.124) 유지, 선택된 상품 맨 앞 정렬 유지.
+  - 필터 적용 위치 = **클라이언트**(카테고리별 최대 1,501건을 한 번에 받는 규모라 즉시 반응하는 패싯 계산이 유리하고, 서버 쿼리 파라미터를 늘릴 필요 없음). FlatList `initialNumToRender 8·windowSize 5·removeClippedSubviews`, 이미지 lazy.
+  - 카탈로그 캐시: 카테고리별 메모리 캐시 10분(모달을 다시 열 때 재요청 없음). catalog가 404(구서버)·오류면 `/ads/active` → 그래도 0건이면 SAMPLE 폴백(v3.216 관행 그대로 — sub_category/color_family가 없으면 모두 '기타' 취급).
+  - 보기 모드·대분류·필터 상태는 화면 state로 유지(피커를 닫아도 카테고리별로 기억), 성별 필터는 기존대로 피커를 열 때마다 ON으로 복귀.
+  - **브랜드 표기 정정**: fmt(:454)·bottomName(:476)·appliedItems.brand(:599)·카테고리 카드(:798-800, :816, :931-933)·위시 카드(:1275)를 `brandOf(item)`(brand 우선)로 → 프롬프트에 실제 브랜드명이 들어간다.
+- 구조: 모달을 `components/cody/CodyPickerModal.tsx`(+ `CodyFilterBar.tsx`, `BrandGroupGrid.tsx`, `SelectedItemsStrip.tsx`)로 분리. 파생 계산은 `utils/codyCatalog.ts`(순수 함수 — 필터·그룹·정렬, 유닛 테스트 대상). API는 `services/catalogService.ts`.
+
+### E. 선택 아이템 미리보기 스트립 [앱, 2조]
+- 피커 모달 헤더 바로 아래에 가로 스트립: 상의·하의·신발·모자·가방 5칸 고정 순서, 각 칸 = 44px 썸네일(선택 없으면 점선 빈 칸 + 카테고리명). 현재 카테고리 칸은 강조 테두리.
+- 탭 동작(자율 확정): **썸네일(또는 빈 칸)을 탭하면 해당 카테고리 피커로 전환**(모자/가방은 악세서리 모드 서브탭으로) — 하의를 고르다가 상의를 바꾸는 흐름을 모달 안에서 끝낼 수 있게. 해제는 기존 관행대로 카테고리 카드를 길게 누르기(스트립은 탭 전환만 — 실수로 지우는 것 방지).
+- 재진입 유지: `outfitStore`에 `codyDraft: Record<Cat, AdItem 최소필드>` + `codyOptions` 추가(영속 — 텍스트/id만). ArtistCody mount 시 복원하고 선택이 바뀔 때마다 기록. 적용 성공(ArtistResult 도달)이나 새 시트 시작(ArtistInput :590 clear)에서 비운다. 복원한 아이템이 카탈로그에서 사라졌으면(비활성) 표시는 하되 적용 전 경고.
+- 로그 `[ArtistCody] strip jump {from,to}`, `[ArtistCody] draft restore {n}`.
+
+### F. 비밀번호 찾기 SES — 판정: **전환 가능(문제 없음), 코드 변경 0**
+- 판정 근거: ① 발송 코드(mailer.py)는 v3.207부터 운영 중이고 설정 스위치만 꺼져 있음. ② 전환에 필요한 서버 작업 = .env 3줄 + **컨테이너 재생성 1회**(이미지 재빌드 불필요). 재생성 동안 API는 수 초~수십 초 응답 불가(이미지 HEALTHCHECK start-period 90s가 상한) — 평소 배포와 같은 수준이며, 앱은 A·B 수정 이후 이 구간을 백오프로 견딘다. ③ 재설정 코드·세션은 별도 Redis 컨테이너(AOF 영속)에 있어서 앱 컨테이너 재생성에 영향이 없다 → 진행 중인 재설정도 유지. ④ SES 실패(권한·샌드박스·검증 미완료)면 mailer가 예외 없이 dev 폴백 → 서비스가 죽을 위험은 없다. 대신 메일이 조용히 안 가는 문제가 있으므로 `[mailer] ses send failed` 로그를 배포 검증 항목에 넣는다.
+- **재기동에 따른 진짜 리스크는 SES가 아니라 진행 중인 생성 작업**: 재생성 순간의 character job은 멈춘 채 남는다(0단계 A). 대응: ⑴ 배포 직전 `character_jobs status=processing` 0건 확인(읽기 전용), ⑵ A의 lazy 정리(30분 넘으면 실패+환불)로 재기동을 기다리지 않고 복구. 작곡·영상 생성 중인 job도 배포 직전 확인 대상에 포함(generations processing 건수 조회).
+- **SES 적용 방식은 v3.227 서버 배포와 같은 재생성 1회에 합친다**(.env가 준비됐을 때만 MAIL_ENABLED=true, 아니면 이번에는 false 유지 — 코드 배포와 분리 가능).
+- 사용자 AWS 콘솔·DNS 체크리스트(순서대로):
+  1. SES(ap-northeast-2) → Identities → Create identity → Domain `maidol.ai.kr`, Easy DKIM(RSA 2048). 표시되는 **CNAME 3개를 Cloudflare DNS에 추가 — 프록시 OFF(DNS only)**. 상태가 Verified가 될 때까지 대기(보통 수 분~72시간).
+  2. (권장) Custom MAIL FROM `mail.maidol.ai.kr`: Cloudflare에 MX `feedback-smtp.ap-northeast-2.amazonses.com`(우선순위 10) + TXT `v=spf1 include:amazonses.com ~all`.
+  3. (권장) DMARC: Cloudflare TXT `_dmarc.maidol.ai.kr` = `v=DMARC1; p=none;` (Gmail 수신 신뢰도).
+  4. SES → Account dashboard → **Request production access**(샌드박스 해제 — 용도: 비밀번호 재설정 트랜잭션 메일, 예상량 소량). 승인 전에는 검증된 수신 주소로만 발송된다(E2E는 본인 주소를 Verified identity로 추가해서 테스트 가능).
+  5. IAM → Roles → `maidol-ec2` → 인라인 정책 추가: `ses:SendEmail`(Resource `arn:aws:ses:ap-northeast-2:<ACCOUNT_ID>:identity/maidol.ai.kr`) + `ses:GetAccount`(Resource `*` — 관리자 헬스체크용).
+  6. 서버 .env에 `MAIL_ENABLED=true`, `SES_REGION=ap-northeast-2`, `MAIL_FROM=no-reply@maidol.ai.kr` 추가 — **사용자가 직접 편집**(값은 문서·로그에 남기지 않음). 이후 컨테이너 재생성은 배포 절차 §6에서 오케스트레이터가 수행.
+- 검증: 본인 이메일로 앱 "비밀번호 찾기" → 메일 수신(스팸함 포함 확인) → 코드로 변경 → 로그 `[mailer] ses send ok kind=reset`(코드 값은 미기록 확인) → admin 시스템 탭 SES 초록.
+
+### H. 얼굴 반영 [서버+앱, 백엔드+1조]
+- **H-1 사진 소실 가드(앱)**
+  - **W0 = 문서 상단 "[최우선] H-1" 절의 수정 1~5가 정본**(draft `photoIntent`, 사진 단계로 되돌림, :513/:593 null 덮어쓰기 금지, ArtistLoading :173-188 생성 직전 가드, 로그). 여기에 W1에서 [이전 사진 사용] 선택지를 더한다: 회수 가능한 최근 job의 original_object_name 또는 서버 캐릭터 original이 있을 때만 노출, 선택하면 확약 다이얼로그를 다시 띄운 뒤 `reuseOriginalObjectName`으로 전송.
+  - ArtistCody 실사 sheet 모드 상단에 "얼굴 사진 포함 / 설명으로 만들기" 배지. 사진이 없으면 【필수 유지】 문구(:582-586)를 "설명된 외모를 유지"로 분기(가상 분기와 같은 형태).
+- **H-1 원본 재사용(서버)**: generate-sheet-async·generate-sheet(sync)에 선택 Form `original_object_name` 추가 — 파일이 없고 이 값이 있으면 소유권 검증(`characters/temp/{uid}/original_` 또는 `characters/{uid}/original_` 접두어, 타인이면 403) 후 MinIO에서 바이트를 읽어 contents로 사용. 얼굴 인증 게이트(SHA 기반, :1384-1392)는 같은 바이트라 그대로 통과. 앱의 outfit 실사 경로도 이 Form을 쓰도록 바꿔 `appendMinioImageToForm`(원본을 앱이 내려받아 다시 올리는 것) 자체를 없앤다 → H-3과 자연스럽게 맞물림.
+- **H-2 동일성(서버) — 채택 ⓐ(인덱스 명시), ⓑ는 A/B로 판정**
+  - ⓐ `_call_image_backend` gpt_image_2 분기: parts를 순회하며 라벨 텍스트를 모아 **"Image 1: [인물 사진] — 이 인물의 얼굴형·이목구비·헤어(길이·색·스타일)·피부·체형을 그대로 유지. Image 2: [상의 참조] — 의상만 참조 …"** 형태의 인덱스 맵을 프롬프트 맨 앞에 붙이고, CHARACTER_SYSTEM_INSTRUCTION을 프롬프트 선두 블록으로 합친다(Gemini의 systemInstruction에 해당). Step B 문구 "[인물 사진] 라벨이 붙은 이미지"는 gpt 경로에서 "Image 1([인물 사진])"로 치환. 사진이 첫 번째 순서라는 것을 코드 주석과 assert로 고정. 공식 가이드의 identity lock 문구("Preserve exact likeness … Replace only the clothing")를 추가.
+  - `openai_image._call_edits`: 참조 파일명·MIME을 실제 포맷으로(매직바이트로 판별: jpg/png/webp). **input_fidelity는 보내지 않는다**(gpt-image-2는 400 — 공식 문서 근거를 주석으로).
+  - 텍스트 우선 조항 수정(:936-942): "사용자가 **명시적으로 바꾸라고 한 항목(헤어 등)만** 설명을 우선하고, 얼굴형·이목구비·피부 특징은 항상 사진을 따른다." 앱 쪽(1조): 사진이 있을 때 Q&A의 머리·얼굴·피부·체형 질문 안내를 "사진과 다르게 하고 싶을 때만 적어주세요(건너뛰면 사진 그대로)"로 바꾼다(ArtistInputScreen QUESTIONS 문구 — 사진 유무 분기).
+  - 관측: `[CharGen] user_text chars=%d hair_kw=%s face_kw=%s sha8=%s`(원문은 남기지 않음), `[CharGen] gpt refs=[photo,top,...] mimes=[...]`.
+  - ⓑ A/B: 배포 전 스테이징 스크립트 `scripts/ab_face_v3227.py`(컨테이너 안에서 generate_character_sheet를 직접 호출 — ⭐·슬롯·DB 쓰기 없음, 결과는 /tmp 로컬 png): **테스트 계정 사진 1장(사용자 제공 또는 오케스트레이터 테스트 사진) × {현행 gpt, ⓐ gpt, nb_pro} × 1회 = 3회 생성**(OpenAI 2 + Gemini 1, 호출 비용만). 사용자가 육안으로 판정 → nb_pro가 확실히 우월하면 REAL_SHEET_MODEL 전환은 **사용자 결정 사안**(v217 고정은 앱팀 요청이었으므로 되돌리는 것은 가능, 대신 실사 화질·의상 재현 차이도 함께 비교).
+- **H-3 원본 얼굴 사진 보호(서버+앱)**
+  - 서버 preview(:2440): 경로가 `characters/{uid}/original_` 또는 `characters/temp/{uid}/original_`(정규식)이면 `get_current_user`(헤더 또는 기존 ?token= 폴백) 필수 + `session.id == uid` 또는 role admin일 때만 200. 아니면 **404**(존재를 드러내지 않음 — faces/ 차단과 같은 관행). 로그 `[preview] original denied reason=`. 추가로 media_type을 매직바이트로(현재 png 고정).
+  - 앱: 신규 `utils/authImage.ts` — 네이티브는 `{uri, headers:{Authorization}}` 소스, 웹은 `fetch(Authorization)` → blob → `URL.createObjectURL`(언마운트 시 revoke). 적용 위치 ArtistResultScreen.tsx:305-315, :434-435(원본 사진 표시). ArtistLoading의 원본 다운로드(:95-118)는 H-1에 따라 `original_object_name` Form으로 대체되어 제거. **URL에 JWT를 넣는 방식은 쓰지 않는다**(nginx access log 노출 방지).
+  - 순서: 서버 배포(게이트 포함)와 웹 배포를 같은 창에서 진행. **APK 1.1.8은 실사 옷 입히기(원본 재다운로드)와 원본 사진 표시가 401/404로 깨짐** — 사용자 결정 2(기본안: 보안 우선 즉시 차단, APK 1.1.9에서 복구). 장소 사진(`characters/{uid}/locations/`)도 실사진이라 같은 문제가 있으나 이번 범위 밖(백로그).
+
+## 변경 매트릭스
+| 파일 | 변경 | 담당 | 로그 추적자 |
+|---|---|---|---|
+| screens/ArtistLoadingScreen.tsx | A 폴링 재작성·resume 모드·finalize 추출·문구 정정 / H-1 전송 전 가드·original_object_name Form / H-3 appendMinioImageToForm 제거 | 1조 | `[ArtistLoading] poll …`, `[CharRecover]` |
+| stores/characterTaskStore.ts | A activeJob(영속)·H-1 textOnlyConfirmed·reuseOriginalObjectName | 1조 | `[CharRecover]` |
+| screens/ArtistInputScreen.tsx | H-1 draft hadPhoto·재업로드 버블·:593 덮어쓰기 금지 / H-2 사진 모드 Q&A 문구 / A 회수 카드 | 1조 | `[ArtistDraft]`, `[CharRecover]` |
+| screens/MyArtistsScreen.tsx | A 회수 카드(저장/버리기/진행중) | 1조 | `[CharRecover]` |
+| screens/ArtistResultScreen.tsx | H-3 원본 사진 authImage 적용(:305-315, :434-435) | 1조 | `[authImage]` |
+| services/characterService.ts | A listRecoverableJobs·dismissJob | 1조 | `[CharRecover]` |
+| utils/authImage.ts (신규) | H-3 인증 이미지 소스(네이티브 헤더/웹 blob) | 1조 | `[authImage]` |
+| utils/remoteLogger.ts | B drop 403·인증 일시정지·inflight·백오프·서킷 | 1조 | `[remoteLogger]`(원래 console로 1회만 경고) |
+| stores/wishlistStore.ts | C sync → GET /wishlist/ 기반(시그니처 유지)·60초 캐시 | 1조 | `[wishlistStore] sync via list` |
+| screens/ArtistCodyScreen.tsx | D 피커를 CodyPickerModal로 교체·브랜드 표기 정정(:454/:476/:599/:798/:816/:931) / E draft 복원·기록 / H-1 사진 배지·【필수 유지】 분기(:582-586) | **2조 전유** | `[ArtistCody]` |
+| components/cody/CodyPickerModal.tsx·CodyFilterBar.tsx·BrandGroupGrid.tsx·SelectedItemsStrip.tsx (신규) | D·E UI | 2조 | `[ArtistCody]` |
+| utils/codyCatalog.ts (신규) | D 필터·그룹·정렬·가격 구간·색상 스와치 맵(순수 함수) | 2조 | — |
+| services/catalogService.ts (신규) | D catalog 호출·캐시·/ads/active 폴백 | 2조 | `[catalog]` |
+| stores/outfitStore.ts | E codyDraft·codyOptions(영속) | 2조 | `[ArtistCody] draft` |
+| 서버 app/routes/character.py | A recoverable·dismiss·save 소비 표시·인덱스 / H-1 original_object_name Form / H-3 preview 게이트 | 백엔드 | `[CharJob]`, `[preview]` |
+| 서버 app/main.py | **변경 없음**(다른 세션이 07:03Z 수정 — 인덱스는 character.py lazy 생성으로 대체) | — | — |
+| 서버 app/services/character_generator.py | H-2 인덱스 맵·system 합성·텍스트 우선 조항·관측 로그 | 백엔드 | `[CharGen]` |
+| 서버 app/services/openai_image.py | H-2 MIME/파일명 정정(input_fidelity 금지 주석) | 백엔드 | `[OpenAIImage]` |
+| 서버 app/routes/business.py | D /ads/catalog(gzip·필드 축소) | 백엔드 | `[catalog]` |
+| 서버 app/services/item_taxonomy.py (신규) | D 세부 분류·색상 계열 규칙 | 백엔드 | — |
+| 서버 scripts/ab_face_v3227.py (신규, 스테이징 전용) | H-2 A/B 3회 | 백엔드 | `[ABFace]` |
+| 서버 .env | F MAIL_ENABLED·SES_REGION·MAIL_FROM | **사용자** | `[mailer]` |
+
+충돌 방지: 1조와 2조의 공유 접점은 `wishlistStore.sync` 시그니처(불변)와 `characterTaskStore`(2조는 읽기만 — 사진 배지용 `photoUri`/`characterKind`)뿐. ArtistCodyScreen은 2조만 편집하고, 1조의 H-1 ArtistCody 변경분(배지·【필수 유지】 분기)도 2조가 반영한다.
+
+## 조 분담 (할당문)
+- **1조(frontend-dev A) — [먼저] W0 H-1 앱 수정만 담은 단독 커밋(ArtistInputScreen·characterTaskStore·ArtistLoadingScreen 가드) → 오케스트레이터 검증·웹 배포 → 이어서 A+B+C+H-1 W1분+H-2(앱 문구)+H-3(앱)**: ArtistLoading 폴링·resume·finalize 공통화, activeJob 영속, MyArtists·ArtistInput 회수 카드, 사진 소실 가드와 draft hadPhoto, 원본을 Form으로 재사용, authImage, remoteLogger 방어 5종, wishlist sync 교체. ArtistCodyScreen은 건드리지 않음. 서버 신규 API가 404면 조용히 기존 동작(구서버 호환).
+- **2조(frontend-dev B) — D+E(+H-1 ArtistCody 부분)**: 먼저 **행동 변화 없는 추출 커밋**(현행 피커를 CodyPickerModal로 그대로 옮김, 스냅샷·회귀 확인) → 이어서 기능 커밋(catalog·모아보기/펼쳐보기·대분류·필터·스트립·draft·브랜드 표기). v3.205 성별 칩·v3.206 서브탭·위시 탭·SAMPLE 폴백 문구·v3.124 선택됨 표시를 그대로 옮긴다.
+- **백엔드(backend-dev) — 서버 A·D·H 코드**: `/private/tmp/server_staging_v3227/`에서만 작업(라이브 원본을 읽기로 가져와 `_orig/` 보존 + MD5SUMS). py_compile, 유닛(분류 규칙표 골든 케이스·recoverable 필터·preview 게이트 경로 정규식·Form 소유권 검증), DEPLOY.md 작성. A/B 스크립트는 스테이징에만 두고 실행은 배포 창에서 오케스트레이터가 한다.
+
+## 서버 배포 절차 (v3.203·v3.224 관행)
+0. **[동시 작업 경고]** 컨테이너가 07:03:26Z에 재시작됨 — 다른 세션이 `app/routes/admin_items.py`(07:02)·`app/main.py`(07:03)를 .bak 없이 수정·배포. 따라서 ⑴ 백엔드는 스테이징을 만들 때, 오케스트레이터는 **배포 직전에 한 번 더** 라이브 현재본 4파일(character.py·character_generator.py·openai_image.py·business.py)을 내려받아 `_orig`와 md5를 대조한다. 다르면 **새 현재본 위에 패치를 다시 적용**(3-way — 준비본으로 덮어쓰기 금지)하고 diff를 보고한다. ⑵ main.py·admin_items.py는 이번 반영 대상에서 제외(scp 목록에 넣지 않음). ⑶ 이미지 빌드는 서버 디렉터리 전체를 굽기 때문에 다른 세션의 미커밋 변경도 함께 빌드된다 → 빌드 전 `ls -l --time-style=full-iso app/routes app/services app/main.py`로 최근 변경 파일을 기록해 보고. 읽기 전용 사전 점검: `character_jobs`/`generations` processing 0건 확인(있으면 끝날 때까지 대기).
+1. 사용자(1줄): **디렉터리 통째 scp 금지**(main.py·admin_items.py 등 다른 세션 변경을 덮을 수 있음). 스테이징에 `deploy/` 평면 폴더(변경 5파일만: character.py·business.py·character_generator.py·openai_image.py·item_taxonomy.py)를 만들고 사용자가 한 줄(`&&` 연결)로 실행: ① ssh로 기존 4파일을 `.bak_pre_v3227`로 복사 ② routes 2파일 scp → `app/routes/` ③ services 3파일 scp → `app/services/`. 서버 파일 쓰기는 오케스트레이터 권한으로 차단되므로 백업 생성도 이 사용자 명령에 포함한다 — 정확한 명령은 DEPLOY.md에 기재. (F 준비가 됐으면 .env 3줄도 사용자가 편집)
+2. 오케스트레이터: 서버 .bak_pre_v3227 백업 확인 → `sudo docker build -t maidol-app:latest .` → `sudo docker rm -f maidol-app && sudo docker run -d --name maidol-app --network host --restart unless-stopped --env-file .env -e S3_REGION=ap-northeast-2 maidol-app:latest` → /api/health 200 대기. **로그 볼륨(우선순위 상향 — 재배포 때마다 컨테이너 내부 frontend.log·docker 로그가 사라져 이번 추적도 07:03 이전 로그를 잃음)**: 사용자가 승인하면 이 재생성에 `-v /home/ubuntu/maidol/logs:/srv/app/logs`를 추가한다(호스트 디렉터리를 먼저 만들고 `chown 10001:10001` — 이미지 USER app uid 10001). docker 표준출력 로그 보존(`--log-driver journald` 또는 재생성 전 `docker logs > 파일` 백업)도 함께 결정.
+3. 검증(무과금 우선): catalog 5카테고리 건수(상의 1,501…)·gzip 헤더·sub_category 분포 / recoverable 401(무토큰)·200(테스트 계정) / preview original 무토큰 404, 본인 토큰 200, 시트 경로 무토큰 200 유지 / dismiss 타인 job 404 / `[migration]` 인덱스 로그 / (F) `[mailer] ses send ok`.
+4. H-2 A/B 스크립트 3회 실행 → 결과 png를 사용자에게 전달 → 모델 결정(사용자).
+5. 웹 배포(G) — 서버 검증이 통과한 뒤에.
+6. 롤백: `.bak_pre_v3227` 복원 → 재빌드·재생성(DEPLOY.md에 명령 명시). .env 롤백 = MAIL_ENABLED 줄 삭제 후 재생성.
+
+## 40% 룰 판정
+**초과(범위 분할로 대응)**. ArtistCodyScreen(1,578줄)은 피커 모달·파생 계산(:671-760, :976-1300 ≈ 420줄)을 교체하고 신규 컴포넌트 4개를 더하므로 파일 변경률이 약 35~45%로 경계선이다 → **"추출 커밋(동작 불변) → 기능 커밋" 2단계를 의무화**해 재작성 리스크를 통제한다. 사이클 전체도 앱 14파일(신규 7)·서버 7파일(신규 2)로 평소 규모를 넘는다 → **웨이브 분할**:
+- **W0(최우선·앱 단독·서버 무관)**: H-1 앱 수정 1~4(draft photoIntent·사진 단계 되돌림·setInput 덮어쓰기 금지·생성 직전 가드). 1조가 별도 커밋으로 먼저 끝내고 → 웹 배포(G) 즉시 가능, APK는 1.1.9 후보. 서버 배포를 기다리지 않는다.
+- **W1(긴급·서버 배포 1회)**: A·B·C·H-1 서버(original 재사용 Form)·H-3(앱+서버), H-2ⓐ(서버 프롬프트), D 서버 catalog(앱 D가 없어도 무해), F(콘솔 준비가 됐으면 같은 재생성에 합침), 로그 볼륨 마운트(승인 시).
+- **W2(같은 사이클 후반, W1 배포 후)**: D·E 앱 UI(2조 — W1과 병렬로 개발하되 배포는 W1 서버 검증 이후), H-2ⓑ 결정 반영.
+- 이월(백로그): 이미지 기반 색상 채우기(874건), 색상 옵션 중복 문서를 표시 단계에서 합치기, 장소 사진 preview 보호, 서버 user_text 원문 감사 저장 여부, nginx gzip_types JSON(서버 설정 — 사용자).
+
+## test-designer 항목
+1. [unit] pollCharacterJob: 숨김 상태 오류는 세지 않음, 보이게 되면 1.5초 후 즉시 조회, 백오프 5→60초, 보인 상태로 3분 연속 실패하거나 20분 경과 시 포기, 404 즉시 종료, 포기 문구에 '환불' 없음.
+2. [unit] activeJob: POST 직후 기록, done→finalize→save 성공 시 비움, failed 수신 시 비움 + 환불 문구, 앱 재시작 후 ArtistLoading resume이 POST 없이 폴링만.
+3. [api] recoverable: 7일·RECOVERABLE_SINCE 경계, consumed/dismissed 제외, 30분 넘은 processing lazy 정리(1회만 환불 — refunded 플래그), 타 사용자 비노출, save 후 consumed_at 기록, dismiss 본인 done만.
+4. [e2e] 핵심 재현(폰 웹): 생성 요청 → 즉시 다른 탭/화면 끄기 3분 → 복귀 → 결과 화면 도달. 변형: 복귀 전 페이지 새로고침 → 내 아티스트에 "도착" 카드 → 저장 → ArtistResult. 슬롯 가득 참 409 → 확장 다이얼로그.
+5. [unit] remoteLogger: 403/401 응답 후 같은 토큰이면 enqueue·flush 0회, 토큰 바뀌면 재개. 동시 _flush 2회 호출 → 네트워크 요청 1회. 5xx 연속 시 백오프 간격·서킷 10분. 임계치 트리거가 백오프 중에는 무동작. [e2e] 만료 토큰으로 로컬 웹 10분 방치 → 서버 `_logs` 요청 ≤1.
+6. [unit] wishlistStore.sync: GET /wishlist/ 1회로 wished 채움(목록 id true, 요청 id 중 나머지 false), 60초 캐시, 401 조용히, 쿼리스트링 요청 0건. [e2e] 폰 웹에서 상의 피커 열기 → 하트 상태 정상, Network Error 0.
+7. [api] catalog: 카테고리별 전량(상의 1,501·하의 1,421·신발 500·모자 629·가방 623 ±비활성 변동), 필드 축소 셋, gzip, 잔재 color 빈 문자열, sub_category 골든 케이스(티셔츠가 셔츠로 분류되지 않음, 스웨트셔츠→맨투맨, 데이팩→백팩 등 20개), 비허용 category 400.
+8. [unit] codyCatalog: 대분류×성별×색상×가격×브랜드 조합 필터, 모아보기 그룹 정렬(상품 수 내림차순), 가격순에서 가격 없는 상품 뒤로, 필터 0건일 때 안내·초기화, 선택된 상품 맨 앞.
+9. [e2e] 피커: 모아보기 → 브랜드 → 상품 선택 / 펼쳐보기 → 필터 → 선택. 무신사·지그재그·브랜드샵이 **플랫폼 단계로 따로 보이지 않고** brand로 통합. 카드·프롬프트에 실제 브랜드명(예: 골드퍼센트)이 들어가고 '브랜드샵'은 없음(적용 로그 desc 확인).
+10. [회귀] v3.205/207 성별 자동 필터(기본 ON·피커 열 때 ON 복귀·서버 gender 폴백·미설정 칩 안내), v3.206 악세서리 [모자|가방] 서브탭·동시 선택·착용 방식 옵션 프롬프트 합성, 위시리스트 탭(카테고리 필터·판매종료 배지·하트 해제), SAMPLE 폴백(catalog/active 모두 실패·0건), v3.124 선택됨 표시, v3.116 자유 디렉팅, v3.156 returnToCover ← 복귀.
+11. [e2e] E 스트립: 상의 선택 → 하의 피커 상단에 상의 썸네일, 스트립에서 상의 칸 탭 → 상의 피커로 전환, 모자·가방 칸 → 악세서리 서브탭. 화면 이탈 후 재진입 → 선택 유지. 새 아티스트 생성 시작 → 비워짐.
+12. [e2e] H-1: 사진+Q&A → 실패 유도(오프라인) → 아티스트 만들기 재진입 → "사진 다시 올리기" 버블, 사진 없이 전송 시도 → **요청 0건·⭐ 변화 없음**. [이전 사진 사용] → 서버 로그 `source=photo…`, original_object_name 소유권 타인 403.
+13. [api] H-3: `characters/{uid}/original_*`·`characters/temp/{uid}/original_*` 무토큰 404, 타인 토큰 404, 본인 200, admin 200, 시트·아이템·커버 경로 무토큰 200 유지. [e2e] ArtistResult 원본 사진 표시(웹 blob·네이티브 헤더), 실사 옷 입히기 정상(원본 재다운로드 없이 Form 경로).
+14. [smoke] H-2: gpt 경로 요청 로그에 인덱스 맵·MIME 실제 포맷, input_fidelity 미포함, A/B 3장 산출. v3.219 디렉터 작업 보존(draft 복원·처음부터·성공 시 청소) 회귀, 가상(cartoon) 경로 프롬프트 불변.
+15. [회귀] 튜토리얼 앵커(MapScreen TUTORIAL_STEPS·DIRECTOR_ANCHOR — 회수 카드는 Map에 넣지 않음을 확인), 작업실 미니플레이어 숨김(ArtistCody·ArtistLoading focus), v3.223 재생 큐 무관.
+16. [ops] F: 재생성 전후 Redis 세션 유지(로그인 유지), 발급된 재설정 코드가 재생성 뒤에도 유효, SES 실발송·dev 폴백 로그 분기, admin SES 헬스.
+
+## 사용자 결정·실행 사안 (기본안 명시 — 지시가 없으면 기본안으로 진행)
+1. **오늘 2건(⭐20) 처리** — 실측 갱신: 2차 6ab4c22b(사진 없이 텍스트 전용, H-1 회귀로 발사)는 **이미 아티스트 "샘플"로 저장됨**(원본 사진 없음 → '사용한 사진' 미노출). 실제로 어디에도 연결되지 않은 것은 **1차 6ab4c16e(사진+텍스트, 얼굴 인증 통과, 결과+원본 temp 보존)** 1건. 기본안 = **"샘플"의 시트를 1차 결과로 교체하고 1차 원본을 original_photo_object_name으로 연결**(`/character/save` character_id=샘플 cid, sheet_object_name=1차 object_name, original_photo_object_name=1차 original_object_name — 오케스트레이터가 사용자 토큰 없이 서버 내부 스크립트로 수행하는 프로덕션 쓰기라 승인 필요, 이름·성별 등 프로필 유지) + **의도하지 않은 텍스트 전용 과금 ⭐10 환불**(2차 point_ref 기준 1회). 대안: (b) 1차를 새 아티스트로 회수(슬롯 필요 — W1 회수 UI 또는 RECOVERABLE_SINCE=06:00Z) + "샘플" 유지, (c) 환불만. 참고: 1차 결과도 H-2 구조 문제(참조 라벨 소실) 영향 아래 생성된 것이라 얼굴 유사도는 약할 수 있음 → 교체 전 미리보기를 사용자에게 보여주고 확정.
+2. **H-3 즉시 차단 vs APK 호환**: 기본안 = 즉시 차단(얼굴 원본 = 민감 개인정보). APK 1.1.8의 실사 옷 입히기·원본 사진 표시는 1.1.9 배포 전까지 실패(웹은 동시 배포로 정상).
+3. **H-2 모델**: 기본안 = gpt_image_2 유지 + ⓐ 적용, A/B 3장을 보고 사용자가 nb_pro 전환 여부 판정.
+4. **F SES 콘솔·DNS·IAM·.env**: 체크리스트 1~6은 사용자 실행. 준비되면 W1 재생성에 합치고, 아니면 이후 .env 편집 + 재생성 1회로 별도 적용.
+5. **서버 배포 scp 1줄**(W1) — 사용자 실행.
+6. **회수 노출 기간**: 기본안 = 7일(그 이후 temp 결과는 목록에서 사라짐, 파일은 남음). 원하면 조정.
+7. **로그 호스트 볼륨 마운트**(우선순위 상향): 기본안 = W1 재생성 때 `-v /home/ubuntu/maidol/logs:/srv/app/logs` 추가(docker run 옵션 변경 — 사용자 승인).
+8. **다른 세션의 서버 동시 수정**(07:03Z main.py·admin_items.py, .bak 없음): 이번 빌드에 함께 들어간다 — 해당 세션 소유자 확인이 필요하면 사용자에게 전달.
+
+규칙: 서버 수정은 server_staging_v3227에서만(라이브 원본 pull + _orig 보존 + 배포 직전 md5 재대조), 프로덕션 쓰기(docker build·재생성·포인트 환불·.env)는 사용자 승인/실행 후, 민감 정보는 플레이스홀더(`<SSH_HOST>`, `<ACCOUNT_ID>`, .env 값 미기재), 팝업은 showAlert, 표기 MAIDOL, 코드 수정·커밋은 이 계획이 승인된 뒤 team-dev 루프에서.
+
+## A-보완 — 생성 중 자유 이탈(전역 백그라운드 작업 추적) [서버+앱, 1조+백엔드]
+
+사용자 지시("생성 중에 화면을 나가도 계속 생성하게")로 A를 '결과 회수'에서 격상한다. **이 소절이 위 "확정 스펙 A"와 충돌하면 이 소절이 우선한다**: `characterTaskStore.activeJob` → 전용 `generationJobStore`, ArtistLoading 안의 폴링 → 전역 추적기, 20분/15분 상한 → 서버 stale 기준 30분, 오류 3회 포기 → 서버 status=failed일 때만 실패. H-1(W0)은 별개로 유지하며 이 소절은 W0를 건드리지 않는다.
+원칙: 서버는 접수 즉시 백그라운드로 끝까지 생성한다(0단계 A). 따라서 **앱은 화면이 아니라 job을 추적**하면 된다. 로딩 화면은 추적기를 보여주는 창일 뿐이고, 화면을 나가거나 앱을 재시작해도 추적은 이어진다.
+
+**앱 — 신규 `stores/generationJobStore.ts` + `services/generationTracker.ts` (확장 가능한 형태, 이번 범위는 kind='artist'만)**
+1. **영속 레코드**(zustand persist, AsyncStorage = 웹 localStorage — 기존 관행): `jobs: Record<jobId, TrackedJob>`, `TrackedJob = { jobId, kind:'artist', mode:'sheet'|'outfit', characterKind:'real'|'virtual', targetCharacterId|null, legacyContract, photoIntent:'photo'|'text', pendingName|Gender|Age|null, startedAt, lastStatus:'processing'|'done'|'failed'|'unknown', lastCheckedAt, result?:{object_name, preview_url, original_object_name?, character_id?, art_style?}, error?, ownerUserId }`. 텍스트만 저장(파일 URI 제외). 로그아웃하면 ownerUserId가 다른 레코드는 숨기고, 다시 로그인하면 복원한다. 모든 레코드는 30일이 지나면 정리.
+   - 기록 시점: `POST /character/generate-sheet(-cartoon)-async`가 202/200으로 job_id를 돌려준 **직후 즉시**(ArtistLoading의 해당 지점 :200-210·:396-402). 화면 전환보다 먼저 한다.
+2. **전역 추적기**(화면 수명과 분리): App 루트에서 1회 `startGenerationTracker()` 호출. `lastStatus==='processing'`인 레코드를 폴링(5초 간격, 여러 job이면 순차 조회). 오류는 **실패로 치지 않는다**: 네트워크 오류·5xx·타임아웃은 lastStatus 유지 + 백오프(5→10→20→40→60초). 404는 'unknown'(다른 계정 등, 조용히 정리).
+   - 재개 트리거: 네이티브 `AppState` → active, 웹 `visibilitychange` → visible, `online` 이벤트, 로그인 완료. 트리거가 오면 대기 중인 타이머를 취소하고 1.5초 뒤 즉시 조회(복귀 직후 네트워크가 살아날 시간).
+   - 숨김 상태(웹 hidden / 네이티브 background)에서는 폴링을 멈춘다(어차피 JS가 정지되고, 배터리 낭비 방지).
+   - **실패 판정은 서버 `status=failed`일 때만.** 이때 문구에 "사용된 별은 자동으로 환불돼요"(서버가 `refund_character_job_points`로 환불 — character.py:1146-1175, 러너 실패 경로 :1265-1285). 오래 걸리면 "아직 만드는 중이에요 — 나가 있어도 계속 만들어져요"를 유지한다. **상한 정합**: 서버는 30분 넘은 processing을 stale로 보고 실패+환불 처리(main.py:535-567 기동 시 + 이번에 추가하는 recoverable lazy 정리). 그래서 앱은 **startedAt+30분**이 지나면 recoverable을 1회 호출(서버가 lazy로 failed+환불 확정)하고, 결과 status를 그대로 따른다. 기존 15분 상한(pollCharacterJob 180틱)은 폐기.
+3. **ArtistLoadingScreen = 추적 뷰어로 전환**: 신규 생성 경로는 POST까지만 담당하고 이후 폴링을 직접 하지 않는다. 대신 `useTrackedJob(jobId)`를 구독해 단계 애니메이션을 표시한다. 화면에 **[나가서 다른 작업 하기]** 버튼(작업실로 popTo('Map'))과 "나가도 계속 만들어져요. 완성되면 작업실에서 알려드릴게요" 안내를 둔다. 라우트 파라미터 `{ jobId }`로 재진입 가능(resume — POST 없음). 기존 `pollCharacterJob`(:57-82)은 삭제.
+4. **완성 처리(단일 경로)**: `finalizeArtistJob(job)`을 추출(현 :221-330 sheet / :404-440 outfit 저장 로직을 이관). 순서:
+   - (sheet) 사진 파일이 메모리에 있으면 기존대로 upload-original-photo. 없으면(이탈·재시작) **job.result.original_object_name을 save의 original_photo_object_name으로 연결** — 사진을 사용한 job이면 '만들 때 사용한 사진'이 항상 채워진다(H-1과 짝).
+   - save → consumed 표시(서버) → store 레코드 완료 처리 → `navigation.navigate('ArtistResult', { characterId, justCreated:true })`.
+   - 호출 시점: ⑴ 추적 뷰어가 열려 있는 상태에서 done을 받으면 즉시 ⑵ 뷰어 밖에서 done을 받으면 **자동 이동하지 않는다**(사용자가 다른 작업 중일 수 있음) → 레코드를 'done-unsaved'로 두고 작업실 배지·앱 내 알림(아래 5)으로 안내 → 사용자가 탭하면 finalize → ArtistResult. **저장은 반드시 사용자가 결과를 보는 흐름에서 한 번만**(중복 save 방지 — 레코드에 `finalizing` 잠금).
+   - 슬롯 초과 409는 기존 확장 다이얼로그를 재사용. 저장 실패 시 레코드는 done-unsaved를 유지(재시도 가능).
+5. **작업실 표시**(MapScreen): 아티스트 디렉터 위치에 상태 말풍선 — processing이면 "만드는 중… (n분)"(스피너 점), done-unsaved면 "완성! 눌러서 확인". 렌더 위치는 기존 isNext 말풍선 슬롯(MapScreen.tsx:749-767)과 같다. **추적 중에는 아티스트의 isNext 말풍선·펄스를 대신 표시**(두 말풍선이 겹치지 않게). 휴식 티켓(:778-785)과는 위치가 달라 병존 가능. 튜토리얼 앵커 `DIRECTOR_ANCHOR_BY_TYPE`(:75-90)는 디렉터 좌표 박스 기준이라 말풍선 추가가 앵커 측정에 영향 없음 — 튜토리얼이 진행 중(TutorialOverlay 표시)이면 상태 말풍선은 숨김.
+   - 아티스트 디렉터 탭(`proceedDirectorPress`): 추적 중인 job이 있으면 기존 진입 대신 **processing → 추적 뷰어(ArtistLoading {jobId}), done-unsaved → finalize → ArtistResult**. v3.219 디렉터 작업 보존(ArtistInput draft 이어가기)은 추적 job이 없을 때의 기존 경로 그대로.
+   - 앱 내 알림: 뷰어 밖에서 done을 수신하면 showAlert 1회("아티스트가 완성됐어요" [지금 보기]/[나중에]). 단 작곡·영상 등 생성 화면에 있을 때는 알림을 띄우지 않고 배지만 표시(방해 금지 — 작업실(Map)·마이페이지 계열 화면에서만 팝업). 문구에 "저작권" 표현 없음.
+6. **중복 생성 차단(앱)**: 추적 중인 artist job(processing 또는 done-unsaved)이 있으면 ArtistInput 진입 시와 ArtistCody [만들기/입히기](handleApply :404 부근, 과금 전 게이트 순서: 피로 게이트 앞) 모두에서 showAlert "이미 아티스트를 만드는 중이에요. 완성된 뒤에 새로 만들 수 있어요" [진행 상황 보기]. done-unsaved면 "완성된 아티스트를 먼저 확인해주세요"로 안내.
+7. **복구 경로(로컬 기록이 사라진 경우 — 기기 변경·저장소 삭제·다른 브라우저)**: 로그인·포그라운드 복귀·MyArtists focus 때 `GET /character/jobs/recoverable`(30초 스로틀)을 호출하고, 로컬에 없는 job은 레코드로 편입(photoIntent는 original_object_name 존재 여부로 추정). 이후 흐름은 1~6과 같다. 서버가 404면(구서버) 조용히 건너뛴다.
+8. **플랫폼 한계(REPORT·사용자 안내에 명시)**: 모바일 웹은 화면이 꺼지거나 탭이 백그라운드로 가면 브라우저가 JS를 멈춘다 → **완성 순간의 알림은 불가하고, 돌아왔을 때 수령하는 것이 한계**. 이번 수정으로 수령은 확실해진다(작업실 배지 + 알림 1회). 네이티브도 백그라운드에서는 JS 폴링이 멈추므로 같은 방식. **네이티브 로컬/푸시 알림은 이번 범위 밖**(expo-notifications 미설치 — 네이티브 모듈 추가·APK 재빌드와, 백그라운드 완성 감지를 위해 서버 푸시(FCM) 발송이 필요 → 백로그 "생성 완료 푸시").
+9. **확장 지점(기록만)**: `TrackedJob.kind`에 'cover'·'video'·'inst'를 추가할 수 있게 설계한다 — kind별 `{ statusUrl(jobId), parseStatus(res), finalize(job) }` 어댑터 레지스트리(`generationTracker.registerKind`). 이번에는 artist 어댑터만 구현. 기존 v3.93 GenerationHistory(Map :810-822 '생성 이력')·Inst 폴링(v3.222)은 건드리지 않고, 차기에 이 어댑터로 이관하는 후보로 둔다.
+
+**서버(character.py — main.py 무변경)**
+1. `GET /api/character/jobs/recoverable`: 내 job 중 `consumed_at`·`dismissed_at` 없음 + `created_at >= max(now-7d, RECOVERABLE_SINCE)`. done → {job_id, mode, status, object_name, preview_url, original_object_name, character_id, art_style(_key), created_at, completed_at}, processing → {job_id, mode, status, created_at}, 최근 24시간의 failed → {job_id, status, error, refunded}(앱이 실패+환불 안내를 확정하는 데 사용). **조회할 때 30분 넘은 processing은 즉시 failed+환불 처리**(stale 복구 로직과 같은 claim + `refund_character_job_points` 재사용 — 재기동을 기다리지 않음). 최신순 최대 10건. 노출 기간 = 7일(자율 확정: 사용자 재방문 주기를 고려하되 temp 결과가 오래 남지 않게), `RECOVERABLE_SINCE` 기본 = 배포 시각(결정 1에 따라 조정).
+2. `/character/save` 성공 끝에 best-effort로 `character_jobs.update_one({user_id, object_name: sheet_object_name}, {$set:{consumed_at}})`.
+3. `POST /api/character/job/{job_id}/dismiss`: 본인 done job만 `dismissed_at` 설정, 환불 없음.
+4. **중복 생성 서버 차단**: generate-sheet-async·generate-sheet-cartoon-async(및 sync 2종 — 같은 헬퍼)에서 피로 게이트 뒤, 슬롯·⭐ 차감 **전**에 `character_jobs.find_one({user_id, status:'processing', created_at >= now-30m})`를 조회해 있으면 **409 `{"error":"generation_in_progress","job_id":…}`**(무과금). 30분 넘은 것은 stale로 보고 막지 않는다(lazy 정리가 처리). 앱은 409 generation_in_progress를 받으면 그 job_id를 추적기에 편입하고 뷰어를 연다(다른 기기에서 시작한 생성도 이어볼 수 있음). 참고: 현재는 동시 신규 생성 2건이 모두 슬롯 검사를 통과할 수 있음(슬롯은 save 때 소모) — 이 409가 그 틈도 막는다. refine(sync, 미리보기용)은 대상 아님.
+5. 인덱스 `character_jobs (user_id, status, created_at)`: character.py에서 프로세스당 1회 lazy create_index(main.py 무변경).
+6. 로그 `[CharJob] recoverable user=… n=… stale_fixed=…`, `[CharJob] dup-blocked user=… job=…`, `[CharJob] consumed job=…`, `[CharJob] dismissed job=…`.
+
+**보완 1 — 생성 중(processing)에도 보이게**
+- `MyArtistsScreen` 상단·`ArtistInputScreen` welcome에 추적 카드 공통 컴포넌트 `components/GenerationJobCard.tsx`: processing = "아티스트를 만드는 중이에요 · 경과 m분 — 나가 있어도 계속 만들어져요"(1분마다 경과 갱신) → 탭하면 추적 뷰어(ArtistLoading {jobId}). done-unsaved = "완성된 아티스트가 도착했어요" + 썸네일 → [확인하기](finalize → ArtistResult) / [버리기](dismiss, showAlert 확인). failed(최근 24시간·미확인) = "만들지 못했어요 — 사용된 별은 환불됐어요" [확인](레코드 정리).
+- **Map 표시 확정 = 아티스트 디렉터 말풍선 슬롯**(위 5항). 근거: 튜토리얼 앵커는 디렉터 좌표로 계산한 140×140 박스(MapScreen.tsx:75-83, :279 measure)이고 말풍선 요소가 아니다. 말풍선은 기존 isNext 말풍선(:749-767)과 같은 자리에 대체 렌더링하므로 앵커 좌표·측정에 영향이 없다. TutorialOverlay가 떠 있는 동안은 숨긴다. 헤더 우측 표시는 채택하지 않음: Map은 탭 헤더를 공유하고 우측 영역에는 ⭐·알림 등 전역 요소가 있어 충돌 여지가 더 크며, 하단 '생성 이력' 버튼(:810-822)은 `map-history` 앵커라 손대지 않는다.
+
+**보완 2 — 중복 생성 차단(과금 전)**
+- 앱: 추적 중(processing·done-unsaved)이면 ⑴ ArtistInput 진입 시 welcome에서 새로 만들기 버튼 대신 추적 카드만, ⑵ ArtistCody handleApply 첫 줄(피로 게이트·잔액 체크 앞, :404-440), ⑶ ArtistLoading POST 직전(최종 방어)에서 showAlert "이미 아티스트를 만드는 중이에요" [진행 상황 보기]/[닫기]. done-unsaved면 "완성된 아티스트를 먼저 확인해주세요" [확인하기]. 옷 입히기(outfit)도 같은 규칙(동일 사용자 artist job 1개).
+- 서버: 위 서버 4항 — `409 {"error":"generation_in_progress","job_id"}`, 무과금. **영구 잠김 방지**: 판정 직전에 같은 사용자의 30분 넘은 processing을 lazy 정리(recoverable과 같은 헬퍼 `_sweep_stale_jobs(user_id)` — failed+1회 환불)한 뒤 남은 processing만 본다. 서버 재기동으로 러너가 죽은 job은 최대 30분 뒤 자동으로 풀린다. 앱은 409를 받으면 job_id를 추적기에 편입하고 뷰어로 이동한다.
+- 30분 동안 막히는 것이 과한지는 관측 항목으로 둔다: 정상 생성은 3~6분(0단계 A)이라 30분은 stale 기준과 맞춘 값이다.
+
+**보완 3 — 부팅·새로고침·재시작 후 재개**
+- persist 하이드레이션이 끝나고(`generationJobStore.persist.onFinishHydration` — v3.223 playerStore 대기 관행) 로그인 세션이 복원된 뒤(authStore restoreSession 완료), `startGenerationTracker()`가 레코드를 스캔한다. processing은 즉시 1회 조회 후 폴링 재개. 조회 결과 done이면 done-unsaved로 바꾸고 카드·Map 말풍선·알림 1회. failed면 환불 안내 카드. 이어서 `GET /character/jobs/recoverable`로 로컬에 없는 job(다른 기기·저장소 삭제)을 편입한다.
+- 웹 새로고침 중 ArtistLoading URL로 바로 들어오는 경로는 없다(linking config는 FeedDetail만 — App.tsx:575-584). 따라서 재개는 전역 추적기 + 카드/말풍선으로만 한다.
+- 로그 `[GenTracker] boot resume {n, processing, done}`, `[GenTracker] poll {jobId, status, backoff}`, `[GenTracker] visible → refresh`.
+
+**변경 매트릭스 추가분**(1조): stores/generationJobStore.ts(신규)·services/generationTracker.ts(신규)·components/GenerationJobCard.tsx(신규)·App.tsx(추적기 기동 1줄 + 하이드레이션 대기)·screens/MapScreen.tsx(아티스트 말풍선 슬롯·디렉터 탭 분기 — 1조 전유, 튜토리얼 로직은 건드리지 않음)·ArtistLoadingScreen(추적 뷰어 전환·finalize 추출)·MyArtists·ArtistInput(카드·진입 차단). ArtistCody handleApply 첫 줄의 중복 가드는 2조가 반영(1조가 `useHasActiveArtistJob()` 훅을 제공). 서버(백엔드): character.py의 recoverable·dismiss·consumed·409·`_sweep_stale_jobs`·lazy 인덱스. **W0(H-1) 커밋·파일 범위와 섞지 않는다** — A-보완은 W0 머지 이후 1조 후속 커밋으로.
+
+**test-designer 추가 항목(A-보완)**
+17. [e2e] 이탈 자유: 생성 접수 → [나가서 다른 작업 하기] → 작업실 아티스트 말풍선 "만드는 중… n분" → 작곡 화면으로 이동(팝업 없음) → 작업실 복귀 시 "완성! 눌러서 확인" → 탭 → ArtistResult(저장 1회, original 사진 노출 — 사진 job).
+18. [e2e] 새로고침·재시작 재개: 웹 생성 중 새로고침(또는 네이티브 앱 강제 종료 후 재실행) → 부팅 로그 `[GenTracker] boot resume` → MyArtists 상단 "만드는 중 · 경과 m분" 카드 → 완성 후 "도착" 카드 → 확인. 백그라운드 3분 뒤 복귀 시 1.5초 이내 재조회, Network Error가 나도 실패 표시 없음.
+19. [e2e/api] 중복 차단: 추적 중 ArtistCody [만들기] → "이미 만드는 중이에요"(요청 0건·⭐ 불변). 다른 기기/브라우저에서 같은 계정으로 generate 시도 → 409 generation_in_progress(무과금) → 앱이 그 job을 편입해 뷰어 표시. stale: processing job의 created_at을 31분 전으로 둔 테스트 데이터(스테이징 유닛) → 새 요청 시 lazy 정리(failed+환불 1회) 후 정상 접수.
+20. [unit] 실패 판정: 추적기 오류 5종(Network Error·502·504·timeout·401 재로그인 필요)에서 lastStatus 유지·백오프만, 서버 failed 수신 때만 실패+환불 문구, startedAt+30분 경과 시 recoverable 1회 호출 후 서버 status 반영. 튜토리얼 표시 중 말풍선 숨김, isNext 말풍선과 동시 렌더 없음.
+
+### v3.227 사용자 결정 (2026-09-24, 오케스트레이터 기록 — 본문과 충돌 시 이 소절이 우선)
+1. **범위**: 전체 진행(W0 → W1 → W2). 40% 룰 초과는 사용자 승인으로 해소.
+2. **오늘 유실 2건(job 6ab4c16e·6ab4c22b, ⭐20)**: **그대로 둠** — '샘플' 교체·환불 등 프로덕션 데이터 쓰기 없음. 단 A 배포 후 회수 목록(recoverable)에 1차 job(미소비 done)이 '도착' 카드로 자연 노출되는 것은 기능 동작으로 허용(사용자가 저장/닫기 선택).
+3. **H-3 원본 사진 보호**: **즉시 차단**(서버 배포 시점에 적용). APK 1.1.8의 실사 옷 갈아입기·'사용한 사진' 표시는 1.1.9까지 일시 제한 — REPORT·사용자 안내에 명시, 웹은 동시 대응.
+4. **회수 보관 기간**: **기간 제한 없음** — recoverable 목록은 저장(consume) 또는 사용자 닫기(dismiss) 전까지 계속 노출. 오래된 job 대량 노출 방지를 위한 목록 상한(예: 최근 N건)은 자율 확정 가능.
+5. W0(H-1) 구현 완료(1조, tsc 0) — photoIntent 표기는 `'photo' | 'text' | null`로 확정.

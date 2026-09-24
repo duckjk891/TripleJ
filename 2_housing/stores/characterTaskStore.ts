@@ -9,6 +9,11 @@ export type CharacterTaskMode = 'sheet' | 'refine' | 'outfit';
 // draft는 그보다 앞 단계인 Q&A 도중을 커버). 생성 성공 저장(reset())·'처음부터'에만 지운다.
 // photoUri 등 파일 URI는 draft에 넣지 않는다(앱 재시작 후 파일 소멸 — F3(d)). 전 필드가
 // 텍스트/enum이라 draft 통째로 AsyncStorage 영속(2026-09-07 텍스트 입력물 보존 정책). ──
+// v3.227 H-1 [ArtistDraft]: 사진 사용 의도 — 'photo'=얼굴 사진을 올려 만들기, 'text'=사진 없이
+// 설명으로 만들기(명시 선택), null=아직 고르지 않음. URI는 영속하지 않지만 의도는 영속해서,
+// 복원 시 의도='photo'인데 사진 파일이 없으면 사진 단계로 되돌린다(사진 없는 조용한 진행·과금 차단).
+export type ArtistPhotoIntent = 'photo' | 'text' | null;
+
 export interface ArtistDraftChatMessage {
   type: 'director' | 'user';
   text: string;
@@ -25,6 +30,8 @@ export interface ArtistDraft {
   /** 키 검증용 — 재생성 진입(targetCharacterId)·forceKind가 draft와 다르면 폐기(오염 방지) */
   targetCharacterId: string | null;
   forceKind: 'real' | 'virtual' | null;
+  /** v3.227 H-1: 사진 사용 의도(영속). v3.219 구 draft에는 없음(undefined) — 복원 시 chat에서 추론 */
+  photoIntent?: ArtistPhotoIntent;
 }
 
 export interface CharacterTaskResult {
@@ -52,6 +59,9 @@ interface CharacterTaskState {
   originalPhotoObjectName: string | null;
   /** v3.76(MAIDOL v137): 사진 확약 — 본인 사진이거나 인물 동의를 받았음을 확인. 사진 첨부 시 필수 */
   portraitConfirmed: boolean;
+  /** v3.227 H-1: 현재 생성 흐름의 사진 사용 의도 — ArtistLoading 생성 직전 가드가 읽는다(메모리).
+   *  영속 원천은 draft.photoIntent(ArtistInput 복원 시 여기로 동기화) */
+  photoIntent: ArtistPhotoIntent;
   /** v3.80: 실사('real') vs 가상화 그림('virtual') 캐릭터 모드 */
   characterKind: 'real' | 'virtual';
   /** v3.80: 가상화 화풍 — 샘플 키(stylePreset) XOR 직접 업로드 이미지(styleImageUri/Name) */
@@ -75,7 +85,7 @@ interface CharacterTaskState {
   draft: ArtistDraft | null;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'photoIntent' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -105,6 +115,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
   outfitDesc: null,
   originalPhotoObjectName: null,
   portraitConfirmed: false,
+  photoIntent: null,
   characterKind: 'real',
   stylePreset: null,
   styleImageUri: null,
@@ -151,6 +162,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       outfitDesc: null,
       originalPhotoObjectName: null,
       portraitConfirmed: false,
+      photoIntent: null,
       characterKind: 'real',
       stylePreset: null,
       styleImageUri: null,
@@ -169,6 +181,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       name: 'maidol-artist-draft',
       storage: createJSONStorage(() => AsyncStorage),
       // 텍스트 입력물(draft)만 영속 — 사진/화풍 파일 URI·API 결과 등은 메모리 전용
+      // (v3.227 H-1: 사진 사용 의도는 draft.photoIntent로 함께 영속된다)
       partialize: (s) => ({ draft: s.draft }),
     }
   )

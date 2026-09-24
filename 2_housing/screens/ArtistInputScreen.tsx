@@ -19,7 +19,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { BACKEND_BASE_URL } from '../services/api';
 import { listArtists } from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
-import { useCharacterTaskStore, type ArtistDraft } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
@@ -125,6 +125,30 @@ const QUESTIONS: QuestionDef[] = [
   },
 ];
 
+// v3.227 H-1 [ArtistDraft]: 사진 선택/텍스트 전용 선택 버블 — 구 draft(photoIntent 없음)의 의도 추론 근거
+const PHOTO_BUBBLE_PREFIX = '사진 선택: ';
+const TEXT_ONLY_BUBBLE = '사진 없이 만들게요';
+const PHOTO_REUPLOAD_BUBBLE = '이어서 만들려면 얼굴 사진을 다시 올려주세요.';
+const STYLE_STEP_PROMPT = '어떤 그림체(화풍)로 그릴까요? 샘플 중에 고르거나 원하는 화풍 이미지를 직접 올려주세요.';
+
+/** v3.227 H-1: draft의 사진 사용 의도. v3.219 구 draft는 필드가 없어 마지막 선택 버블로 추론 */
+function resolveDraftPhotoIntent(d: ArtistDraft): ArtistPhotoIntent {
+  if (d.photoIntent !== undefined) return d.photoIntent;
+  for (let i = d.chat.length - 1; i >= 0; i--) {
+    const m = d.chat[i];
+    if (m.type !== 'user') continue;
+    if (m.text.startsWith(PHOTO_BUBBLE_PREFIX)) return 'photo';
+    if (m.text === TEXT_ONLY_BUBBLE) return 'text';
+  }
+  return null;
+}
+
+/** v3.227 H-1: 사진 재요구 시 되돌아갈 지점(사진 재업로드 후 멈췄던 단계·질문으로 복귀) */
+interface PhotoResumeTarget {
+  step: Step;
+  qIndex: number;
+}
+
 function buildFinalText(answers: StyleAnswers): string {
   const parts: string[] = [];
   // v3.109: 이름 포함 — "이어서 만들기" 보존(conceptText 요약)에도 이름이 실린다
@@ -181,13 +205,37 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     })()
   ).current;
 
+  // v3.227 H-1 [ArtistDraft]: 사진 사용 의도 복원 + 사진 재요구 판정. 로컬 photoUri는 항상 null로
+  // 시작하므로(URI 비영속) 의도='photo'로 사진 단계를 지난 draft는 사진 단계(welcome)로 되돌린다.
+  // 질문 답변·qIndex·화풍 컨셉은 보존 → 재업로드 후 멈췄던 단계로 복귀. 사진 없이는 진행 불가.
+  const restoredPhotoIntent: ArtistPhotoIntent = resumableDraft
+    ? resolveDraftPhotoIntent(resumableDraft)
+    : restoreParam
+      ? useCharacterTaskStore.getState().photoIntent
+      : null;
+  const initialPhotoResume: PhotoResumeTarget | null =
+    resumableDraft && restoredPhotoIntent === 'photo' && resumableDraft.step !== 'welcome'
+      ? { step: resumableDraft.step, qIndex: resumableDraft.qIndex }
+      : null;
+  const [photoIntent, setPhotoIntent] = useState<ArtistPhotoIntent>(restoredPhotoIntent);
+  const [photoResume, setPhotoResume] = useState<PhotoResumeTarget | null>(initialPhotoResume);
+
   const scrollRef = useRef<ScrollView>(null);
-  const [step, setStep] = useState<Step>(resumableDraft ? resumableDraft.step : 'welcome');
+  const [step, setStep] = useState<Step>(
+    initialPhotoResume ? 'welcome' : resumableDraft ? resumableDraft.step : 'welcome'
+  );
   // v3.82: forceKind 진입이어도 kind 언급 문구는 표시하지 않음(내부 로직만 유지)
   // v3.112: 신규 추가(forceKind 없음)는 실사/가상 선택부터 — 첫 인사도 선택 유도로 분기
   const [chat, setChat] = useState<ChatMessage[]>(() =>
     resumableDraft
-      ? (resumableDraft.chat as ChatMessage[])
+      ? initialPhotoResume
+        ? // v3.227 H-1: 기존 "사진 선택: …" 버블은 재업로드 안내로 치환(텍스트 답변 버블은 보존)
+          (resumableDraft.chat as ChatMessage[]).map((m) =>
+            m.type === 'user' && m.text.startsWith(PHOTO_BUBBLE_PREFIX)
+              ? { type: 'director' as const, text: PHOTO_REUPLOAD_BUBBLE }
+              : m
+          )
+        : (resumableDraft.chat as ChatMessage[])
       : [
           {
             type: 'director',
@@ -200,6 +248,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   // v3.219 [ArtistDraft]: photoUri는 draft 영속 제외(로컬 파일 URI — 재시작 후 소멸 가능).
   // 화면 이탈 복원 시에도 사진은 다시 올리는 흐름(텍스트 답변만 보존)이다.
+  // v3.227 H-1: 대신 사진 사용 의도(photoIntent)를 영속해, 의도='photo'면 사진 단계를 다시 요구한다.
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoName, setPhotoName] = useState<string>('');
 
@@ -238,7 +287,16 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     if (__DEV__) {
       console.info('[ArtistDraft] draft 복원 — 이어서 진행', {
         step: resumableDraft.step, qIndex: resumableDraft.qIndex, chatLen: resumableDraft.chat.length,
+        photoIntent: restoredPhotoIntent,
       });
+    }
+    // v3.227 H-1: 복원된 의도를 taskStore에 동기화 — ArtistLoading 생성 직전 가드가 읽는다
+    if (restoredPhotoIntent) useCharacterTaskStore.getState().setInput({ photoIntent: restoredPhotoIntent });
+    if (initialPhotoResume) {
+      console.info('[ArtistDraft] 사진 재요구', {
+        step: initialPhotoResume.step, qIndex: initialPhotoResume.qIndex, kind: resumableDraft.selectedKind,
+      });
+      return; // 화풍 샘플은 사진 재업로드 후 style 단계로 복귀할 때 로드
     }
     if (resumableDraft.step === 'style') loadStyleSamples();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,7 +308,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     const hasProgress = chat.some((m) => m.type === 'user');
     if (!hasProgress) return;
     useCharacterTaskStore.getState().setDraft({
-      step,
+      // v3.227 H-1: 사진 재요구 중(welcome)에는 멈췄던 단계를 기록 — 다시 이탈해도 재업로드 후 같은 지점으로
+      step: photoResume ? photoResume.step : step,
       chat,
       qIndex,
       styleAnswers: { ...styleAnswers },
@@ -259,9 +318,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       pendingConceptText,
       targetCharacterId: regenCharacterId ?? null,
       forceKind: forceKind ?? null,
+      photoIntent,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, chat, qIndex, styleAnswers, currentInput, selectedKind, pendingConceptText]);
+  }, [step, chat, qIndex, styleAnswers, currentInput, selectedKind, pendingConceptText, photoIntent, photoResume]);
 
   // v3.219 [ArtistDraft]: '처음부터' — draft 폐기 후 초기 상태로(대화·답변·진행도 리셋)
   const handleRestartFromScratch = () => {
@@ -283,6 +343,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setPendingConceptText('');
     setPhotoUri(null);
     setPhotoName('');
+    // v3.227 H-1: 사진 의도·재요구 지점도 초기화(처음부터 = 사진/설명 선택부터 다시)
+    setPhotoIntent(null);
+    setPhotoResume(null);
+    useCharacterTaskStore.getState().setInput({ photoIntent: null });
     setSelectedPresetKey(null);
     setStyleUpload(null);
     setShowResumeNotice(false);
@@ -377,6 +441,39 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setStep('questioning');
   };
 
+  // v3.227 H-1: 사진 재요구 후 사진(또는 명시적 텍스트 전환)을 받으면 멈췄던 단계로 복귀.
+  // 재요구 중이 아니면 기존대로 질문 처음부터. 텍스트 전환인데 답변이 하나도 없으면 처음부터
+  // (텍스트 전용은 설명이 필요 — handleStartGeneration 가드와 같은 기준).
+  const resumeOrStartQuestioning = (target: PhotoResumeTarget | null, viaTextOnly: boolean) => {
+    setPhotoResume(null);
+    if (!target || (viaTextOnly && !buildFinalText(styleAnswers).trim())) {
+      startQuestioning();
+      return;
+    }
+    if (__DEV__) console.info('[ArtistDraft] 사진 단계 통과 — 멈췄던 단계로 복귀', {
+      step: target.step, qIndex: target.qIndex, viaTextOnly,
+    });
+    if (target.step === 'style' && isVirtualMode) {
+      pushDirector(STYLE_STEP_PROMPT);
+      setStep('style');
+      loadStyleSamples();
+      return;
+    }
+    // 화풍 단계였는데 실사로 바뀐 경우 등은 마지막 질문으로(답변은 보존 — 확인 후 만들기)
+    const qi = target.step === 'style' ? QUESTIONS.length - 1 : Math.min(target.qIndex, QUESTIONS.length - 1);
+    setQIndex(qi);
+    pushDirector(QUESTIONS[qi].question);
+    setStep('questioning');
+  };
+
+  // v3.227 H-1: 사진 의도='photo'인데 사진이 없으면 사진 단계로 되돌린다(방어 — 정상 흐름에선 복원 시 이미 차단)
+  const requirePhotoAgain = (from: Step) => {
+    console.info('[ArtistDraft] 사진 재요구', { step: from, qIndex });
+    setPhotoResume({ step: from, qIndex });
+    pushDirector(PHOTO_REUPLOAD_BUBBLE);
+    setStep('welcome');
+  };
+
   // ── Photo pick → 사진 확약(MAIDOL v137) → 6단계 질문 시작 ─────
   const handlePickPhoto = async () => {
     try {
@@ -395,10 +492,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 if (__DEV__) console.info('[ArtistInput] 사진 확약 완료', { name: file.name, isVirtualMode });
                 setPhotoUri(file.uri);
                 setPhotoName(file.name);
+                setPhotoIntent('photo'); // v3.227 H-1: 사진 사용 의도 영속(draft)
                 // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
-                taskStore.setInput({ portraitConfirmed: true, characterKind: isVirtualMode ? 'virtual' : 'real' });
-                pushUser(`사진 선택: ${file.name}`);
-                startQuestioning();
+                taskStore.setInput({ portraitConfirmed: true, photoIntent: 'photo', characterKind: isVirtualMode ? 'virtual' : 'real' });
+                pushUser(`${PHOTO_BUBBLE_PREFIX}${file.name}`);
+                resumeOrStartQuestioning(photoResume, false);
                 // v3.163(대표): 얼굴인증 수집·이용 동의는 "만들기" 클릭이 아니라 사진 업로드
                 // 시점에 미리 — 실사+본인인증 완료+미동의 사용자만 동의 화면(consentOnly)으로.
                 // best-effort: 상태 조회 실패해도 입력 흐름은 계속(생성 시점 게이트가 후방 방어).
@@ -427,11 +525,21 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[ArtistInput] 텍스트-only 경로 시작', { isVirtualMode });
     setPhotoUri(null);
     setPhotoName('');
+    // v3.227 H-1: 명시적 텍스트 전용 선택 — 의도 'text' 영속 + store의 이전 사진도 여기서만 비운다
+    // (setInput 호출부는 사진이 있을 때만 photoUri를 갱신하므로, 잔존 사진이 텍스트 경로에 실리지 않게)
+    setPhotoIntent('text');
     // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
-    taskStore.setInput({ portraitConfirmed: false, characterKind: isVirtualMode ? 'virtual' : 'real' });
-    pushUser('사진 없이 만들게요');
+    taskStore.setInput({
+      portraitConfirmed: false,
+      photoIntent: 'text',
+      photoUri: null,
+      photoName: null,
+      characterKind: isVirtualMode ? 'virtual' : 'real',
+    });
+    pushUser(TEXT_ONLY_BUBBLE);
     pushDirector('좋아요! 설명만 듣고 상상해서 만들어드릴게요. 대신 조금 더 자세히 알려주세요!');
-    setTimeout(() => startQuestioning(), 400);
+    const resumeTarget = photoResume;
+    setTimeout(() => resumeOrStartQuestioning(resumeTarget, true), 400);
   };
 
   // ── v3.112: 실사/가상 명시 선택(구 v3.80 토글 대체) ─────
@@ -499,6 +607,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       showAlert('알림', '화풍을 하나 골라주세요. 샘플 중에 고르거나 이미지를 직접 올릴 수 있어요.');
       return;
     }
+    // v3.227 H-1: 사진 의도인데 사진이 없으면 진행 불가 — 사진 단계로
+    if (photoIntent === 'photo' && !photoUri) {
+      requirePhotoAgain('style');
+      return;
+    }
     if (__DEV__) console.info('[ArtistInput] 화풍 확정', { preset: selectedPresetKey, upload: styleUpload?.name });
     pushUser(
       styleUpload
@@ -509,9 +622,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
     // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
     useOutfitStore.getState().clear();
+    // v3.227 H-1: photoUri/photoName은 사진이 있을 때만 갱신(null 덮어쓰기 금지 — 사진 소실 회귀)
     taskStore.setInput({
-      photoUri,
-      photoName,
+      ...(photoUri ? { photoUri, photoName } : {}),
+      photoIntent,
       userText: pendingConceptText,
       conceptText: pendingConceptText, // v3.105: 취소/실패 복원용 순수 컨셉 보존
       stylePreset: styleUpload ? null : selectedPresetKey,
@@ -558,6 +672,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // (기본 착장 프롬프트 제거. 옷은 ArtistCody에서 선택, 미선택 시 디폴트 fallback)
   const handleStartGeneration = (answers: StyleAnswers) => {
     const userInput = buildFinalText(answers);
+    // v3.227 H-1: 사진 의도인데 사진이 없으면 진행 불가 — 사진 단계로(답변은 보존)
+    if (photoIntent === 'photo' && !photoUri) {
+      requirePhotoAgain('questioning');
+      return;
+    }
     // v3.76: 텍스트-only 경로(사진 없음)에서는 설명이 최소 하나는 필요
     if (!photoUri && !userInput.trim()) {
       showAlert('알림', '사진이 없으면 설명이 필요해요. 질문에 하나 이상 답해주세요.');
@@ -578,7 +697,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.80: 가상화 모드는 화풍 선택 스텝을 거친 뒤 ArtistCody로 (handleStyleConfirm에서 진행)
     if (isVirtualMode) {
       setPendingConceptText(conceptText);
-      pushDirector('어떤 그림체(화풍)로 그릴까요? 샘플 중에 고르거나 원하는 화풍 이미지를 직접 올려주세요.');
+      pushDirector(STYLE_STEP_PROMPT);
       setStep('style');
       loadStyleSamples();
       return;
@@ -590,7 +709,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     useOutfitStore.getState().clear();
     // photoUri + 컨셉만 저장. API 호출은 옷 선택 후 ArtistLoading에서.
     // v3.105: conceptText = 취소/실패 복원용 순수 컨셉 (Cody가 userText를 의상 desc와 합쳐 덮어씀)
-    taskStore.setInput({ photoUri, photoName, userText: conceptText, conceptText });
+    // v3.227 H-1: photoUri/photoName은 사진이 있을 때만 갱신(null 덮어쓰기 금지 — 사진 소실 회귀)
+    taskStore.setInput({
+      ...(photoUri ? { photoUri, photoName } : {}),
+      photoIntent,
+      userText: conceptText,
+      conceptText,
+    });
 
     setTimeout(() => {
       // 옷 선택 화면으로. mode='sheet' 전달 → ArtistCody가 초기 생성 분기로 동작.
@@ -627,8 +752,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   // v3.105: 이어서 만들기 — Cody 취소(restore) 또는 직전 생성 실패(apiError) 시
   // store에 보존된 컨셉/사진/화풍으로 의상 선택부터 재개 (입력 데이터 보존 — 대표 지적)
+  // v3.227 H-1: 사진 의도인데 store에 사진이 없으면 숨김 — 의상 단계로 건너뛰면 사진 없이 생성된다
+  const resumeMissingPhoto = photoIntent === 'photo' && !taskStore.photoUri;
   const canResume =
-    (restoreParam || !!taskStore.apiError) && !!(taskStore.conceptText || taskStore.userText);
+    (restoreParam || !!taskStore.apiError) && !!(taskStore.conceptText || taskStore.userText) && !resumeMissingPhoto;
   const handleResume = () => {
     if (__DEV__) console.info('[ArtistInput] 이어서 만들기 — 의상 선택 재개', {
       restoreParam, hadError: !!taskStore.apiError,
@@ -681,7 +808,9 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 </TouchableOpacity>
               )}
               <AppText style={styles.textOnlyHint}>
-                {isVirtualMode
+                {photoResume
+                  ? '올려두었던 사진은 다시 올려야 해요. 사진을 올리면 멈췄던 질문부터 이어서 진행해요.'
+                  : isVirtualMode
                   ? '캐릭터로 만들기: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
                   : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
               </AppText>
@@ -859,7 +988,9 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             </View>
             <View style={[styles.bubble, styles.dirBubble]}>
               <AppText style={[styles.bubbleText, { color: colors.bg.deepest }]}>
-                진행하던 아티스트 만들기를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+                {photoResume
+                  ? '진행하던 아티스트 만들기를 이어서 할게요! 얼굴 사진은 다시 올려주셔야 해요 — 올리면 답해둔 내용 그대로 멈췄던 곳부터 이어가요. 새로 시작하고 싶으면 아래 버튼을 눌러주세요.'
+                  : '진행하던 아티스트 만들기를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.'}
               </AppText>
               <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
                 <AppText style={styles.restartInlineBtnText}>처음부터</AppText>

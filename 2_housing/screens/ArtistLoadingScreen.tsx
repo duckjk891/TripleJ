@@ -178,6 +178,27 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           // v3.80: 가상화(그림) 모드 — cartoon 엔드포인트 + style_preset XOR style_image
           const isVirtual = taskStore.characterKind === 'virtual';
           const hasPhoto = !!photoUri;
+          // v3.227 H-1: 생성 직전 가드(API 호출·⭐ 차감 전) — 실사인데 사진으로 만들기로 했던(의도='photo')
+          // 흐름에서 사진이 사라졌으면 텍스트 전용으로 조용히 생성하지 않고 중단 → 사진 재업로드로 안내.
+          // 사진 없이 만들기(의도='text')를 명시 선택한 텍스트 경로는 그대로 통과한다.
+          const photoIntent = taskStore.photoIntent ?? taskStore.draft?.photoIntent ?? null;
+          if (!isVirtual && photoIntent === 'photo' && !hasPhoto) {
+            console.warn('[ArtistLoading] 사진 누락 차단', { intent: photoIntent, kind: taskStore.characterKind });
+            const blockedMsg = '얼굴 사진이 확인되지 않아 만들지 않았어요. 사진을 다시 올려주세요. (별은 사용되지 않았어요)';
+            taskStore.failApi(blockedMsg);
+            // 사진 단계로 — draft가 있으면 그 키(재생성 cid·kind)로 진입해야 복원(사진 재요구)이 적용된다
+            const d = taskStore.draft;
+            const inputParams = d
+              ? { ...(d.targetCharacterId ? { characterId: d.targetCharacterId } : {}), ...(d.forceKind ? { forceKind: d.forceKind } : {}) }
+              : taskStore.targetCharacterId && !taskStore.legacyContract
+                ? { characterId: taskStore.targetCharacterId, forceKind: taskStore.characterKind }
+                : undefined;
+            navigation.replace('ArtistInput', inputParams);
+            setTimeout(() => {
+              showAlert('사진을 다시 올려주세요', blockedMsg);
+            }, 100);
+            return;
+          }
           if (!hasPhoto && !(taskStore.userText || '').trim()) throw new Error('사진 또는 컨셉 설명이 필요해요.');
           const form = new FormData();
           const nameFromUri = photoName || (photoUri?.split('/').pop() ?? 'photo.jpg');
