@@ -49,6 +49,9 @@ export const login = (email, password) => API.post('/auth/login', { email, passw
 // ---- dashboard ----
 export const getDashboard = () => API.get('/admin/dashboard');
 export const getActiveUsers = (days = 14) => API.get('/admin/stats/active-users', { params: { days } });
+export const getFeatureUsage = (days = 7) => API.get('/admin/stats/features', { params: { days } });
+export const getRetention = (days = 30) => API.get('/admin/stats/retention', { params: { days } });
+export const getScreenAnalytics = (days = 7) => API.get('/admin/stats/screens', { params: { days } });
 
 // ---- users ----
 export const getUsers = (params) => API.get('/admin/users', { params });

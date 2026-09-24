@@ -3,6 +3,7 @@ import { useAuth } from '../auth';
 
 const MENU = [
   { to: '/', label: '대시보드', icon: '📊', end: true },
+  { to: '/analytics', label: '사용 분석', icon: '📈' },
   { to: '/reports', label: '신고 처리', icon: '🚨' },
   { to: '/tracks', label: '곡 관리', icon: '🎵' },
   { to: '/users', label: '사용자 관리', icon: '👥' },
