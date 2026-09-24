@@ -17,8 +17,8 @@ REMOTE=/home/ubuntu/maidol/backend_9004
 
 [ -d dist ] || { echo "dist/ 없음 — 먼저 npm run build"; exit 1; }
 
-echo "== 1/5 admin_items.py 업로드"
-scp ../backend/app/routes/admin_items.py $HOST:$REMOTE/app/routes/admin_items.py
+echo '== 1/5 admin_items.py · admin_stats.py 업로드'
+scp ../backend/app/routes/admin_items.py ../backend/app/routes/admin_stats.py $HOST:$REMOTE/app/routes/
 
 echo "== 2/5 SPA 정적 파일 업로드"
 ssh $HOST "rm -rf /tmp/admin_static_new"
@@ -34,6 +34,10 @@ changed = False
 if 'admin_items' not in src:
     src = src.replace('from .routes import admin, admin_ads,', 'from .routes import admin, admin_ads, admin_items,', 1)
     src = src.replace('app.include_router(admin_ads.router)', 'app.include_router(admin_ads.router)\napp.include_router(admin_items.router)', 1)
+    changed = True
+if 'admin_stats' not in src:
+    src = src.replace('from .routes import admin, admin_ads, admin_items,', 'from .routes import admin, admin_ads, admin_items, admin_stats,', 1)
+    src = src.replace('app.include_router(admin_items.router)', 'app.include_router(admin_items.router)\napp.include_router(admin_stats.router)', 1)
     changed = True
 if 'admin_static' not in src:
     src += '''

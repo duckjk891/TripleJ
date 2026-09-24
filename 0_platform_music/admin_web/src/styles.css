@@ -182,3 +182,11 @@ tr:hover td { background: #fafbfd; }
 .import-result ul { margin: 8px 0 0 18px; }
 .progress-bar { height: 8px; background: #eceef4; border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .progress-bar > div { height: 100%; background: var(--primary); transition: width 0.4s; }
+
+/* ---------- dashboard DAU chart ---------- */
+.dau-chart { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding-top: 8px; }
+.dau-col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; }
+.dau-bar { width: 100%; max-width: 34px; min-height: 2px; background: var(--primary); border-radius: 4px 4px 0 0; }
+.dau-num { font-size: 0.72rem; font-weight: 700; color: var(--text); }
+.dau-signup { font-size: 0.68rem; color: var(--green); height: 12px; }
+.dau-date { font-size: 0.68rem; color: var(--text-sub); white-space: nowrap; }

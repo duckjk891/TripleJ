@@ -1,0 +1,52 @@
+--- /private/tmp/claude-501/-Users-pearl-TripleJ--claude-worktrees-distracted-jennings-dc69d7/87f9311a-f303-411e-b7d5-8fd2c624a633/scratchpad/stage_dau/auth.py.orig	2026-09-24 16:09:23
++++ /private/tmp/claude-501/-Users-pearl-TripleJ--claude-worktrees-distracted-jennings-dc69d7/87f9311a-f303-411e-b7d5-8fd2c624a633/scratchpad/stage_dau/auth.py	2026-09-24 16:09:39
+@@ -1,5 +1,6 @@
+ import json
+ import os
++from datetime import datetime, timedelta, timezone
+ 
+ import jwt
+ from fastapi import Depends, Header, HTTPException, Request
+@@ -9,7 +10,26 @@
+ JWT_SECRET = os.getenv("JWT_SECRET", "music-platform-secret-key-2024")
+ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ 
++# 관리자 대시보드 "오늘 접속자" — 인증된 요청을 보낸 사용자를 KST 일자별 Redis SET 에 기록.
++DAU_KEY_PREFIX = "stats:dau:"
++DAU_TTL = 400 * 24 * 3600
++_KST = timezone(timedelta(hours=9))
+ 
++
++def dau_key(day: datetime) -> str:
++    return f"{DAU_KEY_PREFIX}{day.astimezone(_KST).strftime('%Y%m%d')}"
++
++
++async def _touch_dau(redis, user_id: str) -> None:
++    # 인증 경로를 절대 막지 않도록 실패는 삼킨다.
++    try:
++        key = dau_key(datetime.now(timezone.utc))
++        if await redis.sadd(key, str(user_id)):
++            await redis.expire(key, DAU_TTL)
++    except Exception:
++        pass
++
++
+ async def get_current_user(request: Request, authorization: str = Header(None)):
+     """Validate JWT token and check Redis session.
+     Supports both Authorization header and ?token= query parameter.
+@@ -45,6 +65,7 @@
+     # Ensure role is present in session data
+     if "role" not in session:
+         session["role"] = "user"
++    await _touch_dau(redis, user_id)
+     return session
+ 
+ 
+@@ -80,6 +101,7 @@
+     session = json.loads(session_data)
+     if "role" not in session:
+         session["role"] = "user"
++    await _touch_dau(redis, user_id)
+     return session
+ 
+ 

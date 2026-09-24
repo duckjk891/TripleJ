@@ -48,6 +48,7 @@ export const login = (email, password) => API.post('/auth/login', { email, passw
 
 // ---- dashboard ----
 export const getDashboard = () => API.get('/admin/dashboard');
+export const getActiveUsers = (days = 14) => API.get('/admin/stats/active-users', { params: { days } });
 
 // ---- users ----
 export const getUsers = (params) => API.get('/admin/users', { params });
