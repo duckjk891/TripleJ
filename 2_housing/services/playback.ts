@@ -16,6 +16,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
 import api, { BACKEND_BASE_URL } from './api';
+import { trackCoverUri } from '../utils/coverUri';
 import {
   applyPlaybackAudioMode,
   setMediaSessionPlaybackState,
@@ -47,14 +48,11 @@ let loadGen = 0;
 /** 곡 로드/전환 시 호출 — 메타데이터 + play/pause/next/prev 핸들러 등록(웹 외 no-op) */
 export function syncMediaSessionForTrack(track: any): void {
   if (Platform.OS !== 'web') return;
-  const img = track?.cover_image || track?.cover_image_url;
   updateMediaSession(
     {
       title: track?.title || 'MAIDOL',
       artist: track?.artist_name || track?.uploader_nickname,
-      artworkUrl: img
-        ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`
-        : null,
+      artworkUrl: trackCoverUri(track),
     },
     {
       play: () => {
