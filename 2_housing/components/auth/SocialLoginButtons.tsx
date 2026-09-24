@@ -32,14 +32,23 @@ function sanitizeServerMessage(value: unknown): string {
   return GENERIC_FAIL_MSG;
 }
 
-export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logPrefix?: string }) {
+export default function SocialLoginButtons({
+  logPrefix = 'SocialLogin',
+  referralCode = '',
+}: {
+  logPrefix?: string;
+  /** v3.224: 초대 추천코드 — 소셜 신규가입 시 서버가 ⭐50×2 추천 보상 적용(형식 검증은 서버) */
+  referralCode?: string;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const handlePress = async (provider: string) => {
     if (busy) return;
     setBusy(provider);
     if (__DEV__) console.info(`[${logPrefix}] 소셜 로그인 시도`, { provider, platform: Platform.OS });
+    const ref = (referralCode || '').trim().toUpperCase();
     const loginUrl = `${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`;
+    const refQuery = /^[A-Z0-9]{4,12}$/.test(ref) ? `ref=${encodeURIComponent(ref)}` : '';
     try {
       if (Platform.OS === 'web') {
         // v3.216 ①: 같은 탭 전체 페이지 이동(location.assign). Linking.openURL은 react-native-web에서
@@ -57,7 +66,7 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
             target = w; // 교차 출처 top 접근 불가 시 현행 동작
           }
           if (__DEV__) console.info(`[${logPrefix}] 웹 로그인 이동`, { inFrame: target !== w });
-          target.location.assign(loginUrl);
+          target.location.assign(refQuery ? `${loginUrl}?${refQuery}` : loginUrl);
         } catch (e: any) {
           console.error(`[${logPrefix}] 소셜 로그인 이동 실패`, { provider, message: e?.message });
           showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
@@ -67,7 +76,7 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
 
       // 네이티브 — 인증 세션 브라우저를 열고 aidol://oauth/callback 복귀를 기다린다.
       // 백엔드 미지원(콜백 미수신) 시 사용자가 브라우저를 닫으면 dismiss 로 복귀 — 조용히 종료.
-      const result = await WebBrowser.openAuthSessionAsync(`${loginUrl}?client=app`, OAUTH_REDIRECT_URL);
+      const result = await WebBrowser.openAuthSessionAsync(`${loginUrl}?client=app${refQuery ? `&${refQuery}` : ''}`, OAUTH_REDIRECT_URL);
       if (result?.type === 'success' && result.url) {
         // 토큰 값은 로그 금지 — 수신 여부만 기록한다.
         const tokenMatch = result.url.match(/[#&?]token=([^&]+)/);

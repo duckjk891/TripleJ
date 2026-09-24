@@ -347,7 +347,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
         <TextInput style={styles.input} placeholder="비밀번호를 입력하세요" placeholderTextColor={colors.text.muted}
           value={password} onChangeText={setPassword} secureTextEntry />
         <Button label={isLoading ? '로그인 중...' : '로그인'} fullWidth disabled={isLoading} onPress={handleLogin} />
-        <SocialLoginButtons logPrefix="AuthPanel:login" />
+        <SocialLoginButtons logPrefix="AuthPanel:login" referralCode={referralCode} />
         {/* v3.207(⑦): 비밀번호 재설정 진입 링크 */}
         <TouchableOpacity style={styles.forgotLink} onPress={() => { resetError(); setMode('forgot'); }}>
           <AppText variant="footnote" tone="secondary">비밀번호를 잊으셨나요?</AppText>
@@ -609,7 +609,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
       </View>
 
       {/* 만14세 미만은 소셜 가입으로 보호자 동의 절차를 우회할 수 없도록 소셜 버튼 숨김 */}
-      {!isMinor ? <SocialLoginButtons logPrefix="AuthPanel:register" /> : null}
+      {!isMinor ? <SocialLoginButtons logPrefix="AuthPanel:register" referralCode={referralCode} /> : null}
       <View style={styles.footer}>
         <AppText variant="footnote" tone="secondary">이미 계정이 있으신가요? </AppText>
         <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
