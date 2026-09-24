@@ -258,3 +258,92 @@ async def screen_analytics(days: int = 7, current_admin=Depends(get_admin_user))
             "session": "앱을 열어 백그라운드로 30분 이상 나가기 전까지",
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# 가입·유입 — 가입 방식(이메일/구글/카카오), 추천 가입, 가입 플랫폼(웹/iOS/안드로이드)
+# 일반 사용자(role=user)만, 테스트 도메인 제외.
+# ---------------------------------------------------------------------------
+PROVIDER_LABELS = {"local": "이메일", "google": "구글", "kakao": "카카오", "apple": "애플", "naver": "네이버"}
+
+
+@router.get("/acquisition")
+async def acquisition(days: int = 30, current_admin=Depends(get_admin_user), conn=Depends(get_pg)):
+    if days < 1 or days > 365:
+        return JSONResponse(status_code=400, content={"error": "기간은 1~365일이어야 합니다."})
+    since = datetime.combine(
+        datetime.now(KST).date() - timedelta(days=days - 1), datetime.min.time(), tzinfo=KST
+    ).astimezone(timezone.utc)
+
+    rows = await conn.fetch(
+        """SELECT u.id::text AS id, u.email, COALESCE(u.provider, 'local') AS provider,
+                  u.created_at, (u.created_at AT TIME ZONE 'Asia/Seoul')::date AS d,
+                  u.referred_by::text AS referred_by, i.nickname AS inviter
+           FROM users u LEFT JOIN users i ON i.id = u.referred_by
+           WHERE u.role = 'user' AND COALESCE(u.account_status, 'active') <> 'withdrawn'"""
+    )
+    users = [r for r in rows if not _is_test_email(r["email"])]
+    recent = [r for r in users if r["created_at"] >= since]
+
+    def by_provider(rs):
+        out: dict = {}
+        for r in rs:
+            out[r["provider"]] = out.get(r["provider"], 0) + 1
+        return [
+            {"provider": p, "label": PROVIDER_LABELS.get(p, p), "count": n}
+            for p, n in sorted(out.items(), key=lambda x: -x[1])
+        ]
+
+    # 최근 7일 접속자의 로그인 방식 (계정 = 로그인 방식 1:1)
+    redis = get_redis()
+    today = datetime.now(KST).date()
+    week_keys = [f"{DAU_KEY_PREFIX}{(today - timedelta(days=i)).strftime('%Y%m%d')}" for i in range(7)]
+    week_active = set(await redis.sunion(*week_keys))
+    active_users = [r for r in users if r["id"] in week_active]
+
+    # 추천인별
+    inviters: dict = {}
+    for r in recent:
+        if r["referred_by"]:
+            k = r["inviter"] or "(삭제된 계정)"
+            inviters[k] = inviters.get(k, 0) + 1
+
+    # 가입 플랫폼 — 앱 사용 분석(analytics_events)에 처음 잡힌 플랫폼 기준
+    platforms: dict = {}
+    recent_ids = [r["id"] for r in recent]
+    known = {}
+    if recent_ids:
+        async for doc in get_mongo().analytics_events.aggregate([
+            {"$match": {"user_id": {"$in": recent_ids}}},
+            {"$sort": {"received_at": 1}},
+            {"$group": {"_id": "$user_id", "platform": {"$first": "$platform"}}},
+        ]):
+            known[doc["_id"]] = doc["platform"] or "unknown"
+    for uid in recent_ids:
+        p = known.get(uid, "unknown")
+        platforms[p] = platforms.get(p, 0) + 1
+
+    daily: dict = {}
+    for r in recent:
+        key = r["d"].isoformat()
+        row = daily.setdefault(key, {"date": key, "total": 0, "referred": 0})
+        row["total"] += 1
+        row[r["provider"]] = row.get(r["provider"], 0) + 1
+        if r["referred_by"]:
+            row["referred"] += 1
+
+    return {
+        "days": days,
+        "totals": {
+            "users": len(users),
+            "signups": len(recent),
+            "referred": sum(1 for r in recent if r["referred_by"]),
+            "active_7d": len(active_users),
+        },
+        "signup_methods": by_provider(recent),
+        "all_methods": by_provider(users),
+        "active_methods": by_provider(active_users),
+        "inviters": [{"inviter": k, "count": v} for k, v in sorted(inviters.items(), key=lambda x: -x[1])],
+        "platforms": [{"platform": k, "count": v} for k, v in sorted(platforms.items(), key=lambda x: -x[1])],
+        "daily": sorted(daily.values(), key=lambda x: x["date"], reverse=True),
+    }
