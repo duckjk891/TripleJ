@@ -16,6 +16,8 @@ import { registerKind, failureBody, type GenKindAdapter, type GenKindText, type 
 
 export const MUSIC_CAP_MS = 30 * 60 * 1000; // 서버 상한(보이스클론 suno 폴링 20분 + 다운로드·정규화)
 export const MUSIC_SLOW_MS = 3 * 60 * 1000;
+/** 보이스클론(내 목소리) 작곡은 실측 114~135초 — "오래 걸림" 안내 기준을 2배로 */
+export const MUSIC_SLOW_VOICE_MS = 6 * 60 * 1000;
 
 export const MUSIC_TEXT: GenKindText = {
   busyTitle: '이미 곡을 만드는 중이에요',

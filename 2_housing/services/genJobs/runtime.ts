@@ -48,7 +48,8 @@ export interface TrackerKindAdapter {
   verifyDone(job: TrackedJob): Promise<void>;
   /** 뷰어 밖 알림 대상 상태인가 */
   canNotify(job: TrackedJob): boolean;
-  notify(job: TrackedJob, route: string): void;
+  /** next = 이 알림을 닫은 뒤 대기 중인 다음 알림 표시(여러 kind 동시 도착 시 지연 방지) */
+  notify(job: TrackedJob, route: string, next: () => void): void;
 }
 
 export interface GenTrackerHooks {
@@ -153,19 +154,19 @@ function wrapAdapter(gen: GenKindAdapter): TrackerKindAdapter {
       }
     },
     canNotify: (j) => j.lastStatus === 'done' || j.lastStatus === 'failed',
-    notify: (job, route) => {
+    notify: (job, route, next) => {
       console.info('[GenTracker] 도착 알림 1회', { kind: gen.kind, jobId: job.jobId, status: job.lastStatus, route });
       if (job.lastStatus === 'failed') {
         // 서버가 쓴 과금 문장(재시작 정리 "…환불됐어요" 등)은 그대로, 아니면 chargeNotice(X-K1)
         const e = (job.error || '').trim();
         const body = e && /별|⭐|환불|차감/.test(e) ? e : chargeNotice(job.refunded, job.notCharged);
         showAlert(gen.text.failTitle, body, [
-          { text: '확인', onPress: () => { ackGenJob(job.jobId); } },
+          { text: '확인', onPress: () => { ackGenJob(job.jobId); next(); } },
         ]);
         return;
       }
       showAlert(gen.text.doneTitle, gen.text.doneBody, [
-        { text: '나중에', style: 'cancel' },
+        { text: '나중에', style: 'cancel', onPress: next },
         { text: '지금 보기', onPress: () => { void openGenJob(job.jobId); } },
       ]);
     },

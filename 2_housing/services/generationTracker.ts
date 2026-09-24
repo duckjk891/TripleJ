@@ -409,7 +409,8 @@ function maybeNotifyDone(): void {
     );
     if (!job) continue;
     store().patchJob(job.jobId, { notifiedAt: Date.now() });
-    adapter.notify(job, route);
+    // v3.228: 닫은 뒤 대기 중인 다음 알림 이어서(동일 job은 notifiedAt으로 중복 0)
+    adapter.notify(job, route, () => maybeNotifyDone());
     return;
   }
 }
@@ -663,10 +664,10 @@ const ARTIST_ADAPTER: TrackerKindAdapter = {
     }
   },
   canNotify: (j) => j.lastStatus === 'done',
-  notify: (job, route) => {
+  notify: (job, route, next) => {
     console.info('[GenTracker] 완성 알림 1회', { jobId: job.jobId, route });
     showAlert('아티스트가 완성됐어요', '완성된 아티스트를 확인하고 저장해 주세요.', [
-      { text: '나중에', style: 'cancel' },
+      { text: '나중에', style: 'cancel', onPress: next },
       { text: '지금 보기', onPress: () => { void finalizeArtistJob(job.jobId); } },
     ]);
   },

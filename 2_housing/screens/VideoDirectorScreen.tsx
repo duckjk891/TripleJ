@@ -118,7 +118,12 @@ type VideoTrackOutcome =
   | { kind: 'done'; videoUrl: string; format: string | null; serverJobId: string | null; result: any }
   | { kind: 'failed'; error: string | null; refunded: boolean | null; notCharged: boolean | null }
   | { kind: 'expired' }
+  | { kind: 'gone' } // 추적 레코드 소멸(원장 없음 → 추적기가 정리·중립 안내) — 회수·편입 추적만
   | { kind: 'unmounted' };
+
+// v3.228: 서버가 명시적으로 답한 오류 본문(앱 계약 {error} · FastAPI 기본 {detail}) — HTML 게이트웨이 5xx 와 구분
+const isServerJsonError = (data: any): boolean =>
+  !!data && typeof data === 'object' && (!!data.error || !!data.detail);
 
 
 // 무과금 완성 확인 — 헤더(상태 코드)만 받고 즉시 중단(본문 다운로드 없음). 구 서버에도 있는 GET 엔드포인트.
@@ -686,12 +691,16 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const trackVideoJob = async (t: {
     key: string; requestId?: string | null; serverJobId?: string | null;
     fileUrl?: string | null; startedAt: number; moduleJob?: ActiveVideoJob | null;
+    /** 이 화면이 직접 보낸 요청(살아 있는 요청) — 레코드가 사라져도 파일 조회 폴백 유지(W0-1) */
+    ownRequest?: boolean;
   }): Promise<VideoTrackOutcome> => {
     let deadline = t.startedAt + (t.fileUrl ? VIDEO_VERIFY_WINDOW_MS : VIDEO_CAP_MS);
     let ledgerSeen = false;
     while (Date.now() <= deadline) {
       if (!mountedRef.current) return { kind: 'unmounted' };
       const rec = useGenerationJobStore.getState().jobs[t.key];
+      // 회수·편입 추적 중 레코드 소멸 = 추적기가 정리(구서버·킬스위치 404 유예 경과 → 중립 안내) — 화면도 종료
+      if (!rec && !t.ownRequest) return { kind: 'gone' };
       const recUrl = rec?.genResult?.video_url;
       if (rec?.lastStatus === 'done' && typeof recUrl === 'string' && recUrl) {
         return { kind: 'done', videoUrl: absVideoUrl(recUrl), format: rec.genResult?.format ?? null, serverJobId: rec.serverJobId ?? null, result: rec.genResult };
@@ -769,6 +778,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       console.info('[GenJob:video] 서버 실패 확정', { jobId: key, refunded: outcome.refunded });
       pushDirector(`영상을 끝내지 못했어요. ${failureBody(outcome.error, outcome.refunded, outcome.notCharged)}`);
       settleGenJob('video', key, 'failed', { error: outcome.error, refunded: outcome.refunded });
+    } else if (outcome.kind === 'gone') {
+      console.info('[GenJob:video] 추적 레코드 정리됨 — 추적 종료', { jobId: key });
+      pushDirector(`영상 결과를 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
     } else {
       console.error('[GenJob:video] 확인 기한 내 결과 확인 실패', { jobId: key });
       pushDirector(`영상 완성을 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
@@ -865,8 +877,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         }
         // 서버가 명시적으로 답한 결과(4xx 전부, 서버 JSON 502 = 실패·환불 완료)만 "확정". 응답 없음(앱 timeout·
         // 네트워크)·게이트웨이 오류(HTML 502/503/504 등)는 서버가 아직 인코딩 중일 수 있어 "확인 중"으로 둔다.
-        const definitive = typeof status === 'number'
-          && (status < 500 || (status === 502 && !!data && typeof data === 'object' && !!data.error));
+        const definitive = typeof status === 'number' && (status < 500 || isServerJsonError(data));
         console.error('[VideoDirector] share-video 실패', { trackId: track.id, status, definitive, code: err?.code });
         if (!definitive) {
           job.phase = 'verifying';
@@ -877,7 +888,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
           // endGenRequest 는 화면 추적이 끝난 뒤 호출 — 구서버(원장 404)에서 추적기가 파일 확인 중인 레코드를
           // 먼저 정리·안내하지 않게(신서버는 원장이 processing 을 답하므로 순서 무관). done 은 markGenJobDone 이 해제.
-          const outcome = await trackVideoJob({ key: genKey, requestId, fileUrl, startedAt, moduleJob: job });
+          const outcome = await trackVideoJob({ key: genKey, requestId, fileUrl, startedAt, moduleJob: job, ownRequest: true });
           if (outcome.kind !== 'done') endGenRequest(genKey);
           if (outcome.kind !== 'unmounted' && activeVideoJob === job) activeVideoJob = null;
           settleTracked(genKey, outcome, { sig, fallbackFormat: params.format, hasTrack: true });

@@ -97,11 +97,13 @@ const isRecoverableNetErr = (err: any) =>
   (err?.code === 'ERR_NETWORK' ||
     err?.code === 'ECONNABORTED' ||
     /network|timeout/i.test(String(err?.message || '')));
-// v3.228 W2: 게이트웨이 오류(HTML 502/503/504 — 서버 JSON 본문 없음)도 서버 처리 여부 미확정 → 결과 확인 대상
+// v3.228 W2: 게이트웨이 오류(HTML 502/503/504 — 서버 JSON 본문 없음)도 서버 처리 여부 미확정 → 결과 확인 대상.
+// 서버 JSON 오류(앱 계약 {error} · FastAPI 기본 {detail})는 서버 확정 실패.
 const isGatewayErr = (err: any) => {
   const st = err?.response?.status;
   const data = err?.response?.data;
-  return (st === 502 || st === 503 || st === 504) && !(data && typeof data === 'object' && data.error);
+  return (st === 502 || st === 503 || st === 504)
+    && !(data && typeof data === 'object' && (data.error || data.detail));
 };
 
 // 서버 시각은 타임존 표기 없는 UTC — 'Z' 보정 파싱 (AppealModal fmtDate 관행)
@@ -1607,11 +1609,20 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 대화: 스타일 확인 → 즉시 생성 (v3.107: 대기열 폐지 — 이 화면의 loading 모드로 직행)
   // v3.118: 커버(image) 디렉터 휴식(쿨다운) 사전 게이트 — 서버 429(⭐ 차감 전)와 동일 다이얼로그.
   // v3.169(대표 확정): refine도 ⭐ 과금(서버 v244) — 피로 게이트는 여전히 미적용(생성만 카운트).
+  // v3.228: 진행 중 커버 요청(모듈 기록)이 있는데 추적 가드가 못 잡은 경우의 폴백 — 무반응 대신 같은 안내 팝업
+  const blockForActiveCover = (reason: string) => {
+    const cur = activeCoverGen;
+    logCoverDupBlock(reason, { jobId: cur?.genKey });
+    const buttons: Array<{ text: string; style?: 'cancel'; onPress?: () => void }> = [{ text: '닫기', style: 'cancel' }];
+    if (cur) buttons.push({ text: '진행 상황 보기', onPress: () => { void openGenJob(cur.genKey, navigation); } });
+    showAlert(COVER_TEXT.busyTitle, COVER_TEXT.busyBody, buttons);
+  };
   const handleStyleConfirm = async (style: string) => {
     // v3.228 W2: 연타·다이얼로그 연타 재진입(피로 조회 await 사이) + 진행 중 요청 + 추적 중 job(커버·다듬기 한 슬롯)
     if (styleConfirmBusyRef.current) { logCoverDupBlock('style-confirm-reentry'); return; }
-    if (activeCoverGen) { logCoverDupBlock('in-flight', { jobId: activeCoverGen.genKey }); return; }
+    // 추적 중 job(다른 화면의 커버 요청 포함) → 가드 팝업([진행 상황 보기]). 추적 레코드가 안 보이는 진행 중 요청도 같은 팝업
     if (guardGeneration('cover', { navigation, where: 'CoverGeneration' })) { logCoverDupBlock('tracked-job'); return; }
+    if (activeCoverGen) { blockForActiveCover('in-flight'); return; }
     styleConfirmBusyRef.current = true;
     try {
       await handleStyleConfirmInner(style);
@@ -1789,11 +1800,11 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       return;
     }
     // v3.228 W2: 추적 중 이미지 job(커버·다듬기 한 슬롯)이 있으면 [닫기]/[진행 상황 보기] — 과금 확인보다 먼저
-    if (activeCoverGen) { logCoverDupBlock('refine-while-cover-in-flight', { jobId: activeCoverGen.genKey }); return; }
     if (guardGeneration('cover_refine', { navigation, where: 'CoverGeneration.refine' })) {
       logCoverDupBlock('refine-tracked-job');
       return;
     }
+    if (activeCoverGen) { blockForActiveCover('refine-while-cover-in-flight'); return; }
     // v3.204(⑤): 이중 제출 봉인 — confirm await 앞에서 세팅, 취소·완료·실패 전 경로 finally 해제
     refineSubmitGuardRef.current = true;
     try {

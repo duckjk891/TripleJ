@@ -31,7 +31,7 @@ import {
 } from '../services/generationTracker';
 import { parseGenInProgress, getGenJobByRequest } from '../services/genJobsService';
 import { failureBody, CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
-import { MUSIC_TEXT } from '../services/genJobs/music';
+import { MUSIC_TEXT, MUSIC_SLOW_MS, MUSIC_SLOW_VOICE_MS } from '../services/genJobs/music';
 import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -56,6 +56,27 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
   const [progress, setProgress] = useState(0);
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
+
+  // v3.228: "평소보다 오래 걸리고 있어요" 안내 — 기준 3분(내 목소리 6분). 경과 기준 시각은
+  // 이어보기면 추적 레코드의 접수 시각, 새 생성이면 이 화면 진입 시각. 이탈 권장·과금 문구 없음.
+  const [waitStartedAt] = useState(
+    () => (resumeGenerationId ? findGenJob('music', resumeGenerationId)?.startedAt : undefined) ?? Date.now()
+  );
+  const slowMs = store.personaId ? MUSIC_SLOW_VOICE_MS : MUSIC_SLOW_MS;
+  const [isSlow, setIsSlow] = useState(false);
+  useEffect(() => {
+    if (isSlow) return undefined;
+    const check = () => {
+      const elapsed = Date.now() - waitStartedAt;
+      if (elapsed >= slowMs) {
+        console.info('[MusicLoading] 평소보다 오래 걸림 안내', { elapsedSec: Math.round(elapsed / 1000), slowSec: slowMs / 1000 });
+        setIsSlow(true);
+      }
+    };
+    check();
+    const t = setInterval(check, 15000);
+    return () => clearInterval(t);
+  }, [isSlow, slowMs, waitStartedAt]);
 
   // Advance loading step (cap at last; progress % from poll drives earlier jumps)
   useEffect(() => {
@@ -445,7 +466,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         messageIndex={messageIndex}
         progress={progress}
         portrait={portrait}
-        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n1~3분 정도 소요될 수 있어요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n${isSlow ? '평소보다 오래 걸리고 있어요. 조금만 더 기다려 주세요.' : '1~3분 정도 소요될 수 있어요.'}\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
       />
     </AppScreenLayout>
   );
