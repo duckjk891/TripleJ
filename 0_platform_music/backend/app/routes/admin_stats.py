@@ -135,7 +135,9 @@ async def feature_usage(days: int = 7, current_admin=Depends(get_admin_user)):
 # ---------------------------------------------------------------------------
 def _is_test_email(email: str) -> bool:
     e = (email or "").lower()
-    domain = e.split("@")[-1]
+    local, _, domain = e.rpartition("@")
+    if domain == "maidol.co.kr" and ("test" in local):  # 사내 QA 계정(test1~4, webtest*) — 계정은 유지, 통계만 제외
+        return True
     return "test" in domain or domain.endswith((".invalid", ".local")) or domain == "example.com"
 
 
