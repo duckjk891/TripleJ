@@ -3219,3 +3219,4 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 **특이**
 - 기존 부풀린 재생수(예: 6ab552a2 play_count 8 / play_logs 3)는 대표 결정으로 보정하지 않음.
 - 30초 안 같은 곡 처음부터 재생·43초 미만 곡 연속 반복은 서버에서 1회로 흡수(수용).
+- 소급 적용 완료(사용자 실행): APPLY DONE tracks=1 errors=0, re-check remaining=0, 검증 REP_TRACK 6ab552a2 artist_name·snap_name='한겨울'. 롤백 원천 OLD 줄은 스테이징 scripts/apply_*.txt 에 보존.
