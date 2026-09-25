@@ -20,6 +20,8 @@ import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
 // v3.207 ①: 코치마크 anchor — 검색바 스포트라이트(결과 ⋮는 TrackRow prop 경유)
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
+// v3.231 A4·A5: 로맨스 포커싱(칩 순서·기본 선택)·느낌 이름 검색 바로 가기 — 순수 로직
+import { MOOD_CATEGORY_FALLBACK, orderMoodChips, pickDefaultMood, matchMoodQuery } from '../utils/searchMood';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(검색바) — 로그인 시에만 노출(enabled=!!user).
 // search-row-more 스텝은 v3.213에서 사용 철회.
@@ -38,7 +40,8 @@ interface Track {
 }
 
 // 느낌 카테고리 — 백엔드 고정 10종(운동~잠자기). 칩은 이모지 없이 텍스트만 표시한다.
-const CATEGORY_FALLBACK = ['운동', '에너지 충전', '휴식', '출퇴근길', '행복한 기분', '집중', '로맨스', '파티', '슬픔', '잠자기'];
+// v3.231 A4: 표시 순서는 로맨스가 맨 앞(서버 순서는 불변, 앱에서만 재정렬 — 폴백도 동일 규칙)
+const CATEGORY_FALLBACK = orderMoodChips(MOOD_CATEGORY_FALLBACK);
 
 // 결과 제목 문구 — 카테고리명만 덩그러니 두지 않고 상황을 설명한다. (예: 운동 → "운동할 때 듣는 음악")
 const CATEGORY_HEADLINE: Record<string, string> = {
@@ -88,7 +91,8 @@ export default function SearchScreen() {
       try {
         const res = await api.get('/charts/categories');
         const list = Array.isArray(res.data?.categories) ? res.data.categories : [];
-        if (list.length) setCategories(list);
+        // v3.231 A4: 서버 목록 → 로맨스 맨 앞으로 재정렬(유효 항목 없으면 폴백 유지)
+        if (list.length) setCategories(orderMoodChips(list));
       } catch (err: any) {
         console.error('[SearchScreen] categories 실패', { status: err?.response?.status });
       }
@@ -110,9 +114,18 @@ export default function SearchScreen() {
     const trimmed = q.trim();
     if (!trimmed) return;
     if (__DEV__) console.info('[SearchScreen] handleSearch', { q: trimmed });
+    setSubmitted(true);
+    // v3.231 A5: 느낌 이름과 정확히 같은 검색어 → 해당 느낌 목록(서버 카테고리 색인 배포 전에도 0건 해소).
+    // 그 느낌 곡이 0건이거나 불러오기 실패면 아래 일반 검색으로 이어간다(기존 검색 결과 회귀 방지).
+    const mood = matchMoodQuery(trimmed, categories);
+    if (mood) {
+      if (__DEV__) console.info('[SearchScreen] 느낌 검색 바로 가기', { mood });
+      const count = await loadCategory(mood);
+      if (count && count > 0) return;
+      if (__DEV__) console.info('[SearchScreen] 느낌 검색 바로 가기 → 일반 검색', { mood, count });
+    }
     setActiveCategory(null);
     setLoading(true);
-    setSubmitted(true);
     try {
       const res = await api.get('/tracks/search', { params: { q: trimmed, limit: 50 } });
       setResults(res.data?.tracks || []);
@@ -125,16 +138,20 @@ export default function SearchScreen() {
   };
 
   // 카테고리(느낌) 곡 로드 — 게이트 없음(디폴트 노출/실제 선택 공용)
-  const loadCategory = useCallback(async (cat: string) => {
+  // v3.231 A5: 불러온 곡 수 반환(실패 = null) — 느낌 검색 바로 가기의 일반 검색 이어가기 판단용
+  const loadCategory = useCallback(async (cat: string): Promise<number | null> => {
     if (__DEV__) console.info('[SearchScreen] getCategoryChart', { cat });
     setActiveCategory(cat);
     setLoading(true);
     try {
       const res = await api.get(`/charts/category/${encodeURIComponent(cat)}`, { params: { limit: 50 } });
-      setResults(Array.isArray(res.data) ? res.data : (res.data?.tracks || []));
+      const list: Track[] = Array.isArray(res.data) ? res.data : (res.data?.tracks || []);
+      setResults(list);
+      return list.length;
     } catch (err: any) {
       console.error('[SearchScreen] category 실패', { status: err?.response?.status, cat });
       setResults([]);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -146,13 +163,17 @@ export default function SearchScreen() {
     loadCategory(cat);
   };
 
-  // 기본: 첫 카테고리(운동)를 디폴트 선택 + 곡 로드 (검색 전 빈 화면 방지)
+  // 기본: 로맨스를 디폴트 선택 + 곡 로드 (검색 전 빈 화면 방지)
+  // v3.231 A4: 첫 칩(운동) → 로맨스(목록에 없으면 첫 칩). 비로그인도 기본 목록 노출은 현행 유지.
   const didDefault = useRef(false);
   useEffect(() => {
     if (didDefault.current || !categories.length) return;
     if (query || activeCategory || submitted) return;
+    const def = pickDefaultMood(categories);
+    if (!def) return;
     didDefault.current = true;
-    loadCategory(categories[0]);
+    if (__DEV__) console.info(`[SearchScreen] 기본 느낌=${def}`);
+    loadCategory(def);
   }, [categories, query, activeCategory, submitted, loadCategory]);
 
   const handlePress = (t: Track) => {
@@ -230,7 +251,7 @@ export default function SearchScreen() {
         <Feather name="search" size={18} color={colors.text.muted} />
         <TextInput
           style={styles.input}
-          placeholder="곡 제목, 아티스트, 태그 검색"
+          placeholder="곡 제목, 아티스트, 장르 검색 (예: 로맨스)"
           placeholderTextColor={colors.text.muted}
           value={query}
           onChangeText={(v) => { if (!user) { setGated(true); return; } setQuery(v); }}

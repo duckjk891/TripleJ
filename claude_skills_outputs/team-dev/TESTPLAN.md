@@ -4326,3 +4326,157 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **FAIL 게이트**: 코드 발 전환·로그아웃이 가드에 막힘(L-U1) · 완료 후 가드 잔존(L-U2) · 웹 back URL 불일치(L-U4) · POST 전 이탈 과금(L-U5·L-E1) · 작곡 응답 전 이탈 추적 누락(L-U7) · 닉네임 규칙 위반 저장(NK-S1) · 자기 자신 409/변형 통과(NK-S2) · 세션 미갱신·TTL 파손(NK-S3) · 타인 문서 변경·가수명 덮어씀(NK-S4) · 프로필 수정 회귀(NK-S5) · 미배포 서버 성공 오표시(NK-U2) · 무료 칩의 과금/피로 경로(VD-U2) · 비공개 곡 칩 재생 실패(VD-U1) · 응답 유실 회수 회귀(VD-U3) · 신규 생성 기존 성별 적용(CG-U1) · female→남 오판(CG-U2) · fail-open(SC-U1·SC-P9~P11) · 경로별 확인 누락/이중(SC-P1~P13) · 휴식 연쇄 무확인 차감(SC-F1) · 단축 연타(SC-F2) · 이중 팝업·busy 고착·휴식 게이트 순서(SC-R1) · 폴백 표 드리프트(SC-A1) · 본인 다운로드 가산(CH-S1) · play_count/적립 회귀(CH-S2) · 자정 공백(CH-S3) · 순위 흔들림(CH-S5) · 재구성 불일치(CH-S7) · 안내 문구와 서버 불일치(CH-U1) · 팝업 중복·계정 혼입·UTC 오파싱(RF-U3) · 기존 회원 과거 보너스 표시(RF-U4) · 정책 문구(X-T1) · 회귀(X-G1) · 재대조·진행 중 재생성·API 회귀(S-P1~P3).
 - **최상위 FAIL**: 팀 과금 생성·휴식 단축 실행, prod 계정 생성, 실사용자 데이터 변경, prod 에서 타인 가산으로 차트 오염, 팀의 scp·재생성·.env 실행(사용자 승인·실행 전), 판독 스크립트의 prod 쓰기, 비밀값·원문 식별자 증적 기재.
 - **판정 회부(결함이면 FAIL)**: L-U5 준비 단계 가드 문구 사실 불일치 · NK-S1 제로폭/NFD 중복 우회 · RF-U4 소급 보너스 표시 기준. **기록·보고만**: NK-S7 경합 창 · CG-U1 재생성 성별 우선순위 · CG-U3 피커 재오픈 규칙 · VD-U1 다중 영상 선택 규칙·50곡 limit · CH-S1 레거시 uploader 없음 · RF-U3 50건 limit · D2 개별 사례(무환불) · D4 기획사명 범위 밖.
+
+## v3.231 (2026-09-25) — ① 아티스트 만들기 "내 답변 편집"(비파괴 편집·사진 바꾸기·실사 최종 확인 review·의상 화면 취소 후 대화 복원) ② 검색 로맨스 포커싱(칩 맨 앞·기본 선택·안내 문구·느낌 이름 바로 가기) ③ 장르 검색 보강(서버: 느낌 분류 색인+재색인·한/영 별칭·곡 수정 시 재색인)
+
+> 대상: PLAN.md v3.231(:6749~6883), planner 테스트 항목 1~11과 회귀 위험 전 항목. **대표 결정 확정**: D1 작곡식 **비파괴 편집**(입력 영역 재사용·수정 배너·이후 대화 보존·원위치 복귀) · D2 **사진 버블 탭 = 사진만 교체**(답 보존). 실사↔캐릭터 전환은 '처음부터'로만 · D3 로맨스 칩 **맨 앞·진입 기본 선택** + placeholder "곡 제목, 아티스트, 장르 검색 (예: 로맨스)" + "로맨스" 정확히 입력하면 로맨스 목록으로 연결. **입력창 자동 포커스 없음** · D4 **실사 최종 확인 단계(review)** 도입 · D5 **관련도 순 유지** + 한/영 장르 별칭(장르 "필터 전용 결과" 없음) · D6 저장된 장르 표기 **정리 안 함**(DB 소급 0 — 별칭으로 흡수).
+> **역할(오케스트레이터 확정)**: 앱 A조 = 아티스트 답변 편집 A1·A1-파생·A1-차단·A1-b·A2·A3(`screens/ArtistInputScreen.tsx`·`stores/characterTaskStore.ts` 타입) / 앱 B조 = 검색 A4·A5(`screens/SearchScreen.tsx`) / 서버 = S1 `categories` 색인+기동 재색인(`services/search_service.py`) · S2 별칭·게이트 예외·regex 폴백(`routes/tracks.py`) · S3 `PUT /tracks/{id}` 후 ES 재색인(`routes/tracks.py`) — 스테이징 `/private/tmp/server_staging_v3231/`(orig/ 보존 · new/ 수정본 · tests/ 로컬 fake 테스트). main.py·config.py·charts.py·embedding_service.py·constants/categories.py 무변경.
+> **테스트 환경 제약(필수 전제)**: iOS 시뮬레이터 없음. 로컬 웹 빌드는 **Worklets 크래시** → 앱 로직은 **Node 하네스**(RN mock: react-native·AsyncStorage·DocumentPicker·navigation(`replace`/`navigate` 캡처)·showAlert 스텁(버튼 콜백 직접 호출)·api 스텁·가짜 타이머)로 [unit] 판정. 하네스에 넣기 어려운 편집 판정은 **순수 함수로 추출**(예: 구 초안 qKey 추론·편집 커밋 적용·파생 값 재계산·느낌 칩 재정렬·느낌 이름 일치)하는 것을 권장 — 추출하지 않으면 react-test-renderer 하네스. 화면 배치·문구·스크롤 위치는 **코드 리뷰(diff 정독) + 배포 후 폰 웹(app.maidol.ai.kr)·PC 크롬 모바일 에뮬레이션(375×812) 수동 E2E**. Android 하드웨어 back 은 다음 APK 전까지 "대기". 서버 = 스테이징 **로컬 fake 테스트**(pytest — 페이크 Mongo(mongomock/dict 스텁)·ES 스텁(요청 본문 캡처 + 적중 주입)·벡터 검색 스텁(유사도 주입)·가짜 시계) → 배포 후 **무쓰기 스모크**(planner q3 방식: `_hybrid_search_core` 직접 호출 = `search_logs` 기록 0 + 읽기 전용 조회만).
+> **데이터 안전**: prod 계정 **생성 금지** · **팀 유료 생성 0회**(아티스트 여정은 Cody "이 옷으로 만들기" → ⭐ 확인 다이얼로그 **[취소]**까지. 필요하면 DevTools Request blocking `*generate-sheet-async*` 로 서버에 요청이 가지 않게 보장) · prod `PUT /tracks/{id}` **실행 금지**(곡 공개 상태·제목 변경 = 실데이터 쓰기 → S3 는 스테이징 + 운영 로그 관측으로 판정) · HTTP `GET /tracks/search` 는 호출할 때마다 `search_logs` 에 1행을 쓰므로(tracks.py:613-632) 팀 E2E 검색 입력은 **시나리오에 적힌 검색어만**, 총 호출 수를 REPORT 에 기재 · ES 재색인은 배포 때 1회 자동 실행(배포 승인에 포함) — 팀이 수동 재색인·`update_by_query` 실행 0 · 계정은 `TEST_USER_EMAIL`(A) 플레이스홀더 · 토큰·user_id·`<SSH_HOST>`·.env 값·곡 제목 원문 대량 증적 기재 금지(곡은 track_id 8자 접두) · 얼굴 사진 E2E 는 **실존 인물 사진 사용 금지**(생성 이미지·비인물 이미지 사용).
+
+### 항목 매핑 (planner 1~11 + 회귀 위험 → 시나리오)
+| # | planner 항목 | 시나리오 |
+|---|---|---|
+| 1 | [A1] 편집 열기·커밋·취소·생략·연쇄 | AE-U1~AE-U5·AE-E1 |
+| 2 | [A1-파생] 성별·이름·나이·컨셉 재계산 | AE-U6·AE-E1 |
+| 3 | [A1-차단] job·사진 재요구·이동 대기·전부 비우기 | AE-U7·AE-U8 |
+| 4 | [A1-b] 사진 바꾸기 | AE-U9·AE-E2 |
+| 5 | [A2] 실사 review·구 초안 승격 | AE-U10·AE-E1 |
+| 6 | [A3] Cody 취소 복귀 대화 복원 | AE-U11·AE-E1 |
+| 7 | 초안 영속 | AE-U12 |
+| 8 | [A4] 로맨스 칩·기본 선택·폴백·비로그인 | SR-U1~SR-U3·SR-E1 |
+| 9 | [A5] 느낌 이름 바로 가기 | SR-U4·SR-E1 |
+| 10 | [S1~S3] 서버 검색 | GS-S1~GS-S8·GS-A1·GS-O1 |
+| 11 | 공통 정책 문구 | X-T1 |
+| 회귀 | v3.227 사진 재요구 · v3.229 디렉터 1탭 복귀 · v3.230 ⭐ 확인·이탈 가드·의상 성별 필터·얼굴 인증 사전 동의 · 비로그인 검색 차단 · v3.229 개명·v3.230 닉네임 ES 재색인 · 차트 | AE-U13·SR-U5·GS-S7·X-G1·X-E1 |
+
+### AE — 아티스트 답변 편집 (앱 A조)
+
+**AE-U1. `qKey` 기록·구 초안 추론 [unit/앱] — FAIL 게이트(다른 질문 칸에 답이 저장됨)**
+- Given: ArtistInput 하니스. 신규 흐름 + 구 초안 픽스처(qKey 없음) ⓐ 실사·설명만·체형까지 답함 ⓑ 실사+사진 — 외모 4문항(머리·얼굴·피부·체형)이 `questionTextFor` 사진 모드 변형 문구 ⓒ 복원 안내 버블·재업로드 안내 버블(`PHOTO_REUPLOAD_BUBBLE`)이 끼어 있음 ⓓ 분위기 답 버블이 중복된 초안(기존 결함 재현) ⓔ 사진/설명 선택·실사/캐릭터 선택·화풍 버블.
+- When: 9문항 답(칩·자유 입력·생략 섞기) / 구 초안 복원.
+- Then: 신규 user 답 버블 전부 `qKey = QUESTIONS[i].key`(생략 버블 "(머리 생략)" 포함), `ArtistDraftChatMessage` JSON 왕복 후 유지. 구 초안: 바로 앞 디렉터 버블이 `QUESTIONS[i].question` 으로 시작하면 해당 key. ⓑ 사진 모드 변형 문구도 앞부분이 같아 추론되는지 확인(안 되면 그 버블은 편집 불가로 남음 — 기록, 다른 key 로 잘못 추론되면 FAIL). ⓒ 안내 버블 뒤의 답도 오추론 0. ⓓ 중복 버블 중 하나만 qKey 를 갖는지 기록. ⓔ qKey 없음(질문 편집 힌트 0 — 사진 버블은 AE-U9 경로). 추론 결과를 초안에 다시 쓰는지 여부 기록.
+
+**AE-U2. 편집 열기 [unit/앱]**
+- Given: 실사·사진 없음, qIndex=6(체형), 입력칸에 "마른" 입력 중. 머리 버블 = 칩 "긴 생머리"·"웨이브" + 자유 입력 "앞머리 있게"(→ "긴 생머리, 웨이브, 앞머리 있게").
+- When: 머리 버블 탭.
+- Then: `editRef = {idx, qKey:'hair', resume:{step:'questioning', qIndex:6, currentInput:'마른'}}` · 입력칸 = 기존 답 문자열 그대로, 칩 목록 = **머리 질문 칩**, "긴 생머리"·"웨이브" 선택 표시 · 진행 표시 "수정 중 · 머리" · 배너 "머리 답변을 수정 중이에요 [취소]" · 버튼 [비우기(건너뛰기)] [수정 완료] · **디렉터 버블 추가 0**, chat 길이 불변 · `showResumeNotice` 가 false 로 바뀜(작곡 v3.219 규칙) · 로그 `[ArtistEdit] 열기` 1줄(답 원문은 로그에 남기지 않음 — 길이만). 생략 버블("(머리 생략)") 탭 → 입력칸 ''. 이름 버블 → 칩 0, 자유 입력만. 편집 중 칩 토글이 `handleChipTap` 규칙과 같게 동작(선택 해제 시 해당 토큰만 제거, 자유 입력 토큰 보존).
+
+**AE-U3. 커밋 [unit/앱] — FAIL 게이트(뒤쪽 대화 손실·다른 버블 변경·진행 위치 이탈)**
+- When: AE-U2 에서 "웨이브" 해제 + "단발" 추가 → [수정 완료] / 별도로 [비우기(건너뛰기)] / 생략 버블에 값 넣고 커밋 / 같은 값 그대로 커밋.
+- Then: `styleAnswers.hair` = 새 값, 해당 버블 텍스트만 교체(다른 버블 전부 deep-equal, chat 길이 불변), step·qIndex = 6 복귀, 입력칸 = "마른"(편집 전 입력하던 값 복원 — 비워지면 FAIL), 배너·"수정 중" 표시 사라짐, 복귀 후 체형 답 → qIndex 7 로 정상 진행(질문 중복·건너뜀 0). [비우기] → 텍스트 "(머리 생략)"·값 ''. 생략 → 값 입력 → 텍스트 교체. 같은 값 → 변화 없이 닫힘. 로그 `[ArtistEdit] 커밋 key=hair len=N`.
+
+**AE-U4. 취소 [unit/앱]** — 배너 [취소] → `styleAnswers`·chat·step·qIndex·입력칸("마른") 이 열기 직전과 **완전히 같음**, 로그 `[ArtistEdit] 취소`. 편집 중 헤더 뒤로 가기 → 편집 취소인지 화면 이탈인지 구현값 기록(어느 쪽이든 커밋되지 않은 값이 초안에 섞이면 FAIL).
+
+**AE-U5. 연쇄 편집 [unit/앱]** — qIndex=7(키)에서 머리 편집 열기 → 입력 변경(커밋 안 함) → 얼굴 버블 탭 → `resume` 은 **처음 위치(qIndex 7, 그때 입력칸 값)** 그대로, 머리의 미커밋 변경은 버려짐(머리 값·버블 불변) → 얼굴 커밋 → 키 질문 복귀. 연쇄 후 [취소] → 처음 상태. 작곡 `performRewind` 규칙과 같음.
+
+**AE-U6. 파생 값 재계산 [unit/앱] — FAIL 게이트(편집 전 성별·이름·컨셉으로 생성)**
+- Given: 단계 {questioning(pending 미설정) · 가상 style · 실사 review · A3 restore-review} × 편집 {성별 남→여 · 성별 → 생략 · 이름 · 나이 · 머리}.
+- Then: questioning → `pendingGender/Name/Age` 호출 0(끝낼 때 한 번 계산하는 현행 유지) · style → `pending*` 새 값, `pendingConceptText = buildFinalText(new) || '특별한 컨셉 없음 — 자연스러운 느낌으로'`, 이어서 화풍 확정 시 새 컨셉 사용 · review/restore → `taskStore` `pending*`·`conceptText`·`userText` = 새 값(`userText` 에 이전 Cody 의상 설명이 겹쳐 들어가면 FAIL — v3.105: conceptText 는 의상 설명이 섞이지 않은 순수 컨셉) · 성별 → 생략 → `pendingGender = null`(이전 값 '남' 이 남으면 FAIL) · Cody 기본 필터: `resolveCodyDefaultGender({isNewArtist:true, pendingGender:'여', draftGender:'여'})` → 여, 로그 `[ArtistCody] 성별 필터 source=pending gender=여` · 실사+사진이면 외모 4문항 편집에도 PHOTO_MODE_HINT 유지 · 로그 `[ArtistEdit] 파생 재계산` 1줄/커밋.
+
+**AE-U7. 모든 답 비우기 거부 [unit/앱]** — 사진 없음 + 답이 머리 1개뿐 → 머리 [비우기] → showAlert('설명이 필요해요','사진 없이 만들 때는 한 가지 이상 답해주세요.') 1회, 커밋 0(값·버블 불변), 로그 `[ArtistEdit] 거부 reason=empty`. 사진 있음 → 허용. 거부 뒤 편집 상태가 유지되는지·닫히는지 구현값 기록. 아직 남은 질문이 있는 questioning 단계에서도 거부되는지 기록. 기존 `handleStartGeneration` 설명 필수 검사(:821-825) 불변.
+
+**AE-U8. 편집 차단 [unit/앱] — FAIL 게이트(생성·이동 중 편집으로 상태 꼬임)** — {`activeJob` 있음, 사진 재요구 중(`photoResume`), [의상 고르러 가기] 뒤 1초 대기(`leavingRef`), `initialLoading`} 각각: "탭해서 수정" 힌트 0, 탭 → state 변화 0, 로그 `[ArtistEdit] 거부 reason=job|photo|leaving|loading`. 조건이 풀리면 힌트가 다시 보임. 실사/캐릭터 선택·화풍 버블은 어느 단계에서도 힌트 0.
+
+**AE-U9. 사진 바꾸기 A1-b [unit/앱] — FAIL 게이트(답 유실·사진 소실·얼굴 인증 동의 누락/중복)**
+- Given: 실사+사진, qIndex=4에서 사진 버블 탭. 같은 테스트를 review·가상 style 단계, "설명만으로" 선택 버블, 캐릭터(가상) 사진 버블로 반복.
+- Then: showAlert('사진을 바꿀까요?','답해둔 내용은 그대로 두고 사진만 다시 골라요.', [취소]/[사진 바꾸기]) · [취소] → 변화 0 · [사진 바꾸기] → `photoResume` = 현재 step·qIndex, 디렉터 "바꿀 사진을 올려주세요. 사진 없이 설명만으로 만들 수도 있어요."(재업로드 안내 `PHOTO_REUPLOAD_BUBBLE`·:972 문구와 **다른 문구**) · 새 사진 선택 → 기존 사진 확인 팝업 → `acceptPhotoWithConsentPrecheck` **정확히 1회** → 멈췄던 단계(qIndex 4 / review / style)로 복귀, `styleAnswers` 불변, `photoIntent='photo'`, 새 photoUri, `reuseOriginalObjectName` 처리 규칙 = v3.227 사진 새로 선택 시와 같음 · 설명만 → 사진: 이후 외모 질문 문구가 사진 모드로 바뀜 · 사진 → "설명만으로" 선택: `photoIntent='text'`, 이후 모든 답이 비어 있으면 AE-U7/기존 검사로 막힘 · 가상은 얼굴 상태 조회 0(`isVirtualMode` return) · 동의 필요 계정 → `navigate('FaceVerify',{consentOnly:true})` 뒤 돌아오면 복귀 단계 유지 · 실사/캐릭터 선택 버블 탭 → 반응 0 · 로그 `[ArtistEdit] 사진 바꾸기`.
+- 경계(판정 회부): [사진 바꾸기] 뒤 사진 선택 창 취소 / 앱 재시작 → **기존 사진이 새 사진을 고르기 전에 지워지면 FAIL**(v3.227 사진 소실 회귀). 기존 사진으로 돌아갈 방법(예: [취소] 버튼 또는 그대로 이어가기)이 있는지 기록.
+
+**AE-U10. 실사 review 단계 A2 [unit/앱] — FAIL 게이트(자동 이동 잔존·⭐ 오해 문구·구 초안 중복 버블)**
+- ① 실사 마지막(분위기) 답 → 가짜 타이머 5초 동안 `replace` 0, 디렉터 "답해주신 내용으로 준비됐어요! 고치고 싶은 답은 말풍선을 눌러 바꿀 수 있어요." 1개, step·초안 step = 'review', 버튼 [의상 고르러 가기](⭐ 표기 0) ② 버튼 → `pending*` 설정·`useOutfitStore.clear()` 1회·`userText/conceptText` 설정·1초 뒤 `replace('ArtistCody',{mode:'sheet'})` 1회. 연타 3회 → replace 1회(`leavingRef`) ③ 사진 의도인데 사진 없음 → `requirePhotoAgain('review')` → 재업로드 후 **review 로 복귀**(`resumeOrStartQuestioning`·`initialPhotoResume` 가 'review' 처리) ④ 가상 → 기존 화풍 단계(review 없음 — 흐름 hunk 0) ⑤ 구 초안 {step:'questioning', qIndex:8, mood 답 있음, 마지막 user 버블 = 분위기} 복원 → review 로 승격, 분위기 버블 1개, review 안내 버블은 1번만(복원할 때마다 다시 추가되면 FAIL) ⑥ qIndex 8 인데 mood 미응답(분위기 질문이 열려 있음) → questioning 유지 ⑦ step 'review' 초안 재시작 → review 복원, 안내 버블 중복 0 ⑧ 로그 `[ArtistInput] review 진입`/`의상 이동`.
+
+**AE-U11. Cody 취소 복귀 A3 [unit/앱]**
+- Given: 초안 진행 있음·초안 키 일치(characterId·forceKind) → Cody [취소] → `replace('ArtistInput',{restore:true})`.
+- Then: 대화 복원 + step='review'(실사·가상 공통), 메모리 사진 유지 로직(:249-253) 그대로, [의상 고르러 가기] = 기존 `handleResume`(store 입력 보존) · 복원 뒤 편집 → AE-U6 restore 칸 · 가상 복원 → 이전 화풍(artStyle) 유지로 Cody 진입 · 초안 없음 / 키 불일치(다른 캐릭터 재생성) → 현행(환영 + "이어서 만들기") · Cody↔Input 3회 왕복 → review 안내 버블 누적 0 · 로그 `[ArtistDraft] restore 대화 복원`.
+
+**AE-U12. 초안 영속 [unit/앱] — FAIL 게이트(편집 결과 유실 — 2026-09-07 가사 유실 사고 유형)** — 커밋 직후 AsyncStorage 초안 JSON 에 새 버블 텍스트·`qKey`·`styleAnswers` 반영 → 스토어 재하이드레이트(앱 재시작 모사) → 같은 화면. 편집 **중** 재시작 → 원래 진행 위치·미커밋 값 미반영·배너 0. 재생성(characterId) 진입 시 키가 다른 초안 폐기는 현행. 새 필드 `qKey`·step 'review' 가 있는 초안을 이전 버전 코드가 읽어도 크래시 0(웹 캐시 구 번들 — 이전 코드는 'review' 를 모름 → 어떤 화면으로 열리는지 기록).
+
+**AE-U13. 회귀 — v3.227·v3.229·v3.230 [unit/앱] — FAIL 게이트**
+- ① v3.227 W0-U1 하니스 재실행(`photoIntent` 영속·사진 단계 되돌림), `requirePhotoAgain` 를 questioning·style·review 에서 호출, [이전 사진 사용] 재사용 경로 불변 ② v3.229 R-U1 `hasArtistDraftProgress`/`peekArtistDraft` 판정이 step 'review' 초안에서도 같음(user 버블 유무만 봄), 작업실 1탭 복귀가 review 로 열림, `utils/directorResume.ts` hunk 0 ③ v3.230 ⭐ 확인: ArtistInput diff 에 `starSpendConfirm`·차감 호출 0, Cody "이 옷으로 만들기" 확인 1회 불변(SC-P 해당 경로 재실행) ④ v3.230 이탈 가드: ArtistLoading `useGenerationLeaveGuard` hunk 0, ArtistInput 에 가드 0(과금 전 화면) ⑤ v3.230 의상 성별 필터: `resolveCodyDefaultGender`·`normalizeArtistGender` hunk 0, CG-U1 행렬 재실행 ⑥ 얼굴 인증 사전 동의: `acceptPhotoWithConsentPrecheck` 호출 = 사진 확정(선택·재사용·바꾸기) 때만, 편집 커밋·review 버튼·A3 복원에서 0.
+
+**AE-E1. 실사 편집 여정 [e2e] — 팀 과금 0 — 정적 대체: AE-U2~U6·U10·U11**
+- 폰 웹(웹 배포 후), A: 아티스트 ＋추가 → 실사 → "설명만으로" → 성별 "남"·이름·머리(칩 2개+자유 입력) … → 체형 질문 중 머리 버블 "탭해서 수정" → 배너·칩 선택 표시 확인 → 칩 바꿔 [수정 완료] → 체형 질문 그대로·입력하던 값 유지 → 끝까지 답 → **review(자동 이동 없음)** → 성별 버블 남→여 수정 → 웹 새로고침 → review·수정값 복원 → [의상 고르러 가기] → Cody 기본 필터 "여성용" → Cody [취소] → 대화·review 복원 → 이름 수정 → [의상 고르러 가기] → "이 옷으로 만들기" → ⭐ 확인 **[취소]**(네트워크 탭 생성 POST 0, 잔액 불변). 이모지 ⭐ 외 0·시스템 Alert 0 육안.
+
+**AE-E2. 캐릭터 + 사진 바꾸기 [e2e] — 팀 과금 0 — 정적 대체: AE-U9**
+- 폰 웹, A: ＋추가 → 캐릭터(가상) → 생성 이미지 사진 A 업로드 → 확인 팝업 → 질문 3개 답 → 사진 버블 탭 → "사진을 바꿀까요?" → [사진 바꾸기] → 안내 문구(재업로드 문구와 다름) → 사진 B → 확인 팝업 → 멈춘 질문으로 복귀·답 유지 → 끝까지 → 화풍 단계에서 나이 수정 → Cody → ⭐ 확인 [취소]. 실사 사진 바꾸기(얼굴 인증 동의 화면 이동)는 실존 인물 사진 금지 원칙상 하니스(AE-U9)로만 판정.
+
+### SR — 검색 로맨스 포커싱 (앱 B조)
+
+**SR-U1. 느낌 칩 재정렬 [unit/앱]** — 입력 {서버 10종 순서(로맨스 7번째), `CATEGORY_FALLBACK`, 로맨스 없는 목록, 로맨스 중복, 빈 목록} → 로맨스 맨 앞 + 나머지 원래 순서 유지 · 로맨스 없음 → 그대로 · 중복 제거 여부 기록 · 빈 목록 → 폴백 유지(현행 :91) · API 응답 배열 자체는 바뀌지 않음(재정렬은 복사본에만).
+
+**SR-U2. 진입 기본 선택 [unit/앱] — FAIL 게이트(운동이 기본으로 남음·두 번 로드해 목록이 깜빡임)**
+- When: 마운트 순서 {`/charts/categories` 가 기본 선택 effect **뒤에** 도착(현행 — 첫 렌더는 폴백 목록), 먼저 도착, 실패, 로맨스 없는 목록 도착} × {로그인, 비로그인}.
+- Then: `GET /charts/category/로맨스` **1회**(운동 호출 0), 활성 칩 = 로맨스, 헤드라인 "설렐 때 듣는 음악", 서버 목록이 늦게 와도 다시 불러오기 0(`didDefault`) · 로맨스 없는 목록이 늦게 도착 → 폴백 기준으로 이미 로맨스가 선택된 상태에서 칩 줄에 로맨스가 없음 → 결과 기록·판정 회부(현재 서버 10종에는 있으므로 운영 영향 없음) · 비로그인도 기본 목록 로드·노출(현행 정책) · 로그 `[SearchScreen] 기본 느낌=로맨스` 1회 · 첫 칩이 가로 스크롤 없이 보이는지(ScrollView 초기 offset 0)는 코드 리뷰.
+
+**SR-U3. placeholder·자동 포커스 없음 [unit/앱 + 코드 리뷰]** — placeholder 가 정확히 "곡 제목, 아티스트, 장르 검색 (예: 로맨스)" · `autoFocus`·마운트 시 `focus()` 호출 0(D3 — 비로그인에게 로그인 오버레이가 바로 뜨는 것 방지) · 375px 폭에서 잘림 여부는 SR-E1 육안.
+
+**SR-U4. 느낌 이름 바로 가기 A5 [unit/앱] — FAIL 게이트(비로그인 차단 우회·일반 검색 회귀)**
+- When(로그인): "로맨스" · " 로맨스 "(앞뒤 공백) · 10종 이름 각각 · "로맨스 노래" · "로맨" · "로맨틱" · "운동" 입력 후 검색.
+- Then: 느낌 이름과 정확히 같을 때(trim 후) → `/tracks/search` 호출 **0**, `loadCategory(해당)` 1회, 활성 칩 = 해당 느낌, 로그 `[SearchScreen] 느낌 검색 바로 가기` · 그 외 → `/tracks/search` 1회(현행 params `{q, limit:50}`) · 바로 가기 결과 곡 탭 → `/tracks/search/click` **0**(카테고리 모드 — 현행과 같음) · 비교 대상 = 현재 칩 목록(서버 목록 기준 — 폴백에만 있는 이름 처리는 기록).
+- When(비로그인): 키보드 제출로 "로맨스" 전달 → `blockIfGuest` 가 **먼저** 동작 → 로그인 오버레이, `loadCategory`·`/tracks/search` 호출 0(바로 가기가 게이트보다 먼저 실행되면 FAIL).
+- 바로 가기 뒤 지우기(X, `clearAll`) → 기본 선택이 다시 실행되지 않는 현행 동작 유지(기록).
+
+**SR-U5. 회귀 [unit/앱] — FAIL 게이트** — 비로그인: 입력 포커스·칩 탭 → 로그인 오버레이(:99-106·:141-144·:236-237 동작 불변) · 곡 탭 = 재생목록 append(v3.223 E-3 — 목록 통째 교체 0) · 좋아요 동기화 · 검색 실패/카테고리 실패 → 빈 목록·크래시 0 · ChartScreen 검색 모달(죽은 코드) hunk 0 · SearchScreen 외 파일 hunk 0.
+
+**SR-E1. 검색 탭 [e2e] — 정적 대체: SR-U1~U4** — 폰 웹 375px. ① 비로그인: 검색 탭 → 로맨스 칩 맨 앞·선택·곡 목록(칩 곡 수 기록) · placeholder 전체 표시 · 키보드 자동으로 올라오지 않음 · 입력칸 탭 → 로그인 오버레이 · 다른 칩 탭 → 오버레이. ② A 로그인: "로맨스" 검색 → 로맨스 칩 목록과 같은 곡 · "로맨스 노래" → 일반 검색 결과 · 곡 탭 → 재생목록 append. 검색 호출 수 기록(데이터 안전).
+
+### GS — 서버 검색: 느낌 색인·별칭·수정 시 재색인 (서버 S1~S3)
+
+**GS-S1. `categories` 매핑·문서 변환 [unit/서버] — FAIL 게이트(키 누락으로 재기동마다 전체 재색인)**
+- Given: `new/services/search_service.py`, 곡 픽스처 {categories ['로맨스','파티'], [], 필드 없음, None}.
+- Then: 매핑에 `categories` = `_ko_text_field()`, `_track_to_doc` 결과에 **항상 `categories` 키**(빈 경우 `[]`), 기존 필드 값은 `orig/` 와 바이트 동일(새 키만 추가) · ensure 경로(:230-242)가 기존 인덱스에 `put_mapping` 으로 필드를 더함(인덱스 삭제·재생성 0).
+
+**GS-S2. 기동 자가 치유·재색인 [unit/서버 — ES 스텁] — FAIL 게이트(재색인 무한 반복·비공개 곡 노출)**
+- Given: ES 스텁 = 28문서(`categories` 키 없음, Mongo 공개인데 ES `is_public=false` 6개 포함, 비공개 곡 문서 1개), Mongo 공개 27.
+- When: 기동 1회 → 재기동 → 재색인 도중 bulk 예외 → 재기동.
+- Then: 1회차: 로그 `[search.es.migrate] sample doc missing 'categories'` 1회 + 공개곡 27건 upsert, 6개 `is_public=true` 로 고쳐짐 · 2회차: 재색인 0·로그 0. **샘플 검사에 걸린 문서가 재색인하지 않은 비공개 문서(키 없음)이면 매 기동 재색인 → FAIL** · 비공개 문서는 `is_public=false` 그대로(검색에 안 나옴) · Mongo 비공개인데 ES 공개인 역방향 불일치 픽스처는 고쳐지는지 기록(현재 prod 0건) · bulk 예외 → 기동 계속·경고 로그·다음 기동에 재시도 · 개수 비교 기반 기존 검사(:303-432) 동작 불변 · 재색인이 기동(첫 요청 응답)을 막는 시간 기록.
+
+**GS-S3. 느낌 검색·아무말 게이트 예외 [unit/서버 — ES·벡터 스텁] — FAIL 게이트(게이트가 헐거워져 아무말에 결과가 나옴)**
+- Then: `es_search` multi_match fields 에 `categories^2` 추가, 기존 가중(`artist^4, title^3, lyrics^2, keywords^2, prompt, tags, genre, mood`) 불변 · 접두어 앵커(`es_anchor_hits`) fields 에 `categories` · 느낌 이름과 정확히 같은 q("로맨스", 10종) → ES top1 2.87·벡터 0.322(실측 재현 주입)에서도 게이트 적용 0 → 결과 반환 · "로맨스ㅁㄴ"·"로맨스 노래"·"ㅁㄴㅇㄹ" → 게이트 기존대로(아무말 0건 유지) · 느낌 이름 목록 출처 = `constants/categories.py`(파일 무변경 — 하드코딩 사본이면 기록).
+
+**GS-S4. 한/영 별칭 확장 S2 [unit/서버] — FAIL 게이트(벡터 질의·응답 변경, 원문 로그)**
+- When: q = {힙합, Hip-hop, 알앤비, R&B, 케이팝, K-Pop, 시티팝, City pop, 댄스, Dance, 재즈, Jazz, 발라드, Ballad, 트로트, Trot, 록, Rock, 로맨스, "힙합 트로트", "힙합 Hip-hop"(양쪽 이미 있음), "기록"·"댄스곡"·"hiphop"(부분 일치 경계), 무관어 "봄날"}.
+- Then: 대응어가 ES 쿼리 문자열에만 추가(로맨스 → 로맨틱·Romantic), 임베딩 호출 입력 = **원래 q**(캡처), `search_logs.q` = 원래 q, 응답 `{tracks,pagination}` 키셋 `orig/` 동일 · 이미 둘 다 있으면 added=0 · "기록"(록이 글자 안에 들어 있음) → Rock 추가 여부 기록(토큰 단위가 아니라 글자 포함으로 판정하면 오탐 — 결과 품질 영향 기록) · "hiphop"·"댄스곡" 처리 기록 · 무관어 added=0 · 로그 `[tracks.search] alias_expand q_len=%d added=%d` — 검색어 원문 0.
+
+**GS-S5. regex 폴백 [unit/서버]** — ES·벡터 모두 예외 → 폴백 `$or` 에 기존(title·tags·prompt·uploader_nickname·artist_name) + `genre`·`mood`·`categories`, "재즈"·"로맨스" 로 해당 곡 반환 · "R&B"·"(" ·".*" → `re.escape` 유지(정규식 오류·전체 매칭 0) · 공개곡 필터 유지.
+
+**GS-S6. `PUT /tracks/{id}` ES 동기화 S3 [unit/서버 — 페이크 Mongo + ES 스텁] — FAIL 게이트(곡 수정 실패·응답 변화)**
+- When: 소유자 PUT {비공개→공개(ES 문서 없음 — 비공개로 만든 곡), 비공개→공개(ES 문서 is_public=false), 공개→비공개, 제목·장르 변경, 변경 필드 없음} · ES 예외 · 타인 PUT · 존재하지 않는 id.
+- Then: 갱신 후 Mongo 에서 다시 읽은 문서로 `es_index_track` 1회(공개 전환 → 검색에 나옴, 비공개 전환 → is_public=false 로 검색 제외, 제목·장르 → 새 값, `categories` 포함) · ES 예외 → **200 + 응답 JSON `orig/` 동일** + 로그 `[tracks.update] es_sync track=%s ok=False` · 타인 → 기존 403, ES 호출 0 · 없는 id → 기존 404 · Redis 캐시 무효화 기존대로 · 응답 지연 추가 = ES 호출 1회(백그라운드면 0) 기록 · 오늘 05:01Z 에 바뀐 tracks.py 부분(다른 세션 변경)이 new/ 에 그대로 있음(`diff live new` 에서 v3.231 hunk 만).
+
+**GS-S7. 다른 ES 동기화 경로 회귀 [unit/서버] — FAIL 게이트(개명·닉네임 재색인이 categories 를 지우거나 공개 상태를 뒤집음)** — 라이브에서 읽기 전용으로 복사한 v3.229 `artist_name_sync`·v3.230 `nickname_sync`·업로드 생성 경로·관리자 경로(admin.py:877)가 ES 에 쓰는 방식 확인: 전체 문서를 `_track_to_doc` 로 다시 쓰는 방식이면 `categories` 자동 포함·is_public 유지 / 부분 갱신이면 `categories` 보존 · 이 경로가 `categories` 없는 문서를 쓰면 다음 기동에 GS-S2 재색인이 다시 발동 → FAIL · 삭제 경로(:977) 불변 · 차트: charts.py hunk 0, `/charts/categories` 순서(서버 원래 순서)·`/charts/category/{cat}` 응답 `orig/` 동일.
+
+**GS-S8. 검색 결과 골든 [unit/서버 — 조건부]** — 로컬 ES(nori) 컨테이너를 띄울 수 있으면: 공개곡 최소 필드(track_id·title·genre·mood·categories·is_public — 가사·사용자 식별자 제외) 읽기 전용 스냅샷으로 old/new 순위 비교 — 로맨스 ≥10(카테고리 로맨스 곡 상위), 재즈 1, 힙합 4개 상위, 알앤비 → R&B 3개 상위, R&B·트로트·하우스·인디 기존 상위 순위 유지, 발라드 0, 아무말 0. 불가하면 GS-S3·S4 쿼리 본문 골든 + GS-A1 로 판정(기록).
+
+**GS-A1. 배포 후 무쓰기 스모크 [api] — FAIL 게이트(검색 회귀)**
+- 배포 **전** 기준값: q3·q4 방식 스크립트로 `_hybrid_search_core` 직접 호출(search_logs 0) — 로맨스·재즈·힙합·알앤비·R&B·케이팝·발라드·"ㅁㄴㅇㄹ"·아티스트명 2개·가사 구절 2개의 결과 수·상위 5 track_id 접두 저장.
+- 배포 후 같은 스크립트: 로맨스 ≥10(카테고리 로맨스 곡이 상위), 재즈 ≥1, 힙합 → 4곡 상위, 알앤비 → R&B 3곡 상위, 발라드 0 유지, "ㅁㄴㅇㄹ" 0 유지, 아티스트명·가사 구절 1위 불변(순위 하락 = FAIL) · q5·q7 방식 읽기 조회: ES `is_public=true` 문서 수 = Mongo 공개 곡 수, 불일치 0, 샘플 문서에 `categories` 키 · 기동 로그 `[search.es.migrate] sample doc missing 'categories'` 1회·Traceback 0, 5분 오류 0.
+- HTTP 경로 확인은 `GET /api/tracks/search?q=로맨스` 비로그인 1회로 200·`{tracks,pagination}` 스키마만(search_logs 1행 발생 — 기록). `PUT` 스모크 0(GS-O1 로 관측).
+
+**GS-O1. 운영 관측 [ops — 읽기 전용]** — 배포 후 7일: 실사용자 곡 수정 시 `[tracks.update] es_sync ... ok=True` 비율, 하루 1회 q5 방식 공개 상태 불일치 수(0 기대), `[tracks.search] alias_expand` 발생 수, 느낌 이름 검색 0건 응답 수(search_logs 결과 수 필드가 있으면).
+
+### S-P — 서버 배포 게이트 [ops]
+
+**S-P1. 재대조·범위 [ops] — FAIL 게이트(다른 세션 변경 덮어쓰기)** — 배포 직전 라이브 md5 = PLAN 기준값(routes/tracks.py `d7b2a040…`·services/search_service.py `de0288a9…`·routes/charts.py `9a5c47a2…`·services/embedding_service.py `657650d5…`·constants/categories.py `73040784…`·config.py `672c7468…`·main.py `78ab7074…`). 불일치 → 새 라이브 본에 diff 재적용(`patch --dry-run` 선행) + 스테이징 tests 재실행. 반영 대상 = search_service.py·tracks.py **2개만**(main.py·config.py·charts.py·기타 0), `.bak_pre_v3231` 생성, 스테이징 tests/ 전체 PASS 로그 첨부.
+
+**S-P2. 사전 점검 [ops] — FAIL 게이트(생성 진행 중 재시작 → boot_id 환불 처리 발생)** — gen_jobs processing·generations pending/processing·inst_jobs·character_jobs·영상 인코딩 = 0 확인 후 컨테이너 재생성. 배포 승인 요청에 "ES 공개곡 재색인 1회 자동 실행(약 27건, 몇 초)" 명시. 배포 실행 = 사용자 승인 후.
+
+**S-P3. 스모크 [ops]** — health 200, GS-A1, v3.230 CH 차트 top100·카테고리 200·스키마 동일, v3.228 `jobs/recoverable` 200, 5분 Traceback 0.
+
+### X — 공통 정책·회귀
+
+**X-T1. 정책 문구 [unit — 정적] — FAIL 게이트(이모지·AIDOL·시스템 Alert·⭐ 오해)** — 이번 diff 신규 문자열 전수("탭해서 수정", "○○ 답변을 수정 중이에요", "수정 중 · ○○", "비우기(건너뛰기)", "수정 완료", "사진을 바꿀까요?", "바꿀 사진을 올려주세요…", "답해주신 내용으로 준비됐어요!…", "의상 고르러 가기", "설명이 필요해요", 검색 placeholder): 이모지 0(⭐ 예외이지만 A2 버튼·review 문구에는 ⭐ 0), `\bAIDOL\b` 0, `Alert.alert` 0(전부 showAlert), 작곡 편집 힌트·배너 스타일(editHint·rewindBanner) 재사용 여부 기록.
+
+**X-G1. 회귀 하니스 [unit] — FAIL 게이트** — ① AE-U13 전 항목 ② v3.229 R-U1(directorResume)·R-U8(튜토리얼 앵커 — ArtistInput·Search 화면 앵커 hunk 0) ③ v3.230 SC-R1 ①·⑤, L-U1·L-U2(ArtistLoading 가드), CG-U1~U4 ④ 비로그인 검색 차단 SR-U5 ⑤ 서버: GS-S7(개명·닉네임 ES 재색인·차트 불변), v3.230 CH-S8 응답 키셋, N-S3 가수명 직렬화 불변 ⑥ `npx tsc --noEmit` 0 ⑦ 스테이징 pytest 전체 PASS ⑧ diff 범위: 앱 = ArtistInputScreen.tsx·characterTaskStore.ts·SearchScreen.tsx(+추출 util·테스트 하니스) 외 hunk 0.
+
+**X-E1. 핵심 여정 회귀 [e2e] — 팀 과금 0** — 웹 배포 후 폰 웹 A: 작업실에서 아티스트 디렉터 1탭 복귀(진행 중 초안 → review 또는 질문 화면으로 바로 열림) · 작사 디렉터 1탭 복귀 → 요청서 → ⭐ 확인 → 취소 · 차트 TOP100 새로고침 3회 순서 동일 · 검색 결과 곡 재생 → 재생목록 append · 콘솔 오류 0. APK 전용(하드웨어 back) "대기".
+
+### 게이트 요약
+
+- **트랙 구조**: 서버 = GS-S1~S7 PASS(스테이징 로컬 fake, GS-S8 조건부) → GS-A1 배포 전 기준값 → S-P1·S-P2 → 사용자 승인·반영·재생성(재색인 1회) → S-P3·GS-A1 → GS-O1 7일 관측. 앱 A조 = AE-U1~U13 / B조 = SR-U1~U5 PASS + X-T1·X-G1 + tsc 0 → 웹 배포(A5 바로 가기로 서버 배포 전에도 "로맨스" 0건 해소 — 앱·서버 배포 순서 무관) → E2E 4종(AE-E1·AE-E2·SR-E1·X-E1, 정적 대체 병기).
+- **태그별 수(총 37)**: [unit] 28(앱 AE-U1~U13·SR-U1~U5 = 18 · 정적 X-T1·X-G1 = 2 · 서버 GS-S1~S8 = 8) · [api] 1(GS-A1) · [e2e] 4(AE-E1·AE-E2·SR-E1·X-E1) · [ops] 4(GS-O1·S-P1~P3).
+- **비용 상한**: 팀 과금 0(⭐ 확인은 전부 [취소]). prod 쓰기 = 배포 때 자동 재색인 1회(승인 포함) + E2E·HTTP 검색이 남기는 search_logs(건수 기록)뿐. prod `PUT /tracks` 0, prod 계정 생성 0.
+- **FAIL 게이트**: 다른 질문 칸에 저장(AE-U1) · 뒤쪽 대화 손실·위치 이탈(AE-U3) · 편집 전 성별/이름/컨셉으로 생성(AE-U6) · 생성·이동 중 편집(AE-U8) · 사진 바꾸기 중 답 유실·사진 소실·동의 누락/중복(AE-U9) · review 자동 이동 잔존·⭐ 문구·구 초안 중복(AE-U10) · 편집 결과 유실(AE-U12) · v3.227/229/230 회귀(AE-U13·X-G1) · 운동 기본 잔존·이중 로드(SR-U2) · 비로그인 차단 우회(SR-U4) · 검색 화면 회귀(SR-U5) · categories 키 누락(GS-S1) · 재색인 무한 반복·비공개 노출(GS-S2) · 아무말 게이트 약화(GS-S3) · 벡터 질의·응답 변경·원문 로그(GS-S4) · 곡 수정 실패·응답 변화(GS-S6) · 다른 재색인 경로가 categories 삭제(GS-S7) · 검색 순위 회귀(GS-A1) · 재대조·진행 중 재시작(S-P1·S-P2) · 정책 문구(X-T1).
+- **최상위 FAIL**: 팀 유료 생성, prod 계정 생성, prod 곡 수정(PUT), 팀의 수동 재색인·scp·재시작(사용자 승인·실행 전), 실존 인물 사진 사용, 비밀값·원문 식별자 증적 기재.
+- **판정 회부(결함이면 FAIL)**: AE-U9 사진 바꾸기 중 취소 시 기존 사진 처리 · SR-U2 로맨스 없는 서버 목록 늦게 도착. **기록·보고만**: AE-U1 사진 모드 문구 추론·중복 버블 · AE-U4 편집 중 뒤로 가기 · AE-U7 거부 뒤 상태·questioning 단계 거부 · AE-U12 구 번들이 'review' 초안 읽기 · SR-U4 폴백 전용 이름 · GS-S2 역방향 불일치·재색인 소요 · GS-S4 글자 포함 오탐("기록"→Rock) · GS-S6 응답 지연 · D6 표기 정리(대상 아님).

@@ -6745,3 +6745,139 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 - A8(앱): 본인인증 요구 UI 전부 우회 — FaceVerifyScreen 본인인증 단계 건너뛰고 동의→촬영으로(서버 identity_required 미수신 구서버면 기존 동작), ArtistInput 의 본인인증 안내 제거(v3.230 D10 "본인인증 조기 안내"는 **취소** — 대신 얼굴 인증 안내로 대체 가능), Settings·DmInbox 의 본인인증 요구 문구/차단 점검(단순 정보 표시는 유지, 기능 차단·유도 팝업은 제거). 403 `identity_verification_required` 수신 시에도 본인인증 유도 대신 일반 안내.
 - 담당: 서버 S3 = backend-dev(v3.230 스테이징에 추가), 앱 ArtistInputScreen = 1조, FaceVerifyScreen·Settings·DmInbox·authStore = 2조.
 - 테스트: 미인증 성인 계정 → 동의 200·검증 진행, 미성년(birth_date 有) → 보호자 동의 분기 유지, flag True 로 되돌리면 기존 403, 앱 어디에서도 "본인인증" 유도 팝업/차단 없음(grep + 하니스).
+
+---
+
+# v3.231 (2026-09-25) — ① 아티스트 만들기 "내 답변 편집" ② 검색창 로맨스 포커싱 ③ 장르 검색 여부 확인
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 5a5dd26). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004/app`(읽기 전용). 분석용 원본 = `/private/tmp/server_staging_v3231/orig/`(routes/tracks.py·routes/charts.py·services/search_service.py·services/embedding_service.py·constants/categories.py·database/elasticsearch.py, 서버 쓰기 0). 실측 스크립트 = `/private/tmp/server_staging_v3231/q1~q7.py`(Mongo find/count·ES get/search/count/analyze·pgvector 유사도 조회만 — `_hybrid_search_core` 를 직접 호출해 `search_logs` 기록도 남기지 않음). 출처 [P]=planner 실측.
+
+사용자 요청 원문:
+"아티스트 만들기에서도 다른 디렉터와 마찬가지로 내가 답변한 대답에 대해서 편집할 수 있는 기능이 필요할 것 같은데. 그리고 검색창에 로맨스를 포커싱해줘. 그리고 검색에 장르로도 검색이 되는 상태인건가?"
+
+서버 파일 md5 기준값([P] 2026-09-25, 배포 직전 재대조):
+- routes/tracks.py `d7b2a040ebef87dddd23ce9f2b3afd02`(mtime 09-25 05:01Z — 다른 세션이 오늘 변경함, 병합 주의) · services/search_service.py `de0288a90b7769cef93ee3877baeefac`(09-11) · routes/charts.py `9a5c47a26f611e29561d81c1cffbd657` · services/embedding_service.py `657650d55f2f1ba0756e30b869a76add` · constants/categories.py `730407841bb98f7d1bee202b6fd12dd0` · config.py `672c746801940276ffeab6734ae8249f` · main.py `78ab70741f8dc476e879c330608e0bc7`(수정 대상 아님)
+
+## 0단계 Plan verification findings
+
+### 1. 다른 디렉터의 "내 답변 편집" 구현 [P]
+| 디렉터 | 방식 | 근거 |
+|---|---|---|
+| 작사 LyricsInputScreen | 선택지 스텝만 **제자리 교체**(대화·진행 위치 유지). 말풍선 탭 → 공용 `AnswerEditModal`(선택지 + 일부 자유 입력) → store 값 + 해당 user 버블 텍스트만 교체 | LyricsInputScreen.tsx:283-319(handleReselect/handleReselectChoice), :405-410(버블 탭), :529-535(모달) |
+| 작곡 MusicGenerationScreen | **비파괴 되감기**. 선택지형 스텝 = `AnswerEditModal` 즉시, 복합형(제목·가사·슬라이더 등) = 해당 스텝 입력 영역으로 이동 + 상단 "○○ 답변을 수정 중이에요 [취소]" 배너. 커밋 시 해당 버블·직후 에코 버블만 치환하고 원래 진행 위치(resumeStep)로 복귀 | MusicGenerationScreen.tsx:58-68(분류), :462-490(commitExchange 되감기 분기), :529-565(performRewind/handleUserBubbleTap), :567-574(cancelRewind), :2212(말풍선 "탭해서 수정"), :2231-2241(배너), :2247-2253(모달) |
+| 커버 CoverGenerationScreen | 작곡과 동일(비파괴). 단 곡 변경(step 0)만 파괴적 확인 팝업(showAlert) 후 처음부터 | CoverGenerationScreen.tsx:1397-1420, :2320(힌트), :2542 |
+| 영상 VideoDirectorScreen | **파괴적 롤백** — 탭한 답변 포함 이후 대화 삭제 후 그 단계부터 다시. 생성 중(busyRef) 차단 | VideoDirectorScreen.tsx:59-60, :467-478, :1137-1149(edit-2 아이콘) |
+- 공용 요소: `components/AnswerEditModal.tsx`(단일 선택 + 선택적 자유 입력, 초기값 prop 없음), 말풍선 힌트 "탭해서 수정"(editHint 스타일), 되감기 배너(rewindBanner 스타일). 초안 영속은 각 화면 draft 미러링 effect 가 자동 반영(편집 결과도 그대로 영속).
+
+### 2. 아티스트 만들기(ArtistInputScreen) 현재 흐름과 갭 [P]
+- 대화 모델: `ChatMessage {type,text}` — **어느 질문의 답인지 메타가 없다**(ArtistInputScreen.tsx:39-42, draft 타입 stores/characterTaskStore.ts:17-20). 말풍선은 `View` 로만 렌더(탭 불가, :1119-1140). → 편집 기능 **전무**(확정).
+- 질문 9개(성별·이름·나이·머리·얼굴·피부·체형·키·분위기, :71-133). 답은 **칩 다중 토글 + 자유 입력을 쉼표로 합친 문자열**(handleChipTap :780-789) → 작사식 단일 선택 모달(AnswerEditModal)로는 재현 불가. 이름은 칩 없음(자유 입력 전용).
+- 답변 진행: handleAnswerNext(:791-811)가 버블 push + 다음 질문. **마지막 질문(분위기) 답 즉시 handleStartGeneration(:813-866) → 1초 뒤 `navigation.replace('ArtistCody')`(:863)** — 실사 흐름은 최종 확인 지점이 없어 답을 고칠 기회가 없다. (가상은 화풍 단계 :744-778 를 한 번 더 거친다.) 다른 디렉터는 모두 최종 버튼 전에 확인 지점이 있다(작곡 "모든 설정이 완료됐어요! 아래 버튼을…" MusicGenerationScreen.tsx:495, 작사 완료 후 시작 버튼).
+- 파생 값: handleStartGeneration 이 `pendingGender/pendingName/pendingAge`(:830-834)와 `userText/conceptText`(:853-859, 가상은 `pendingConceptText` :839) 를 **그 시점에 한 번** 계산 → 이후 답을 바꾸면 이 값들을 다시 계산해야 한다.
+- 의상 성별(v3.230 A4): ArtistCodyScreen.tsx:190-201 `resolveCodyDefaultGender({isNewArtist, pendingGender, draftGender = draft.styleAnswers.gender})`(utils/codyCatalog.ts:90-108). 신규 생성은 pendingGender → 초안 성별 순. → 성별 편집은 `styleAnswers`(초안 미러링 자동) **와** `pendingGender`(설정된 뒤라면) 둘 다 갱신해야 필터가 맞다.
+- Cody 취소 복귀: ArtistCodyScreen.tsx:985-991 `replace('ArtistInput',{restore:true})` → ArtistInput 은 restore 면 **초안 대화 복원을 건너뛴다**(:221) → 빈 환영 화면 + "이어서 만들기" 버튼(:895-905)만. 답한 내용을 보거나 고칠 수 없다(확정).
+- 초안 재진입 결함(코드 추적, 런타임 재현 전): 실사 마지막 답 후 step='questioning', qIndex=8 로 초안이 남는다(qIndex 증가 없이 이동). Cody 에서 하드웨어 back 등으로 나가 작업실 바로 가기(utils/directorResume.ts:128-139)로 돌아오면 분위기 질문이 다시 열리고, 답하면 분위기 버블이 중복된다.
+- 사진/얼굴 인증: 사진 확정 시 동의 선진행 `acceptPhotoWithConsentPrecheck`(:582-594), 사진 의도 `photoIntent` 영속·재요구(`requirePhotoAgain` :562-567, `resumeOrStartQuestioning` :534-560), 실사+사진이면 외모 4문항 안내 문구 변형(`questionTextFor` :138-140). 초안 복원 시 사진 버블 텍스트로 의도를 추론하는 구 초안 호환(:150-160).
+- 재생성 대상: `route.params.characterId`/`forceKind` 가 초안 키(:214-232) — 편집은 키를 바꾸지 않으므로 영향 없음.
+
+### 3. 검색 화면 현재 구성 [P]
+- 검색 탭 = `screens/SearchScreen.tsx`(App.tsx:399). 입력창 placeholder "곡 제목, 아티스트, 태그 검색"(:233), 아래 느낌 칩 가로 바(10종, 서버 `/charts/categories` 순서 = 운동·에너지 충전·휴식·출퇴근길·행복한 기분·집중·**로맨스(7번째)**·파티·슬픔·잠자기, constants/categories.py:10-21). 진입 시 **첫 칩(운동)을 기본 선택해 곡 로드**(:150-156). 로맨스 칩은 가로 스크롤해야 보인다. 헤드라인 "설렐 때 듣는 음악"(:51).
+- 비로그인: 입력 포커스·칩 탭 → 로그인 오버레이(:99-106, :141-144, :236-237). 기본 카테고리 로드만 비로그인도 노출(현행). 서버 `/tracks/search` 는 비로그인도 200(tracks.py:641-647 `get_current_user_optional`) — 차단은 앱 정책(메모리 aidol-mvp-policy-decisions 유지).
+- ChartScreen.tsx:186-201·:398-407 에도 검색 모달이 있으나 여는 코드가 없다(죽은 코드 — 범위 밖, 기록만).
+- 카테고리별 공개곡 수 [P q1]: 로맨스 10 · 행복한 기분 10 · 에너지 충전 8 · 파티 4 · 휴식 3 · **운동 2** · 슬픔 1 · 출퇴근길 1 · 집중 0 · 잠자기 0 (공개곡 27/전체 35). → 현재 기본값(운동)은 2곡뿐, 로맨스는 가장 많은 10곡.
+
+### 4. 서버 검색 경로 — 장르 검색 여부 [P, 코드 + 실측]
+- 경로: `GET /tracks/search`(routes/tracks.py:641-688) → `_hybrid_search_core`(:432-583) = pgvector 의미 검색(cosine floor 0.15) + ES BM25 → RRF 결합 → Mongo 공개곡만. 폴백 regex(:405-429)는 두 백엔드가 모두 죽었을 때만.
+- ES 색인 필드: title·lyrics·prompt·**genre**·**mood**·tags·keywords·artist(search_service.py:150-180, 문서 변환 :192-210). 쿼리 multi_match fields = `artist^4, title^3, lyrics^2, keywords^2, prompt, tags, genre, mood`(:549), nori + 무드 동의어(:70-81).
+- **느낌 카테고리(`categories`: 로맨스 등)는 ES 매핑·문서 변환·쿼리 어디에도 없다**(확정). regex 폴백도 title·tags·prompt·uploader_nickname·artist_name 만(:407-416 — genre/mood/categories 없음).
+- 아무말 게이트(:486-512): ES top1 < `search_es_weak_score`(3.0) 이고 벡터 top1 < `search_gibberish_cosine`(0.34) 이고 접두어 앵커(:636-675, fields lyrics.phrase·title.phrase·artist·keywords) 0건이면 빈 결과.
+- 저장값 실측 [P q1]: 공개곡 genre 가 한/영 혼재 — 트로트4·댄스4·시티팝3·R&B3·K-Pop3·Hip-hop3·하우스2·인디2·Dance Pop1·Carol1·재즈1·Dance1·힙합1·City pop1. mood 도 한/영 혼재(밝고 경쾌한9·Romantic2·로맨틱·달콤한2…). tags 는 전 곡 비어 있음. 분석기 토큰: "R&B"→[r,b], "Hip-hop"→[hip,hop], "hiphop"→[hiphop], "시티팝"→[시티,팝].
+- **ES 공개 상태 불일치 6곡**[P q5·q7]: Mongo 공개 27곡 중 ES `is_public=false` 6곡(ES 총 28 문서, 역방향 불일치 0). 6곡 모두 비공개로 만든 뒤 공개로 바꾼 곡(updated_at > created_at). 원인: `PUT /tracks/{id}`(tracks.py:1040-1100)가 Mongo·Redis 만 갱신하고 ES 는 갱신하지 않는다(ES 동기화 호출은 삭제 :977·관리자 :877 뿐). 기동 시 자가 치유(search_service.py:303-432)는 **문서 개수만** 비교(28 ≥ 27 → skip)해서 못 고친다.
+- 실측(`_hybrid_search_core` 직접 호출, 공개곡 27) [P q3·q4·q6]:
+
+| 검색어 | 모드 | 결과 수 | 해당 장르/느낌 곡 | 순위 |
+|---|---|---|---|---|
+| R&B | hybrid | 27 | 3/3 | 1·2·3 |
+| 알앤비 | hybrid | 11 | 1/3 | 3 |
+| Hip-hop | hybrid | 17 | 4/4 (Hip-hop+힙합) | 1·2·3·10 |
+| 힙합 | hybrid | 7 | 2/4 | 1·2 |
+| 트로트 | hybrid | 13 | 4/4 | 1·2·7·13 |
+| 댄스 | hybrid | 24 | 5/6 (댄스·Dance·Dance Pop) | 1·2·3·6·10 |
+| 시티팝 / City pop | hybrid | 27 / 12 | 4/4 | 1·2·5·21 / 1·2·3·10 |
+| K-Pop / 케이팝 | hybrid | 27 / 27 | 3/3 | 2·3·4 / 3·18·23 |
+| 하우스 · 인디 | hybrid | 16 · 20 | 2/2 · 2/2 | 1·2 |
+| **재즈** | gibberish | **0** | 0/1 | — (그 1곡이 ES 불일치 6곡 중 하나) |
+| 발라드 | gibberish | 0 | 공개 발라드 곡 0 — 정상 | — |
+| **로맨스** | gibberish | **0** | 0/12 (카테고리 로맨스 10 + 무드 로맨틱 2) | — (ES top1 2.87 < 3.0, 벡터 0.322 < 0.34) |
+| 로맨틱 | hybrid | 26 | 12/12 | 1·2·3·4·5·7·8·9·17·23·25·26 |
+- 결론(확정): **장르 검색은 된다(genre 필드 색인·검색, 해당 장르 곡이 대부분 1~3위).** 단 ① 한/영 표기 불일치로 "힙합"은 Hip-hop 표기 곡 2곡을 놓치고 "알앤비"는 R&B 곡 1/3만, "케이팝"은 하위권 ② ES 공개 상태 미동기화 6곡은 키워드로 안 잡혀 "재즈" 0건 ③ 장르 "필터"가 아닌 관련도 검색이라 결과에 다른 장르 곡도 섞인다(R&B 검색 27곡 전부 노출, 해당 곡은 상위) ④ **느낌(로맨스 등)은 색인되지 않아 "로맨스"를 입력하면 0건**(느낌 칩으로는 10곡) ⑤ regex 폴백은 장르 미포함.
+
+## 항목별 원인/갭 요약
+1. **답변 편집(아티스트)**: 대화 메시지에 질문 식별 정보가 없고 말풍선이 탭 불가 → 편집 기능 없음. 실사는 마지막 답과 동시에 의상 화면으로 넘어가 확인 지점이 없음. Cody 취소 복귀 시 대화가 보이지 않음. 답은 칩 다중 선택+자유 입력 합성이라 공용 모달(단일 선택)이 맞지 않음 → 작곡의 "복합형 되감기(입력 영역 재사용 + 수정 배너)" 방식이 적합.
+2. **로맨스 포커싱**: 느낌 칩 기본 선택이 첫 번째(운동, 2곡)로 고정, 로맨스는 7번째라 스크롤해야 보임. 검색창에 "로맨스"를 쳐도 0건(서버 카테고리 미색인 + 아무말 게이트).
+3. **장르 검색**: 된다. 다만 한/영 별칭 미흡·ES 공개 상태 불일치(재즈 0건)·느낌 카테고리 미색인. placeholder 에 장르 안내 없음("태그 검색" — 실제 tags 는 전 곡 비어 있음).
+
+## 변경 매트릭스
+
+### 앱 (2_housing)
+| ID | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| A1 | screens/ArtistInputScreen.tsx, stores/characterTaskStore.ts | **질문 답변 편집(비파괴)**. `ChatMessage`·`ArtistDraftChatMessage` 에 선택 필드 `qKey?: keyof StyleAnswers` 추가(handleAnswerNext 가 기록, 구 초안 호환). 구 초안 버블은 직전 디렉터 버블이 `QUESTIONS[i].question` 으로 시작하면 그 key 로 추론(없으면 편집 불가). user 버블을 TouchableOpacity 로, qKey 있는 버블에 "탭해서 수정" 힌트(작곡 editHint 스타일). 탭 → `editRef={idx,qKey,resume:{step,qIndex,currentInput}}` 저장 → 입력 영역을 그 질문으로 전환(`currentInput`=기존 답, 생략이었다면 빈 값, 칩 선택 상태 자동 반영) + 진행 표시 "수정 중 · 머리" + 상단 배너 "머리 답변을 수정 중이에요 [취소]"(작곡 rewindBanner 스타일). 버튼 = [비우기(건너뛰기)] [수정 완료]. **디렉터 새 버블 push 없음**. 커밋: `styleAnswers[qKey]` 갱신, 해당 버블 텍스트만 교체(`(○○ 생략)` 포함), 이후 대화 보존, step·qIndex·currentInput 원위치 복귀. 연쇄 편집(수정 중 다른 버블 탭) = 복귀 지점은 최초 위치 유지(작곡 규칙). [취소] = 미반영 복귀. | `[ArtistEdit]` 열기/커밋/취소/거부 |
+| A1-파생 | 동일 | 커밋 시 이미 계산된 파생 값 재계산: `pendingGender/pendingName/pendingAge`(이미 설정된 경우 = style·review 단계), 가상 style 단계면 `pendingConceptText = buildFinalText(new) \|\| '특별한 컨셉 없음 — 자연스러운 느낌으로'`, review/복원 단계면 `taskStore.conceptText/userText` 재설정. 사진 소스 없음 + 모든 답이 비게 되는 커밋은 거부 → showAlert('설명이 필요해요','사진 없이 만들 때는 한 가지 이상 답해주세요.'). 실사+사진이면 외모 4문항 진행 표시에 PHOTO_MODE_HINT 유지. | `[ArtistEdit] 파생 재계산` |
+| A1-차단 | 동일 | 편집 비활성(힌트 미표시·탭 무시): `activeJob` 있음, 사진 재요구 중(`photoResume`), 의상 화면 이동 대기(1초 setTimeout — `leavingRef`), initialLoading. 사진/설명 선택·실사/캐릭터 선택·화풍 버블은 질문 편집 대상 아님(A1-b 참조). | `[ArtistEdit] 거부 reason=` |
+| A1-b | 동일 | **사진 버블 탭 = 사진 바꾸기**(D2 기본 도입): showAlert('사진을 바꿀까요?','답해둔 내용은 그대로 두고 사진만 다시 골라요.',[취소]/[사진 바꾸기]) → 기존 `requirePhotoAgain` 메커니즘 재사용(photoResume 에 현재 step·qIndex 저장 → welcome) — 단 디렉터 문구는 "바꿀 사진을 올려주세요. 사진 없이 설명만으로 만들 수도 있어요."(재업로드 안내 문구와 분리). 새 사진 → 기존 확약 팝업·얼굴 인증 동의 선진행(acceptPhotoWithConsentPrecheck) 그대로 → 멈췄던 단계로 복귀. 실사/캐릭터 선택 버블은 편집 불가(바꾸려면 '처음부터'). | `[ArtistEdit] 사진 바꾸기` |
+| A2 | 동일(+ characterTaskStore `ArtistDraft.step` 에 `'review'` 추가) | **실사 최종 확인 단계 'review'**: 마지막 질문 답 후 바로 Cody 로 넘기지 않고 디렉터 "답해주신 내용으로 준비됐어요! 고치고 싶은 답은 말풍선을 눌러 바꿀 수 있어요." + [의상 고르러 가기] 버튼. 버튼이 기존 handleStartGeneration 의 파생 값 설정·outfit clear·`replace('ArtistCody')` 수행(동작 동일, 시점만 버튼으로). 가상은 기존 화풍 단계가 확인 단계 역할(그 단계에서도 A1 편집 가능). `resumeOrStartQuestioning`·`initialPhotoResume` 가 target.step='review' 를 처리(사진 재업로드 후 review 복귀). 구 초안(step='questioning', qIndex=8, 분위기 답 있음)은 복원 시 review 로 승격(중복 분위기 버블 방지). | `[ArtistInput] review 진입/의상 이동` |
+| A3 | 동일 | **Cody 취소 복귀 시 대화 복원**: restore 이고 초안 키 일치·진행 있음이면 초안 대화를 복원하고 step='review'(실사·가상 공통)로 연다 — [의상 고르러 가기] = 기존 handleResume(store 보존 입력 그대로) + 답변 편집 가능(편집 시 conceptText/userText·pending* 재계산). 초안이 없으면 현행(환영 + "이어서 만들기"). 메모리 사진 유지 로직(:249-253) 그대로. | `[ArtistDraft] restore 대화 복원` |
+| A4 | screens/SearchScreen.tsx | **로맨스 포커싱**(D3 기본): 느낌 칩 순서에서 로맨스를 맨 앞으로(서버 목록에서 앱이 재정렬 — 서버 순서 불변, 폴백 배열도 동일), 진입 시 기본 선택 = 로맨스(목록에 없으면 첫 칩), 입력창 placeholder = "곡 제목, 아티스트, 장르 검색 (예: 로맨스)". 비로그인 게이트 현행 유지(기본 카테고리 목록 노출만 현행대로). | `[SearchScreen] 기본 느낌=로맨스` |
+| A5 | screens/SearchScreen.tsx | **느낌 이름 검색 바로 가기**: 입력어(trim)가 느낌 카테고리명과 정확히 같으면 `/tracks/search` 대신 해당 칩 선택(loadCategory) — 서버 배포 전에도 "로맨스" 입력 0건 해소. 그 외 검색어는 현행. | `[SearchScreen] 느낌 검색 바로 가기` |
+
+### 서버 (staging `/private/tmp/server_staging_v3231/{orig,new}` — main.py·config.py 무변경)
+| ID | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1 | services/search_service.py | ES `categories` 필드 추가: 매핑(`_ko_text_field()`), `_track_to_doc` 에 `categories`, es_search fields 에 `categories^2`, es_anchor_hits fields 에 `categories`. 기동 자가 치유의 샘플 검사에 "`categories` 키 없음 → 전체 재색인"(v169 artist 패턴 :376-393) 추가 → 배포 후 1회 자동 재색인(공개곡 27, 수 초) — **이 재색인이 공개 상태 불일치 6곡도 함께 고친다**. put_mapping 은 기존 ensure 경로(:230-242)가 가산 적용. | `[search.es.migrate] sample doc missing 'categories'` |
+| S2 | routes/tracks.py | 장르·느낌 별칭 확장(ES 쿼리 문자열에만 덧붙임, 벡터 쿼리·응답 형태 불변): 힙합↔Hip-hop, 알앤비↔R&B, 케이팝↔K-Pop, 시티팝↔City pop, 댄스↔Dance, 재즈↔Jazz, 발라드↔Ballad, 트로트↔Trot, 록↔Rock, 로맨스→로맨틱·Romantic. 대응 토큰이 쿼리에 있을 때만 추가. 느낌 카테고리명과 정확히 같은 쿼리는 아무말 게이트 비적용. regex 폴백 `$or` 에 genre·mood·categories 추가. | `[tracks.search] alias_expand q_len=%d added=%d` |
+| S3 | routes/tracks.py | `PUT /tracks/{id}` 갱신 후 ES 동기화: 갱신된 문서를 다시 읽어 `es_index_track`(admin.py:877 패턴, best-effort·실패해도 200). 공개↔비공개·제목·장르 변경이 검색에 즉시 반영. | `[tracks.update] es_sync track=%s ok=%s` |
+- 배포 후 기대 [P 예측, 스모크로 확인]: "로맨스" → 10곡 이상(카테고리 일치 상위), "재즈" → 1곡, "힙합" → 4곡 상위, "알앤비" → R&B 3곡 상위.
+
+## 역할 분담
+- 1조(앱): A1·A1-파생·A1-차단·A1-b·A2·A3 — ArtistInputScreen.tsx, characterTaskStore.ts(타입만). utils/directorResume.ts 는 수정 없음(step 값 추가만 영향 — hasArtistDraftProgress 는 step 을 보지 않음 확인).
+- 2조(앱): A4·A5 — SearchScreen.tsx.
+- backend-dev: S1·S2·S3 — staging 에서만, orig 보존, 배포 직전 md5 재대조(tracks.py 는 오늘 05:01Z 변경분 있음 — 병합).
+- test-designer: 아래 항목.
+
+## 회귀 위험
+- v3.229 directorResume: 초안 step 에 'review' 가 생겨도 작업실 바로 가기·"이어서 하기" 판정 불변이어야 함(peekArtistDraft 는 user 버블 유무만 봄). 키(characterId·forceKind) 전달 유지.
+- v3.230 A4 의상 성별: 성별 편집 → Cody 기본 필터가 새 성별(pending 우선 → 초안). 편집 전 값이 pendingGender 에 남는 경로가 없어야 함(review·style·restore 세 단계 모두).
+- v3.230 ⭐ 확인(starSpendConfirm)·이탈 가드(useGenerationLeaveGuard): ArtistInput 에는 과금이 없음 — 과금·확인은 Cody "이 옷으로 만들기" 1회 그대로. A2 버튼이 과금으로 오해되지 않게 문구에 ⭐ 표기 금지.
+- v3.227 H-1 사진 의도·재요구: 사진 바꾸기(A1-b)와 재업로드 안내 문구 분리, photoIntent·reuseOriginal 갱신 규칙 동일. 텍스트 전용에서 사진으로 바꾸면 photoIntent='photo' 로.
+- 얼굴 인증 동의 선진행은 사진 확정 때만(편집 커밋으로 재실행 금지).
+- 복원 안내 버블('처음부터')·showResumeNotice 접기 규칙 — 편집 시작도 "이어서"로 접는다(다른 디렉터와 동일).
+- 검색: 비로그인 입력·칩 탭 게이트 유지, 기본 카테고리 로드는 현행(비로그인도 목록 노출). 검색 결과 클릭 로깅(:159-165)은 A5 바로 가기(카테고리 모드)에서 기록 안 함(현행 카테고리 모드와 동일).
+- 서버: 응답 형태 `{tracks,pagination}` 불변. 별칭 확장이 아무말 게이트를 과하게 풀지 않게(느낌명 정확 일치만 게이트 제외). ES 재색인은 공개곡만(비공개 문서는 그대로 is_public=false).
+
+## test-designer 에게 줄 테스트 항목
+1. [A1] 실사·사진 없음: 머리 답(칩 2개+자유 입력) → 체형 질문 중 머리 버블 탭 → 입력 영역에 기존 값·칩 선택 표시 → 수정 완료 → 머리 버블만 바뀌고 이후 대화·현재 질문(체형) 그대로. [취소] = 변화 없음. 생략 버블 편집 → 값 입력 시 텍스트 교체. 연쇄 편집 후 복귀 위치 = 최초 위치.
+2. [A1-파생] 성별 남→여 편집(가상 style 단계·실사 review 단계 각각) → Cody 기본 필터 "여성" (로그 `[ArtistCody] 성별 필터 source=pending gender=여`). 이름·나이 편집 → 생성 저장 후 상세 화면 반영. 가상 컨셉 텍스트 재계산 확인.
+3. [A1-차단] 추적 중 job 있음·사진 재요구 중·의상 화면 이동 1초 대기 중 탭 무반응. 사진 없음 + 모든 답 비우기 커밋 → showAlert 거부.
+4. [A1-b] 실사 사진 버블 탭 → 확인 → 새 사진 → 확약 팝업 → 멈췄던 질문으로 복귀, 답 보존, photoIntent='photo'. 텍스트 전용 → 사진으로 전환. 캐릭터(가상) 사진 버블도 동일.
+5. [A2] 실사 마지막 답 → review(자동 이동 없음) → [의상 고르러 가기] → Cody. review 에서 편집 후 이동 → user_text 에 수정값 반영(ArtistLoading `form.append('user_text')` 값 확인). 구 초안(questioning, qIndex 8, 분위기 답 있음) 복원 → review 로 열림·분위기 버블 중복 없음.
+6. [A3] Cody [취소] → 대화 복원 + review → 편집 → [의상 고르러 가기] → Cody → 생성 → conceptText 수정값. 초안 없는 restore 는 현행 화면.
+7. [초안 영속] 편집 직후 앱 종료·재시작 → 편집값 유지(버블·styleAnswers·qKey). 재생성(characterId) 진입 초안 키 불일치 폐기 현행.
+8. [A4] 검색 탭 진입 → 로맨스 칩 맨 앞·선택·"설렐 때 듣는 음악" 목록. `/charts/categories` 실패 시 폴백 목록도 로맨스 먼저. 비로그인: 입력 포커스·다른 칩 탭 → 로그인 오버레이.
+9. [A5] "로맨스" 입력 → 로맨스 칩 선택 목록(10곡), "로맨스 노래" 는 일반 검색. 다른 느낌명도 동일.
+10. [S1~S3] 스모크: "로맨스"·"재즈"·"힙합"·"알앤비"·"R&B"·"발라드"(0 유지)·아무말("ㅁㄴㅇㄹ" 0 유지)·아티스트명·가사 구절(순위 회귀 없음). 곡 비공개→공개 PUT 후 즉시 검색 반영, 공개→비공개 후 제외. 기동 로그 `[search.es.migrate] sample doc missing 'categories'` 1회 → 재기동 시 재발 없음. ES 공개 문서 수 = Mongo 공개 수.
+11. 공통: 팝업 전부 showAlert, MAIDOL 표기, 이모지 ⭐ 외 0.
+
+## 대표 결정 필요 (기본값으로 진행)
+- **D1 편집 방식**: 기본 = 작곡식 비파괴 편집(입력 영역 재사용 + 수정 배너, 이후 대화 보존). 대안: 영상식 파괴적 롤백(이후 답 다시 입력) — 채택 안 함.
+- **D2 사진 바꾸기**: 기본 = 사진 버블 탭으로 사진만 교체(답 보존) 도입. 실사↔캐릭터 전환은 '처음부터'로만.
+- **D3 로맨스 포커싱 해석**: 기본 = (a) 느낌 칩 로맨스 맨 앞 + 진입 기본 선택(곡 목록 즉시) + (b) placeholder "곡 제목, 아티스트, 장르 검색 (예: 로맨스)" + (c) "로맨스" 입력 시 로맨스 목록(A5·S1). 대안: 입력창 자동 포커스(키보드 올라옴)는 하지 않음 — 비로그인은 포커스 즉시 로그인 오버레이가 떠서 부적합.
+- **D4 실사 최종 확인 단계(review)**: 기본 = 도입(탭 1회 추가, 다른 디렉터와 일관). 대안: 현행 자동 이동 유지 + Cody 취소 복귀 시에만 편집.
+- **D5 장르 검색 방식**: 기본 = 관련도 검색 유지(장르 곡이 상위, 다른 곡도 아래 노출) + 한/영 별칭 보강. 장르 정확 일치 시 "필터 결과만" 보여주기는 하지 않음.
+- **D6 저장 장르 표기 정리(DB 소급)**: 기본 = 하지 않음(Hip-hop/힙합 등 기존 값 유지, 검색 별칭으로 흡수). 소급 통일은 별도 승인 사안.
+
+## 서버 배포 필요 여부
+- **필요**(S1·S2·S3 — 검색 품질). 앱 A1~A5 는 서버 없이 동작(A5 로 "로맨스" 0건은 앱만으로도 해소). 절차: staging `orig/`→`new/` 수정 → 로컬 구문 검사·스모크 → 배포 직전 md5 재대조(위 기준값, tracks.py 오늘 변경분 병합) → 사용자 승인 → 코드 반영·이미지 빌드·컨테이너 재생성(진행 중 생성 job 0 확인) → 기동 로그 재색인 1회 확인 → 검색 스모크(테스트 10) → 5분 무오류.
+- DB 쓰기: Mongo·Postgres 쓰기 없음. ES 재색인(공개곡 27건 upsert)은 배포 시 자동 1회 — 배포 승인에 포함해 고지.
+
+규칙: 서버 수정은 server_staging_v3231 에서만(orig 보존). 프로덕션 쓰기는 사용자 승인 뒤. 비밀값 미기재. 팝업 showAlert, 표기 MAIDOL, 이모지 ⭐만. 코드 수정·커밋은 계획 승인 뒤 team-dev 루프에서.

@@ -17,10 +17,14 @@ export type ArtistPhotoIntent = 'photo' | 'text' | null;
 export interface ArtistDraftChatMessage {
   type: 'director' | 'user';
   text: string;
+  /** v3.231 [ArtistAnswerEdit]: 이 user 버블이 답한 질문 키(StyleAnswers 키 — 편집 대상 식별).
+   *  v3.230 이전 초안에는 없음 → 복원 시 직전 디렉터 질문 문구로 추론(utils/artistAnswerEdit) */
+  qKey?: string;
 }
 
 export interface ArtistDraft {
-  step: 'welcome' | 'questioning' | 'style';
+  /** v3.231 A2: 'review' = 실사 최종 확인 단계(마지막 답 뒤 [의상 고르러 가기]) — 구 초안에는 없음 */
+  step: 'welcome' | 'questioning' | 'style' | 'review';
   chat: ArtistDraftChatMessage[];
   qIndex: number;
   styleAnswers: Record<string, string>;
