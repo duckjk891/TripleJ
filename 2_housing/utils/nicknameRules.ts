@@ -35,6 +35,9 @@ export const NICKNAME_MESSAGES: Record<NicknameInvalidReason, string> = {
   same: '지금 쓰는 닉네임과 같아요.',
 };
 
+/** 입력칸 안내(닉네임 변경 모달·가입 폼 공통) */
+export const NICKNAME_GUIDE = `${NICKNAME_MIN_LEN}~${NICKNAME_MAX_LEN}자로 입력해주세요. 다른 사람이 쓰는 닉네임은 쓸 수 없어요.`;
+
 export const NICKNAME_TAKEN_MESSAGE = '이미 쓰는 닉네임이에요. 다른 닉네임을 입력해주세요.';
 export const NICKNAME_UNSUPPORTED_MESSAGE = '닉네임 변경은 아직 준비 중이에요. 서버 업데이트 후 다시 시도해주세요.';
 
@@ -97,6 +100,23 @@ export interface NicknameResult {
 
 /** PATCH /auth/me/profile {nickname} 성공(2xx) 응답 해석 — 구서버는 nickname 필드를 무시하므로
  *  응답의 nickname 이 요청값으로 바뀌지 않았으면 '아직 지원되지 않음'으로 본다. */
+/** v3.230c 가입 닉네임 사전 검사(이메일·보호자 가입 공통) — 변경과 같은 규칙(정리 → empty/chars/length/reserved).
+ *  통과 시 value(정리값)를 서버로 보낸다. 중복은 가입 시 서버만 판정. */
+export function checkSignupNickname(raw: string | null | undefined): NicknameCheck {
+  return validateNickname(raw);
+}
+
+/** 서버 오류 본문 → 사용자 문구. error 가 코드(nickname_invalid 등)면 message 우선, 아니면 error·detail 문장.
+ *  '본인인증' 유도 문장은 노출하지 않는다(v3.230 A8). */
+export function pickServerErrorMessage(data: any, fallback: string): string {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  const err = str(data?.error);
+  const isCode = !!err && /^[a-z0-9_]+$/.test(err);
+  const text = (isCode ? str(data?.message) : '') || (!isCode ? err : '') || str(data?.message) || str(data?.detail);
+  if (!text || /본인\s*인증/.test(text)) return fallback;
+  return text;
+}
+
 export function interpretNicknameSuccess(requested: string, data: any): NicknameResult {
   const body = data?.user ?? data ?? {};
   const got = typeof body?.nickname === 'string' ? normalizeNickname(body.nickname) : '';

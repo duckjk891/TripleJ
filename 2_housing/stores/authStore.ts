@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   interpretNicknameError,
   interpretNicknameSuccess,
+  pickServerErrorMessage,
   renameUploaderInTrack,
   type NicknameResult,
 } from '../utils/nicknameRules';
@@ -135,10 +136,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err: any) {
       // v3.101(A-19) — 서버측 만14세 미만 판정: error 코드 대신 사람이 읽는 message를 표시
       const data = err.response?.data;
+      // v3.230c: 닉네임 400(nickname_invalid 등 코드형 error)은 서버 message 를 그대로 표시
       const message =
         data?.error === 'guardian_consent_required'
           ? (data?.message || '만 14세 미만 가입은 보호자 동의가 필요합니다.')
-          : data?.error || data?.detail || '회원가입에 실패했습니다.';
+          : pickServerErrorMessage(data, '회원가입에 실패했습니다.');
+      console.error('[authStore] register 실패', { status: err?.response?.status, error: typeof data?.error === 'string' && /^[a-z0-9_]+$/.test(data.error) ? data.error : null });
       set({ error: message, isLoading: false });
       return false;
     }

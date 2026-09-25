@@ -18,8 +18,8 @@ import { colors } from '../../theme/colors';
 import { showAlert } from '../../utils/appAlert';
 import { useAuthStore } from '../../stores/authStore';
 import {
+  NICKNAME_GUIDE,
   NICKNAME_MAX_LEN,
-  NICKNAME_MIN_LEN,
   nicknameLength,
   normalizeNickname,
   validateNickname,
@@ -109,7 +109,7 @@ export default function NicknameEditModal({ visible, currentNickname, onClose }:
           <View style={styles.box}>
             <AppText style={styles.title}>닉네임 변경</AppText>
             <AppText style={styles.guide}>
-              {`${NICKNAME_MIN_LEN}~${NICKNAME_MAX_LEN}자로 입력해주세요. 다른 사람이 쓰는 닉네임은 쓸 수 없어요.`}
+              {NICKNAME_GUIDE}
             </AppText>
             <TextInput
               style={styles.input}

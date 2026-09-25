@@ -23,6 +23,14 @@ import {
   loadPendingReferral,
   savePendingReferral,
 } from '../../utils/pendingReferral';
+import {
+  NICKNAME_GUIDE,
+  NICKNAME_MAX_LEN,
+  checkSignupNickname,
+  nicknameLength,
+  normalizeNickname,
+  pickServerErrorMessage,
+} from '../../utils/nicknameRules';
 import { AppText, Button } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -237,6 +245,12 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const handleGuardianRequest = async () => {
     resetError();
     if (!email.trim() || !password || !nickname.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
+    // v3.230c: 가입 닉네임도 변경과 같은 규칙(2~15자·사용 불가 문자·예약어) 사전 검사
+    const nickCheck = checkSignupNickname(nickname);
+    if (!nickCheck.ok) {
+      console.info('[AuthPanel] 가입 닉네임 사전 검사 실패', { path: 'guardian', reason: nickCheck.reason, len: nicknameLength(normalizeNickname(nickname)) });
+      setLocalError(nickCheck.message); return;
+    }
     if (!companyName.trim() || !displayTitle.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
     if (password !== passwordConfirm) { setLocalError('비밀번호가 일치하지 않습니다.'); return; }
     if (!(password.length >= 8 && /[a-zA-Z]/.test(password) && /[0-9]/.test(password))) {
@@ -259,7 +273,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
       const res = await requestGuardianConsent({
         email: email.trim(),
         password,
-        nickname: nickname.trim(),
+        nickname: nickCheck.value,
         birth_date: bd,
         nationality,
         gender,
@@ -279,9 +293,8 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
         // 서버 플래그 OFF — 준비 중 안내로 전환
         setMode('blocked');
       } else {
-        setLocalError(
-          err?.response?.data?.error || err?.response?.data?.detail || '보호자 동의 요청에 실패했습니다.'
-        );
+        // v3.230c: 서버 400 문구 그대로(코드형 error 면 message) — 본인인증 유도 문장은 일반 문구로
+        setLocalError(pickServerErrorMessage(err?.response?.data, '보호자 동의 요청에 실패했습니다.'));
       }
     } finally {
       setGuardianLoading(false);
@@ -316,6 +329,12 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const handleRegister = async () => {
     resetError();
     if (!email.trim() || !password || !nickname.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
+    // v3.230c: 가입 닉네임 사전 검사(변경 모달과 같은 규칙)
+    const nickCheck = checkSignupNickname(nickname);
+    if (!nickCheck.ok) {
+      console.info('[AuthPanel] 가입 닉네임 사전 검사 실패', { path: 'email', reason: nickCheck.reason, len: nicknameLength(normalizeNickname(nickname)) });
+      setLocalError(nickCheck.message); return;
+    }
     if (!companyName.trim() || !displayTitle.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
     if (password !== passwordConfirm) { setLocalError('비밀번호가 일치하지 않습니다.'); return; }
     if (!(password.length >= 8 && /[a-zA-Z]/.test(password) && /[0-9]/.test(password))) {
@@ -333,7 +352,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     SIGNUP_CONSENT_KEYS.forEach((k) => { consentsBody[k] = !!consents[k]; });
     if (__DEV__) console.info('[AuthPanel] register 시도', { emailLen: email.length, hasRef: !!ref });
     const ok = await register(
-      email.trim(), password, nickname.trim(),
+      email.trim(), password, nickCheck.value,
       normalizeCompany(companyName), displayTitle.trim(),
       {
         birth_date: bd,
@@ -598,8 +617,16 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
       <TextInput style={styles.input} placeholder="이메일을 입력하세요" placeholderTextColor={colors.text.muted}
         value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
       <Label>닉네임</Label>
-      <TextInput style={styles.input} placeholder="닉네임을 입력하세요" placeholderTextColor={colors.text.muted}
+      <TextInput style={[styles.input, { marginBottom: 4 }]} placeholder="닉네임을 입력하세요" placeholderTextColor={colors.text.muted}
+        maxLength={NICKNAME_MAX_LEN + 10 /* 공백 정리 전 여유 — 최종 길이는 검사에서 판정 */}
         value={nickname} onChangeText={setNickname} />
+      {/* v3.230c: 닉네임 변경 모달과 같은 안내·글자수 카운터(정리 후 코드포인트 기준) */}
+      <View style={styles.nickMetaRow}>
+        <AppText variant="caption" tone="muted" style={{ flex: 1 }}>{NICKNAME_GUIDE}</AppText>
+        <AppText variant="caption" style={{ color: nicknameLength(normalizeNickname(nickname)) > NICKNAME_MAX_LEN ? colors.status.error : colors.text.muted }}>
+          {`${nicknameLength(normalizeNickname(nickname))}/${NICKNAME_MAX_LEN}`}
+        </AppText>
+      </View>
       <Label>기획사명</Label>
       <TextInput style={styles.input} placeholder="예: 이재규 엔터테인먼트" placeholderTextColor={colors.text.muted}
         maxLength={100} value={companyName} onChangeText={setCompanyName}
@@ -706,6 +733,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
   },
   section: { marginTop: spacing.lg, marginBottom: spacing.sm },
+  // v3.230c: 닉네임 안내·글자수 카운터 행
+  nickMetaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.sm },
   // v3.230 A7-1: 추천코드 적용 안내 칩
   refChip: {
     flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
