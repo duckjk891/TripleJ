@@ -12,6 +12,7 @@ import { showAlert } from '../../utils/appAlert';
 import { BACKEND_BASE_URL } from '../../services/api';
 import { resetToChartTab } from '../../services/navigationRef';
 import { useAuthStore } from '../../stores/authStore';
+import { savePendingReferral } from '../../utils/pendingReferral';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -49,6 +50,12 @@ export default function SocialLoginButtons({
     const ref = (referralCode || '').trim().toUpperCase();
     const loginUrl = `${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`;
     const refQuery = /^[A-Z0-9]{4,12}$/.test(ref) ? `ref=${encodeURIComponent(ref)}` : '';
+    // v3.230 A7-1 [ReferralPending]: 소셜 이동 전 추천코드 보관 — 웹은 전체 페이지 이동으로 폼 state 가
+    // 사라지므로, 복귀 후 가입 선물 안내가 "코드를 썼는데 미적용" 여부를 판단할 수 있게 저장해 둔다.
+    if (refQuery) {
+      const saved = await savePendingReferral(ref, 'input');
+      console.info('[ReferralPending] 소셜 이동 전 보관', { provider, saved, len: ref.length });
+    }
     try {
       if (Platform.OS === 'web') {
         // v3.216 ①: 같은 탭 전체 페이지 이동(location.assign). Linking.openURL은 react-native-web에서

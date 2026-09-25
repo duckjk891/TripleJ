@@ -13,6 +13,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
+import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError, sanitizeServerText } from '../utils/identityGate';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -221,7 +222,10 @@ export default function DmChatScreen() {
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
-      showAlert('알림', err?.response?.data?.detail || err?.response?.data?.error || '메시지를 보낼 수 없습니다.');
+      // v3.230 A8: 서버 '본인인증 후 이용' 문장은 노출하지 않고 준비 중 안내로(본인인증 유도 금지)
+      showAlert('알림', isIdentityRequiredError(err?.response?.status, err?.response?.data)
+        ? DM_UNAVAILABLE_MESSAGE
+        : sanitizeServerText(err?.response?.data?.detail || err?.response?.data?.error, '메시지를 보낼 수 없습니다.'));
     } finally {
       setSending(false);
     }

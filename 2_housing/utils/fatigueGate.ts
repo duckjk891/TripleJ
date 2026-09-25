@@ -6,6 +6,7 @@ import {
   FATIGUE_DIRECTOR_LABELS,
 } from '../services/fatigueService';
 import { usePointsStore } from '../stores/pointsStore';
+import { markStarSpendChain } from './starSpendConfirm';
 import { FatigueDirector, FatigueStatus } from '../types';
 import {
   isRewardedAdSupported,
@@ -27,7 +28,14 @@ import {
  *   서버 계약 무변경. 미지원 플랫폼(Expo Go/web)은 버튼 미노출, 로드 실패·중도 이탈·폴링
  *   타임아웃은 안내 후 기존 ⭐/광고권 경로로 폴백(이중 차감 없음).
  * - 스킵 후에도 남으면 갱신된 남은 시간으로 재안내, 0 도달 시 onCleared 호출
+ * - v3.230 A5-5(D7): 단축 직후 재표시 다이얼로그는 0.8초간 단축 버튼 잠금(같은 위치 연타 흡수) +
+ *   본문에 "이번에 단축에 ⭐N 사용" 누적 표시. 일괄 단축 버튼은 두지 않는다.
+ * - v3.230 A5-4: onCleared 뒤 생성 요청은 호출부가 ⭐ 확인(utils/starSpendConfirm)을 거친다 —
+ *   단축 직후 확인 없는 자동 생성 연쇄 금지. 확인 다이얼로그도 잠금(markStarSpendChain)이 걸린다.
  */
+/** v3.230 A5-5(D7): 단축 직후 재표시 다이얼로그 버튼 잠금 시간 */
+export const FATIGUE_RESHOW_LOCK_MS = 800;
+
 export function showFatigueCooldownDialog(opts: {
   status: FatigueStatus | null;
   remainingSec: number;
@@ -40,8 +48,13 @@ export function showFatigueCooldownDialog(opts: {
   /** 스킵 응답(status payload)으로 화면 상태 동기화 */
   onStatusUpdate?: (s: FatigueStatus) => void;
   cancelText?: string;
+  /** v3.230 A5-5 내부용: 이번 다이얼로그 흐름에서 단축에 쓴 ⭐ 누적(재표시 시 전달) */
+  spentStars?: number;
+  /** v3.230 A5-5 내부용: 단축 직후 재표시 — 버튼 0.8초 잠금 */
+  reshownAfterSkip?: boolean;
 }): void {
   const { status, remainingSec, onCleared, onCancel, onStatusUpdate, cancelText } = opts;
+  const spentStars = Math.max(0, Number(opts.spentStars) || 0);
   const director: FatigueDirector = opts.director ?? 'composer';
   const label = FATIGUE_DIRECTOR_LABELS[director];
   // v3.118: ⭐비용은 status 실값(디렉터별 차등 — v220). 폴백은 서버 계약 기본값.
@@ -65,14 +78,22 @@ export function showFatigueCooldownDialog(opts: {
       const data = await skipFatigue(method, director);
       onStatusUpdate?.(data);
       if (method === 'points') usePointsStore.getState().fetchBalance(); // ⭐ 차감 반영
+      // v3.230 A5-4: 단축 직후 이어지는 ⭐ 확인 다이얼로그도 잠금(연타가 생성 확인까지 새지 않게)
+      markStarSpendChain();
+      const spentNow = spentStars + (method === 'points' ? cost : 0);
       const remain = Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0));
+      console.info(`[fatigue:${director}] 단축 완료`, { method, remainSec: remain, spentStars: spentNow });
       if (remain <= 0) {
-        showAlert('휴식 종료', `「${label} 디렉터」가 다시 준비됐어요! 이제 새 작업을 지시할 수 있어요.`, [
-          { text: '확인', onPress: onCleared },
-        ]);
+        showAlert(
+          '휴식 종료',
+          `「${label} 디렉터」가 다시 준비됐어요! 이제 새 작업을 지시할 수 있어요.` +
+            (spentNow > 0 ? `\n이번에 휴식 단축에 ⭐${spentNow} 사용했어요.` : ''),
+          [{ text: '확인', onPress: onCleared }],
+          { lockMs: FATIGUE_RESHOW_LOCK_MS }
+        );
       } else {
-        // 아직 쿨다운 잔여 — 갱신된 남은 시간으로 재안내(반복 스킵 가능)
-        showFatigueCooldownDialog({ ...opts, status: data, remainingSec: remain });
+        // 아직 쿨다운 잔여 — 갱신된 남은 시간으로 재안내(반복 스킵 가능, 0.8초 잠금·누적 표시)
+        showFatigueCooldownDialog({ ...opts, status: data, remainingSec: remain, spentStars: spentNow, reshownAfterSkip: true });
       }
     } catch (err: any) {
       const st = err?.response?.status;
@@ -176,10 +197,13 @@ export function showFatigueCooldownDialog(opts: {
     typeof status?.today_completed === 'number'
       ? `\n오늘 완성 ${status.today_completed}개 — 완성할 때마다 휴식이 길어져요 (${ladderText} · 매일 자정 리셋).`
       : '';
+  // v3.230 A5-5: 이번 흐름 누적 사용 표시
+  const spentLine = spentStars > 0 ? `\n이번에 단축에 ⭐${spentStars} 사용` : '';
   showAlert(
     '디렉터 휴식 중',
     `「${label} 디렉터」가 쉬는 중이에요 — 남은 시간 ${formatCooldown(remainingSec)}\n` +
-      `⭐${cost}로 ${minutes}분 단축할 수 있어요${completedLine}`,
-    buttons
+      `⭐${cost}로 ${minutes}분 단축할 수 있어요${spentLine}${completedLine}`,
+    buttons,
+    opts.reshownAfterSkip ? { lockMs: FATIGUE_RESHOW_LOCK_MS } : undefined
   );
 }

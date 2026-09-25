@@ -34,7 +34,8 @@ import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
 // v3.117: 내 아티스트 요약 행 — 다중 아티스트 정본(GET /character/list) + 레거시 /me 폴백
 import { listArtists, artistSheetUrl, ServerArtist } from '../services/characterService';
 // v3.210 ③: AI 곡 Inst. 버전 생성 — trackService 계약(backend 조 병렬, PLAN v3.210)
-import { requestInstrumental, getInstrumentalStatus, INSTRUMENTAL_STAR_COST } from '../services/trackService';
+import { requestInstrumental, getInstrumentalStatus } from '../services/trackService';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 // v3.215 ④: Inst = 작곡(composer) 디렉터 영역 — 생성 전 쿨다운 게이트 (MusicGeneration 관행)
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -463,73 +464,73 @@ export default function MyMusicScreen({ navigation }: any) {
   };
 
   // v3.210 ③: ⋮ 메뉴 [Inst. 버전 만들기] — 확인 다이얼로그(⭐ 비용 안내) → 생성 요청 → 폴링
-  const confirmCreateInstrumental = (track: Track) => {
+  // v3.230 A5-2(tester 1차): 공통 ⭐ 확인(confirmStarSpend)으로 교체 — 보유 ⭐ 표시·잔액 부족 안내·
+  // 휴식 단축 직후(onCleared·409 이미 해제) 0.8초 잠금이 다른 경로와 동일하게 적용된다.
+  const confirmCreateInstrumental = async (track: Track) => {
     const trackId = String(track.id);
-    showAlert(
-      'Inst. 버전 만들기',
-      // v3.214 ⑩: 재화 표기 관행 통일 — "스타 n개" → "⭐n" (VideoDirectorScreen "⭐{n}이 소모돼요" 동일)
-      `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들까요?\n\n⭐${INSTRUMENTAL_STAR_COST}이 차감되며, 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '만들기',
-          onPress: async () => {
-            if (instBusy[trackId]) return;
-            setInstBusy((prev) => ({ ...prev, [trackId]: true }));
-            if (__DEV__) console.info('[Inst] 생성 시작', { trackId });
-            try {
-              const accepted = await requestInstrumental(trackId);
-              // v3.228: 202 수신 즉시 전역 추적 등록(진행 화면 이탈·재시작 후에도 회수)
-              if (accepted?.job_id) {
-                registerGenJob({ kind: 'inst', serverJobId: String(accepted.job_id), meta: { trackId, title: track.title } });
-              }
-              // v3.222 ②: '생성 시작' alert + 백그라운드 폴링 → InstLoading 진행 화면으로 교체
-              // (완료 표시·미리듣기는 그 화면이 담당, 이탈 시 복귀 focus 확인으로 갈음 — 결정 2 기본안)
-              goInstLoading(trackId, track.title);
-            } catch (err: any) {
-              const status = err?.response?.status;
-              console.error('[Inst] 생성 요청 실패', { trackId, status });
-              setInstBusy((prev) => ({ ...prev, [trackId]: false }));
-              if (status === 429 || err?.response?.data?.error === 'director_fatigue') {
-                // v3.215 ④: 서버 composer 게이트 429(과금 전 무비용 — 게이트→과금 순서) —
-                // 선게이트와의 레이스는 동일 쿨다운 다이얼로그로 대응 (VideoDirector 관행)
-                const remain = Math.max(
-                  0,
-                  Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0)
-                );
-                showFatigueCooldownDialog({
-                  status: null, // 게이트 통과 직후라 최신 status 미보유 — 다이얼로그가 계약 폴백 표기
-                  remainingSec: remain > 0 ? remain : 1,
-                  director: 'composer',
-                  onCleared: () => confirmCreateInstrumental(track),
-                });
-              } else if (status === 402) {
-                showAlert('알림', '스타(⭐)가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
-              } else if (status === 409) {
-                // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)
-                if (err?.response?.data?.existing_track_id) {
-                  showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
-                } else {
-                  // v3.222 ②: 진행 중 409 → 동일 화면 resume 모드(폴링만 — MusicLoading resume 관행)
-                  // v3.228: 진행 중 job(다른 창·기기 포함)을 추적기에 편입
-                  const busyJobId = err?.response?.data?.job_id;
-                  if (busyJobId) {
-                    registerGenJob({ kind: 'inst', serverJobId: String(busyJobId), meta: { trackId, title: track.title }, source: 'conflict' });
-                  }
-                  setInstBusy((prev) => ({ ...prev, [trackId]: true }));
-                  goInstLoading(trackId, track.title, true);
-                }
-              } else if (status === 404) {
-                // v3.214 ③: 서버 /instrumental 미배포(v3.210) 과도기 안내 — 배포 후 404는 곡 미존재뿐이라 무해
-                showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.');
-              } else {
-                showAlert('오류', err?.response?.data?.error || 'Inst. 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
-              }
-            }
-          },
-        },
-      ]
-    );
+    if (instBusy[trackId]) return;
+    const ok = await confirmStarSpend({
+      source: 'MyMusic.inst',
+      costKey: 'instrumental',
+      action: 'Inst. 버전 만들기',
+      message: `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들어요. 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
+    });
+    if (!ok) {
+      console.info('[Inst] ⭐ 확인 취소 — 요청 없음', { trackId });
+      return;
+    }
+    if (instBusy[trackId]) return;
+    setInstBusy((prev) => ({ ...prev, [trackId]: true }));
+    if (__DEV__) console.info('[Inst] 생성 시작', { trackId });
+    try {
+      const accepted = await requestInstrumental(trackId);
+      // v3.228: 202 수신 즉시 전역 추적 등록(진행 화면 이탈·재시작 후에도 회수)
+      if (accepted?.job_id) {
+        registerGenJob({ kind: 'inst', serverJobId: String(accepted.job_id), meta: { trackId, title: track.title } });
+      }
+      // v3.222 ②: '생성 시작' alert + 백그라운드 폴링 → InstLoading 진행 화면으로 교체
+      // (완료 표시·미리듣기는 그 화면이 담당, 이탈 시 복귀 focus 확인으로 갈음 — 결정 2 기본안)
+      goInstLoading(trackId, track.title);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.error('[Inst] 생성 요청 실패', { trackId, status });
+      setInstBusy((prev) => ({ ...prev, [trackId]: false }));
+      if (status === 429 || err?.response?.data?.error === 'director_fatigue') {
+        // v3.215 ④: 서버 composer 게이트 429(과금 전 무비용 — 게이트→과금 순서) —
+        // 선게이트와의 레이스는 동일 쿨다운 다이얼로그로 대응 (VideoDirector 관행)
+        const remain = Math.max(
+          0,
+          Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0)
+        );
+        showFatigueCooldownDialog({
+          status: null, // 게이트 통과 직후라 최신 status 미보유 — 다이얼로그가 계약 폴백 표기
+          remainingSec: remain > 0 ? remain : 1,
+          director: 'composer',
+          onCleared: () => confirmCreateInstrumental(track),
+        });
+      } else if (status === 402) {
+        showAlert('알림', '스타(⭐)가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!');
+      } else if (status === 409) {
+        // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)
+        if (err?.response?.data?.existing_track_id) {
+          showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
+        } else {
+          // v3.222 ②: 진행 중 409 → 동일 화면 resume 모드(폴링만 — MusicLoading resume 관행)
+          // v3.228: 진행 중 job(다른 창·기기 포함)을 추적기에 편입
+          const busyJobId = err?.response?.data?.job_id;
+          if (busyJobId) {
+            registerGenJob({ kind: 'inst', serverJobId: String(busyJobId), meta: { trackId, title: track.title }, source: 'conflict' });
+          }
+          setInstBusy((prev) => ({ ...prev, [trackId]: true }));
+          goInstLoading(trackId, track.title, true);
+        }
+      } else if (status === 404) {
+        // v3.214 ③: 서버 /instrumental 미배포(v3.210) 과도기 안내 — 배포 후 404는 곡 미존재뿐이라 무해
+        showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.');
+      } else {
+        showAlert('오류', err?.response?.data?.error || 'Inst. 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
+      }
+    }
   };
 
   // 내 곡 공유 (내가 만든 곡만 노출되는 화면이므로 소유권 체크 불필요)

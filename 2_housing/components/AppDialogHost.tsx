@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useDialogStore, type DialogButton } from '../stores/dialogStore';
 import { colors } from '../theme/colors';
@@ -8,11 +9,31 @@ import { colors } from '../theme/colors';
 export default function AppDialogHost() {
   const dialog = useDialogStore((s) => s.queue[0]);
   const dismiss = useDialogStore((s) => s.dismiss);
+  // v3.230 A5-5: lockMs 다이얼로그 — 표시 후 잠금 시간 동안 cancel 외 버튼 무반응(같은 위치 연타 흡수).
+  // 잠금 해제 시각은 다이얼로그 id별로 렌더 중 1회 고정(effect 전 첫 프레임부터 잠금), 해제 시 리렌더.
+  const lockRef = useRef<{ id: number; until: number } | null>(null);
+  if (dialog && dialog.lockMs && dialog.lockMs > 0 && lockRef.current?.id !== dialog.id) {
+    lockRef.current = { id: dialog.id, until: Date.now() + dialog.lockMs };
+  }
+  const lockUntil = dialog && lockRef.current?.id === dialog.id ? lockRef.current.until : 0;
+  const [, setUnlockTick] = useState(0);
+  useEffect(() => {
+    const wait = lockUntil - Date.now();
+    if (!(wait > 0)) return undefined;
+    const t = setTimeout(() => setUnlockTick((n) => n + 1), wait + 10);
+    return () => clearTimeout(t);
+  }, [lockUntil]);
 
   if (!dialog) return null;
+  const locked = lockUntil > Date.now();
 
   const cancelBtn = dialog.buttons.find((b) => b.style === 'cancel');
   const press = (b: DialogButton) => {
+    // 잠금 중엔 cancel 외 버튼 무시(렌더가 늦어도 누른 시각 기준으로 판정)
+    if (b.style !== 'cancel' && lockUntil > Date.now()) {
+      console.info('[AppDialogHost] 잠금 중 버튼 입력 무시', { title: dialog.title, text: b.text });
+      return;
+    }
     dismiss(dialog.id);
     b.onPress?.();
   };
@@ -24,6 +45,7 @@ export default function AppDialogHost() {
   const renderBtn = (b: DialogButton, i: number) => {
     const isCancel = b.style === 'cancel';
     const isDestructive = b.style === 'destructive';
+    const btnLocked = locked && !isCancel;
     return (
       <TouchableOpacity
         key={i}
@@ -31,6 +53,7 @@ export default function AppDialogHost() {
           styles.btn,
           vertical && styles.btnVertical,
           isCancel ? styles.cancelBtn : isDestructive ? styles.destructiveBtn : styles.confirmBtn,
+          btnLocked && styles.btnLocked,
         ]}
         onPress={() => press(b)}
         activeOpacity={0.7}
@@ -107,6 +130,7 @@ const styles = StyleSheet.create({
   // v3.118.3: 웹에서 flex:0이 flex-basis 압축으로 버튼 높이를 무너뜨려 글자 잘림
   // (앨범 커버 변경 3버튼 등 세로 스택 전부) — 화풍 버튼(v3.109)과 동일 패턴 수정.
   btnVertical: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  btnLocked: { opacity: 0.45 },
   cancelBtn: {
     backgroundColor: colors.bg.surface2,
     borderWidth: 1,

@@ -1,6 +1,7 @@
 // [DmInbox] 다이렉트 메시지함 — MAIDOL DmInboxPage 이식(RN).
 // 탭: 메시지/요청. 새 메시지: 닉네임 또는 #태그 검색(#태그=추천코드 4자리, 전역 유일 '배틀태그').
-// 게이트: 본인인증(is_verified) 회원만 — 미인증은 안내 화면.
+// 게이트: v3.230 A8 — 본인인증 안내 화면 제거(본인인증은 추후 적용). 목록·공식 계정 문의는 누구나,
+//   서버가 아직 막는 일반 회원 검색·대화 시작(403)은 본인인증 유도 없이 '준비 중' 일반 안내.
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
@@ -11,6 +12,8 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { fetchOfficial, type OfficialContact } from '../services/officialService';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
+import { showAlert } from '../utils/appAlert';
+import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError } from '../utils/identityGate';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -50,7 +53,8 @@ export default function DmInboxScreen() {
   const composeSheetHeight = Math.max(0, winH - composeTopLimit - spacing.md);
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
-  const [eligible, setEligible] = useState<boolean | null>(null);
+  // v3.230 A8: 서버 DM 게이트가 막는 기능(일반 회원 검색·대화 시작) 여부 — 표시용(차단 화면 아님)
+  const [peerDmLimited, setPeerDmLimited] = useState(false);
   const [tab, setTab] = useState<'messages' | 'requests'>('messages');
   const [convs, setConvs] = useState<DmConversation[]>([]);
   const [requests, setRequests] = useState<DmConversation[]>([]);
@@ -73,10 +77,14 @@ export default function DmInboxScreen() {
     setLoading(true); setError('');
     if (__DEV__) console.info('[DmInbox] 목록 조회');
     try {
-      const el = await api.get('/dm/eligibility');
-      const ok = !!el.data?.is_verified;
-      setEligible(ok);
-      if (!ok) { setLoading(false); return; }
+      // v3.230 A8: eligibility 는 표시용으로만(실패 무시) — 미인증이어도 목록·공식 문의는 그대로 연다
+      api.get('/dm/eligibility')
+        .then((el) => {
+          const limited = !el.data?.is_verified && el.data?.identity_required !== false;
+          setPeerDmLimited(limited);
+          console.info('[IdentityBypass] dm eligibility', { limited });
+        })
+        .catch((e: any) => console.error('[DmInbox] eligibility 조회 실패(무시)', { status: e?.response?.status }));
       const [c, r] = await Promise.all([api.get('/dm/conversations'), api.get('/dm/requests')]);
       setConvs(c.data?.conversations || []);
       setRequests(r.data?.requests || []);
@@ -132,6 +140,10 @@ export default function DmInboxScreen() {
         setResults(res.data?.users || []);
       } catch (err: any) {
         console.error('[DmInbox] 사용자 검색 실패', { status: err?.response?.status });
+        if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
+          console.info('[IdentityBypass] dm search 403 identity — 준비 중 안내');
+          setPeerDmLimited(true);
+        }
         setSearchFailed(true); setResults([]);
       } finally {
         setSearching(false);
@@ -148,6 +160,12 @@ export default function DmInboxScreen() {
       navigation.navigate('DmChat', { conversation: conv });
     } catch (err: any) {
       console.error('[DmInbox] 대화 시작 실패', { peerId, status: err?.response?.status });
+      if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
+        console.info('[IdentityBypass] dm start 403 identity — 준비 중 안내');
+        setPeerDmLimited(true);
+        showAlert('알림', DM_UNAVAILABLE_MESSAGE);
+        return;
+      }
       setSearchFailed(true);
     }
   };
@@ -178,15 +196,12 @@ export default function DmInboxScreen() {
     );
   };
 
-  // ── 게이트: 비로그인/미인증 ──
-  if (!user || eligible === false) {
+  // ── 게이트: 비로그인만(v3.230 A8 — 본인인증 안내 화면 제거) ──
+  if (!user) {
     return (
       <View style={styles.gate}>
         <Feather name="mail" size={40} color={colors.text.muted} />
-        <AppText variant="title3" center style={{ marginTop: spacing.lg }}>본인인증 후 이용할 수 있어요</AppText>
-        <AppText variant="footnote" tone="secondary" center style={{ marginTop: spacing.sm, lineHeight: 20 }}>
-          다이렉트 메시지는 본인인증을 완료한 회원만 이용할 수 있습니다.{'\n'}카카오/네이버 로그인 시 자동으로 인증돼요.
-        </AppText>
+        <AppText variant="title3" center style={{ marginTop: spacing.lg }}>로그인 후 이용할 수 있어요</AppText>
         <View style={{ marginTop: spacing.xl, width: 160 }}>
           <Button label="돌아가기" variant="tonal" fullWidth onPress={() => navigation.goBack()} />
         </View>
@@ -236,7 +251,9 @@ export default function DmInboxScreen() {
               </TouchableOpacity>
             </View>
             <AppText variant="caption" tone="secondary" style={styles.composeHint}>
-              닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요. 닉네임#태그 또는 #태그로 정확히 찾을 수 있어요.
+              {peerDmLimited
+                ? DM_UNAVAILABLE_MESSAGE
+                : '닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요. 닉네임#태그 또는 #태그로 정확히 찾을 수 있어요.'}
             </AppText>
             <View style={styles.searchBox}>
               <Feather name="search" size={16} color={colors.text.muted} />
@@ -253,7 +270,9 @@ export default function DmInboxScreen() {
               {searching ? (
                 <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 중...</AppText>
               ) : searchFailed ? (
-                <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색에 실패했습니다.</AppText>
+                <AppText variant="footnote" tone="muted" style={styles.searchStatus}>
+                  {peerDmLimited ? DM_UNAVAILABLE_MESSAGE : '검색에 실패했습니다.'}
+                </AppText>
               ) : !query.trim() ? (
                 // v3.216 ③: 빈 검색어 — maidol_official 고정 행(조회 실패 시 현행 빈 목록 폴백).
                 // 검색어 입력 시엔 검색 결과만 노출되므로 고정 행과의 중복은 구조적으로 없다.

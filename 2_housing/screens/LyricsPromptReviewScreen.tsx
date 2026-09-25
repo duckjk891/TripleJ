@@ -18,6 +18,7 @@ import { useLyricsStore } from '../stores/lyricsStore';
 import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { colors } from '../theme/colors';
 import {
   buildLyricsRequest,
@@ -75,6 +76,21 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     navigation.navigate('LyricsLoading' as any);
   };
 
+  // v3.230 A5-2/A5-4: 작사 ⭐ 차감 직전 확인 1회 — 휴식 게이트 뒤·LyricsLoading 진입 전.
+  // 휴식 단축 해제(onCleared)도 이 확인을 거친다(확인 없는 자동 생성 연쇄 금지).
+  const confirmingRef = useRef(false);
+  const confirmThenStart = async (via: 'button' | 'fatigue-chain') => {
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+    try {
+      const ok = await confirmStarSpend({ source: 'LyricsPromptReview', costKey: 'lyrics', action: '가사 만들기' });
+      console.info('[LyricsPromptReview] ⭐ 확인 결과', { via, ok });
+      if (ok) startLyricsLoading();
+    } finally {
+      confirmingRef.current = false;
+    }
+  };
+
   // v3.118: 작사 디렉터 휴식(쿨다운) 게이트 — 생성 시작 전 사전 확인(429 무과금과 동일 다이얼로그)
   const handleGenerate = async () => {
     // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
@@ -90,7 +106,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
           status,
           remainingSec: remain,
           director: 'lyricist',
-          onCleared: startLyricsLoading,
+          onCleared: () => { void confirmThenStart('fatigue-chain'); },
         });
         return;
       }
@@ -100,7 +116,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     } finally {
       fatigueCheckingRef.current = false;
     }
-    startLyricsLoading();
+    await confirmThenStart('button');
   };
 
   const handleFieldEdit = (field: EditField) => {

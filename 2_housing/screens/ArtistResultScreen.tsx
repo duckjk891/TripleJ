@@ -38,6 +38,7 @@ import { applyArtistRenameToPlayback } from '../services/playback';
 import { useOutfitStore } from '../stores/outfitStore';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { getPointCostSync } from '../services/pointCosts';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -142,23 +143,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // 앱 내부 디자인 다이얼로그 (시스템 Alert 대신)
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
-  // v3.105: 재생성(다시 만들기)도 generate-sheet ⭐ 소모 — confirm에 실비용 표기
+  // v3.105: 재생성(다시 만들기) 진입 confirm.
+  // v3.230 A5-2(D6): ⭐ 차감 확인은 ArtistCody "이 옷으로 만들기" 1회로 일원화 — 여기선 비용 없는 안내만
+  // (두 곳에서 비용을 묻지 않는다). 기존 /points/costs 직조회도 제거.
   const [regenConfirmVisible, setRegenConfirmVisible] = useState(false);
-  const [characterCost, setCharacterCost] = useState(10);
-
-  // v3.105: /points/costs 실값 (실패 시 10 폴백) — ArtistCody 관행
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await api.get('/points/costs');
-        if (alive && res.data?.costs?.character != null) setCharacterCost(res.data.costs.character);
-      } catch (err: any) {
-        console.error('[ArtistResult] /points/costs 조회 실패', { status: err?.response?.status });
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
 
   // v3.121: 착용 제품 매핑 — /business/ads/active 전체(무인증 GET, 카테고리 미지정=전체).
   // 실패 시 null 유지 → 판매종료 배지 판단 보류(used_items 자체 정보로만 표시).
@@ -1058,10 +1046,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               {personaMissing
                 ? '연결했던 목소리가 삭제되어 연결이 해제됐어요. 다른 목소리를 다시 연결해주세요.'
                 : personaExpired
-                  ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 새 목소리를 연결해주세요. (재학습 ⭐5)`
+                  ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 새 목소리를 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
                   : personaConnected
                   // v3.156(대표): 외부 AI 보이스 수명 안내 — 최대 2시간 이내 사용 권장
-                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.\n⏱️ 목소리는 만든 후 2시간 동안 사용할 수 있어요 — 그 전에 작곡에 사용해 주세요. 만료되면 다시 학습하면 돼요. (재학습 ⭐5)`
+                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.\n⏱️ 목소리는 만든 후 2시간 동안 사용할 수 있어요 — 그 전에 작곡에 사용해 주세요. 만료되면 다시 학습하면 돼요. (재학습 ⭐${getPointCostSync('voice_clone')})`
                   : serverPreset
                     ? `간편 목소리(${serverPreset.gender} · ${serverPreset.style})가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`
                     : '목소리 연결은 필수예요! 간편 목소리 또는 내 목소리를 연결하면, 같은 아티스트는 항상 같은 목소리로 노래해요.'}
@@ -1232,11 +1220,11 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         onClose={() => { setZoomUri(null); setZoomHeaders(undefined); }}
       />
 
-      {/* v3.105: 서버 아티스트 재생성 confirm — ⭐ 소모 명시 */}
+      {/* v3.105: 서버 아티스트 재생성 confirm — v3.230: 비용은 Cody 확인 1회(D6) */}
       <ConfirmDialog
         visible={regenConfirmVisible}
         title="다시 만들기"
-        message={`이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)\n생성 시 ⭐${characterCost}이 소모돼요.`}
+        message={'이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)\n별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
         confirmText="다시 만들기"
         onConfirm={performRegenerateServerArtist}
         onCancel={() => setRegenConfirmVisible(false)}
@@ -1250,7 +1238,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           (bothSlots
             ? '서버 제약으로 현재는 모든 아티스트가 함께 삭제됩니다(개별 삭제는 준비 중이에요). 모든 코디 기록도 함께 삭제돼요.'
             : '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요.'
-          ) + `\n새로 만들 때 ⭐${characterCost}이 소모돼요. 진행할까요?`
+          ) + '\n새로 만들 때 별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요. 진행할까요?'
         }
         confirmText="삭제하고 다시 만들기"
         destructive

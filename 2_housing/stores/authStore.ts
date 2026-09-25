@@ -4,6 +4,13 @@ import { usePlayerStore } from './playerStore';
 import { useMusicStore } from './musicStore';
 import { useCharacterTaskStore } from './characterTaskStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  interpretNicknameError,
+  interpretNicknameSuccess,
+  renameUploaderInTrack,
+  type NicknameResult,
+} from '../utils/nicknameRules';
+import { clearPendingReferral, noteSignupReferral } from '../utils/pendingReferral';
 
 interface AuthUser {
   id: string;
@@ -32,6 +39,8 @@ export interface ProfilePatch {
   region?: string | null;
   nationality?: string | null;
   sns_links?: string[];
+  /** v3.230 A2(S1): 닉네임 — changeNickname 전용(검증·오류 해석 포함). 서버 규칙 2~15자·중복 409 */
+  nickname?: string;
 }
 
 const TOKEN_KEY = 'auth-token-v1';
@@ -54,6 +63,9 @@ interface AuthState {
   ) => Promise<boolean>;
   // v3.190: starGranted — 프로필 완성 보상 ⭐10 이 이번 저장으로 지급됐는지(1회성)
   updateProfile: (patch: ProfilePatch) => Promise<{ ok: boolean; starGranted?: boolean }>;
+  /** v3.230 A2: 닉네임 변경 — PATCH /auth/me/profile {nickname}. 성공 시 user·재생 큐 표시 캐시 갱신.
+   *  구서버(닉네임 무시)면 code='unsupported'. 전역 isLoading/error 는 건드리지 않는다(모달이 자체 표시). */
+  changeNickname: (nickname: string) => Promise<NicknameResult>;
   /** v3.92: 서버 반영 후 로컬 user 부분 갱신(프로필 이미지·getMe 보강 등) */
   setUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
@@ -107,6 +119,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (displayTitle && displayTitle.trim()) body.display_title = displayTitle.trim();
       const res = await api.post('/auth/register', body);
       const { token, user } = res.data;
+      // v3.230 A7 [ReferralPending]: 추천코드 적용 결과(referral.applied)를 가입 선물 안내에 넘기고 보관 코드 소진
+      if (typeof body.referral_code === 'string' && body.referral_code) {
+        const applied = typeof res.data?.referral?.applied === 'boolean' ? res.data.referral.applied : null;
+        noteSignupReferral(body.referral_code, applied);
+        console.info('[ReferralPending] 이메일 가입 추천 결과', { applied });
+      }
+      clearPendingReferral('email-register').catch(() => {});
       setAuthToken(token);
       AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
       set({ token, user, isLoading: false });
@@ -147,6 +166,48 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
       return { ok: false };
     }
+  },
+  changeNickname: async (nickname) => {
+    const prev = useAuthStore.getState().user;
+    if (!prev) return { code: 'auth', message: '로그인이 필요해요.' };
+    console.info('[NicknameChange] PATCH 요청', { len: nickname.length });
+    let result: NicknameResult;
+    try {
+      const res = await api.patch('/auth/me/profile', { nickname });
+      result = interpretNicknameSuccess(nickname, res.data);
+      console.info('[NicknameChange] PATCH 응답', { code: result.code, synced: result.synced ?? null });
+    } catch (err: any) {
+      const status = err?.response?.status;
+      result = interpretNicknameError(status, err?.response?.data);
+      console.error('[NicknameChange] PATCH 실패', { status, code: result.code, error: err?.response?.data?.error ?? null });
+    }
+    if (result.code !== 'ok' || !result.nickname) return result;
+    const newNick = result.nickname;
+    const oldNick = prev.nickname;
+    // 1) 인증 store 사용자 정보(설정·내 곡·댓글 표기의 소스)
+    set((state) => ({ user: state.user ? { ...state.user, nickname: newNick } : state.user }));
+    // 2) 표시 캐시 — 재생 큐·현재 곡·계정 보관함의 내 곡 스냅샷(uploader_nickname·폴백 표기)
+    try {
+      const uid = String(prev.id);
+      const ps = usePlayerStore.getState();
+      let n = 0;
+      const mapT = (t: any) => {
+        const r = renameUploaderInTrack(t, uid, oldNick, newNick);
+        if (r !== t) n++;
+        return r;
+      };
+      const queue = ps.queue.map(mapT);
+      const track = mapT(ps.track);
+      const savedQueues: typeof ps.savedQueues = {};
+      for (const [owner, entry] of Object.entries(ps.savedQueues || {})) {
+        savedQueues[owner] = entry ? { ...entry, queue: (entry.queue || []).map(mapT), track: mapT(entry.track) } : entry;
+      }
+      if (n > 0) usePlayerStore.setState({ queue, track, savedQueues });
+      console.info('[NicknameChange] 표시 캐시 갱신', { tracks: n, len: newNick.length });
+    } catch (err: any) {
+      console.error('[NicknameChange] 표시 캐시 갱신 실패(무시)', { message: err?.message });
+    }
+    return result;
   },
   setUser: (patch) =>
     set((state) => ({ user: state.user ? { ...state.user, ...patch } : state.user })),

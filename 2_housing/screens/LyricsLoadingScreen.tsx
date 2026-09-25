@@ -40,6 +40,8 @@ import { failureBody } from '../services/genJobs';
 import { LYRICS_TEXT, hydrateLyricsFromResult } from '../services/genJobs/lyrics';
 import { useGenerationJobStore, useTrackedJob } from '../stores/generationJobStore';
 import { applyLyricsResult, lyricsTextOf } from '../utils/lyricsHydrate';
+import { useGenerationLeaveGuard } from '../hooks/useGenerationLeaveGuard';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -63,6 +65,14 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
   const [messageIndex, setMessageIndex] = useState(0);
   const dotAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // v3.230 A1-1(D1): 진행 중 이탈 가드 — 휴식·중복 안내 다이얼로그가 떠 있는 동안은 비활성(이중 팝업 방지)
+  const [guardActive, setGuardActive] = useState(true);
+  const { allowLeave } = useGenerationLeaveGuard(navigation, { screen: 'LyricsLoading', active: guardActive });
+  const leaveBack = () => {
+    allowLeave();
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate('Map' as any);
+  };
 
   // Advance loading step (cap at last step, API finish will navigate away)
   useEffect(() => {
@@ -111,8 +121,7 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
       outcomeHandledRef.current = true;
       console.info('[LyricsLoading] 추적 레코드 없음 — 복귀', { watchKey });
       store.setIsLoading(false);
-      if (navigation.canGoBack()) navigation.goBack();
-      else navigation.navigate('Map' as any);
+      leaveBack();
       return;
     }
     if (watched.lastStatus === 'done') {
@@ -158,7 +167,11 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
 
     const doGenerate = async () => {
       // v3.228: 중복 생성 최종 방어(사용자당 진행 중 1건 — 미확인 완성본은 비차단)
-      if (guardGeneration('lyrics', { navigation, where: 'LyricsLoading', onDismiss: () => navigation.goBack() })) return;
+      if (guardGeneration('lyrics', { navigation, where: 'LyricsLoading', onDismiss: () => leaveBack() })) {
+        if (isMounted) setGuardActive(false);
+        return;
+      }
+      if (isMounted) setGuardActive(true);
       // v3.228: 요청 원장 — POST 직전 기록(응답을 잃어도 /jobs/req/{rid}로 정확히 회수)
       const rid = newRequestId();
       const key = registerGenJob({ kind: 'lyrics', requestId: rid, meta: { save: true } });
@@ -210,10 +223,11 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
           const adoptedKey = adoptGenJob(busySnap, { replaceKey: key });
           if (!isMounted) return;
           store.setIsLoading(false);
+          setGuardActive(false);
           console.info('[LyricsLoading] 409 진행 중인 작사 — 편입', { jobId: adoptedKey });
           showAlert(LYRICS_TEXT.busyTitle, LYRICS_TEXT.busyBody, [
-            { text: '닫기', style: 'cancel', onPress: () => navigation.goBack() },
-            { text: '진행 상황 보기', onPress: () => { if (isMounted) setWatchKey(adoptedKey); } },
+            { text: '닫기', style: 'cancel', onPress: () => leaveBack() },
+            { text: '진행 상황 보기', onPress: () => { if (isMounted) { setGuardActive(true); setWatchKey(adoptedKey); } } },
           ]);
           return;
         }
@@ -241,15 +255,24 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
               console.warn('[LyricsLoading] [fatigue:lyricist] 상태 조회 실패:', statusErr?.response?.status);
             }
             if (!isMounted) return;
+            setGuardActive(false); // 휴식 다이얼로그와 가드 이중 팝업 방지
             showFatigueCooldownDialog({
               status: fatigueStatus,
               remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
               director: 'lyricist',
               cancelText: '돌아가기',
-              onCancel: () => navigation.goBack(),
-              onCleared: () => {
-                // 스킵으로 쿨다운 해제 — 생성 재시도 (⭐ 작사 비용은 이 재시도에서 정상 차감)
-                doGenerate();
+              onCancel: () => leaveBack(),
+              onCleared: async () => {
+                // 스킵으로 쿨다운 해제 — v3.230 A5-4: 확인 없는 자동 재요청 금지 → ⭐ 확인 1회 후 재시도
+                const ok = await confirmStarSpend({
+                  source: 'LyricsLoading',
+                  costKey: 'lyrics',
+                  action: '가사 만들기',
+                  variant: 'fatigue-chain',
+                });
+                if (!isMounted) return;
+                if (ok) doGenerate();
+                else leaveBack(); // 입력은 store에 보존 — 요청서 화면으로 복귀
               },
             });
             return;

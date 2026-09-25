@@ -24,6 +24,7 @@ import { colors } from '../theme/colors';
 import { findInstJobForTrack } from '../services/genJobs/inst';
 import { settleGenJob, setViewerJob, releaseViewerJob } from '../services/generationTracker';
 import { failureBody } from '../services/genJobs';
+import { useGenerationLeaveGuard } from '../hooks/useGenerationLeaveGuard';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -61,6 +62,10 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
   const [seekValue, setSeekValue] = useState(0);
   const isSeekingRef = useRef(false);
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  // v3.230 A1-1(D1): 진행 중(loading)에만 이탈 가드 — 헤더 ←(popTo)·Android 뒤로·탭 재탭.
+  // 완료·실패·10분 타임아웃 카드에선 비활성(자유 이탈).
+  useGenerationLeaveGuard(navigation, { screen: 'InstLoading', active: phase === 'loading' });
 
   // v3.223 C-9: RN7 navigate('Map')는 기존 Map으로 pop하지 않고 새 Map을 push(실측 Map>InstLoading>Map)
   // → popTo('Map')로 스택을 되감아 이 화면을 닫는다(헤더 ←·실패 [돌아가기] 공통).

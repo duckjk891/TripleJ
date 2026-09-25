@@ -101,7 +101,7 @@ export default function BrandGroupGrid({
       // v3.205(⑤): 성별 필터 결과 0건 — 전체 보기 전환 안내
       <View style={{ padding: 40 }}>
         <AppText style={styles.emptyDesc}>
-          {genderLabel(artistGender!)}용 {pickerCat} 아이템이 없어요.{'\n'}상단 칩을 누르면 전체 보기로 전환됩니다.
+          {genderLabel(artistGender!)}용 {pickerCat} 아이템이 없어요.{'\n'}상단 '전체' 칩을 누르면 모든 아이템을 볼 수 있어요.
         </AppText>
       </View>
     ) : (

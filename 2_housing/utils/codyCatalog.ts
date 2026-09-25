@@ -58,14 +58,58 @@ export const genderMatches = (i: AdItem, g: string) => {
 export const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
 
 // v3.205(⑤): 아티스트 성별 정규화 — '남성'/'남자'/'남' → '남', '여성'/'여자'/'여' → '여'.
-// 판별 실패는 null → 자동 필터 미적용·안내 칩 노출(전량 노출, 안전).
+// 판별 실패는 null → 자동 필터 미적용(전량 노출, 안전).
+// v3.230 A4: 소년/소녀·영문(male/female·man/woman·boy/girl·m/f) 추가. 영문은 **정확 토큰 비교**만 —
+// "female"·"woman" 안에 "male"·"man" 이 들어 있어 부분 문자열 매칭은 오판(여→남)이 된다.
+const MALE_EN = new Set(['male', 'man', 'boy', 'm']);
+const FEMALE_EN = new Set(['female', 'woman', 'girl', 'f']);
 export const normalizeArtistGender = (raw?: string | null): '남' | '여' | null => {
-  const t = (raw || '').trim();
+  const t = (typeof raw === 'string' ? raw : '').trim();
   if (!t) return null;
-  if (t.startsWith('남')) return '남';
-  if (t.startsWith('여')) return '여';
+  // 한글: 기존 '남…/여…' 시작 인식 유지 + 소년/소녀
+  if (t.startsWith('남') || t.startsWith('소년')) return '남';
+  if (t.startsWith('여') || t.startsWith('소녀')) return '여';
+  const en = t.toLowerCase();
+  if (FEMALE_EN.has(en)) return '여'; // female 먼저(정확 일치라 순서 무관하지만 의도 명시)
+  if (MALE_EN.has(en)) return '남';
   return null;
 };
+
+// v3.230 A4: 꾸미기 피커 성별 필터 선택 — '남'|'여' = 해당 성별용+공용, 'all' = 전체 보기
+export type CodyGenderChoice = '남' | '여' | 'all';
+
+export type CodyGenderSource = 'pending' | 'server' | 'profile' | 'none';
+
+/**
+ * v3.230 A4: 필터 기본 성별 결정(순수).
+ * - 신규 생성(sheet 모드 + 대상 아티스트 없음): 방금 답한 성별(pending → 같은 흐름의 초안 답)만 사용.
+ *   기존 아티스트(서버)·슬롯 프로필 성별은 쓰지 않는다 — 여자 아티스트 보유 계정이 남자 아티스트를
+ *   새로 만들 때 '여성용'으로 걸리던 문제(v3.230 ④). 답이 없으면 null(전체).
+ * - 대상 있음(재생성·옷 갈아입히기): 대상(서버) 성별 → 답 → 슬롯 프로필(기존 폴백 유지).
+ */
+export function resolveCodyDefaultGender(p: {
+  isNewArtist: boolean;
+  pendingGender?: string | null;
+  draftGender?: string | null;
+  serverGender?: string | null;
+  profileGender?: string | null;
+}): { gender: '남' | '여' | null; source: CodyGenderSource } {
+  if (p.isNewArtist) {
+    const g = normalizeArtistGender(p.pendingGender) ?? normalizeArtistGender(p.draftGender);
+    return { gender: g, source: g ? 'pending' : 'none' };
+  }
+  const s = normalizeArtistGender(p.serverGender);
+  if (s) return { gender: s, source: 'server' };
+  const pg = normalizeArtistGender(p.pendingGender);
+  if (pg) return { gender: pg, source: 'pending' };
+  const pf = normalizeArtistGender(p.profileGender);
+  if (pf) return { gender: pf, source: 'profile' };
+  return { gender: null, source: 'none' };
+}
+
+/** 선택 → 실제 필터 성별(null = 필터 없음) */
+export const codyFilterGender = (choice: CodyGenderChoice): '남' | '여' | null =>
+  choice === 'all' ? null : choice;
 
 // ── 세부 분류 ──────────────────────────────────────────────────────────────
 

@@ -55,6 +55,8 @@ import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import MyReportsScreen from './screens/MyReportsScreen';
+import StarHistoryScreen from './screens/StarHistoryScreen'; // v3.230 A7-3
+import { useRewardNotice } from './hooks/useRewardNotice'; // v3.230 A7-2
 import { useUiStore } from './stores/uiStore';
 import { usePlayerStore } from './stores/playerStore';
 // v3.197(T4): 포그라운드 복귀 시 재생상태 리컨사일 — 죽은 사운드면 UI를 일시정지로 정합화(자동 재재생 금지)
@@ -165,6 +167,8 @@ export type RootStackParamList = {
   DmInbox: undefined;
   Notifications: undefined;
   MyReports: undefined;
+  // v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역
+  StarHistory: undefined;
   // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
   DmChat: { conversation: any; prefill?: string };
   // v3.205(④): initialTab — 설정 '공지사항' 진입 시 커뮤니티 탭(공지) 직행. 미지정 시 기존 music 탭 시작.
@@ -478,6 +482,8 @@ function GlobalModals() {
   const openAttendance = useUiStore((s) => s.openAttendance);
   const fetchBalance = usePointsStore((s) => s.fetchBalance);
   const prevUserRef = useRef<any>(null);
+  // v3.230 A7-2: 가입 선물·추천 보상 1회 안내(로그인 직후·앱 복귀)
+  useRewardNotice();
   useEffect(() => {
     const wasLoggedOut = !prevUserRef.current;
     prevUserRef.current = user;
@@ -663,6 +669,7 @@ export default function App() {
             <RootStack.Screen name="DmInbox" component={DmInboxScreen} options={({ navigation }) => stackHeader(navigation, '메시지')} />
             <RootStack.Screen name="Notifications" component={NotificationsScreen} options={({ navigation }) => stackHeader(navigation, '알림')} />
             <RootStack.Screen name="MyReports" component={MyReportsScreen} />
+            <RootStack.Screen name="StarHistory" component={StarHistoryScreen} options={({ navigation }) => stackHeader(navigation, '스타 내역')} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />
             <RootStack.Screen
               name="Player"

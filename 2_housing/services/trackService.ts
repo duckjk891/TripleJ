@@ -12,7 +12,8 @@
 //     ※ MAIDOL UploadPage.jsx:1566은 type='track' 전송(구버전) — 백엔드는 'cover'만 허용 → 'cover' 사용.
 // web/native FormData 분기는 voiceService.appendAudioFile / albumService.appendImageFile 관행 재사용.
 import { Platform } from 'react-native';
-import api from './api';
+import api, { BACKEND_BASE_URL } from './api';
+import { FALLBACK_POINT_COSTS } from './pointCosts';
 
 // 서버 제한값(위 계약 주석의 단일 소스) — 클라 선검증용
 export const AUDIO_ALLOWED_EXTS = ['mp3', 'wav', 'ogg', 'flac', 'm4a'];
@@ -155,7 +156,9 @@ export async function uploadCoverBackground(file: PickedFile): Promise<{ object_
  *   GET /tracks/{track_id}/instrumental/status — { status, error? } (generations 관행:
  *     pending|processing|completed|failed 어휘 — musicService.isGenerationInProgress와 동일 축).
  */
-export const INSTRUMENTAL_STAR_COST = 5;
+// v3.230 A5-6: 하드코딩 제거 — 표시·확인은 services/pointCosts(getPointCostSync('instrumental')) 사용.
+// 이 상수는 하위호환용 폴백 별칭(서버 POINT_COSTS.instrumental과 동일 표).
+export const INSTRUMENTAL_STAR_COST = FALLBACK_POINT_COSTS.instrumental;
 
 export async function requestInstrumental(trackId: string): Promise<any> {
   if (__DEV__) console.info('[Inst] 생성 요청', { trackId });
@@ -180,4 +183,50 @@ export async function uploadTrackCover(trackId: string, file: PickedFile): Promi
     timeout: 120000,
   });
   return res.data;
+}
+
+// ── v3.230 A3 [VideoDirector] 지난 영상 무료 재열람(D9 — 칩만, 보관함 탭 재도입 아님) ─────────
+// 서버(routes/tracks.py, 변경 없음):
+//   GET /api/tracks/my/share-videos → {items:[{track_id,title,object_name,format,size,last_modified}]}
+//     (내 곡 최신 50곡, last_modified 최신순)
+//   GET /api/tracks/share-video/object/{object_name} → video/mp4 (무인증, **공개 곡만 200 — 비공개 404**)
+export interface ShareVideoItem {
+  track_id: string;
+  title?: string;
+  object_name: string;
+  format?: string;
+  size?: number;
+  last_modified?: string | null;
+}
+
+const SHARE_OBJECT_RE = /^share\/v[5678]\/[a-f0-9]{24}[A-Za-z0-9_\-]*\.mp4$/;
+
+export async function listMyShareVideos(): Promise<ShareVideoItem[]> {
+  const res = await api.get('/tracks/my/share-videos', { timeout: 20000 });
+  const items: any[] = Array.isArray(res.data?.items) ? res.data.items : [];
+  return items
+    .filter((it) => it && typeof it.object_name === 'string' && SHARE_OBJECT_RE.test(it.object_name) && it.track_id)
+    .map((it) => ({
+      track_id: String(it.track_id),
+      title: it.title,
+      object_name: String(it.object_name),
+      format: typeof it.format === 'string' ? it.format : undefined,
+      size: typeof it.size === 'number' ? it.size : undefined,
+      last_modified: typeof it.last_modified === 'string' ? it.last_modified : null,
+    }));
+}
+
+/** 곡별 최신 1개(last_modified 최신) — 서버 정렬을 믿지 않고 다시 고른다 */
+export function latestShareVideoByTrack(items: ShareVideoItem[]): Record<string, ShareVideoItem> {
+  const out: Record<string, ShareVideoItem> = {};
+  for (const it of items) {
+    const cur = out[it.track_id];
+    if (!cur || (it.last_modified || '') > (cur.last_modified || '')) out[it.track_id] = it;
+  }
+  return out;
+}
+
+/** object 프록시 재생 URL(공개 곡만 재생 가능 — 호출부가 공개 여부를 먼저 확인) */
+export function shareVideoObjectUrl(objectName: string): string {
+  return `${BACKEND_BASE_URL}/api/tracks/share-video/object/${objectName.split('/').map(encodeURIComponent).join('/')}`;
 }

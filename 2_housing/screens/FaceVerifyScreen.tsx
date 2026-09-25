@@ -3,7 +3,7 @@
 //
 // 상태 머신 (MAIDOL 원본 준용, Liveness(aws Amplify)는 실기기 백로그 — 셀피 파일 경로 사용):
 //   loading → (status 조회)
-//     ├─ need_identity   : 본인인증 미완료 안내(닫기만)
+//     ├─ unavailable     : v3.230 A8 — 구서버에서 미인증 계정(서버 403 예정) → 일반 안내(본인인증 유도 없음)
 //     ├─ consent         : 성인 — 동의 전문 + 체크 + [동의하기]
 //     ├─ guardian        : 미성년 — 보호자 안내 + [보호자에게 동의 문자 보내기]
 //     ├─ guardian_waiting: 보호자 승인 대기(3초 폴링)
@@ -17,16 +17,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { colors } from '../theme/colors';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import {
   getFaceVerifyStatus, consentFaceVerify, requestFaceGuardianConsent, verifyFace,
   FaceVerifyStatus,
 } from '../services/faceVerifyService';
+import {
+  FACE_UNAVAILABLE_MESSAGE, FACE_UNAVAILABLE_TITLE, faceIdentityRoute, isIdentityRequiredError, sanitizeServerText,
+} from '../utils/identityGate';
 import { FACE_CONSENT_VERSION, FACE_CONSENT_LABEL, FACE_CONSENT_BODY, FACE_GUARDIAN_NOTICE } from '../constants/faceConsent';
 
 type Step =
-  | 'loading' | 'need_identity' | 'consent' | 'guardian' | 'guardian_waiting'
+  | 'loading' | 'unavailable' | 'consent' | 'guardian' | 'guardian_waiting'
   | 'capture' | 'verifying' | 'blocked' | 'error';
 
 type Props = NativeStackScreenProps<any, 'FaceVerify'>;
@@ -65,9 +69,24 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       if (!aliveRef.current) return;
       console.info('[FaceVerify] verify 결과', { verified: !!data?.verified, method: data?.method, reason: data?.reason });
       if (data?.verified) {
-        showAlert('인증 완료', '얼굴 인증이 완료됐어요! 아티스트 생성을 이어서 진행할게요.', [
-          { text: '확인', onPress: () => navigation.replace('ArtistLoading' as any) },
-        ]);
+        // v3.230 A5-2(D6): 인증 직후 자동 재요청도 ⭐ 차감 직전 확인 1회 — [취소]/[⭐N 사용하고 이어서 만들기]
+        const ok = await confirmStarSpend({
+          source: 'FaceVerify',
+          costKey: 'character',
+          action: '아티스트 만들기',
+          title: '인증 완료',
+          message: '얼굴 인증이 완료됐어요! 아티스트 생성을 이어서 진행할까요?',
+          confirmText: '⭐{cost} 사용하고 이어서 만들기',
+        });
+        if (!aliveRef.current) return;
+        if (ok) {
+          console.info('[FaceVerify] 인증 완료 — ⭐ 확인 후 생성 재개');
+          navigation.replace('ArtistLoading' as any);
+        } else {
+          console.info('[FaceVerify] 인증 완료 — ⭐ 확인 취소, 초안 보존 후 복귀');
+          useCharacterTaskStore.getState().failApi('얼굴 인증은 완료됐어요. 아티스트 만들기의 "이어서 만들기"로 다시 시도할 수 있어요. 입력한 내용은 유지돼요.');
+          navigation.goBack();
+        }
         return;
       }
       if (data?.reason === 'stored_mismatch' || data?.need_recapture) {
@@ -84,7 +103,14 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
     } catch (err: any) {
       console.error('[FaceVerify] verify 실패', { status: err?.response?.status, message: err?.message });
       if (!aliveRef.current) return;
-      setErrorMsg(err?.response?.data?.error || err?.response?.data?.message || '얼굴 인증 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
+      // v3.230 A8: 403 identity_verification_required → 본인인증 유도 대신 일반 안내
+      if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
+        console.info('[IdentityBypass] verify 403 identity — 일반 안내');
+        setStep('unavailable');
+        return;
+      }
+      const fallback = '얼굴 인증 요청에 실패했어요. 잠시 후 다시 시도해주세요.';
+      setErrorMsg(sanitizeServerText(err?.response?.data?.error || err?.response?.data?.message, fallback));
       setStep('error');
     }
   }, [photoUri, photoName, navigation]);
@@ -110,7 +136,11 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       navigation.goBack();
       return;
     }
-    if (!st.is_verified) { setStep('need_identity'); return; }
+    // v3.230 A8 [IdentityBypass]: 본인인증 단계 없음 — identity_required:false(S3)면 바로 동의·촬영으로.
+    // 구서버(키 없음)+미인증이면 서버가 403 을 낼 것이므로 본인인증 유도 대신 일반 안내로 끝낸다.
+    const identityRoute = faceIdentityRoute(st);
+    console.info('[IdentityBypass] face status', { identityRequired: st.identity_required ?? null, route: identityRoute });
+    if (identityRoute === 'unavailable') { setStep('unavailable'); return; }
     // v3.163: consentOnly인데 이미 동의돼 있으면 할 일 없음 — 조용히 복귀
     if (consentOnly && !st.consent_needed) {
       console.info('[FaceVerify] consentOnly — 이미 동의됨, 복귀');
@@ -137,7 +167,7 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
         const st = await getFaceVerifyStatus();
         if (!aliveRef.current) return;
         console.info('[FaceVerify] status', {
-          enabled: st.enabled, mode: st.mode, is_verified: st.is_verified,
+          enabled: st.enabled, mode: st.mode, is_verified: st.is_verified, identity_required: st.identity_required ?? null,
           consent_needed: st.consent_needed, guardian_needed: st.guardian_needed,
           guardian_status: st.guardian_status, registered: st.registered,
         });
@@ -196,7 +226,13 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       proceedAfterConsent(!!statusRef.current?.registered);
     } catch (err: any) {
       console.error('[FaceVerify] 동의 기록 실패', { status: err?.response?.status });
-      if (aliveRef.current) showAlert('오류', '동의 처리에 실패했어요. 잠시 후 다시 시도해주세요.');
+      if (!aliveRef.current) return;
+      if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
+        console.info('[IdentityBypass] consent 403 identity — 일반 안내');
+        setStep('unavailable');
+        return;
+      }
+      showAlert('오류', '동의 처리에 실패했어요. 잠시 후 다시 시도해주세요.');
     } finally {
       setBusy(false);
     }
@@ -214,7 +250,13 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       if (aliveRef.current) setStep('guardian_waiting');
     } catch (err: any) {
       console.error('[FaceVerify] 보호자 요청 실패', { status: err?.response?.status });
-      if (aliveRef.current) showAlert('오류', '보호자 동의 문자 발송에 실패했어요. 잠시 후 다시 시도해주세요.');
+      if (!aliveRef.current) return;
+      if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
+        console.info('[IdentityBypass] guardian 403 identity — 일반 안내');
+        setStep('unavailable');
+        return;
+      }
+      showAlert('오류', '보호자 동의 문자 발송에 실패했어요. 잠시 후 다시 시도해주세요.');
     } finally {
       setBusy(false);
     }
@@ -238,7 +280,9 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
     console.info('[FaceVerify] 닫기', { step, consentOnly });
     // v3.163: consentOnly(사진 업로드 직후 동의 선진행)는 생성 태스크가 없음 — failApi 금지
     if (!consentOnly) {
-      taskStore.failApi('얼굴 인증이 필요해 생성을 중단했어요. 인증 후 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+      taskStore.failApi(step === 'unavailable'
+        ? '얼굴 인증을 잠시 이용할 수 없어 생성을 중단했어요. 잠시 후 "이어서 만들기"로 다시 시도하거나 가상 아티스트로 만들 수 있어요. 입력한 내용은 유지돼요.'
+        : '얼굴 인증이 필요해 생성을 중단했어요. 인증 후 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
     }
     navigation.goBack();
   };
@@ -248,13 +292,12 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
     switch (step) {
       case 'loading':
         return <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />;
-      case 'need_identity':
+      case 'unavailable':
+        // v3.230 A8: 본인인증 유도 없음 — 일반 안내 + 닫기
         return (
           <View style={styles.card}>
-            <AppText style={styles.title}>본인인증 후 이용할 수 있어요</AppText>
-            <AppText style={styles.hint}>
-              얼굴 사진을 사용한 아티스트 생성은 본인인증을 완료한 회원만 이용할 수 있어요.
-            </AppText>
+            <AppText style={styles.title}>{FACE_UNAVAILABLE_TITLE}</AppText>
+            <AppText style={styles.hint}>{FACE_UNAVAILABLE_MESSAGE}</AppText>
             <TouchableOpacity style={styles.primaryBtn} onPress={handleClose}>
               <AppText style={styles.primaryBtnText}>닫기</AppText>
             </TouchableOpacity>

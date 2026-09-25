@@ -27,6 +27,8 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import GenerationJobCard from '../components/GenerationJobCard';
 import { refreshRecoverable, guardArtistGeneration } from '../services/generationTracker';
+import { fetchPointCosts, FALLBACK_POINT_COSTS } from '../services/pointCosts';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { colors } from '../theme/colors';
 
 // ── v3.103(B-1): 내 아티스트 목록 — 서버 /character/list 기반 N명 체제 ─────────
@@ -56,8 +58,9 @@ interface ArtistEntry {
   voicePreset: string;
 }
 
-const EXTRA_SLOT_COST_FALLBACK = 15;
-const CHARACTER_COST_FALLBACK = 10;
+// v3.230 A5-6: 폴백 단가는 services/pointCosts 단일 표(서버 POINT_COSTS 동일)
+const EXTRA_SLOT_COST_FALLBACK = FALLBACK_POINT_COSTS.extra_slot;
+const CHARACTER_COST_FALLBACK = FALLBACK_POINT_COSTS.character;
 
 export default function MyArtistsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -75,8 +78,6 @@ export default function MyArtistsScreen({ navigation }: any) {
   const [characterCost, setCharacterCost] = useState<number>(CHARACTER_COST_FALLBACK);
   const balance = usePointsStore((s) => s.balance);
   const [spending, setSpending] = useState(false);
-  // 슬롯 확장 과금 confirm (앱 내 다이얼로그)
-  const [slotConfirmVisible, setSlotConfirmVisible] = useState(false);
   // v3.105: [＋추가] 진입 confirm — 생성 시 ⭐ 소모를 입력 시작 전에 고지 (대표 지적)
   const [addConfirm, setAddConfirm] = useState<{ forceKind?: SlotKind } | null>(null);
   // v3.217 ③: 대표 지정 진행 중인 cid — 중복 PATCH 방지 + 카드 버튼 스피너
@@ -104,10 +105,12 @@ export default function MyArtistsScreen({ navigation }: any) {
       (async () => {
         try {
           // 목록 + 비용 병렬 로드 (모두 조회성 — 과금 없음)
-          const [listRes, costsRes] = await Promise.all([
+          // v3.230 A5-6: /points/costs 는 services/pointCosts 캐시 경유(실패 시 폴백 표)
+          const [listRes, costsTable] = await Promise.all([
             listArtists(),
-            api.get('/points/costs').catch(() => null),
+            fetchPointCosts(),
           ]);
+          const costsRes = costsTable ? { data: { costs: costsTable } } : null;
           if (cancelled) return;
 
           const { characters, slots: serverSlots } = listRes;
@@ -253,6 +256,8 @@ export default function MyArtistsScreen({ navigation }: any) {
   };
 
   const slotsFull = slots.used >= slots.max;
+  // v3.230 A1-3: 빈 슬롯 수(음수 방지 — 레거시 환산으로 used>max일 수 있음)
+  const emptySlots = Math.max(0, (Number(slots.max) || 0) - (Number(slots.used) || 0));
 
   // v3.105: 진입 전 ⭐ 잔액 사전 안내 — 부족하면 생성 자체가 402라 입력 낭비 방지
   const guardStarShortage = (): boolean => {
@@ -304,10 +309,28 @@ export default function MyArtistsScreen({ navigation }: any) {
       return;
     }
     // 슬롯 가득 → ⭐로 슬롯 확장 제안
-    setSlotConfirmVisible(true);
+    // v3.230 A5-2(D6): 공통 ⭐ 확인(비용·보유 표시·잔액 부족 안내·단축 직후 잠금)으로 통일
+    void confirmSlotPurchase();
   };
 
-  // v3.105: 추가 confirm 확정 → 입력 시작 (입력 화면 진입 후에는 재확인 팝업 없음)
+  const confirmSlotPurchase = async () => {
+    if (spending) return;
+    const ok = await confirmStarSpend({
+      source: 'MyArtists',
+      costKey: 'extra_slot',
+      cost: extraSlotCost,
+      action: '아티스트 슬롯 확장',
+      message: `슬롯이 가득 찼어요 (${slots.used}/${slots.max}). 슬롯을 1개 영구 확장해요.\n아티스트를 만들 때 별 사용은 옷을 고른 뒤 한 번 더 확인해요.`,
+    });
+    if (!ok) {
+      console.info('[MyArtists] 슬롯 확장 ⭐ 확인 취소 — 요청 없음');
+      return;
+    }
+    await performSlotPurchase();
+  };
+
+  // v3.105: 추가 confirm 확정 → 입력 시작.
+  // v3.230 A5-2(D6): 이 confirm은 비용 없는 안내 — ⭐ 차감 확인은 ArtistCody "이 옷으로 만들기" 1회
   const performAddEntry = () => {
     const params = addConfirm;
     setAddConfirm(null);
@@ -319,7 +342,6 @@ export default function MyArtistsScreen({ navigation }: any) {
 
   // 슬롯 확장 확정 → POST /points/spend {action:'extra_slot'} → 성공 시 생성 진입
   const performSlotPurchase = async () => {
-    setSlotConfirmVisible(false);
     if (spending) return;
     setSpending(true);
     if (__DEV__) console.info('[MyArtists] extra_slot 과금 요청', { cost: extraSlotCost, slots });
@@ -332,8 +354,10 @@ export default function MyArtistsScreen({ navigation }: any) {
       } else {
         setSlots((prev) => ({ ...prev, max: prev.max + 1 }));
       }
-      if (__DEV__) console.info('[MyArtists] extra_slot 과금 성공 → ArtistInput 진입', { max_slots: res.max_slots });
+      console.info('[MyArtists] extra_slot 과금 성공 → ArtistInput 진입', { max_slots: res.max_slots });
       navigation.navigate('ArtistInput');
+      // v3.230 A1-3: 확장 직후 생성을 못 끝내도 슬롯은 남는다는 안내(“별만 나갔다” 오인 방지)
+      showAlert('슬롯을 확장했어요', '아티스트 슬롯이 1개 늘었어요. 빈 슬롯은 계속 남아 있어요 — 지금 만들지 않아도 나중에 내 아티스트에서 쓸 수 있어요.');
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[MyArtists] extra_slot 과금 실패', { status, message: err?.message });
@@ -352,7 +376,7 @@ export default function MyArtistsScreen({ navigation }: any) {
   const addLabel = loading
     ? '＋ 아티스트 추가'
     : artists.length === 0 && slots.used === 0
-      ? '＋ 첫 아티스트 만들기 (무료)'
+      ? '＋ 첫 아티스트 만들기'
       : !isLegacy && slotsFull
         ? `＋ 아티스트 추가 (⭐${extraSlotCost})`
         : '＋ 아티스트 추가';
@@ -500,28 +524,26 @@ export default function MyArtistsScreen({ navigation }: any) {
               지금은 최대 2명까지 만들 수 있어요.
             </AppText>
           )}
+          {/* v3.230 A1-3: 빈 슬롯 표시 — 확장한 슬롯이 남아 있음을 보여준다(서버 slots 기준, 레거시 제외) */}
+          {!isLegacy && !loading && artists.length > 0 && emptySlots > 0 && (
+            <AppText style={styles.fullHint}>
+              빈 슬롯 {emptySlots}개 — 빈 슬롯은 계속 남아 있어요.
+            </AppText>
+          )}
         </ScrollView>
       )}
 
-      {/* v3.105: [＋추가] 진입 confirm — 생성 ⭐ 소모를 입력 시작 전에 고지 */}
+      {/* v3.105: [＋추가] 진입 confirm — v3.230 D6: 비용 없는 안내(⭐ 차감 확인은 Cody 1회) */}
       <ConfirmDialog
         visible={addConfirm !== null}
         title="새 아티스트 추가"
-        message={`새 아티스트를 추가하시겠어요?\n생성 시 ⭐${characterCost}이 소모돼요.${balance != null ? ` (현재 보유: ⭐${balance})` : ''}`}
+        message={'새 아티스트를 추가하시겠어요?\n별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
         confirmText="추가하기"
         onConfirm={performAddEntry}
         onCancel={() => setAddConfirm(null)}
       />
 
-      {/* 슬롯 확장 과금 confirm — 앱 내 다이얼로그 */}
-      <ConfirmDialog
-        visible={slotConfirmVisible}
-        title="아티스트 슬롯 확장"
-        message={`슬롯이 가득 찼어요 (${slots.used}/${slots.max}).\n⭐${extraSlotCost}를 사용해 슬롯을 1개 영구 확장할까요?\n확장 후 생성 시 ⭐${characterCost}는 별도로 소모돼요.`}
-        confirmText={`⭐${extraSlotCost} 사용하기`}
-        onConfirm={performSlotPurchase}
-        onCancel={() => setSlotConfirmVisible(false)}
-      />
+      {/* 슬롯 확장 과금 confirm — v3.230: confirmStarSpend(showAlert)로 이동 */}
     </View>
   );
 }

@@ -37,6 +37,13 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
+import { useGenerationLeaveGuard, LEAVE_GUARD_DEFAULT_BODY } from '../hooks/useGenerationLeaveGuard';
+import { getPointCostSync, fetchPointCosts } from '../services/pointCosts';
+
+// v3.230 A1-2: 요청(POST) 전에 화면을 떠나면 요청을 보내지 않는다 — 이 경우 과금 요청 자체가 없다
+const LEFT_BEFORE_REQUEST_MSG = '시작 전에 나가서 만들지 않았어요. ⭐은 쓰이지 않았어요. 입력한 내용은 유지돼요.';
+const PRE_REQUEST_GUARD_BODY =
+  '작업이 끝날 때까지 이 화면을 벗어나지 마세요.\n아직 요청을 보내기 전이에요. 지금 나가면 만들지 않아요.';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
@@ -139,6 +146,22 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
   const missingHandledRef = useRef(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
+  // v3.230 A1-1/A1-2: 요청 전송 여부(가드 문구) · 사용자가 가드에서 [나가기]를 골랐는지
+  const [requestSent, setRequestSent] = useState(!!routeJobId);
+  const leftRef = useRef(false);
+  const guardActive =
+    !saveFailed &&
+    (!isViewer || (!!tracked && tracked.lastStatus !== 'done' && tracked.lastStatus !== 'failed'));
+  const leaveGuard = useGenerationLeaveGuard(navigation, {
+    screen: 'ArtistLoading',
+    active: guardActive,
+    message: requestSent ? LEAVE_GUARD_DEFAULT_BODY : PRE_REQUEST_GUARD_BODY,
+    onLeave: () => {
+      leftRef.current = true;
+      console.info('[ArtistLoading] 가드 [나가기]', { jobId, requestSent });
+    },
+  });
+  const { allowLeave, waitWhilePrompting } = leaveGuard;
 
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침). blur 시 복원.
   useFocusEffect(
@@ -160,9 +183,10 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
   );
 
   const leaveToMap = useCallback(() => {
+    allowLeave(); // v3.230 A1-1: 코드 발 복귀는 가드 통과
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.navigate('Map');
-  }, [navigation]);
+  }, [navigation, allowLeave]);
 
   // ── v3.227 추적 뷰어: 완성 → finalize(단일 경로) / 실패 → 환불 안내 / 레코드 소멸 → 복귀 ──
   useEffect(() => {
@@ -217,10 +241,24 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
     if (routeJobId) return;
     if (!mode) {
       // store에 작업 정보 없음 — 잘못 진입
+      allowLeave();
       navigation.goBack();
       return;
     }
     let cancelled = false;
+    // v3.230 A1-2: POST 직전 확인 — 가드 다이얼로그가 떠 있으면 사용자의 선택을 기다린 뒤,
+    // 이미 떠났으면(나가기·언마운트) 요청을 보내지 않는다(무과금 — 요청 자체가 없음). 초안은 보존.
+    const leftBeforeRequest = async (kind: 'sheet' | 'outfit' | 'refine'): Promise<boolean> => {
+      await waitWhilePrompting();
+      if (!cancelled && !leftRef.current) return false;
+      console.info('[ArtistLoading] 시작 전 이탈 — 요청 안 보냄', { kind, cancelled, left: leftRef.current });
+      taskStore.failApi(LEFT_BEFORE_REQUEST_MSG); // 아티스트 만들기의 "이어서 만들기"로 재개
+      setTimeout(() => showAlert('만들지 않았어요', LEFT_BEFORE_REQUEST_MSG), 100);
+      return true;
+    };
+    const markRequestSent = () => {
+      if (!cancelled) setRequestSent(true);
+    };
     const callApi = async () => {
       try {
         const photoUri = taskStore.photoUri;
@@ -229,6 +267,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         // v3.227 중복 생성 가드(최종 방어 — POST 직전, 과금 전): 추적 중 job이 있으면 요청 0
         if ((mode === 'sheet' || mode === 'outfit') && getBlockingArtistJob()) {
           console.info('[ArtistLoading] 중복 생성 차단 — POST 없음');
+          allowLeave();
           navigation.goBack();
           setTimeout(() => { guardArtistGeneration({ where: 'ArtistLoading' }); }, 100);
           return;
@@ -305,6 +344,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
             stylePreset: taskStore.stylePreset, hasStyleImage: !!taskStore.styleImageUri,
             characterId: targetCid, legacyContract: taskStore.legacyContract,
           });
+          if (await leftBeforeRequest(mode)) return;
+          markRequestSent();
           const startRes = await api.post(endpoint, form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
@@ -392,6 +433,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
             endpoint, virtual: isVirtualOutfit, items: items.length,
             characterId: outfitCid, legacyContract: taskStore.legacyContract,
           });
+          if (await leftBeforeRequest(mode)) return;
+          markRequestSent();
           const startRes = await api.post(endpoint, form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
@@ -445,6 +488,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
             characterId: refineCid, legacyContract: taskStore.legacyContract,
           });
 
+          if (await leftBeforeRequest('refine')) return;
+          markRequestSent();
           const res = await api.post('/character/refine', form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
@@ -505,6 +550,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           }
           if (cancelled) return;
           taskStore.failApi('아티스트 디렉터가 쉬는 중이에요. 휴식이 끝나면 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+          allowLeave();
           navigation.goBack();
           setTimeout(() => {
             showFatigueCooldownDialog({
@@ -531,24 +577,29 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         if (status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
           const used = err.response?.data?.used;
           const max = err.response?.data?.max;
-          const slotMsg = `아티스트 슬롯이 가득 찼어요${typeof used === 'number' && typeof max === 'number' ? ` (${used}/${max})` : ''}. ⭐15로 슬롯을 영구 확장할 수 있어요.`;
+          // v3.230 A5-6: 슬롯 확장 비용 = /points/costs(extra_slot) — 하드코딩 제거
+          await fetchPointCosts();
+          if (cancelled) return; // 단가 조회 사이 화면 이탈 — 이미 떠난 화면에서 goBack 하지 않는다
+          const slotCost = getPointCostSync('extra_slot');
+          const slotMsg = `아티스트 슬롯이 가득 찼어요${typeof used === 'number' && typeof max === 'number' ? ` (${used}/${max})` : ''}. ⭐${slotCost}로 슬롯을 영구 확장할 수 있어요.`;
           if (__DEV__) console.info('[ArtistLoading] 409 slot_limit_exceeded', { used, max });
           taskStore.failApi(slotMsg);
+          allowLeave();
           navigation.goBack();
           setTimeout(() => {
             showAlert('슬롯이 가득 찼어요', slotMsg, [
               { text: '다음에', style: 'cancel' },
               {
-                text: '⭐15로 확장',
+                text: `⭐${slotCost}로 확장`,
                 onPress: async () => {
                   try {
                     await spendExtraSlot();
                     usePointsStore.getState().fetchBalance();
                     // v3.105: 입력은 store에 보존됨 — 아티스트 만들기 화면의 "이어서 만들기"로 재개 가능
-                    showAlert('확장 완료', '슬롯이 추가됐어요. 아티스트 만들기에서 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+                    showAlert('확장 완료', '슬롯이 추가됐어요. 빈 슬롯은 계속 남아 있어요. 아티스트 만들기에서 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
                   } catch (spendErr: any) {
                     if (spendErr?.response?.status === 402) {
-                      showAlert('스타(⭐)가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');
+                      showAlert('스타(⭐)가 부족해요', `슬롯 확장에는 ⭐${slotCost}가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.`);
                     } else {
                       showAlert('오류', spendErr?.response?.data?.error || '슬롯 확장에 실패했어요. 잠시 후 다시 시도해주세요.');
                     }
@@ -561,7 +612,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         }
         let msg: string;
         if (status === 402) {
-          msg = '별이 부족해요. 캐릭터 시트 생성에는 ⭐10개가 필요합니다.';
+          msg = `별이 부족해요. 캐릭터 시트 생성에는 ⭐${getPointCostSync('character')}개가 필요합니다.`;
         } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
           msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
         } else {
@@ -573,6 +624,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         }
         usePointsStore.getState().fetchBalance(); // 잔액 재확인
         taskStore.failApi(msg);
+        allowLeave();
         navigation.goBack();
         setTimeout(() => {
           showAlert('오류', msg);

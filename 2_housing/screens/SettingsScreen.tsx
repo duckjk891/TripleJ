@@ -32,6 +32,7 @@ import {
   PROFILE_IMAGE_MAX_BYTES,
 } from '../services/authService';
 import AuthPanel from '../components/auth/AuthPanel';
+import NicknameEditModal from '../components/settings/NicknameEditModal';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS, CONSENT_VERSION, AI_GENERATION_NOTICE } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
@@ -302,6 +303,8 @@ export default function SettingsScreen({ navigation }: any) {
   // 계약(backend_9004 auth.py:962 withdraw_account): DELETE /auth/me body { confirm_text: "회원탈퇴" }
   //   소프트 삭제(개인정보 익명화, 발행 곡은 '탈퇴한 사용자' 명의 유지). 불일치 400 { error }, 성공 { message }.
   const [showWithdraw, setShowWithdraw] = useState(false);
+  // v3.230 A2: 닉네임 변경 모달
+  const [showNicknameEdit, setShowNicknameEdit] = useState(false);
   const [withdrawInput, setWithdrawInput] = useState('');
   const [withdrawError, setWithdrawError] = useState('');
   const [withdrawBusy, setWithdrawBusy] = useState(false);
@@ -361,7 +364,7 @@ export default function SettingsScreen({ navigation }: any) {
 
   // v3.95(A-14): CS 오류신고 — 사유 선택 → GET /dm/official → POST /dm/conversations →
   // 기존 DM 채팅(DmChat)으로 "[오류신고: 사유] " 프리필 입장(자동 전송 X — MAIDOL ReportIssueModal 관행).
-  const CS_REASONS = ['재생 오류', '결제·별 오류', '계정 문제', '로그인·본인인증 문제', '기타'];
+  const CS_REASONS = ['재생 오류', '결제·별 오류', '계정 문제', '로그인·계정 인증 문제', '기타'];
   const startCsInquiry = async (reason: string) => {
     if (__DEV__) console.info('[SettingsScreen] CS 문의 시작', { reason });
     try {
@@ -518,7 +521,10 @@ export default function SettingsScreen({ navigation }: any) {
         <AppText variant="callout" style={styles.sectionTitle}>계정 관리</AppText>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowFirst]}
-          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
+          onPress={() => {
+            console.info('[NicknameChange] 설정 행 탭');
+            setShowNicknameEdit(true);
+          }}
         >
           <AppText style={styles.settingLabel}>닉네임 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
@@ -530,38 +536,24 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
-        {/* v3.189(대표): 내 정산 제거 → 본인인증 진입(미인증이면 ⭐30 보상 노출).
-            실제 PASS 연동 전이라 미인증 탭은 준비 중 안내 — 얼굴 등록의 선행 조건임을 함께 고지 */}
+        {/* v3.230 A8 [IdentityBypass]: '본인인증' 행(⭐30 유도·준비 중 팝업) 제거 — 본인인증은 추후 적용(대표 지시).
+            인증 상태 표시도 필요 없어 숨김. 복원 시 v3.189 행을 되살리면 된다. */}
         <TouchableOpacity
           style={styles.settingRow}
-          onPress={() => {
-            if (user?.is_verified) {
-              showAlert('본인인증 완료', '본인인증이 완료된 계정입니다. 얼굴 등록 등 인증이 필요한 기능을 모두 사용할 수 있어요.');
-            } else {
-              showAlert(
-                '본인인증 (준비 중)',
-                '휴대폰 본인인증 기능을 준비하고 있어요.\n\n인증을 완료하면 ⭐30을 드리고, 내 얼굴로 아티스트를 만드는 얼굴 등록 기능을 사용할 수 있게 됩니다.'
-              );
-            }
-          }}
-        >
-          <AppText style={styles.settingLabel}>본인인증</AppText>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {user?.is_verified ? (
-              <AppText variant="footnote" tone="accent">완료</AppText>
-            ) : (
-              <View style={styles.verifyBadge}>
-                <AppText variant="caption" style={styles.verifyBadgeText}>인증하고 ⭐30 받기</AppText>
-              </View>
-            )}
-            <AppText style={styles.settingArrow}>{'>'}</AppText>
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowLast]}
           onPress={() => navigation.navigate('MyReports' as never)}
         >
           <AppText style={styles.settingLabel}>내 신고 내역</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
+        </TouchableOpacity>
+        {/* v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역 */}
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowLast]}
+          onPress={() => {
+            console.info('[StarHistory] 설정 행 탭');
+            navigation.navigate('StarHistory' as never);
+          }}
+        >
+          <AppText style={styles.settingLabel}>스타 내역</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 
@@ -745,6 +737,13 @@ export default function SettingsScreen({ navigation }: any) {
           </KeyboardAvoidingView>
         </Modal>
 
+        {/* v3.230 A2: 닉네임 변경 모달 */}
+        <NicknameEditModal
+          visible={showNicknameEdit}
+          currentNickname={user.nickname}
+          onClose={() => setShowNicknameEdit(false)}
+        />
+
         {/* 프로필 편집 모달 */}
         <Modal
           visible={showProfileEdit}
@@ -781,7 +780,7 @@ export default function SettingsScreen({ navigation }: any) {
                 {/* v3.92(A-18): 인구통계 — 전부 선택 입력, 미입력은 저장 시 지우기(null) */}
                 {user.is_verified && (
                   <AppText style={styles.verifiedNotice}>
-                    본인인증 완료 계정은 생년월일·성별을 수정할 수 없습니다.
+                    인증이 완료된 계정은 생년월일·성별을 수정할 수 없어요.
                   </AppText>
                 )}
                 <AppText style={styles.modalLabel}>생년월일 (선택)</AppText>
@@ -1062,7 +1061,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text.muted,
   },
-  // v3.189: 본인인증 보상 배지 — 미인증 사용자에게 ⭐30 인센티브 상시 노출
+  // v3.189 보상 배지 스타일 — v3.230 A8 이후 프로필 완성 ⭐10 배지만 사용(본인인증 행 제거)
   verifyBadge: {
     backgroundColor: colors.accent.primary,
     borderRadius: 10,

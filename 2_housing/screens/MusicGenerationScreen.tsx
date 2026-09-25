@@ -31,6 +31,8 @@ import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
 import { getFatigueStatus, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { getPointCostSync } from '../services/pointCosts';
 // v3.200: 창작 기록 계층 — 작곡 플로우 진입 시 세션 확보 + 가사 편집 확정 시 버전 커밋(§7.4).
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 작곡 대화·생성을 절대 막지 않는다.
 import { ensureCreationSession, commitLyricsVersion } from '../services/creationLogService';
@@ -1001,7 +1003,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       showAlert(
         artist.persona_status === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
         artist.persona_status === 'expired'
-          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 연결해주세요. (재학습 ⭐5)`
+          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
           : `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
       );
       return;
@@ -1407,6 +1409,21 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.94: 생성 버튼 — 디렉터 쿨다운 중이면 앱 내 다이얼로그(남은 시간 + ⭐스킵/광고권/취소)로 게이트.
   // 서버도 POST /generate/(start_music_gen=true)에서 429로 게이트하므로(과금 전 — generate.py:444)
   // 레이스는 MusicLoadingScreen의 429 분기가 처리한다.
+  // v3.230 A5-2/A5-4: 작곡 ⭐ 차감 직전 확인 1회 — 순서: 진행 중 차단(guardGeneration) → 휴식 게이트 → 확인.
+  // 휴식 단축 해제(onCleared)도 이 확인을 거친다(확인 없는 자동 생성 연쇄 금지).
+  const composeConfirmingRef = useRef(false);
+  const confirmThenProceed = async (via: 'button' | 'fatigue-chain') => {
+    if (composeConfirmingRef.current) return;
+    composeConfirmingRef.current = true;
+    try {
+      const ok = await confirmStarSpend({ source: 'MusicGeneration', costKey: 'compose', action: '곡 만들기' });
+      console.info('[MusicGeneration] ⭐ 확인 결과', { via, ok });
+      if (ok) proceedGenerate();
+    } finally {
+      composeConfirmingRef.current = false;
+    }
+  };
+
   const handleGenerate = () => {
     // v3.228 W1: 사용자당 진행 중 1곡(결정 4) — 과금·피로 게이트보다 먼저. 미확인 완성본은 막지 않음.
     if (guardGeneration('music', { navigation, where: 'MusicGeneration' })) return;
@@ -1416,11 +1433,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         status: fatigue,
         remainingSec: fatigueRemainSec,
         onStatusUpdate: applyFatigueStatus,
-        onCleared: proceedGenerate,
+        onCleared: () => { void confirmThenProceed('fatigue-chain'); },
       });
       return;
     }
-    proceedGenerate();
+    void confirmThenProceed('button');
   };
 
   const isComplete = step >= DIRECTOR_MESSAGES.length && step < 100;
@@ -1562,7 +1579,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       }}
                     >
                       <AppText style={styles.choiceNumber}>1</AppText>
-                      <AppText style={styles.choiceText}>목소리 만들러 가기 (⭐5)</AppText>
+                      <AppText style={styles.choiceText}>목소리 만들러 가기 (⭐{getPointCostSync('voice_clone')})</AppText>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceBack}>

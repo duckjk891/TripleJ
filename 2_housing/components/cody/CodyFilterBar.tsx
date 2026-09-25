@@ -1,11 +1,10 @@
 // v3.227(D): 피커 '전체' 탭 상단 컨트롤 — [브랜드 모아보기 | 브랜드 펼쳐보기] 보기 전환, 대분류 칩(개수·0건 숨김),
-// 필터 행([성별 칩](v3.205/207 그대로) · 색상 ▾ · 가격 ▾ · 브랜드 ▾(펼쳐보기 전용) · 활성 개수 배지 · 초기화),
+// 필터 행([성별 칩 남성·여성·전체](v3.230 A4) · 색상 ▾ · 가격 ▾ · 브랜드 ▾(펼쳐보기 전용) · 활성 개수 배지 · 초기화),
 // 펼친 필터 패널, 안내 문구, 펼쳐보기 정렬. 데이터가 지원하는 축만 노출(색상/가격 정보가 없으면 숨김).
-import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useState } from 'react';
 import { View, TouchableOpacity, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
-import { showAlert } from '../../utils/appAlert';
 import { colors } from '../../theme/colors';
 import {
   COLOR_SWATCHES,
@@ -13,8 +12,8 @@ import {
   MULTI,
   PRICE_BUCKETS,
   activeFilterCount,
-  genderLabel,
   type Cat,
+  type CodyGenderChoice,
   type CodySort,
   type CodyViewMode,
   type CodyViewState,
@@ -35,9 +34,10 @@ interface Props {
   brandFacets: FacetCount[];
   hasColor: boolean;
   hasPrice: boolean;
-  artistGender: '남' | '여' | null;
-  genderFilterOn: boolean;
-  setGenderFilterOn: Dispatch<SetStateAction<boolean>>;
+  /** v3.230 A4: 성별 필터 남/여/전체 칩 — 현재 선택 · 기본값(답/대상 아티스트, 없으면 null) · 선택 콜백 */
+  genderChoice: CodyGenderChoice;
+  defaultGender: '남' | '여' | null;
+  onGenderChoice: (choice: CodyGenderChoice) => void;
   onReset: () => void;
 }
 
@@ -45,6 +45,13 @@ const SORTS: { key: CodySort; label: string }[] = [
   { key: 'rec', label: '추천순' },
   { key: 'low', label: '낮은 가격순' },
   { key: 'high', label: '높은 가격순' },
+];
+
+// v3.230 A4: 성별 필터 칩(남성용·여성용은 해당 성별용 + 공용 아이템 노출)
+const GENDER_CHOICES: { key: CodyGenderChoice; label: string }[] = [
+  { key: '남', label: '남성' },
+  { key: '여', label: '여성' },
+  { key: 'all', label: '전체' },
 ];
 
 const toggleIn = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
@@ -60,9 +67,9 @@ export default function CodyFilterBar({
   brandFacets,
   hasColor,
   hasPrice,
-  artistGender,
-  genderFilterOn,
-  setGenderFilterOn,
+  genderChoice,
+  defaultGender,
+  onGenderChoice,
   onReset,
 }: Props) {
   const [panel, setPanel] = useState<Panel>(null);
@@ -144,35 +151,29 @@ export default function CodyFilterBar({
 
       {/* 필터 행 */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
-        {/* v3.205(⑤)→v3.207(⑩): 성별 필터 칩 — 대상 카테고리(상의/하의/신발)에서 상시 노출.
-            성별 판별 시 = "◯◯용만/전체 보기" 토글, 미상 시 = "성별 미설정" 안내 칩(발견성). */}
-        {GENDER_FILTER_CATS.includes(pickerCat) ? (
-          artistGender ? (
-            <TouchableOpacity
-              style={[pickerStyles.genderChip, genderFilterOn && pickerStyles.genderChipActive]}
-              onPress={() => setGenderFilterOn((v) => !v)}
-              accessibilityLabel="성별 필터 전환"
-            >
-              <AppText style={[pickerStyles.genderChipText, genderFilterOn && pickerStyles.genderChipTextActive]}>
-                {genderFilterOn ? `${genderLabel(artistGender)}용만` : '전체 보기'}
-              </AppText>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={pickerStyles.genderChip}
-              onPress={() => {
-                if (__DEV__) console.info('[ArtistCody] 성별 자동 필터 — 미설정 칩 탭(안내)');
-                showAlert(
-                  '성별 미설정',
-                  '아티스트 성별이 설정되지 않아 전체 아이템을 보여드리고 있어요.\n아티스트 프로필에서 성별을 설정하면 성별 맞춤 필터를 사용할 수 있어요.'
-                );
-              }}
-              accessibilityLabel="성별 미설정 안내"
-            >
-              <AppText style={pickerStyles.genderChipText}>성별 미설정 · 전체 표시</AppText>
-            </TouchableOpacity>
-          )
-        ) : null}
+        {/* v3.205(⑤)→v3.207(⑩)→v3.230(A4): 성별 필터 — 대상 카테고리(상의/하의/신발)에서 남성/여성/전체 칩.
+            기본 선택 = 방금 답한 성별(신규) 또는 대상 아티스트 성별, 없으면 전체. 사용자가 직접 바꿀 수 있다. */}
+        {GENDER_FILTER_CATS.includes(pickerCat)
+          ? GENDER_CHOICES.map(({ key, label }) => {
+              const active = genderChoice === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[pickerStyles.genderChip, active && pickerStyles.genderChipActive]}
+                  onPress={() => {
+                    if (!active) onGenderChoice(key);
+                  }}
+                  accessibilityLabel={`성별 필터 ${label}`}
+                  accessibilityState={{ selected: active }}
+                >
+                  <AppText style={[pickerStyles.genderChipText, active && pickerStyles.genderChipTextActive]}>
+                    {label}
+                    {key !== 'all' && key === defaultGender ? ' · 기본' : ''}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })
+          : null}
         {hasColor && (
           <TouchableOpacity
             style={[s.chip, (view.colors.length > 0 || panel === 'color') && s.chipActive]}

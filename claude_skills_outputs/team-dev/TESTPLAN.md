@@ -4032,3 +4032,297 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **FAIL 게이트**: 개명 후 노출 경로 구 이름 잔존(N-E1·N-U1·N-A1) · 소급이 착장 스냅샷 덮어씀(N-S1·N-D1⑤) · 소급 재실행 비멱등/dry-run 쓰기(N-S4·N-D1③) · 보존본 복귀가 v3.228 진행 중 작업을 가림(R-U2·R-U7·R-E2) · 새로 시작 시 휴식 게이트 우회=과금 우회(R-U3·R-E3) · 참고 음원 있을 때 세기 질문 소실(V-U1②④) · V2 기본값 동작 변화/참고 음원 경로 오염(V-S1) · personaId 로그 노출(V-S2) · 연주곡 체인 회귀(V-G1) · 튜토리얼 앵커 회귀(R-U8) · 판정 불일치로 draft 폐기(R-U1) · 창작 모드 유실(R-U5) · 이탈 권장 문구·이모지·AIDOL·시스템 Alert(X-T1) · 회귀(X-G1) · 현재본 미대조·main.py 반영·진행 중 재생성(S-P1·S-P2) · 기존 API 회귀(S-P3).
 - **최상위 FAIL**: 팀이 과금 생성 실행, 팀이 소급 `--apply`·.env·scp·재생성 실행, dry-run/판독 스크립트의 프로덕션 쓰기.
 - **판정 회부(결함이면 FAIL)**: O-1 H3~H6. **기록·보고만**: V-D1 비교표, V-AB1 청취 결과(사용자), 탭 수 전후 표, N6 개명 남용 리스크, 닉네임 변경 미전파·step 7·8 미전송(범위 밖).
+
+## v3.230 (2026-09-25) — ① 아티스트 생성 중 뒤로가기 가드·POST 전 이탈 무과금(L) ② 닉네임 변경 + 사본 소급(NK) ③ 지난 영상 무료 재열람 칩(VD) ④ 의상 필터 성별(CG) ⑤ ⭐ 차감 직전 확인 일원화·휴식 단축 연쇄/연타 차단(SC) ⑥ TOP100 본인 제외·롤링 24h(CH) ⑦ 추천코드 대기·가입 선물 팝업·스타 내역(RF)
+
+> 대상: PLAN.md v3.230(:6512~6732), planner "test-designer 에게 줄 테스트 항목" 1~9 + "회귀 위험" 전 항목. **확정 반영(대표 결정 기본값)**: D1 진행 화면 4곳(아티스트·작곡·작사·Inst) 뒤로가기 가드 [계속 기다리기]/[나가기] · D3 닉네임 2~15자·중복 409(대소문자 무시·탈퇴 제외)·예약어 차단·변경 간격 제한 없음·곡/피드/댓글 사본 소급(알림 actor_nickname 은 이력 유지) · D5 차트 본인 다운로드·본인 재생 제외(play_count·재생 ⭐ 적립 유지)·롤링 24h·빈 차트 폴백 주간→총 재생수·동점 결정적·좋아요 미반영 · D6 모든 ⭐ 차감 직전 1회 확인(비용·보유 표시), 아티스트는 Cody "이 옷으로 만들기" 1회로 일원화, "다시 묻지 않기" 없음, 비용 미수신 시에도 확인(**fail-closed**) · D7 휴식 단축 재표시 0.8초 잠금 + 누적 표시, 연쇄(onCleared → 무확인 생성) 차단 · D8 가입 선물 팝업 1회 + 추천인 팝업 1회 + 스타 내역 화면 · D9 영상은 "지난번 만든 영상 보기" 칩만(보관함 탭 재도입 아님) · D10 실사 사진 선택 직후 본인인증 안내(가상 아티스트 대안). D2(개별 사례 무환불)·D4(기획사명 전파 범위 밖)는 테스트 대상 아님 — 기록만.
+> **역할(오케스트레이터 확정)**: 1조 = A1(L)·A5(SC)·**A3(VD — PLAN 2조에서 1조로 이관)** / 2조 = A2(NK 앱)·A4(CG)·A6(CH 앱)·A7(RF) / 서버 = S1(NK 서버)·S2(CH 서버) — 스테이징 `/private/tmp/server_staging_v3230/`(orig/ 보존 · new/ 수정본 · tests/ 로컬 fake 테스트), main.py·admin_*·analytics 무변경.
+> **테스트 환경 제약(필수 전제)**: iOS 시뮬레이터 없음. 웹 빌드는 로컬에서 **Worklets 로 크래시** → 앱 로직은 **Node 하네스(RN mock: react-native·AsyncStorage·BackHandler·navigation·showAlert 스텁, api 스텁, 가짜 타이머)** 로 [unit] 판정하고, 화면은 **코드 리뷰(diff 정독) + 배포 후 폰 웹(app.maidol.ai.kr)·PC 크롬 모바일 에뮬레이션·실기기 수동 E2E**. 네이티브 APK 전용 동작(Android 하드웨어 back·잠금화면)은 다음 빌드 후 "대기". 서버 = 스테이징 **로컬 fake 테스트**(pytest — 페이크 Mongo(mongomock 또는 dict 스텁)·fakeredis·PG 스텁(쿼리 캡처 + 행 주입)·ES 스텁·가짜 시계) → 배포 후 **무과금 스모크**만.
+> **데이터 안전**: prod 계정 **생성 금지**(신규 가입 여정은 하니스 + 운영 관측/대표 실사용으로 이관) · **팀 유료 생성 0회**(과금 경로 e2e 는 비용 확인 다이얼로그에서 **취소**까지, 또는 DevTools 요청 차단으로 서버 미도달 확인) · 실사용자 데이터 변경 0(닉네임·다운로드·재생 쓰기 스모크는 테스트 계정 본인 데이터 한정) · **prod 에서 타인 다운로드/재생 가산 테스트 금지**(차트 오염 — 가산 경로는 스테이징에서만) · 계정은 `TEST_USER_EMAIL`(A)·`TEST_USER2_EMAIL`(B) 플레이스홀더 · 토큰·user_id·닉네임 원문·추천코드 실값·`<SSH_HOST>`·.env 값 증적 기재 금지(8자 접두·길이만) · DB 조회는 `q*.py` 읽기 전용(insert/update/delete 호출 0 grep 선행).
+
+### 항목 매핑 (planner 1~9 + 회귀 위험 → 시나리오)
+| # | planner 항목 | 시나리오 |
+|---|---|---|
+| 1 | [A1] 아티스트 이탈 (a)~(e) | L-U1~L-U6·L-U8·L-U9·L-E1 |
+| 2 | [A1-4] 작곡 POST 응답 전 이탈 | L-U7 |
+| 3 | [S1/A2] 닉네임 | NK-S1~S7·NK-U1~U3·NK-A1·NK-E1 |
+| 4 | [A3] 영상 | VD-U1~U4·VD-A1·VD-E1 |
+| 5 | [A4] 성별 필터 | CG-U1~U4·CG-E1 |
+| 6 | [A5] ⭐ 확인 13경로·연쇄·연타 | SC-U1·SC-U2·SC-P1~P13·SC-F1~F3·SC-H1·SC-R1·SC-A1·SC-E1·SC-O1 |
+| 7 | [S2/A6] 차트 | CH-S1~S8·CH-U1·CH-A1·CH-E1 |
+| 8 | [A7] 추천·가입 선물·내역 | RF-U1~U6·RF-A1·RF-E1 |
+| 9 | 공통 정책 문구 | X-T1 |
+| 회귀 | A1-1 코드 발 전환 통과 · A1-2↔v3.227 · A4 대상 있음 · A5↔v3.228/v3.229 · A5-4 큐 · A7-2 기존 회원 · S1 세션·경합 · S2 폴백·지연 · boot_id | L-U1·L-U5·CG-U4·SC-R1·SC-F3·RF-U4·NK-S3·NK-S7·CH-S3·CH-S6·CH-S8·S-P2·X-G1·X-E1 |
+
+### L — 아티스트(외 3개 진행 화면) 이탈 가드 · POST 전 이탈 무과금 (1조 A1)
+
+**L-U1. `useGenerationLeaveGuard` 액션 판정 [unit/앱] — FAIL 게이트(성공 후 자동 전환·강제 로그아웃이 가드에 막혀 흐름 정지)**
+- Given: 훅 하니스(navigation `addListener('beforeRemove')` 스텁 — `e.data.action` 주입, `e.preventDefault` 캡처, showAlert 스텁), 상태 = 진행 중.
+- When: 사용자 발 {GO_BACK(헤더 뒤로), POP, POP_TO_TOP(Studio 탭 재탭), 다른 탭 NAVIGATE} × 코드 발 {ArtistLoading → ArtistResult `replace`, → FaceVerify `replace`(403 face_verification_required), 슬롯 409 `goBack`, `failApi` 후 `goBack`, 세션 만료·로그아웃 `reset`, 도착 알림 탭 이동(v3.227)}.
+- Then: 사용자 발 → preventDefault 1회 + 다이얼로그 "아직 만드는 중이에요" / "나가도 만들던 결과는 완성되면 작업실에서 알려드려요." [계속 기다리기]/[나가기] 1개, 로그 `[LeaveGuard] prompt action=…` 1회. 코드 발(replace·reset·코드가 부른 goBack) → preventDefault **0**·다이얼로그 0(코드 goBack 은 GO_BACK 과 타입이 같으므로 "허용 플래그(allowLeaveRef 등) 선설정" 여부를 diff 로 확인). 로그아웃·세션 만료 reset 이 가드에 막히면 = FAIL. 도착 알림 탭은 사용자 발로 간주(다이얼로그 표시 허용) — 결과 기록.
+
+**L-U2. 가드 활성 구간·해제 [unit/앱] — FAIL 게이트(완료·실패 뒤에도 가드가 남아 화면 갇힘)**
+- Given: ArtistLoading·MusicLoading·LyricsLoading·InstLoading 4화면 하니스(D1). VoiceCloneWizard·VideoDirector·CoverGeneration 은 대상 아님.
+- When: 상태 전이 {마운트(준비) → POST 중 → 폴링 중 → done / failed / API 오류 / 409 편입 / 429 휴식 다이얼로그}.
+- Then: 가드 활성 = 마운트~(done|failed|오류|409 goBack) 직전, 전이 즉시 비활성(이후 뒤로가기 다이얼로그 0). 429 휴식 다이얼로그 표시 중 뒤로가기 → 휴식 다이얼로그와 **이중 다이얼로그 0**(showAlert 큐 1개). 언마운트 시 beforeRemove·BackHandler 구독 해제 호출 각 1회(누수 0). 4화면 외 다른 화면 동작 hunk 0.
+
+**L-U3. 가드 다이얼로그 선택지 [unit/앱]**
+- When: ① [계속 기다리기] ② [나가기] ③ Android BackHandler 연속 3회(0.3초 간격) ④ 다이얼로그 표시 중 작업 done 도착.
+- Then: ① 화면·폴링 유지, 네비게이션 dispatch 0 ② 보류된 `e.data.action` dispatch **정확히 1회**(재진입 시 다시 가드 안 걸림), 추적 레코드 유지 ③ BackHandler `true` 반환·다이얼로그 1개(누적 0) ④ 다이얼로그 자동 닫힘 또는 [나가기] 후에도 결과는 추적기로 도착 — 결과 화면 replace 가 다이얼로그에 막히지 않음(L-U1 코드 발).
+
+**L-U4. 웹 브라우저 back(popstate) [unit/앱 + 코드 리뷰] — FAIL 게이트(URL·화면 불일치로 이후 back 무반응/무한 루프)**
+- Given: react-navigation linking 웹 하니스(jsdom history) 또는 코드 리뷰.
+- When: 진행 중 `history.back()` → [계속 기다리기] → 다시 `history.back()` → [나가기].
+- Then: 첫 back 후 URL 이 진행 화면 경로로 **복원**, 두 번째 back 에도 다이얼로그 재표시(무반응 0), [나가기] 후 URL·화면 일치, popstate 핸들러 재귀 0. 하니스 불가 시 코드 리뷰 + L-E1 ④로 판정.
+
+**L-U5. POST 전(준비 단계) 이탈 무과금 — A1-2 [unit/앱] — FAIL 게이트(화면을 떠났는데 POST 발생 = 인지 밖 과금)**
+- Given: ArtistLoading 하니스, 준비 단계(사진·blob 준비·`/character/me`·능력 확인) 각 await 를 deferred promise 로 정지. 시트 경로(POST :308)·옷 갈아입히기 경로(:395) 각각.
+- When: 준비 단계 중 언마운트(가드 [나가기] 포함) → deferred 해제.
+- Then: `generate-sheet-async`/outfit POST 스텁 호출 **0**, `registerArtistJob` 호출 0(v3.227 추적 레코드 신규 0 — 회귀 위험 A1-2), 초안 보존(draft 스토어 스냅샷 동일), 안내 "시작 전에 나가서 만들지 않았어요. ⭐은 쓰이지 않았어요" 1회(표시 위치 = 복귀 화면 showAlert — 언마운트된 화면에서 호출돼 유실되면 FAIL), 로그 `[ArtistLoading] 시작 전 이탈 — 요청 안 보냄` 1회.
+- 경계: `cancelled` 재확인 **직후** 언마운트(POST 이미 출발) → POST 1회 + 응답 후 `registerArtistJob` 1회(cancelled 무관 — v3.227 설계), 결과는 추적기로 도착. 준비 단계에서 가드 다이얼로그 문구("완성되면 작업실에서 알려드려요")가 실제로는 만들어지지 않는 경우와 **사실 불일치** — 준비 단계 전용 문구 분기가 없으면 **판정 회부**(기록).
+
+**L-U6. POST 후 이탈 결과 보존 (v3.227 회귀) [unit/앱]**
+- When: POST 201(job_id) 수신 후 [나가기] → 추적기 폴링 스텁 done.
+- Then: `maibol-generation-jobs-v1` 레코드 1건, 도착 알림 1회, 작업실 말풍선 "완성! 눌러서 확인", 탭 → ArtistResult 회수(v3.227 경로 hunk 0), 차감 스텁 호출 1회(⭐10 1회 — 중복 0).
+
+**L-U7. 작곡 POST 응답 전 이탈 추적 등록 — A1-4 [unit/앱] — FAIL 게이트(응답 전 이탈 시 로컬 추적 누락)**
+- Given: MusicLoading 하니스, `/generate/` 스텁 응답 40초 지연(가짜 타이머).
+- When: ① 응답 전 언마운트 → 201 ② 정상 대기 → 201 ③ 응답 전 언마운트 → 409(v3.228 편입) ④ 응답 전 언마운트 → 500/네트워크 오류 ⑤ POST 전 rid 선등록 구현인 경우 ①~④ 동일.
+- Then: ① `registerGenJob` 1회(`isMounted` 가드보다 앞), 작업실 말풍선 "만드는 중…"·완성 시 도착 알림 1회 ② 등록 1회(중복 0) ③ v3.228 편입 경로 불변(adopt 1회) ④ 레코드 0 또는 선등록 레코드 제거·실패 표시(유령 "만드는 중" 0), v3.228 응답 유실 회수 경로(X-Gen-Request-Id 원장 조회) 불변 ⑤ 레코드 1건(선등록 + 응답 갱신 중복 0). 작사(:164)·커버(:846)·영상(:828) 등록 순서 hunk 0.
+
+**L-U8. 실사 사진 선택 직후 본인인증 안내 — A1-3/D10 [unit/앱]**
+- Given: ArtistInput 하니스, `face-verify/status` 스텁 {verified, need_identity(본인인증 미완), 조회 실패(500·타임아웃)} × kind {실사, 가상(cartoon)}.
+- Then: 실사 + need_identity → 사진 선택 직후 showAlert 1회(실사는 본인인증 필요 · 가상 아티스트는 바로 가능 — 대안 버튼/문구 포함), 같은 사진 재선택·리렌더에 재호출 0(선택 1회당 1회) · 실사 + verified → 안내 0 · 가상 → status 호출 0 · 조회 실패 → 안내 0(fail-open — 서버 403 과금 전 차단이 최종 방어로 남음) + 로그 `[ArtistInput] face-verify status 실패` 1줄 · 본인인증 완료·얼굴 인증 미완 → 안내 0(끝의 FaceVerify 흐름 유지 — 구현 명세와 다르면 기록).
+
+**L-U9. 슬롯 확장 안내·빈 슬롯 표시 [unit/앱]**
+- Then: MyArtists 확장 성공 문구에 "빈 슬롯은 계속 남아 있어요" 포함, 목록에 "빈 슬롯 N개"(N = 전체 슬롯 − 사용 슬롯; 레거시 단일 doc 의 시트 2개 = 슬롯 2 환산(slots_service.py:22-37) 반영 — 레거시 계정 픽스처에서 음수·과대 표시 0), N=0 → 표시 0. ArtistLoading :539-545·generationTracker.ts:470-476 의 "⭐15" 하드코딩 → pointCosts 값(SC-H1).
+
+**L-E1. 아티스트 이탈 여정 [e2e] — 팀 과금 0 — 정적 대체: L-U1~U6**
+- 방법(PC 크롬 모바일 에뮬레이션, A 계정, app.maidol.ai.kr): DevTools **Request blocking** 에 `*generate-sheet-async*`·`*outfit*` 등록 → 서버 미도달로 과금 0 보장(잔액·`point_events` 전후 불변을 읽기 전용 조회로 확인).
+  1. Cody "이 옷으로 만들기" → ⭐ 확인(SC) [사용하기] → ArtistLoading 준비 단계에서 브라우저 back → 가드 다이얼로그 → [계속 기다리기] → 화면 유지·URL 복원 → 다시 back → [나가기] → "시작 전에 나가서 만들지 않았어요…" 안내, 네트워크 탭 POST 0(차단 목록 hit 도 0이어야 함 — hit 가 있으면 앱이 POST 를 시도한 것 = FAIL).
+  2. Studio 탭 재탭 → 가드 다이얼로그 동일.
+  3. 실사 kind + 본인인증 미완 계정(B 가 해당하면 B, 없으면 "대기") → 사진 선택 직후 안내.
+- POST 후 이탈(가드 → [나가기] → 도착 알림 → ArtistResult 회수)은 **대표 실사용 생성 시 관측**(REPORT 에 절차 제공, 팀 실행 0). Android 하드웨어 back = APK "대기".
+
+### NK — 닉네임 변경 (서버 S1 + 2조 A2)
+
+**NK-S1. 입력 검증 행렬 [unit/서버] — FAIL 게이트(규칙 위반 값 저장)**
+- Given: 스테이징 `new/routes/auth.py update_profile`, PG 스텁(현재 사용자 행 + 타 사용자 행), Redis·동기화 스텁.
+- When/Then(값 → 기대):
+  - "가"(1자) → 400 `{"error":"nickname_invalid","message":…}` · "가나"(2자) → 200 · 15자 → 200 · 16자 → 400 · `max_length=30` 초과(31자) → 422 아닌 400 으로 통일되는지 기록(pydantic 선검증 — 앱 매핑 NK-U2 와 정합).
+  - "  홍길동  " → 저장값 "홍길동" · "홍  길동" → "홍 길동"(연속 공백 1칸) · "   "(공백만)·"" → 400 · 제어문자 포함("홍\n길동", "\t") → 정리 후 길이 재판정.
+  - 길이 기준 = 정리 **후** 문자 수. 이모지(서로게이트 쌍 "😀😀") → Python len 2 → 200 — 앱 카운터(NK-U1)와 같은 기준인지 대조(JS length 4 로 앱이 막으면 불일치 기록).
+  - 예약어: `maidol_official`, "MAIDOL_Official", " maidol_official " → 400(`is_reserved_nickname` strip+casefold).
+  - 제로폭 문자("홍길동​")·NFD 한글(자모 분해 입력) → 중복 회피 수단이 되는지 확인: 기존 "홍길동" 존재 시 200 이면 **판정 회부**(D3 "중복 불가" 우회 — 기록 + 다음 사이클 제안).
+  - 값 원문은 로그 0, `[NicknameChange] user=… len=N result=ok|taken|invalid` 형식.
+
+**NK-S2. 중복 판정 [unit/서버] — FAIL 게이트(자기 자신과 409 / 대소문자 변형 통과)**
+- When: 타 사용자 "Abc" 존재 시 {"abc", "ABC", " abc "} · 본인 현재값과 동일 재저장 · 본인 "abc" → "ABC"(대소문자만 변경) · 탈퇴 계정 닉네임과 동일 · **기존 중복 그룹(실측 1그룹) 구성원이 현재값 그대로 재저장** · nickname 없이 다른 필드만 PATCH.
+- Then: 타 사용자 변형 3종 → 409 `{"error":"nickname_taken"}` · 동일값 재저장 → 200·sync 변경 0(멱등) · 대소문자만 변경 → 200 · 탈퇴 계정 → 200(제외) · 기존 중복 그룹 구성원 현재값 재저장 → **200**(무변경은 중복 검사 대상 아님 — 409 면 FAIL: 앱 모달이 다른 필드 저장까지 막음) · nickname 미전달 → 중복 검사 쿼리 0. 쿼리 캡처에 `lower(trim(nickname))`·본인 제외·탈퇴 제외 조건 존재.
+
+**NK-S3. 세션 갱신 [unit/서버 — fakeredis] — FAIL 게이트(변경 후 업로드·댓글에 옛 닉네임 복사)**
+- Given: `session:{uid}` JSON(닉네임 포함, TTL 3600 잔여 1200).
+- When: ① 정상 변경 ② 세션 키 없음(만료) ③ Redis set 예외 ④ 변경 직후 같은 세션으로 댓글 작성·피드 업로드 핸들러 호출(current_user 스텁 = 갱신된 세션).
+- Then: ① nickname 만 갱신, 다른 필드 바이트 동일, TTL 잔여 ±2초 유지(0·-1 로 바뀌면 FAIL — 영구 세션/즉시 만료) ② 200 + 경고 로그, 세션 생성 0 ③ 500 아님 → 200 + `[NicknameChange] session-refresh-failed` 경고(다음 로그인까지 지연 기록) ④ 새 댓글·피드 `author_nickname` = 새 값.
+
+**NK-S4. `nickname_sync.sync_user_nickname` [unit/서버 — 페이크 Mongo] — FAIL 게이트(타인 문서 변경·비멱등·가수명 덮어씀)**
+- Given: 사용자 A 곡(artist_name 有·無)·피드·피드 댓글·곡 댓글·알림(actor_nickname), 사용자 B 의 같은 닉네임 문서.
+- When: ① sync(A, 새값) ② 재실행 ③ Redis·ES 스텁 예외 ④ Mongo update 예외.
+- Then: ① `tracks.uploader_nickname`·`feeds.author_nickname`·댓글 `author_nickname`(uploader_id/author_id = A 만) = 새값, **`tracks.artist_name` 무접촉**(v3.229 개명 동기화와 독립 — 가수명 있는 곡의 표기 불변, 없는 곡은 기획사 폴백으로 새 닉네임), `notifications.actor_nickname` 무접촉(D3), B 문서 무접촉 ② 변경 0건·재색인 0(멱등 필터) ③·④ 예외 전파 0, 반환 dict 에 실패 단계명, PATCH 는 200 ⑤ 영향 곡 `cache:track:*`·`cache:chart:*` 삭제 호출, ES `artist` 재색인 background 1회/곡 ⑥ 응답 `nickname_synced:{tracks,feeds,comments}` 건수 = 실제 변경 수 ⑦ 로그 `[NicknameSync]` 에 원문 0.
+
+**NK-S5. nickname 미전달 시 현행 불변 [unit/서버] — FAIL 게이트(기존 프로필 수정 회귀)** — `orig/` 대비 골든: 기존 필드(bio·프로필 이미지·기획사명 등) PATCH 응답 JSON 키셋·값 동일, sync·세션 갱신 호출 0, `ProfileUpdate` 에 nickname 추가 외 필드 hunk 0. 응답에 `nickname_synced` 는 nickname 전달 시에만.
+
+**NK-S6. 인가·격리 [unit/서버]** — 무토큰 → 401 기존대로, 타인 uid 지정 불가(본인만), 관리자 공식 계정(official) 자신의 닉네임 변경 시 예약어 판정과 충돌 여부 기록.
+
+**NK-S7. 동시 변경 경합 [unit/서버 — 기록]** — 두 사용자가 같은 새 값으로 동시 PATCH(asyncio.gather, PG 스텁 지연) → 최종 재확인 후 UPDATE 구현이면 1건 200 + 1건 409 기대, 창 안에서 둘 다 200 가능 → **기록**(유니크 인덱스 없음 — PLAN 회귀 위험 수용). FAIL 아님.
+
+**NK-U1. 닉네임 모달 [unit/앱]**
+- Given: `NicknameEditModal` 하니스, authStore `user.nickname` 주입.
+- Then: 현재값 프리필·글자수 카운터(정리 후 기준, NK-S1 과 같은 셈법)·규칙 안내("2~15자, 다른 사람과 같은 닉네임은 쓸 수 없어요" 류), 1자·16자·공백만·현재값과 동일 → 저장 버튼 비활성 또는 즉시 안내(요청 0), 저장 연타 → PATCH 1회(busy), 모달은 앱 내(showAlert·Modal) — `Alert.alert` 0. 설정 "닉네임 변경" 행의 "준비 중인 기능입니다" 스텁 제거.
+
+**NK-U2. 응답 매핑 [unit/앱] — FAIL 게이트(S1 미배포 서버에서 성공 오표시)**
+- When: 스텁 응답 {200(nickname 갱신), 409 nickname_taken, 400 nickname_invalid(message), 422, 500, 네트워크 오류, **200 이지만 응답 nickname 이 옛 값**(S1 미배포 — 필드 무시)}.
+- Then: 200 → user 갱신 + "닉네임을 바꿨어요 / 내 곡·피드·댓글 표기도 새 닉네임으로 바뀌어요." 1회 · 409 → "이미 쓰는 닉네임이에요" · 400 → 서버 message · 422/500/네트워크 → 일반 실패 문구, user 불변 · 옛 값 200 → **성공 문구 0**·실패 안내(PLAN 배포 절차 "S1 미배포 시 실패 안내"). 로그 `[NicknameChange]` 원문 0.
+
+**NK-U3. 표시처 갱신 [unit/앱]** — 성공 후 `useAuthStore.user.nickname` 구독처(SettingsScreen :486·:492·:500·:503·:762, 기본 기획사명 :168, MyMusicScreen :629·:679-680, TrackComments :171) 재렌더 값 = 새값. 앱 재시작(= `/auth/me` 재구성) 후에도 새값. 재생 큐 항목의 기획사 폴백(`uploader_nickname`)은 서버 재조회 전까지 옛 값일 수 있음 → 기록(FAIL 아님, NK-E1 에서 재조회 후 확인).
+
+**NK-A1. 배포 후 스모크 [api] — 무과금·테스트 계정 한정**
+- A 계정 원래 닉네임을 로컬 메모(증적 = 길이만) → ① 임시값 PATCH 200·`GET /auth/me` 반영·`nickname_synced` 건수 ② B 의 닉네임으로 PATCH → 409 ③ 1자 → 400 ④ 예약어 → 400 ⑤ 같은 임시값 재PATCH → 200·동기화 0건 ⑥ 원래 값 복원 200. 각 단계 컨테이너 로그 `[NicknameChange]`·`[NicknameSync]` 1줄씩·원문 0·Traceback 0. A 의 곡이 있으면 `GET /tracks/{id}` 기획사 표기(artist_name 없는 곡) 새값 → 복원 후 원래 값.
+
+**NK-E1. 노출 경로 [e2e] — 정적 대체: NK-S4·NK-U3**
+- 수동(폰 웹, A, NK-A1 임시값 구간): 설정·마이페이지·내 곡·곡 상세(가수명 없는 곡의 기획사 자리)·차트 곡 행(≤5분 캐시)·피드·기존 댓글·**변경 후 새로 쓴 댓글**·검색(ES 재색인 수 초)·다른 기기 로그인 세션 → 전부 새 닉네임. 지난 알림 문구는 옛 닉네임 유지(D3). 모달 규칙 안내·409 문구 육안. 확인 후 원래 값 복원.
+
+### VD — 지난 영상 무료 재열람 칩 (1조 이관 A3)
+
+**VD-U1. 칩 표시 조건 [unit/앱]**
+- Given: VideoDirector 하니스, `GET /tracks/my/share-videos` 스텁(서버 계약: `{items:[{track_id,title,object_name,format,size,last_modified}]}`, 최신 50곡·최신순).
+- When: 선택 곡 {항목 1개, 항목 여러 개(v6/v7/v8·sns/wide/kakao), 항목 없음, 목록 조회 실패/타임아웃, 목록에 없는 51번째 이전 곡, 비공개 곡}.
+- Then: 항목 있음 → "지난번 만든 영상 보기(무료)" 칩 1개(여러 개면 `last_modified` 최신 1개 기준 — 규칙을 diff 로 확인해 기록) · 없음 → 칩 0·기존 흐름 불변 · 조회 실패 → 칩 0·오류 팝업 0(곡 선택 흐름 차단 0, 대기 시간이 선택을 막지 않음) · 51번째 이전 곡 → 칩 0(서버 limit 50 — 기록) · **비공개 곡 → 칩 0 또는 사전 차단 문구 우선**(object 프록시는 공개 곡만 200, 비공개 404 — 칩이 보이고 재생 실패하면 FAIL). 곡 변경 시 이전 곡 칩 잔존 0. 목록 조회는 영상 디렉터 진입당 1회(곡 선택마다 재호출 여부 기록).
+
+**VD-U2. 칩 탭 → 무과금 재생 [unit/앱] — FAIL 게이트(무료 칩이 과금·피로 경로를 탐)**
+- Then: 칩 탭 → `/tracks/share-video/object/{object_name}` URL 로 `showVideoDone` 결과 화면, `POST share-video` 호출 **0**, ⭐ 확인 팝업(SC) 0, fatigueGate 호출 0, `X-Gen-Request-Id` 원장 등록 0, 로그 `[VideoDirector] 지난 영상 열기` 1회. 결과 화면의 저장·공유 버튼 동작은 기존 결과 화면과 동일. 보관함 탭·목록 UI 신설 0(D9 — diff 확인).
+
+**VD-U3. v3.228 회수 경로 회귀 [unit/앱] — FAIL 게이트(응답 유실 시 결과 미표시 재발)**
+- When: 새 영상 생성(확인 후) → POST 응답 유실(네트워크 오류·502·504) → 원장·파일 조회 스텁 {완성, 진행 중 → 완성, 11분 창 초과, 추적기 cap 25분 초과}.
+- Then: "확인 중" 상태 → 완성 시 결과 표시·⭐5 차감 스텁 1회(재시도 POST 0), 창 초과 시 기존 안내(`VIDEO_VERIFY_WINDOW_MS`·`services/genJobs/video.ts:13` 값 hunk 0). 확인 중 재시도 버튼 비활성(429 유도 0).
+
+**VD-U4. 사전 차단·휴식·중복 [unit/앱]** — 비공개 곡·커버 없는 곡 사전 차단 문구 불변, 429 → 휴식 다이얼로그(v3.208 경로), 409 → 진행 중 합류(v3.228), 칩 경로는 셋 다 거치지 않음.
+
+**VD-A1. 서버 계약 [api] — 읽기 전용** — 배포 후 A 토큰 `GET /tracks/my/share-videos` 200·스키마 위 계약 일치·B 토큰 호출 시 A 곡 항목 0(uploader_id 격리). object 프록시: 형식 불일치 경로 404, 비공개 곡 404, 공개 곡 200 `video/mp4`(HEAD 대신 Range 1바이트 GET 으로 확인 — 전량 다운로드 불요). 서버 변경 없음(tracks.py 해당 구간 hunk 0).
+
+**VD-E1. 지난 영상 칩 [e2e] — 무과금** — A 계정에 기존 share video 가 있는 공개 곡이 있으면(없으면 "대기" — 팀이 영상 생성 0): 영상 디렉터 → 해당 곡 선택 → 칩 → 영상 재생·저장 버튼 표시 → 잔액·`point_events` 전후 불변(읽기 전용 조회) → 다른 곡 선택 시 칩 사라짐. 응답 유실 회수(VD-U3)는 실생성이 필요하므로 정적 + 운영 관측(v3.228 이후 kind=video 첫 실사용 로그).
+
+### CG — 의상 필터 성별 (2조 A4)
+
+**CG-U1. 결정식 행렬 [unit/앱] — FAIL 게이트(신규 생성에서 기존 아티스트 성별 적용 = 제보 재현)**
+- Given: ArtistCody 하니스, `listArtists` 스텁 {여자 기본 아티스트 1, 남·여 혼재, 없음, 실패}, profileGender(AsyncStorage `aidol-artist-profile`) {여, 없음}, pendingGender {남, 여, null(스킵)}, 모드 {신규(`isSheetMode && !targetCharacterId`), 재생성(대상 여), 옷 갈아입히기(대상 여)}.
+- Then: **신규**: pending 남 → "남성용"(서버 여·프로필 여 무시), pending 여 → "여성용", pending null → 전체(필터 off) — 서버·프로필 폴백 0 · **대상 있음**: 대상(서버) 성별 → 여 유지(옷 갈아입히기 = 여 — planner 5) · listArtists 실패 + 대상 있음 → pending → 전체 폴백, 예외 0 · 죽은 `apiResult.gender` 참조 0(diff). 로그 `[ArtistCody] 성별 필터 source=pending|server|none gender=…` 1회/진입.
+- 판정 회부(기록): 재생성에서 성별 질문 답이 대상 성별과 다를 때 우선순위(PLAN 은 "대상 있으면 서버 성별") — 구현값 기록.
+
+**CG-U2. `normalizeArtistGender` [unit/앱] — FAIL 게이트(부분 문자열 오판)**
+- When/Then: 남·남자·남성·소년·male·Male·MALE·boy·man → 남 / 여·여자·여성·소녀·female·Female·girl·woman → 여 / **"female"·"woman" 이 남으로 판정되면 FAIL**(substring 'male'·'man') / 공백 앞뒤(" 여성 ") → 여 / 논바이너리·기타·""·null·undefined·숫자 → null(전체). 기존 '남…/여…' 시작 인식 동작 불변.
+
+**CG-U3. 필터 칩 전환·적용 범위 [unit/앱]**
+- Then: 필터 바 남/여/전체 칩, 기본 선택 = CG-U1 결과, 칩 전환 → 상의·하의·신발 목록만 필터(`codyCatalog.ts:20` 대상), 헤어·액세서리 등 비대상 카테고리 목록 불변, `genderMatches` 결과 행렬 불변(성별 무관 아이템은 양쪽 노출). 이미 선택한 아이템이 칩 전환으로 가려져도 선택 스트립·선택 상태 유지(자동 해제 0). 피커 재오픈 시 칩 상태 규칙(유지 또는 기본 복귀 — 기존 "열 때마다 ON 복귀" :244·:269 대비) 구현값 기록.
+
+**CG-U4. 대상 있음 회귀 [unit/앱]** — 재생성·옷 갈아입히기 경로의 `serverGender` 계산(:200-228) 동작 hunk 가 "신규 제외" 조건 추가 외 0, 프로필 슬롯별 profileGender 잔존값이 신규 생성에 영향 0.
+
+**CG-E1. 성별 필터 [e2e] — 팀 과금 0** — 폰 웹, 여자 아티스트 보유 계정(A 해당 시 A, 아니면 "대기"): ＋추가 → 성별 "남성" 답 → Cody 필터 "남성용"·목록 남성 의상 → 칩 "여"·"전체" 전환 → 성별 스킵 재시도 → "전체" → 기존 여자 아티스트 옷 갈아입히기 → "여성용". 각 경우 "이 옷으로 만들기" 후 ⭐ 확인에서 **취소**(POST 0).
+
+### SC — ⭐ 차감 직전 확인 일원화 (1조 A5)
+
+**SC-U1. `confirmStarSpend` [unit/앱] — FAIL 게이트(fail-open)**
+- When: {cost 10·balance 50, cost 10·balance 10(경계), balance 9(부족), balance 미상(null), cost 미수신(pointCosts 폴백)} × {[⭐N 사용하기], [취소], 다이얼로그 바깥 닫기/Android back}, 연속 2회 호출(더블탭).
+- Then: 다이얼로그 제목·비용 ⭐N·보유 ⭐M 표시(미상이면 보유 줄 생략), [사용하기] → true 1회, [취소]·바깥 닫기·back → false(요청 0), 더블탭 → 다이얼로그 1개·Promise 결과 1회, 잔액 부족 → [사용하기] 대신 부족 안내(기존 부족 흐름 — 요청 0), **비용 미수신·조회 실패 → 폴백 표 값으로 반드시 확인**(무확인 true 반환 0), showAlert 만(`Alert.alert` 0), 로그 `[StarConfirm] action=… cost=… result=ok|cancel|insufficient|fallback` 1줄.
+
+**SC-U2. `pointCosts` 캐시·폴백 [unit/앱]**
+- Then: `/points/costs` 성공 → 서버 값 사용(서버 값을 변경 주입하면 표시값도 변경 — 폴백 우선 0), 실패·로딩 중 → 폴백 표 = 서버 현행 `POINT_COSTS`(lyrics 5·compose 15·cover 5·cover_refine 5·share_video 5·character 10·fatigue_skip 5·hire_director 10·extra_slot 15·voice_clone 5·instrumental 5)와 **1:1 일치**(휴식 단축 2/3/5 단계값은 fatigue 응답 우선 — 기록), 캐시 재사용(화면 진입마다 재호출 폭주 0), 모르는 키 → 폴백 없음이면 확인 다이얼로그에 "⭐ 사용" 일반 문구로라도 확인(무확인 0).
+
+**PLAN §5 표 1:1 경로 시나리오 [unit/앱 — 화면 하니스, 차감 API 스텁 호출 카운터]** — 공통 Then: 트리거 → 확인 다이얼로그 **정확히 1회**(이중 0), 비용 = pointCosts 값, [취소] → 차감 스텁 0·busy/proceedingRef 해제·단계 롤백(같은 버튼 재탭 가능), [사용하기] → 요청 1회.
+
+- **SC-P1. 새 아티스트(10)** — 진입별: (a) MyArtists "＋추가" → **비용 없는 안내**(⭐ 문구 0)로 전환 → Cody 확인 1회 (b) **첫 아티스트** Map → Dialogue → ArtistInput → Cody (c) 초안 이어하기(directorResume.ts:130-140, v3.229 1탭 복귀) (d) ArtistInput "이어서 만들기"(:899-903) (e) ArtistResult 빈 상태 버튼(:833) (f) **FaceVerify 완료 "확인"**(:68-69) → [취소]/[⭐N 사용하고 이어서 만들기] — 취소 시 재요청 0·초안 보존. (a)~(e) 모두 Cody "이 옷으로 만들기"에서 1회, ArtistLoading 도착 후 추가 확인 0.
+- **SC-P2. 아티스트 다시 만들기(10)** — ArtistResult :665 기존 확인(:1236-1260)과 Cody 확인이 **둘 다 뜨면 FAIL**(D6 일원화 — 어느 한 곳만 비용 표시), 취소 시 기존 아티스트 무변경.
+- **SC-P3. 옷 갈아입히기(10)** — ArtistResult :580-608 → Cody "이 옷으로 만들기" → 확인 1회(신규), outfit POST(:395) 0(취소 시).
+- **SC-P4. 슬롯 확장(15)** — MyArtists :306·:321 기존 확인 유지, 비용 표시 = pointCosts(:518-521 하드코딩 여부 확인), ArtistLoading :539-545·generationTracker.ts:470-476 안내 문구 비용도 동일 값.
+- **SC-P5. 작사(5)** — LyricsPromptReview :299 / LyricsResult "다시 생성" :249 각각 확인 1회(기존 무확인·무비용표기 → 신규), LyricsLoading :180 POST 0(취소).
+- **SC-P6. 작곡(15)** — MusicGeneration :1432 "이대로 갈게요" → 확인 1회, MusicLoading :336 POST 0(취소), v3.228 `guardGeneration`(진행 중 작곡) 차단이 **확인 팝업보다 먼저** 판정(진행 중이면 "이미 곡을 만드는 중이에요" 1개만 — 확인 후 409 안내 이중 0).
+- **SC-P7. Inst(5)** — MyMusic 메뉴 기존 확인(:467-477) 유지, 비용 = pointCosts(trackService.ts:158 하드코딩 제거), MyMusic :481 요청 0(취소).
+- **SC-P8. 커버 생성(5)** — CoverGeneration :2499·:2513·:2520 세 버튼 + 스타일 답 재편집(:1478) 각각 확인 1회, :266 요청 0(취소).
+- **SC-P9. 커버 미세조정(5)** — :2216·:2220 → 확인(조건부 → **항상**), `/points/costs` 실패·로딩 중(:491-502 상태 주입)에도 폴백 ⭐5 로 확인 — 무확인 :1875 호출 = FAIL.
+- **SC-P10. 영상(5)** — VideoDirector :1358 → videoCost 미수신 상태에서도 확인(:798-806 조건 제거), :837 요청 0(취소). **지난 영상 칩(VD-U2)은 확인 0**(무료).
+- **SC-P11. 보이스(5)** — VoiceCloneWizard :715 → 비용 미수신·구서버 폴백(:451)에서도 확인, :461 요청 0(취소), "재학습 ⭐5" 표기(:822)·MusicGeneration :1004·:1565 표기 = pointCosts. 기존 이탈 권장 예외 문구 불변(X-T1).
+- **SC-P12. 유료 디렉터 영입(10)** — DirectorLineup :128 → 확인 1회(신규), **연타(3회/0.5초) → `/points/spend` 1회**(연타 가드), 취소 → 0, 실패 응답 → busy 해제, :80 하드코딩 → pointCosts.
+- **SC-P13. 휴식 단축(2~5)** — fatigueGate.ts:155-156 버튼 자체가 확인 — **추가 confirmStarSpend 0**(이중 0), 표시 비용 = fatigue 응답 단계값, 광고 보고 해제 경로는 ⭐ 확인 0. (연쇄·연타는 SC-F1·F2)
+- 표 외 경로 확인: `admin_points` 관리자 조정 = 앱 경로 아님(제외 기록). grep `spend_points(` 서버 지점 목록(PLAN §5 머리) ↔ 앱 트리거 매핑 누락 0.
+
+**SC-F1. 휴식 단축 연쇄 차단 7지점 [unit/앱] — FAIL 게이트(휴식 해제 직후 무확인 생성 차감 — DB 실측 8건 재발)**
+- Given: 각 지점 하니스(MusicLoading :404, LyricsLoading :250, CoverGeneration :739·:1688, MusicGeneration :1419, LyricsPromptReview :93, LyricsResult :139), fatigueGate `onCleared` 트리거 3종 {⭐ 단축 성공, 휴식 종료 → 확인, 409 이미 해제} + 광고 해제.
+- Then: onCleared → 생성 요청 **직전** 확인 1회 → [취소] 시 생성 차감 스텁 0·busy 해제·화면 유지 / [사용하기] 시 요청 1회. 로딩 화면 2곳(MusicLoading·LyricsLoading = 이미 확인받은 요청의 재시도)은 "휴식이 끝났어요. ⭐N을 사용해 이어서 만들까요?" 1회, 취소 시 이전 화면 복귀 또는 초안 보존(유실 0). 로그 `[StarConfirm] fatigue-chain site=…` 1줄.
+
+**SC-F2. 휴식 단축 연타 흡수 [unit/앱 — 가짜 타이머] — FAIL 게이트(3.5초에 8회 단축 재발)**
+- When: 단축 성공 → 같은 다이얼로그 재표시 → 0.1·0.5·0.79초 탭 → 0.81초 탭.
+- Then: 0.8초 미만 탭 → 단축 요청 0, 0.8초 이후 탭 → 1회, 본문 "이번에 단축에 ⭐N 사용" 누적값 = 성공 단축 합(실패·409 제외), 다이얼로그 닫았다 다시 열면 누적 규칙 기록. "남은 휴식 한 번에 단축" 버튼 0(D7).
+
+**SC-F3. 다이얼로그 큐 겹침 [unit/앱]** — 휴식 다이얼로그 → 단축 → 휴식 종료 확인 → ⭐ 확인이 showAlert 큐에서 **순차 1개씩**(동시 2개 렌더 0), 가드(L-U2)·도착 알림(v3.228 다중 알림 연쇄)과 겹칠 때도 1개씩, 취소 후 큐 잔여 0.
+
+**SC-H1. 하드코딩 비용 제거 [unit — 정적 grep]** — ArtistLoading :534-551·:564, generationTracker.ts:469-481, trackService.ts:158, DirectorLineup :80, "재학습 ⭐5"(MusicGeneration :1004·:1565, VoiceCloneWizard :822) → pointCosts 참조. `grep -nE "⭐ ?(2|3|5|10|15)\b"` 신규 diff 문자열에서 고정 숫자 0(휴식 단계 표시 등 서버 응답 값 보간은 허용).
+
+**SC-R1. 회귀 — 중복 차단·복귀·자동 재개 [unit/앱] — FAIL 게이트(이중 팝업·재진입·busy 고착)**
+- ① v3.228 busyRef·proceedingRef: 확인 대기 중 같은 버튼 재탭 → 다이얼로그 1개, 취소 후 busy false ② v3.228 genJobs 409·회수·환불(boot_id sweep) 경로 hunk 0 ③ v3.229 디렉터 1탭 복귀(directorResume) 후 과금 버튼 → 확인 1회(복귀 자체는 확인 0) ④ v3.229 화면 안 휴식 게이트 지점(R-U3 목록)은 여전히 확인 **전에** 발동(휴식 중인데 확인 다이얼로그가 먼저 뜨면 FAIL) ⑤ FaceVerify `replace` 자동 재개 → SC-P1(f) 다이얼로그 1개(ArtistLoading 재마운트로 인한 이중 0) ⑥ 튜토리얼 리뷰 모드 앵커 불변.
+
+**SC-A1. `/points/costs` 계약 [api] — 읽기 전용** — 배포 전후 `GET /api/points/costs` 200 `{costs:{…}}` 키셋 = SC-U2 폴백 표 키셋(차이 = FAIL — 폴백 드리프트). 무인증 접근 가능 여부 기록(앱 호출 시점 — 로그인 전 화면에서 호출되면 결과 확인).
+
+**SC-E1. 확인-취소 순회 [e2e] — 팀 과금 0**
+- 폰 웹, A: 작사(요청서 → 생성), 작곡("이대로 갈게요"), 커버(생성 3버튼 중 1 + 미세조정), 영상, 아티스트 신규(Cody), 옷 갈아입히기, Inst, 슬롯 확장, 디렉터 영입(표시 중이면), 보이스 → 각 확인 다이얼로그 비용·보유 표시 → **[취소]** → 네트워크 탭 생성·`/points/spend` 요청 0, 잔액 불변, 같은 버튼 재탭 가능.
+- fail-closed: DevTools Request blocking `*points/costs*` → 새로고침 → 커버 미세조정·영상·보이스 → 확인 다이얼로그 여전히 표시(폴백 비용) → 취소.
+- 휴식 연쇄(휴식 중 조건이 있을 때만, 없으면 SC-F1 로 판정): 광고 해제 경로 또는 휴식 종료 대기 → 확인 다이얼로그 → 취소 → 생성 요청 0. **⭐ 휴식 단축 자체는 팀 실행 0**(과금).
+
+**SC-O1. 배포 후 관측 [ops — 읽기 전용]** — 웹 배포 후 7일: `point_events` 에서 휴식 단축 후 3초 이내 생성 차감 건수(전 8건 기준), 15초 내 3회 이상 연속 단축 묶음 수(전 12묶음) — 1.2.x 이상 클라이언트에서 0 기대, 구 APK 발생분은 버전별 분리 기록.
+
+### CH — TOP100 본인 제외·롤링 24h (서버 S2 + 2조 A6)
+
+**CH-S1. 다운로드 소유자 제외 [unit/서버 — 페이크 Mongo + fakeredis] — FAIL 게이트(본인 다운로드 차트 가산 = 요청 미충족)**
+- When: `POST /tracks/download/{id}` {업로더 본인, 타 사용자, 같은 타 사용자 2회(같은 기간), uploader_id 없는 레거시 곡, 비공개 곡 본인}.
+- Then: 본인 → `chart:downloaders:*` 모든 기간 셋 SADD **0**, `download_logs.is_owner=true`, `download_count` +1(D5 총계 유지), 로그 `[ChartOwnerExclude] download track=… ` · 타인 → 모든 기간 셋 SADD 1, `is_owner` false/부재 · 2회 → 셋 카디널리티 1(기간별 1인 1회 불변) · uploader_id 없음 → 현행(가산) + 경고 여부 기록 · 응답 스키마 `orig/` 동일.
+
+**CH-S2. 재생 소유자 제외 [unit/서버] — FAIL 게이트(play_count·재생 ⭐ 적립 회귀)**
+- When: `/charts/record-play` {본인 로그인, 타인 로그인, 비로그인, 없는 track_id, 30초 내 재호출(v3.229), 소유자 캐시 hit/miss}.
+- Then: 본인 → `chart:listeners:*` SADD 0, **play_count +1·play_logs 기록·재생 ⭐ 적립 현행 유지**(point_events award 호출 1) · 타인 → SADD 1 + 현행 · 비로그인 → play_count 만(현행) · 없는 track → 현행 응답(예외 0) · 30초 내 재호출 → v3.229 dedup 동작 불변(본인·타인 모두) · 소유자 조회 = `tracks.find_one({_id},{uploader_id})` 1회, 캐시 `track:owner:{id}` 채택 시 두 번째 호출 Mongo 0·TTL 1h.
+
+**CH-S3. 롤링 24h [unit/서버 — 가짜 시계 KST] — FAIL 게이트(자정 직후 순위 공백/급변 재발)**
+- Given: hourly 셋 픽스처 — 전날 20·22·23시, 당일 00·01·09시 청취자/다운로더.
+- When: 시각 {00:30, 01:30(심야), 07:59, 08:00, 09:30} × {배포 직후(hourly 셋 TTL 2h 잔존분만), 배포 24h 후}.
+- Then: SADD 시 hourly 셋 `EXPIRE` = 26h(93600±60초)·daily/weekly/monthly TTL 불변 · 24h 순 청취자 = 최근 24개 hourly 셋 SUNION 카디널리티(00:30 에 전날 23시 청취자 포함 — daily 방식이면 0 이 되는 케이스) · 중복 사용자(여러 시간대) 1회만 · **전환기**: hourly 셋이 24h 를 못 채운 구간 → daily 셋 사용(롤링 셋 부족 판정 기준 구현값 기록), 전환 경계 전후 점수 연속성 확인 · 다운로더 동일 규칙.
+
+**CH-S4. 가중 [unit/서버]** — 08~24시 = 24h×0.5 + 1h×0.5, 01~07시 = 24h×100%(1h 무시), 성분 = 청취자×0.4 + 다운로더×0.6 — 경계 07:59/08:00·00:59/01:00 산식 전환 정확. 좋아요·play_count 가 점수에 들어가면 FAIL(D5).
+
+**CH-S5. 동점 결정적 정렬 [unit/서버] — FAIL 게이트(요청마다 순위 흔들림)** — 0.4점 동점 14곡 픽스처(오늘 실측 재현) → 정렬 = score → listeners_1h → listeners_24h → track_id, 같은 입력 100회 호출 순서 동일·Redis 셋 반환 순서 셔플 주입해도 동일.
+
+**CH-S6. 빈 차트 폴백 [unit/서버]** — 24h·1h 모두 0 → weekly 점수 순 → weekly 도 0 → play_count 순(현행). 소유자 제외로 비게 된 차트(본인 활동만 있는 곡) → 폴백 진입 기록, 폴백 순위에도 비공개 곡 0. 폴백 사용 시 로그 `[ChartCalc] fallback=weekly|play_count` 1줄.
+
+**CH-S7. `chart_recovery` 재구성 [unit/서버] — FAIL 게이트(재구성 결과가 실시간 집계와 불일치)** — play_logs·download_logs 픽스처(본인·타인·`is_owner` 없는 과거 로그) → 재구성 셋 = CH-S1·S2 실시간 규칙 적용 결과와 동일(과거 로그는 uploader 조회로 소유자 판정), hourly 24개 재구성·TTL 26h, 재실행 멱등.
+
+**CH-S8. 응답·정책·성능 회귀 [unit/서버]** — top100·HOT100(30일)·일/주/월 응답 JSON 키셋 `orig/` 동일, 비공개 곡 제외(:120) 유지, `agency_name`/`artist_name` 폴백(NK 연동) 불변, record_play 추가 지연 = Mongo 1회(캐시 hit 0회) — 하니스 호출 카운트로 판정. charts.py/tracks.py/chart_recovery.py 외 파일 hunk 0, main.py 0.
+
+**CH-U1. 차트 기준 안내 A6 [unit/앱 + 문구 리뷰]** — TOP100 탭 "차트 기준" → showAlert 1회: 로그인 사용자 순 청취자·순 다운로더, 곡 70% 이상 재생 1회, **본인 곡 재생·다운로드 제외, 좋아요·총 재생수 미반영**, 롤링 24시간 표현(D5 확정 문구와 서버 구현 일치 — 서버가 롤링 미채택이면 문구 불일치 = FAIL). 멜론 명칭·로고 사용 0, 이모지 ⭐ 외 0.
+
+**CH-A1. 배포 후 스모크 [api] — 무과금·차트 오염 0**
+- `GET` top100·hot100·daily 200·스키마 동일, 5분 캐시 후 재조회 순서 동일(결정적).
+- 소유자 제외(테스트 계정 본인 곡이 있을 때만, 없으면 "대기"): A 가 자기 곡 `POST /tracks/download/{id}` 1회 → Redis 읽기(`SISMEMBER chart:downloaders:*` A 미포함), `download_logs` 최신 1건 `is_owner:true`, download_count +1. 본인 재생 1회 → listeners 셋 미포함·play_count +1.
+- **타인 가산 경로는 prod 에서 실행 금지**(차트 오염) — CH-S1·S2 로만 판정. 로그 `[ChartOwnerExclude]` 2줄, `[ChartCalc]` 오류 0, 5분 Traceback 0. Redis 기존 셋의 과거 소유자 기록은 자연 만료(주간 8일·월간 32일) — 즉시 정리 0(승인 없음) 기록.
+
+**CH-E1. 차트 화면 [e2e]** — 폰 웹: TOP100 탭 "차트 기준" 안내 문구 확인, 새로고침 3회 순위 동일, 자정 직후(00:10~00:30 KST) 관측 가능하면 차트 비지 않음 확인(불가 시 CH-S3 로 판정·운영 관측 이관).
+
+### RF — 추천코드 대기·가입 선물 팝업·스타 내역 (2조 A7)
+
+**RF-U1. `pendingReferral` 저장 [unit/앱]**
+- When: `?ref=CODE` 진입 {정상, 새로고침, 7일 경과(가짜 시계 7d+1s), 다른 코드로 재진입, 공백·특수문자·과도 길이, localStorage 접근 예외(사파리 프라이빗), 네이티브(localStorage 없음)}.
+- Then: 키 `maidol-pending-ref-v1` 에 {code, savedAt} 저장, 새로고침 후 유지, 7일 경과 → 무효·삭제, 재진입 → 최신 코드로 교체(규칙 기록), 형식 위반 → 저장 0, 예외 → try/catch·크래시 0·기존 모듈 1회 읽기 폴백, 네이티브 → no-op(딥링크 없음 — 기록). 가입 확인(RF-U3) 후 삭제. URL·로그에 코드 원문 재노출 0(로그는 길이만).
+
+**RF-U2. AuthPanel·SocialLoginButtons [unit/앱]**
+- Then: 대기 코드 있음 → 가입·로그인 모드 모두 칩 "추천코드 ○○○ 적용돼요 — 구글·카카오로 가입해도 ⭐50을 받아요"(코드 표시 방식 = 마스킹/원문 구현값 기록), 로그인 모드 "추천코드가 있어요" 펼침 입력 → 저장 시 pendingReferral 갱신·"새로 가입할 때만 적용" 안내, 소셜 버튼 URL 에 `ref=` 부착(**새로고침 후에도** — 전 결함 재현 케이스), 이메일 가입 폼 기본값 = 대기 코드, 미성년 숨김 규칙 불변(AuthPanel :572-580), 대기 코드 없음 → 칩 0·UI 불변.
+
+**RF-U3. 가입 선물 팝업 `rewardNotice` [unit/앱] — FAIL 게이트(중복 표시·타 계정 혼입)**
+- Given: `/points/history?limit=50` 스텁, AsyncStorage `maidol-reward-seen-v1:{uid}`, 트리거 {로그인 직후, 가입 직후, 앱 복귀 훅} 동시 발화.
+- Then: 신규 소셜 가입 {signup_bonus 50, beta_signup_bonus 50, referral_joiner 50} → "가입 선물이 도착했어요" 1회에 3줄(가입 보너스 ⭐50 · 베타 가입 추가 ⭐50 · 추천코드 가입 ⭐50), 합계 표기 일치 · 트리거 3개 동시 → 팝업 1개(in-flight dedup) · 재로그인·앱 재시작 → 0 · 같은 기기 다른 계정(B) → B 기준 독립 판정(A 의 seen 이 B 를 막거나 A 이벤트가 B 에 보이면 FAIL) · history 실패 → 팝업 0·오류 팝업 0(조용히) · 튜토리얼 시작과 겹치면 큐 순서로 1개씩(앵커 가림 0 — 기록).
+- 경계: **`created_at` 이 타임존 없는 ISO(naive UTC — points_service.get_history `isoformat()`)** → 앱이 로컬(KST)로 파싱하면 9시간 어긋남 → 72시간 창 판정·내역 시각이 틀어짐. UTC 로 해석하는지 명시 검증(FAIL 게이트). 50건 limit 안에 보너스가 없는 활동 과다 계정 → 팝업 누락 기록.
+
+**RF-U4. 기존 회원 미표시 [unit/앱] — FAIL 게이트(과거 보너스 갑작스런 표시)** — 가입 72시간 초과 계정 → 0 · 최초 실행 기준시각 기록 로직이 **신규 가입 직후 몇 초 전 이벤트를 배제하지 않음**(가입 bonus created_at < 기준시각 − 수 초 케이스에서도 표시 — 배제되면 FAIL) · 72시간 이내지만 오래된 계정의 소급 `beta_signup_bonus`(베타 소급 12명 유형) → 표시 여부 판정 기준(가입 시각 vs 이벤트 시각) 구현값 기록, "가입 선물" 문구로 오래된 회원에게 뜨면 판정 회부.
+
+**RF-U5. 추천인·미적용 안내 [unit/앱]** — referral_inviter 1건 → "친구가 내 추천코드로 가입했어요 ⭐50" 1회, 2건 → 합산 1회(건수 표기), 이후 새 1건 → 새 것만 1회 · 신규 가입 + 대기 코드 있음 + referral_joiner 없음 → "추천코드가 확인되지 않아 추천 보상은 적용되지 않았어요" 1회 + 대기 코드 삭제 · **기존 회원 로그인 + 대기 코드** → 미적용 안내 0(가입 아님) + 대기 코드 처리 규칙 기록 · 이메일 가입 응답 `referral.applied` 경로 → 같은 팝업 1회(register 응답 + history 이중 표시 0).
+
+**RF-U6. 스타 내역 화면 [unit/앱]** — `/points/history` 항목 라벨 표: signup_bonus 가입 보너스 · beta_signup_bonus 베타 가입 추가 · referral_joiner 추천 가입 · referral_inviter 친구 초대 · verify_bonus·profile_bonus · 재생·출석 적립 · spend:* 사용(작곡·작사·커버·커버 미세조정·영상·아티스트·Inst·보이스·휴식 단축·디렉터 영입·슬롯 확장) · refund:* 환불 · spend:admin_adjust 조정 · **모르는 action → "기타"(원문 키 노출 0)**. 금액 부호(+적립/−사용) 서버 amount 부호와 일치, 시각 KST(RF-U3 naive UTC 규칙), 빈 목록 → 빈 상태 문구, 실패 → 오류 문구 + 다시 시도. StarGuideModal "내역 보기" 진입, genJobs/index.ts:114·120 "별 사용 내역" 문구 = 실제 화면명. 헤더 규격(네이티브 헤더 통일, paddingTop:50 0).
+
+**RF-A1. `/points/history` 계약 [api] — 읽기 전용** — A 토큰 200 `{history:[{action,track_id,day,amount,created_at}]}`, limit 경계(1·200·201 → 422), 무토큰 401, B 토큰에 A 이벤트 0. created_at 타임존 표기 실측(RF-U3 판정 근거).
+
+**RF-E1. 추천 대기·기존 회원·내역 [e2e] — 계정 생성 0**
+- 폰 웹 시크릿 창: `app.maidol.ai.kr?ref=<테스트용 코드 — A 의 초대 링크>` → 칩 표시 → 새로고침 → 칩 유지 → 소셜 버튼 링크 URL 에 ref 부착 확인(**클릭하지 않음** — 신규 prod 계정 생성 금지) → 로그인 모드 펼침 입력 확인.
+- A(기존 회원) 로그인 → 가입 선물 팝업 **0**. 설정/⭐ 안내 → "내역 보기" → 라벨·부호·KST 시각 육안(최근 이벤트 1건을 읽기 전용 DB 조회와 대조).
+- 신규 가입 팝업 3줄·추천인 팝업은 하니스(RF-U3·U5) + **운영 관측**(배포 후 첫 실사용 소셜 가입 1건의 frontend.log `[RewardNotice]` 1회·point_events 대조)으로 이관.
+
+### S-P — 서버 배포 게이트 [ops]
+
+**S-P1. 재대조·범위 [ops] — FAIL 게이트(다른 세션 변경 덮어쓰기·main.py 반영)** — 배포 직전 라이브 md5 = PLAN 기준값(routes/auth.py `931890e1…`·models/user.py `f127f33d…`·routes/charts.py `31f3d78b…`·routes/tracks.py `3623fba3…`·services/chart_recovery.py `66b59ffc…`), 불일치 → 새 현재본에 diff 재적용(`patch --dry-run` 선행)·스테이징 테스트 재실행. 신규 `services/nickname_sync.py` 라이브 부재 확인. scp 대상 = 위 5파일 + 신규 1개만, main.py·admin_*·analytics·디렉터리 통째 0, `.bak_pre_v3230` 생성. 스테이징 tests/ 전체 PASS 로그 첨부.
+
+**S-P2. 사전 점검 [ops] — FAIL 게이트(진행 중 생성 있는 채 재생성 → boot_id sweep 환불 발생)** — gen_jobs processing·generations pending/processing·inst_jobs active·character_jobs processing·share-video 인코딩 = 0 확인 후 재생성(v3.228 boot_id 환불 경로 hunk 0), 재생성 옵션·로그 볼륨 v3.229 유지.
+
+**S-P3. 스모크 [ops] — FAIL 게이트(기존 API 회귀)** — health 200, NK-A1, CH-A1, SC-A1, RF-A1, VD-A1, v3.228 `jobs/recoverable` 200, v3.229 `[ArtistRename]` 경로 무오류(PATCH 호출 없음 — 로그 grep 만), 5분 Traceback 0. 배포 = 사용자 승인·실행.
+
+### X — 공통 정책·회귀
+
+**X-T1. 정책 문구 [unit — 정적] — FAIL 게이트(이탈 권장·이모지·AIDOL·시스템 Alert)**
+- When: 이번 diff 신규 문자열 전수 + `grep -rnE "나가 있어도|나가도 계속|화면을 나가도|나가서 다른" 2_housing/{screens,components,services,stores,utils,hooks}`.
+- Then: 이탈 권장 = VoiceCloneWizardScreen.tsx 기존 1건 + **L 가드 다이얼로그 문구(사용자가 이미 나가려 할 때만 표시 — D1 허용)** 외 0, "작업이 끝날 때까지 이 화면을 벗어나지 마세요" 개수 유지(:661·:678 삭제 0), 신규 문자열 이모지 0(⭐ 예외), `\bAIDOL\b` 0(MAIDOL), `Alert.alert` 0(showAlert/앱 내 모달만), "저작권 등록 가능/보장" 0, 멜론 명칭 앱 노출 0.
+
+**X-G1. 회귀 하니스 [unit] — FAIL 게이트**
+- ① v3.227 아티스트 추적/회수: `registerArtistJob`(POST 응답 후·cancelled 무관), 말풍선·도착 알림·ArtistResult 회수 hunk 0(L-U5 경계·L-U6) ② v3.228 genJobs: 과금 전 409 중복 차단·X-Gen-Request-Id 원장·응답 유실 회수·ack 영속·boot_id 환불 — 지점 8곳 guardGeneration hunk 0(SC-P6 순서 변경 제외 시 사유 기록) ③ v3.229 디렉터 1탭 복귀(directorResume 판정 동치 — R-U1 하니스 재실행), 재생 1회 기록(70% 도달·세션당 1회, playRecord.ts)·30초 dedup(CH-S2), 개명 동기화 `artist_name_sync` 무변경·NK sync 와 필드 비중첩 ④ v3.208 휴식 보상형 광고·fatigueGate 단일 지점 ⑤ v3.223 큐 보존 ⑥ v3.213 튜토리얼 앵커 ⑦ `npx tsc --noEmit` 0 ⑧ 서버 pytest(스테이징 tests/) 전체 PASS.
+
+**X-E1. 핵심 여정 회귀 [e2e] — 팀 과금 0** — 웹 배포 후 폰 웹 A: 디렉터 1탭 복귀(작사 draft → 1탭 → 요청서 → ⭐ 확인 → 취소 → 화면 유지) · 곡 재생 70% → `[PlayRecord]` 1회·30초 내 재진입 0 · 작업실 추적 말풍선 표시(기존 job 있을 때) · 튜토리얼 리뷰 모드 앵커 육안 · 콘솔 오류 0. APK 항목은 "대기".
+
+### 게이트 요약
+
+- **트랙 구조**: 서버 = NK-S1~S7·CH-S1~S8 PASS(스테이징 로컬 fake) → S-P1·S-P2 → 사용자 승인·scp·재생성 → S-P3(NK-A1·CH-A1·SC-A1·RF-A1·VD-A1). 앱 1조 = L-U1~U9·SC-U1·U2·SC-P1~P13·SC-F1~F3·SC-H1·SC-R1·VD-U1~U4 / 2조 = NK-U1~U3·CG-U1~U4·CH-U1·RF-U1~U6 PASS + X-T1·X-G1 + tsc 0 → 웹 배포(**A2 노출은 S1 배포 후** — NK-U2 옛 값 200 케이스로 이중 방어) → E2E 8종(L-E1·NK-E1·VD-E1·CG-E1·SC-E1·CH-E1·RF-E1·X-E1, 정적 대체 병기, APK 대기) → SC-O1 7일 관측.
+- **비용 상한**: 팀 과금 0회(⭐ 확인은 전부 취소, 서버 미도달은 DevTools 요청 차단으로 보장). 쓰기 = 테스트 계정 닉네임 PATCH·본인 곡 다운로드/재생 각 1회만. prod 계정 생성 0.
+- **FAIL 게이트**: 코드 발 전환·로그아웃이 가드에 막힘(L-U1) · 완료 후 가드 잔존(L-U2) · 웹 back URL 불일치(L-U4) · POST 전 이탈 과금(L-U5·L-E1) · 작곡 응답 전 이탈 추적 누락(L-U7) · 닉네임 규칙 위반 저장(NK-S1) · 자기 자신 409/변형 통과(NK-S2) · 세션 미갱신·TTL 파손(NK-S3) · 타인 문서 변경·가수명 덮어씀(NK-S4) · 프로필 수정 회귀(NK-S5) · 미배포 서버 성공 오표시(NK-U2) · 무료 칩의 과금/피로 경로(VD-U2) · 비공개 곡 칩 재생 실패(VD-U1) · 응답 유실 회수 회귀(VD-U3) · 신규 생성 기존 성별 적용(CG-U1) · female→남 오판(CG-U2) · fail-open(SC-U1·SC-P9~P11) · 경로별 확인 누락/이중(SC-P1~P13) · 휴식 연쇄 무확인 차감(SC-F1) · 단축 연타(SC-F2) · 이중 팝업·busy 고착·휴식 게이트 순서(SC-R1) · 폴백 표 드리프트(SC-A1) · 본인 다운로드 가산(CH-S1) · play_count/적립 회귀(CH-S2) · 자정 공백(CH-S3) · 순위 흔들림(CH-S5) · 재구성 불일치(CH-S7) · 안내 문구와 서버 불일치(CH-U1) · 팝업 중복·계정 혼입·UTC 오파싱(RF-U3) · 기존 회원 과거 보너스 표시(RF-U4) · 정책 문구(X-T1) · 회귀(X-G1) · 재대조·진행 중 재생성·API 회귀(S-P1~P3).
+- **최상위 FAIL**: 팀 과금 생성·휴식 단축 실행, prod 계정 생성, 실사용자 데이터 변경, prod 에서 타인 가산으로 차트 오염, 팀의 scp·재생성·.env 실행(사용자 승인·실행 전), 판독 스크립트의 prod 쓰기, 비밀값·원문 식별자 증적 기재.
+- **판정 회부(결함이면 FAIL)**: L-U5 준비 단계 가드 문구 사실 불일치 · NK-S1 제로폭/NFD 중복 우회 · RF-U4 소급 보너스 표시 기준. **기록·보고만**: NK-S7 경합 창 · CG-U1 재생성 성별 우선순위 · CG-U3 피커 재오픈 규칙 · VD-U1 다중 영상 선택 규칙·50곡 limit · CH-S1 레거시 uploader 없음 · RF-U3 50건 limit · D2 개별 사례(무환불) · D4 기획사명 범위 밖.

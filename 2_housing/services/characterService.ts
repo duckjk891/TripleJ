@@ -181,6 +181,18 @@ export const spendExtraSlot = async (): Promise<{ spent?: number; balance?: numb
   }
 };
 
+/** v3.230 A5-2: POST /points/spend {action:'hire_director', ref} → {spent, balance} (단가는 서버 POINT_COSTS) */
+export const spendHireDirector = async (directorId: string): Promise<{ spent?: number; balance?: number }> => {
+  try {
+    const res = await api.post('/points/spend', { action: 'hire_director', ref: `hire:${directorId}` });
+    console.info('[characterService] spendHireDirector 성공', { directorId, spent: res.data?.spent ?? null });
+    return res.data ?? {};
+  } catch (err: any) {
+    console.error('[characterService] spendHireDirector 실패', { directorId, status: err?.response?.status ?? null });
+    throw err;
+  }
+};
+
 // ── v3.227 A-보완: 생성 job 추적 API — 서버 필드 접근은 이 매퍼 한 곳에서만 ─────────
 // GET  /character/job/{job_id}           → {job_id, mode('real'|'cartoon'), status, object_name?, preview_url?,
 //                                           original_object_name?, character_id?, art_style?, error?, created_at,

@@ -33,6 +33,8 @@ import { parseGenInProgress, getGenJobByRequest } from '../services/genJobsServi
 import { failureBody, CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
 import { MUSIC_TEXT, MUSIC_SLOW_MS, MUSIC_SLOW_VOICE_MS } from '../services/genJobs/music';
 import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
+import { useGenerationLeaveGuard } from '../hooks/useGenerationLeaveGuard';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -56,6 +58,10 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
   const [progress, setProgress] = useState(0);
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
+
+  // v3.230 A1-1(D1): 진행 중 이탈 가드 — 휴식·중복 안내 다이얼로그가 떠 있는 동안은 비활성(이중 팝업 방지)
+  const [guardActive, setGuardActive] = useState(true);
+  const { allowLeave } = useGenerationLeaveGuard(navigation, { screen: 'MusicLoading', active: guardActive });
 
   // v3.228: "평소보다 오래 걸리고 있어요" 안내 — 기준 3분(내 목소리 6분). 경과 기준 시각은
   // 이어보기면 추적 레코드의 접수 시각, 새 생성이면 이 화면 진입 시각. 이탈 권장·과금 문구 없음.
@@ -108,6 +114,11 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
     const watchKey = (key: string | null) => {
       trackedKey = key;
       if (key) setViewerJob(key);
+    };
+    // v3.230 A1-1: 코드 발 복귀(가드 통과)
+    const leaveBack = () => {
+      allowLeave();
+      navigation.goBack();
     };
 
     // v3.91: 참고 음악 업로드 실패 시 사용자 확인 — true=참고 없이 진행, false=중단
@@ -251,7 +262,11 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
 
     const doGenerate = async () => {
       // v3.228: 중복 생성 최종 방어(사용자당 진행 중 1곡 — 결정 4, 미확인 완성본은 비차단)
-      if (guardGeneration('music', { navigation, where: 'MusicLoading', onDismiss: () => navigation.goBack() })) return;
+      if (guardGeneration('music', { navigation, where: 'MusicLoading', onDismiss: () => leaveBack() })) {
+        if (isMounted) setGuardActive(false);
+        return;
+      }
+      if (isMounted) setGuardActive(true);
       const rid = newRequestId();
       store.setIsLoading(true);
       store.setError(null);
@@ -276,7 +291,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
             // 중단: 로딩 상태를 되돌리고 이전 화면으로 복귀(파일 교체 후 재시도 가능)
             store.setIsLoading(false);
             store.setStatus('idle');
-            navigation.goBack();
+            leaveBack();
             return;
           }
           referenceData = null; // 참고 없이 진행
@@ -338,18 +353,27 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           result = await generateWithWondera(params);
         }
 
-        if (!isMounted) return;
-
         // Check if we got a generation ID to poll
         const genId = result.generation_id || result.id || result.task_id;
+
+        // v3.230 A1-4: 접수 응답을 받으면 화면 이탈 여부와 무관하게 먼저 전역 추적 등록
+        // (기존엔 isMounted 확인이 앞서 응답 전 이탈 시 로컬 추적이 빠졌다 — v3.228 genJobs 계약:
+        // 작곡은 201 수신 직후 serverJobId로 등록). 뷰어 등록은 화면이 살아 있을 때만.
+        let registeredKey: string | null = null;
+        if (genId && store.selectedModel === 'suno') {
+          registeredKey = registerGenJob({ kind: 'music', requestId: rid, serverJobId: String(genId), meta: { title: params.title ?? null } });
+          if (!isMounted) {
+            console.info('[GenJob:music] 화면 이탈 후 접수 응답 — 추적만 등록(뷰어 없음)', { jobId: registeredKey, genId: String(genId) });
+          }
+        }
+
+        if (!isMounted) return;
 
         if (genId) {
           store.setGenerationId(genId);
           store.setStatus('processing');
           // v3.228: 접수 즉시 전역 추적 등록(이탈·재시작 후에도 작업실 말풍선·도착 알림으로 회수)
-          if (store.selectedModel === 'suno') {
-            watchKey(registerGenJob({ kind: 'music', requestId: rid, serverJobId: String(genId), meta: { title: params.title ?? null } }));
-          }
+          if (registeredKey) watchKey(registeredKey);
 
           // Poll for status (v3.93: 이어보기와 공유하는 pollOnce 재사용)
           beginPolling(genId);
@@ -380,7 +404,23 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           navigation.replace('MusicResult');
         }
       } catch (err: any) {
-        if (!isMounted) return;
+        if (!isMounted) {
+          // v3.230 A1-4: 화면을 떠난 뒤 응답 유실(네트워크·timeout·5xx) — 요청 id로 추적만 남긴다
+          // (전역 추적기가 /jobs/req/{rid}로 회수, 서버 미도달이면 유예 뒤 조용히 정리 — v3.228 계약)
+          const lostStatus = err?.response?.status;
+          const busyGone = parseGenInProgress(err, 'music');
+          if (busyGone) {
+            // 409 진행 중(다른 요청) — 안내 없이 추적기에 편입만(v3.228 편입 경로와 동일 결과)
+            adoptGenJob(busyGone);
+            console.info('[GenJob:music] 화면 이탈 후 409 — 진행 중 곡 편입', { genId: busyGone.jobId });
+            return;
+          }
+          if (store.selectedModel === 'suno' && (!err?.response || (typeof lostStatus === 'number' && lostStatus >= 500))) {
+            const key = registerGenJob({ kind: 'music', requestId: rid, meta: { title: lyricsStore.generatedTitle || null } });
+            console.info('[GenJob:music] 화면 이탈 후 응답 유실 — 요청 id로 추적 등록', { jobId: key, status: lostStatus ?? null });
+          }
+          return;
+        }
         // v3.94: 디렉터 피로 429(레이스 — 게이트 통과 후 다른 곡 완성 등) — 생성 실패로 처리하지
         // 않는다. 서버는 ⭐ 차감 *전에* 게이트하므로 429 시 과금 없음 (generate.py:444-447, 573-577).
         // 동일 다이얼로그로 남은 시간 + ⭐/광고권 스킵을 안내하고, 해제되면 생성을 재시도한다.
@@ -396,14 +436,23 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
             console.warn('[MusicLoading] [fatigue] 상태 조회 실패:', statusErr?.response?.status);
           }
           if (!isMounted) return;
+          setGuardActive(false); // 휴식 다이얼로그와 가드 이중 팝업 방지
           showFatigueCooldownDialog({
             status: fatigueStatus,
             remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
             cancelText: '돌아가기',
-            onCancel: () => navigation.goBack(),
-            onCleared: () => {
-              // 스킵으로 쿨다운 해제 — 생성 재시도 (⭐ 작곡 비용은 이 재시도에서 정상 차감)
-              doGenerate();
+            onCancel: () => leaveBack(),
+            onCleared: async () => {
+              // 스킵으로 쿨다운 해제 — v3.230 A5-4: 확인 없는 자동 재요청 금지 → ⭐ 확인 1회 후 재시도
+              const ok = await confirmStarSpend({
+                source: 'MusicLoading',
+                costKey: 'compose',
+                action: '곡 만들기',
+                variant: 'fatigue-chain',
+              });
+              if (!isMounted) return;
+              if (ok) doGenerate();
+              else leaveBack(); // 입력은 store에 보존 — 작곡 화면으로 복귀
             },
           });
           return;
@@ -414,10 +463,11 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           adoptGenJob(busySnap);
           store.setIsLoading(false);
           store.setStatus('idle');
+          setGuardActive(false);
           console.info('[MusicLoading] 409 진행 중인 곡 — 편입', { genId: busySnap.jobId });
           showAlert(MUSIC_TEXT.busyTitle, MUSIC_TEXT.busyBody, [
-            { text: '닫기', style: 'cancel', onPress: () => navigation.goBack() },
-            { text: '진행 상황 보기', onPress: () => { if (isMounted) followInPlace(busySnap.jobId); } },
+            { text: '닫기', style: 'cancel', onPress: () => leaveBack() },
+            { text: '진행 상황 보기', onPress: () => { if (isMounted) { setGuardActive(true); followInPlace(busySnap.jobId); } } },
           ]);
           return;
         }

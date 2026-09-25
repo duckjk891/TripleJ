@@ -31,6 +31,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { showAlert } from '../utils/appAlert';
+import { getPointCostSync } from './pointCosts';
 
 // ── v3.227 A-보완 [GenTracker]: 전역 생성 job 추적기 (화면 수명과 분리) ───────────────
 // 상태 전이(레코드 lastStatus):
@@ -466,19 +467,21 @@ async function appendPhotoFile(form: FormData, photo: { uri: string; name: strin
 function showSlotDialog(err: any) {
   const used = err?.response?.data?.used;
   const max = err?.response?.data?.max;
-  const slotMsg = `아티스트 슬롯이 가득 찼어요${typeof used === 'number' && typeof max === 'number' ? ` (${used}/${max})` : ''}. ⭐15로 슬롯을 영구 확장한 뒤 완성된 아티스트를 저장할 수 있어요.`;
+  // v3.230 A5-6: 비용 = /points/costs(extra_slot) 캐시(없으면 폴백 표) — 하드코딩 제거
+  const slotCost = getPointCostSync('extra_slot');
+  const slotMsg = `아티스트 슬롯이 가득 찼어요${typeof used === 'number' && typeof max === 'number' ? ` (${used}/${max})` : ''}. ⭐${slotCost}로 슬롯을 영구 확장한 뒤 완성된 아티스트를 저장할 수 있어요.`;
   showAlert('슬롯이 가득 찼어요', slotMsg, [
     { text: '다음에', style: 'cancel' },
     {
-      text: '⭐15로 확장',
+      text: `⭐${slotCost}로 확장`,
       onPress: async () => {
         try {
           await spendExtraSlot();
           usePointsStore.getState().fetchBalance();
-          showAlert('확장 완료', '슬롯이 추가됐어요. 내 아티스트의 "도착" 카드에서 다시 저장해주세요.');
+          showAlert('확장 완료', '슬롯이 추가됐어요. 빈 슬롯은 계속 남아 있어요. 내 아티스트의 "도착" 카드에서 다시 저장해주세요.');
         } catch (spendErr: any) {
           if (spendErr?.response?.status === 402) {
-            showAlert('스타(⭐)가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');
+            showAlert('스타(⭐)가 부족해요', `슬롯 확장에는 ⭐${slotCost}가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.`);
           } else {
             showAlert('오류', spendErr?.response?.data?.error || '슬롯 확장에 실패했어요. 잠시 후 다시 시도해주세요.');
           }

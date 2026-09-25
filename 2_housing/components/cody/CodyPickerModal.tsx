@@ -19,12 +19,14 @@ import {
   brandFacets,
   brandNameOf,
   colorFacets,
+  codyFilterGender,
   genderMatches,
   pinPicked,
   priceFacets,
   subCategoryFacets,
   type AdItem,
   type Cat,
+  type CodyGenderChoice,
   type CodyViewState,
 } from '../../utils/codyCatalog';
 import CodyPickerTabs from './CodyPickerTabs';
@@ -42,9 +44,10 @@ interface Props {
   setPickerTab: Dispatch<SetStateAction<'all' | 'wish'>>;
   view: CodyViewState;
   updateView: (patch: Partial<CodyViewState>) => void;
-  genderFilterOn: boolean;
-  setGenderFilterOn: Dispatch<SetStateAction<boolean>>;
-  artistGender: '남' | '여' | null;
+  /** v3.230 A4: 현재 성별 필터 선택(남/여/전체) · 기본값(답·대상 아티스트 기준, 없으면 null) · 칩 선택 */
+  genderChoice: CodyGenderChoice;
+  defaultGender: '남' | '여' | null;
+  onGenderChoice: (choice: CodyGenderChoice) => void;
   selected: Partial<Record<Cat, AdItem>>;
   staleIds: Set<string>;
   isLoggedIn: boolean;
@@ -65,9 +68,9 @@ export default function CodyPickerModal({
   setPickerTab,
   view,
   updateView,
-  genderFilterOn,
-  setGenderFilterOn,
-  artistGender,
+  genderChoice,
+  defaultGender,
+  onGenderChoice,
   selected,
   staleIds,
   isLoggedIn,
@@ -89,8 +92,10 @@ export default function CodyPickerModal({
   // ── v3.205(⑤) 성별 자동 필터 — 목록에 선적용(대분류·색상 등 패싯 수치도 필터 후 기준) ──
   // genderMatches: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
   // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
+  // v3.230 A4: 남/여/전체 칩 선택이 곧 필터 성별('all' = 필터 없음)
+  const artistGender = codyFilterGender(genderChoice);
   const genderFilterActive =
-    !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat) && genderFilterOn;
+    !!artistGender && !!pickerCat && GENDER_FILTER_CATS.includes(pickerCat);
   // v3.206: 악세서리 피커 — 서브탭(모자|가방)이 앞단 필터.
   // 해당 서브카테고리 실데이터 0건이면 SAMPLE 폴백(장신구 아닌 모자/가방 샘플).
   const sourceItems = useMemo(() => {
@@ -157,9 +162,9 @@ export default function CodyPickerModal({
       brandFacets={facets.brand}
       hasColor={facets.hasColor}
       hasPrice={facets.hasPrice}
-      artistGender={artistGender}
-      genderFilterOn={genderFilterOn}
-      setGenderFilterOn={setGenderFilterOn}
+      genderChoice={genderChoice}
+      defaultGender={defaultGender}
+      onGenderChoice={onGenderChoice}
       onReset={resetFilters}
     />
   ) : null;

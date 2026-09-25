@@ -25,6 +25,9 @@ import { usePointsStore } from '../stores/pointsStore';
 // 생성 직전 게이트 + 서버 429 동일 다이얼로그). 스킵비 ⭐2(share_video 5의 1/3 반올림).
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { fetchPointCosts } from '../services/pointCosts';
+import { listMyShareVideos, latestShareVideoByTrack, shareVideoObjectUrl, type ShareVideoItem } from '../services/trackService';
 import { FatigueStatus } from '../types';
 // v3.219 [VideoDraft]: 대화 draft(선곡·진행·대화) 미러링 + 스타일 sticky — musicStore 보존
 import { useMusicStore, type VideoDraft, type VideoStylePrefs } from '../stores/musicStore';
@@ -234,6 +237,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const scrollRef = useRef<ScrollView>(null);
   // v3.214 tester U-5④: 생성 성공 조합 시그니처 → v3.228 모듈 스코프 succeededVideoSigs 로 이관(재마운트 유지).
   const [videoCost, setVideoCost] = useState<number | null>(null);
+  // v3.230 A3(D9): 곡별 최신 지난 영상(서버 캐시 객체) — "지난번 만든 영상 보기(무료)" 칩 근거. 진입당 1회 조회.
+  const [pastVideos, setPastVideos] = useState<Record<string, ShareVideoItem>>({});
   // v3.228 W0-1: 탭 → (쿨다운·비용 확인 다이얼로그) → POST → 확인 중 종료까지 1건만. 다이얼로그 await 이전
   // (탭 즉시) 세팅, 모든 종료 경로에서 해제. proceedingRef 는 다이얼로그 버튼 연타로 onCleared/resolve 가
   // 두 번 불려 proceedGeneration 이 겹치는 경로 차단.
@@ -323,12 +328,25 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   useEffect(() => {
     let alive = true;
     (async () => {
+      // v3.230 A5-6: services/pointCosts 캐시 경유(실패 시 확인은 폴백 단가로 — fail-closed)
+      const table = await fetchPointCosts();
+      if (alive && typeof table?.share_video === 'number') setVideoCost(table.share_video);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // v3.230 A3: 지난 영상 목록(서버 보관 API 재사용) — 실패·지연은 칩 미표시로 끝(오류 팝업·선곡 차단 없음)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
       try {
-        const res = await api.get('/points/costs');
-        const c = res.data?.costs?.share_video;
-        if (alive && typeof c === 'number') setVideoCost(c);
+        const items = await listMyShareVideos();
+        if (!alive) return;
+        const byTrack = latestShareVideoByTrack(items);
+        setPastVideos(byTrack);
+        console.info('[VideoDirector] 지난 영상 목록', { items: items.length, tracks: Object.keys(byTrack).length });
       } catch (err: any) {
-        console.error('[VideoDirector] /points/costs 조회 실패', { status: err?.response?.status });
+        console.error('[VideoDirector] 지난 영상 목록 조회 실패(칩 미표시)', { status: err?.response?.status ?? null });
       }
     })();
     return () => { alive = false; };
@@ -469,6 +487,18 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     pushUser(t.title, 'pick');
     pushDirector('좋아요! 어떤 형태의 영상으로 만들까요?');
     setStep('format');
+  };
+
+  // v3.230 A3(D9): 지난번 만든 영상 무료 재열람 — 새 요청·⭐ 확인·휴식 게이트·원장 등록 없이 결과 화면으로.
+  // 칩은 공개 곡에만(object 프록시는 공개 곡만 200) 표시한다.
+  const pastVideoForSelected: ShareVideoItem | null =
+    selected && selected.is_public !== false ? pastVideos[selected.id] ?? null : null;
+  const handleOpenPastVideo = () => {
+    const item = pastVideoForSelected;
+    if (!item || busyRef.current || step === 'making') return;
+    console.info('[VideoDirector] 지난 영상 열기', { trackId: item.track_id, format: item.format ?? null });
+    pushUser('지난번 만든 영상 보기', 'format');
+    showVideoDone(shareVideoObjectUrl(item.object_name), item.format);
   };
 
   const handlePickFormat = (fmt: 'sns' | 'wide' | 'kakao') => {
@@ -796,13 +826,14 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     const track = selected;
     let handedOff = false; // 429 재다이얼로그로 가드 소유권을 넘기면 finally 에서 해제하지 않음
     try {
-      if (typeof videoCost === 'number') {
-        const ok = await new Promise<boolean>((resolve) => {
-          showAlert('영상 만들기', `새 영상 생성 시 ⭐${videoCost}이 소모돼요.
-(같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요)`, [
-            { text: '취소', style: 'cancel', onPress: () => resolve(false) },
-            { text: '진행', onPress: () => resolve(true) },
-          ]);
+      // v3.230 A5-3: 조건부(비용 수신 시만) → 항상 확인(fail-closed — 미수신이면 폴백 단가)
+      {
+        const ok = await confirmStarSpend({
+          source: 'VideoDirector',
+          costKey: 'share_video',
+          cost: videoCost,
+          action: '영상 만들기',
+          message: '같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요.',
         });
         if (!ok) { rollbackToSubPos(); return; }
       }
@@ -1208,6 +1239,13 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             </View>
           )
         )}
+        {step === 'format' && pastVideoForSelected && (
+          <TouchableOpacity style={styles.pastChip} onPress={handleOpenPastVideo} activeOpacity={0.75}
+            accessibilityLabel="지난번 만든 영상 보기, 무료">
+            <Feather name="play-circle" size={14} color={colors.accent.primary} />
+            <AppText style={styles.pastChipText}>지난번 만든 영상 보기(무료)</AppText>
+          </TouchableOpacity>
+        )}
         {step === 'format' && (
           <View style={styles.formatRow}>
             {FORMATS.map((f) => (
@@ -1439,6 +1477,13 @@ const styles = StyleSheet.create({
   trackCoverPh: { backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center' },
   trackTitle: { color: colors.text.primary, fontSize: 14, fontWeight: '600' },
   formatRow: { flexDirection: 'row', gap: 8 },
+  // v3.230 A3: 지난 영상 칩
+  pastChip: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7, marginBottom: 8, borderRadius: 16,
+    borderWidth: 1, borderColor: colors.accent.primary, backgroundColor: colors.bg.surface1,
+  },
+  pastChipText: { fontSize: 13, fontWeight: '600', color: colors.accent.primary },
   formatCard: {
     flex: 1, backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 10,
     alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle,

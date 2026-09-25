@@ -24,6 +24,8 @@ import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 // v3.96(A-20): 홈(차트) 최신 앨범 가로 섹션 — GET /albums/latest, 탭 시 앨범 상세로
 import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
+import { showAlert } from '../utils/appAlert';
+import { chartCriteriaText, isChartCriteriaTab } from '../utils/chartCriteria';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 2스텝 — 비로그인 시에만 노출(enabled=!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
@@ -298,6 +300,25 @@ export default function ChartScreen() {
         </ScrollView>
       </View>
 
+      {/* v3.230 A6: 차트 기준 안내(TOP100·일간·주간·월간) — 앱 내 팝업 */}
+      {isChartCriteriaTab(activeTab) ? (
+        <View style={styles.criteriaBar}>
+          <TouchableOpacity
+            style={styles.criteriaBtn}
+            onPress={() => {
+              console.info('[Chart] 차트 기준 안내 열기', { tab: activeTab });
+              const { title, message } = chartCriteriaText(activeTab);
+              showAlert(title, message);
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="차트 기준 안내"
+          >
+            <Feather name="info" size={13} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted">차트 기준</AppText>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {(() => {
         const isQueue = activeTab === 'queue';
         // 내 재생목록은 회원 전용이 아님 — 비회원도 담은 곡을 그대로 볼 수 있고, 상단에 안내만 노출
@@ -447,6 +468,9 @@ const styles = StyleSheet.create({
   headerBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
   chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  // v3.230 A6: 차트 기준 안내 진입(우측 작은 텍스트 버튼)
+  criteriaBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  criteriaBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2 },
   spinner: { marginTop: spacing.huge },
   // v3.96(A-20): 최신 앨범 섹션 — UserChannelScreen 앨범 카드와 동일 규격(120px)
   albumSection: {

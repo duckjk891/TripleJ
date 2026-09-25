@@ -13,11 +13,17 @@ export type DialogItem = {
   title: string;
   message?: string;
   buttons: DialogButton[];
+  /** v3.230 A5-5: 표시 후 이 시간(ms) 동안 cancel 외 버튼 잠금 — 같은 위치 연타 흡수 */
+  lockMs?: number;
+};
+
+export type DialogOptions = {
+  lockMs?: number;
 };
 
 interface DialogState {
   queue: DialogItem[];
-  show: (title: string, message?: string, buttons?: DialogButton[]) => void;
+  show: (title: string, message?: string, buttons?: DialogButton[], options?: DialogOptions) => void;
   dismiss: (id: number) => void;
 }
 
@@ -25,7 +31,7 @@ let nextId = 1;
 
 export const useDialogStore = create<DialogState>((set) => ({
   queue: [],
-  show: (title, message, buttons) =>
+  show: (title, message, buttons, options) =>
     set((s) => ({
       queue: [
         ...s.queue,
@@ -34,6 +40,7 @@ export const useDialogStore = create<DialogState>((set) => ({
           title,
           message,
           buttons: buttons && buttons.length > 0 ? buttons : [{ text: '확인' }],
+          ...(options?.lockMs && options.lockMs > 0 ? { lockMs: options.lockMs } : {}),
         },
       ],
     })),

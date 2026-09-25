@@ -32,6 +32,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback } from 'react';
 import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { fetchPointCosts } from '../services/pointCosts';
 import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
 import { Feather } from '@expo/vector-icons';
@@ -486,18 +488,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const [currentVersion, setCurrentVersion] = useState(0); // 서버 세션의 현재 버전
   const [viewVersion, setViewVersion] = useState(0);       // 화면에서 보고 있는 버전
   const [refineInput, setRefineInput] = useState('');
-  // v3.169(대표): 미세조정 ⭐ 비용 — /points/costs의 cover_refine 키가 있을 때만 고지·confirm
+  // v3.169(대표): 미세조정 ⭐ 비용. v3.230 A5-3/A5-6: services/pointCosts 캐시 경유 — 조회 실패·로딩 중에도
+  // 확인은 폴백 단가로 반드시 띄운다(fail-closed, confirmStarSpend가 cost=null이면 캐시·폴백 사용).
   const [refineCost, setRefineCost] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        const res = await api.get('/points/costs');
-        const c = res.data?.costs?.cover_refine;
-        if (alive && typeof c === 'number') setRefineCost(c);
-      } catch (err: any) {
-        console.error('[Cover] /points/costs 조회 실패', { status: err?.response?.status });
-      }
+      const table = await fetchPointCosts();
+      if (alive && typeof table?.cover_refine === 'number') setRefineCost(table.cover_refine);
     })();
     return () => { alive = false; };
   }, []);
@@ -737,8 +735,18 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         director: 'image',
         cancelText: '돌아가기',
         onCancel: () => doRegenerate(), // 스타일 대화 화면으로 복귀 (에러 화면 미진입)
-        onCleared: () => {
-          // 스킵으로 해제 — 같은 인자로 재시도 (⭐ 커버 비용은 재시도에서 정상 차감)
+        onCleared: async () => {
+          // 스킵으로 해제 — v3.230 A5-4: 확인 없는 자동 재요청 금지 → ⭐ 확인 1회 후 같은 인자로 재시도
+          const ok = await confirmStarSpend({
+            source: 'CoverGeneration.429',
+            costKey: 'cover',
+            action: '커버 만들기',
+            variant: 'fatigue-chain',
+          });
+          if (!ok || !mountedRef.current) {
+            console.info('[Cover] 휴식 해제 후 ⭐ 확인 취소 — 스타일 단계 유지', { ok });
+            return;
+          }
           if (lastCharObjRef.current) musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
           doGenerate(e.trackId, e.title, e.style);
         },
@@ -1693,6 +1701,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (doGenerate catch에서 동일 다이얼로그)
       console.warn('[Cover] [fatigue:image] 상태 조회 실패:', err?.response?.status, err?.message);
     }
+    // v3.230 A5-2(D6): 커버 ⭐ 차감 직전 확인 1회 — 순서: 진행 중 차단 → 휴식 게이트 → 확인.
+    // 스타일 칩·직접 입력·그대로 만들기·스타일 답 재편집·휴식 해제 후 재시도가 모두 이 경로를 지난다.
+    const spendOk = await confirmStarSpend({ source: 'CoverGeneration', costKey: 'cover', action: albumMode ? '앨범 커버 만들기' : '커버 만들기' });
+    if (!spendOk) {
+      console.info('[Cover] ⭐ 확인 취소 — 생성 요청 없음(스타일 단계 유지)');
+      return;
+    }
     // v3.120: 앨범 모드는 musicStore cover* 미사용 (이탈 후 재진입 이어보기 없음 — 재진입 시 새 대화)
     if (!albumMode) {
       musicStore.setCoverTrackId(trackId);
@@ -1844,16 +1859,15 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     // v3.204(⑤): 이중 제출 봉인 — confirm await 앞에서 세팅, 취소·완료·실패 전 경로 finally 해제
     refineSubmitGuardRef.current = true;
     try {
-      // v3.169(대표 확정): 미세조정도 ⭐ 소모 — 실행 전 confirm (서버에 키 없으면 무고지·바로 진행)
-      if (typeof refineCost === 'number') {
-        const ok = await new Promise<boolean>((resolve) => {
-          showAlert('미세조정', `미세조정 시 ⭐${refineCost}이 소모돼요. 진행할까요?`, [
-            { text: '취소', style: 'cancel', onPress: () => resolve(false) },
-            { text: '진행', onPress: () => resolve(true) },
-          ]);
-        });
-        if (!ok) return;
-      }
+      // v3.169(대표 확정): 미세조정도 ⭐ 소모 — 실행 전 confirm.
+      // v3.230 A5-3: 조건부(키 있을 때만) → 항상 확인(fail-closed — 비용 미수신이면 폴백 단가)
+      const ok = await confirmStarSpend({
+        source: 'CoverGeneration.refine',
+        costKey: 'cover_refine',
+        cost: refineCost,
+        action: '커버 미세조정',
+      });
+      if (!ok) return;
       setRefining(true);
       console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
       const t0 = Date.now();

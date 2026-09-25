@@ -1,4 +1,4 @@
-import { useDialogStore, type DialogButton } from '../stores/dialogStore';
+import { useDialogStore, type DialogButton, type DialogOptions } from '../stores/dialogStore';
 
 export type AppAlertButton = DialogButton;
 
@@ -8,9 +8,9 @@ export type AppAlertButton = DialogButton;
  * 전역 dialogStore → AppDialogHost(App 루트) 렌더로 대체 — 웹/네이티브 동일한 앱 디자인 팝업.
  * 버튼 3개 이상도 지원(세로 스택).
  */
-export function showAlert(title: string, message?: string, buttons?: AppAlertButton[]) {
+export function showAlert(title: string, message?: string, buttons?: AppAlertButton[], options?: DialogOptions) {
   if (__DEV__) {
-    console.info('[appAlert] show', { title, buttons: buttons?.length ?? 0 });
+    console.info('[appAlert] show', { title, buttons: buttons?.length ?? 0, lockMs: options?.lockMs ?? 0 });
   }
-  useDialogStore.getState().show(title, message, buttons);
+  useDialogStore.getState().show(title, message, buttons, options);
 }

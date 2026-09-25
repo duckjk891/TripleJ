@@ -6,8 +6,8 @@
 //               → pending 화면(동의 요청 발송 안내 + 상태 확인). 승인 전 로그인은 서버가 403으로 차단.
 //   플래그 OFF → 기존 blocked(준비 중) 안내 유지 — 법적 방어(가입 차단).
 // 현행 백엔드는 gender·consents가 필수라 이 패널이 없으면 가입이 항상 400으로 실패한다(v3.43에서 해소).
-import { useMemo, useState } from 'react';
-import { View, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
 import {
@@ -18,6 +18,11 @@ import { showAlert } from '../../utils/appAlert';
 import { CONSENT_VERSION, SIGNUP_CONSENT_KEYS, REQUIRED_CONSENT_KEYS } from '../../constants/consentTexts';
 import ConsentList, { ConsentState } from './ConsentList';
 import SocialLoginButtons from './SocialLoginButtons';
+import {
+  capturePendingReferralFromUrl,
+  loadPendingReferral,
+  savePendingReferral,
+} from '../../utils/pendingReferral';
 import { AppText, Button } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -40,13 +45,9 @@ const normalizeCompany = (v: string) => {
 const REFERRAL_RE = /^[A-Z0-9]{4,12}$/;
 
 // v3.212: 웹 한정 — 초대 랜딩의 `?ref={code}` 쿼리를 가입 폼 추천코드로 프리필. 네이티브 동작 무변경.
-const initialReferralCode = (() => {
-  try {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
-    const ref = (new URLSearchParams(window.location.search).get('ref') || '').toUpperCase();
-    return REFERRAL_RE.test(ref) ? ref : '';
-  } catch { return ''; }
-})();
+// v3.230 A7-1 [ReferralPending]: 모듈 로드(앱 부팅) 시 1회 읽고 7일 보관(utils/pendingReferral) —
+// 새로고침·재방문·소셜 이동 후에도 코드가 유지된다. 마운트 시 보관 코드로 다시 채운다.
+const initialReferralCode = capturePendingReferralFromUrl();
 
 interface AuthPanelProps {
   onSuccess?: () => void;
@@ -88,6 +89,26 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const [displayTitle, setDisplayTitle] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [referralCode, setReferralCode] = useState(initialReferralCode);
+  // v3.230 A7-1: 로그인 모드 "추천코드가 있어요" 펼침 입력
+  const [refInputOpen, setRefInputOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    loadPendingReferral().then((p) => {
+      if (cancelled || !p) return;
+      console.info('[ReferralPending] 보관 코드 복원', { len: p.code.length, source: p.source });
+      setReferralCode((prev) => (prev ? prev : p.code));
+    });
+    return () => { cancelled = true; };
+  }, []);
+  const validReferral = REFERRAL_RE.test(referralCode.trim().toUpperCase()) ? referralCode.trim().toUpperCase() : '';
+  // 로그인 모드 입력 — 형식이 맞으면 즉시 보관(소셜 이동 후에도 유지)
+  const handleLoginReferralChange = (v: string) => {
+    const up = v.toUpperCase().replace(/\s+/g, '');
+    setReferralCode(up);
+    if (REFERRAL_RE.test(up)) {
+      savePendingReferral(up, 'input').then((ok) => console.info('[ReferralPending] 로그인 모드 입력 보관', { ok, len: up.length }));
+    }
+  };
   const [consents, setConsents] = useState<ConsentState>({});
 
   // v3.101 보호자 동의 플로우(만 14세 미만 + 서버 플래그 ON)
@@ -335,6 +356,24 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     </TouchableOpacity>
   );
 
+  // v3.230 A7-1: 추천코드 적용 안내 칩(로그인·가입 공통) — 코드는 원문 표시(본인이 받은 코드)
+  const ReferralChip = ({ onEdit }: { onEdit?: () => void }) => (
+    <View style={styles.refChip}>
+      <Feather name="gift" size={14} color={colors.accent.primary} />
+      <View style={{ flex: 1 }}>
+        <AppText variant="caption" tone="accent">
+          {`추천코드 ${validReferral} 적용돼요 — 구글·카카오로 가입해도 ⭐50을 받아요`}
+        </AppText>
+        <AppText variant="caption" tone="muted">새로 가입할 때만 적용돼요. 이미 가입한 계정에는 적용되지 않아요.</AppText>
+      </View>
+      {onEdit ? (
+        <TouchableOpacity onPress={onEdit} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="추천코드 변경">
+          <AppText variant="caption" tone="secondary">변경</AppText>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+
   // ── 로그인 ──
   if (mode === 'login') {
     return (
@@ -348,6 +387,24 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
           value={password} onChangeText={setPassword} secureTextEntry />
         <Button label={isLoading ? '로그인 중...' : '로그인'} fullWidth disabled={isLoading} onPress={handleLogin} />
         <SocialLoginButtons logPrefix="AuthPanel:login" referralCode={referralCode} />
+        {/* v3.230 A7-1: 추천코드 — 보관 코드가 있으면 칩, 없으면 "추천코드가 있어요" 펼침 입력 */}
+        {validReferral && !refInputOpen ? (
+          <ReferralChip onEdit={() => setRefInputOpen(true)} />
+        ) : refInputOpen ? (
+          <View style={{ marginTop: spacing.md }}>
+            <Label>추천코드</Label>
+            <TextInput style={styles.input} placeholder="친구에게 받은 코드 (4~12자)" placeholderTextColor={colors.text.muted}
+              maxLength={12} autoCapitalize="characters" value={referralCode}
+              onChangeText={handleLoginReferralChange} />
+            <AppText variant="caption" tone="muted">
+              구글·카카오로 새로 가입할 때만 적용돼요. 이미 가입한 계정에는 적용되지 않아요.
+            </AppText>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.forgotLink} onPress={() => { console.info('[ReferralPending] 로그인 모드 입력 펼침'); setRefInputOpen(true); }}>
+            <AppText variant="footnote" tone="secondary">추천코드가 있어요</AppText>
+          </TouchableOpacity>
+        )}
         {/* v3.207(⑦): 비밀번호 재설정 진입 링크 */}
         <TouchableOpacity style={styles.forgotLink} onPress={() => { resetError(); setMode('forgot'); }}>
           <AppText variant="footnote" tone="secondary">비밀번호를 잊으셨나요?</AppText>
@@ -610,6 +667,8 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
 
       {/* 만14세 미만은 소셜 가입으로 보호자 동의 절차를 우회할 수 없도록 소셜 버튼 숨김 */}
       {!isMinor ? <SocialLoginButtons logPrefix="AuthPanel:register" referralCode={referralCode} /> : null}
+      {/* v3.230 A7-1: 추천코드가 있으면 소셜 가입에도 적용된다는 안내 칩(미성년은 소셜·추천 모두 숨김) */}
+      {!isMinor && validReferral ? <ReferralChip /> : null}
       <View style={styles.footer}>
         <AppText variant="footnote" tone="secondary">이미 계정이 있으신가요? </AppText>
         <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
@@ -647,6 +706,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
   },
   section: { marginTop: spacing.lg, marginBottom: spacing.sm },
+  // v3.230 A7-1: 추천코드 적용 안내 칩
+  refChip: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border.accent,
+    padding: spacing.md, marginTop: spacing.md,
+  },
   consentUrlBox: {
     backgroundColor: colors.bg.surface1, borderRadius: radius.md, padding: spacing.md,
     borderWidth: 1, borderColor: colors.border.subtle, marginBottom: spacing.lg,

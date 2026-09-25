@@ -25,6 +25,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { getFaceVerifyStatus } from '../services/faceVerifyService';
+import { faceIdentityRoute } from '../utils/identityGate';
 import GenerationJobCard from '../components/GenerationJobCard';
 import { useActiveArtistJob, useUserArtistJobs } from '../stores/generationJobStore';
 import { refreshRecoverable, ensureServerCapability } from '../services/generationTracker';
@@ -565,6 +566,24 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setStep('welcome');
   };
 
+  // ── 사진 확정 + 얼굴인증 동의 선진행(v3.163) ─────
+  // v3.230: D10(본인인증 조기 안내)은 대표 지시로 취소 — 본인인증 요구·유도 없음.
+  // 사진은 즉시 확정하고, 실사면 얼굴 인증 진행 가능(faceIdentityRoute='proceed' — 서버 S3 identity_required:false
+  // 또는 인증된 계정)+미동의 계정만 동의 화면(consentOnly)으로 보낸다
+  // (best-effort: 조회 실패해도 입력 흐름은 계속 — 생성 시점 서버 게이트가 후방 방어).
+  const acceptPhotoWithConsentPrecheck = (accept: () => void, where: 'pick' | 'reuse') => {
+    accept();
+    if (isVirtualMode) return;
+    getFaceVerifyStatus()
+      .then((st) => {
+        if (st?.enabled && faceIdentityRoute(st) === 'proceed' && st.consent_needed) {
+          console.info('[ArtistInput] 얼굴인증 동의 선진행 → FaceVerify(consentOnly)', { where });
+          (navigation as any).navigate('FaceVerify', { consentOnly: true });
+        }
+      })
+      .catch((err: any) => console.warn('[ArtistInput] face status 확인 실패(계속 진행)', err?.response?.status));
+  };
+
   // ── Photo pick → 사진 확약(MAIDOL v137) → 6단계 질문 시작 ─────
   const handlePickPhoto = async () => {
     try {
@@ -579,7 +598,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             { text: '취소', style: 'cancel' },
             {
               text: '확인했어요',
-              onPress: () => {
+              onPress: () => acceptPhotoWithConsentPrecheck(() => {
                 if (__DEV__) console.info('[ArtistInput] 사진 확약 완료', { name: file.name, isVirtualMode });
                 setPhotoUri(file.uri);
                 setPhotoName(file.name);
@@ -591,18 +610,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 resumeOrStartQuestioning(photoResume, false, true);
                 // v3.163(대표): 얼굴인증 수집·이용 동의는 "만들기" 클릭이 아니라 사진 업로드
                 // 시점에 미리 — 실사+본인인증 완료+미동의 사용자만 동의 화면(consentOnly)으로.
-                // best-effort: 상태 조회 실패해도 입력 흐름은 계속(생성 시점 게이트가 후방 방어).
-                if (!isVirtualMode) {
-                  getFaceVerifyStatus()
-                    .then((st) => {
-                      if (st?.enabled && st.is_verified && st.consent_needed) {
-                        console.info('[ArtistInput] 얼굴인증 동의 선진행 → FaceVerify(consentOnly)');
-                        (navigation as any).navigate('FaceVerify', { consentOnly: true });
-                      }
-                    })
-                    .catch((err: any) => console.warn('[ArtistInput] face status 확인 실패(계속 진행)', err?.response?.status));
-                }
-              },
+                // v3.230: 상태 조회는 acceptPhotoWithConsentPrecheck로 통합(동작 동일 — 사진 확정 후 조회).
+              }, 'pick'),
             },
           ]
         );
@@ -649,7 +658,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         { text: '취소', style: 'cancel' },
         {
           text: '확인했어요',
-          onPress: () => {
+          onPress: () => acceptPhotoWithConsentPrecheck(() => {
             console.info('[ArtistInput] 이전 사진 사용 확약', { kind: 'real' });
             setPhotoUri(null);
             setPhotoName('');
@@ -665,16 +674,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             });
             pushUser(REUSE_PHOTO_BUBBLE);
             resumeOrStartQuestioning(photoResume, false, true);
-            // 사진 업로드 경로와 같은 얼굴인증 동의 선진행(best-effort)
-            getFaceVerifyStatus()
-              .then((st) => {
-                if (st?.enabled && st.is_verified && st.consent_needed) {
-                  console.info('[ArtistInput] 얼굴인증 동의 선진행 → FaceVerify(consentOnly)');
-                  (navigation as any).navigate('FaceVerify', { consentOnly: true });
-                }
-              })
-              .catch((err: any) => console.warn('[ArtistInput] face status 확인 실패(계속 진행)', err?.response?.status));
-          },
+            // 사진 업로드 경로와 같은 얼굴인증 동의 선진행 — acceptPhotoWithConsentPrecheck가 처리
+          }, 'reuse'),
         },
       ]
     );

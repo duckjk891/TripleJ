@@ -9,6 +9,8 @@ export interface FaceVerifyStatus {
   enabled: boolean;
   mode: 'aws' | 'mock' | string;
   is_verified: boolean;
+  /** v3.230 S3: false = 본인인증 게이트 꺼짐(서버 IDENTITY_VERIFY_REQUIRED). 구서버는 키 없음 */
+  identity_required?: boolean;
   minor: boolean;
   consent_needed: boolean;
   guardian_needed: boolean;

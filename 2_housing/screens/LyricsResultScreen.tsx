@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/authStore';
 import { saveLyricsAsset } from '../services/lyricsService';
 import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 // v3.200: 창작 기록 계층 — 가사 버전 커밋(문서 §7.4: 진입 시 AI 초안, 에디터 닫기 시 수정본).
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 가사 편집·작곡 진행을 절대 막지 않는다.
 import { commitLyricsVersion } from '../services/creationLogService';
@@ -121,6 +122,20 @@ export default function LyricsResultScreen({ navigation }: Props) {
   // v3.118: 작사 디렉터 피로 게이트 중복 탭 방지
   const fatigueCheckingRef = useRef(false);
 
+  // v3.230 A5-2/A5-4: 다시 생성 ⭐ 차감 직전 확인 1회 — 휴식 게이트 뒤, 휴식 단축 해제 뒤에도 동일
+  const confirmingRef = useRef(false);
+  const confirmThenRegenerate = async (via: 'button' | 'fatigue-chain') => {
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+    try {
+      const ok = await confirmStarSpend({ source: 'LyricsResult', costKey: 'lyrics', action: '가사 다시 만들기' });
+      console.info('[LyricsResult] ⭐ 확인 결과', { via, ok });
+      if (ok) navigation.replace('LyricsLoading');
+    } finally {
+      confirmingRef.current = false;
+    }
+  };
+
   // v3.118: "다시 생성하기" — 작사 디렉터 휴식(쿨다운) 게이트 (대표 방침: 재생성 시 팝업)
   const handleRegenerate = async () => {
     // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
@@ -136,7 +151,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
           status,
           remainingSec: remain,
           director: 'lyricist',
-          onCleared: () => navigation.replace('LyricsLoading'),
+          onCleared: () => { void confirmThenRegenerate('fatigue-chain'); },
         });
         return;
       }
@@ -146,7 +161,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
     } finally {
       fatigueCheckingRef.current = false;
     }
-    navigation.replace('LyricsLoading');
+    await confirmThenRegenerate('button');
   };
 
   return (

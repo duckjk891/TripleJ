@@ -6508,3 +6508,240 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 6. **step 7·8(자유도·대중/실험) 미전송 UI**: 기본안 = 이번 범위 밖(기록). 전송으로 연결할지 질문을 없앨지는 후속에서 결정한다.
 
 규칙: 서버 수정은 server_staging_v3229에서만 한다(라이브 원본 pull + orig 보존 + 배포 직전 md5 재대조). 프로덕션 쓰기(scp·build·재생성·.env·소급 apply)는 사용자 승인·실행 뒤에 한다. main.py는 건드리지 않는다. 민감 정보는 플레이스홀더로 쓴다. 팝업은 showAlert, 표기는 MAIDOL, 이모지 금지(⭐ 예외), 이탈 권장 문구 금지, 과금 단정 금지. 코드 수정과 커밋은 이 계획이 승인된 뒤 team-dev 루프에서 한다.
+
+---
+
+# v3.230 (2026-09-25) — ① 아티스트 생성 중 뒤로가기 "별만 소모" ② 닉네임 변경 ③ 영상 디렉터 완료 후 결과 미표시 ④ 의상 필터 성별 오판 ⑤ ⭐ 소모 전 확인 팝업 누락 경로 ⑥ TOP100 선정 기준(멜론 대비) ⑦ 소셜 가입 추천코드 적립 안내
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD cded514, 앱 1.2.0 — 서버·웹·APK 모두 v3.228까지 반영, v3.229 서버 반영). 서버 = `<SSH_HOST>`(maidol-ec2) `/home/ubuntu/maidol/backend_9004/app`(git 아님, 이미지 베이크, 컨테이너 `maidol-app` 2026-09-24 23:26Z 재기동). 분석용 원본 = `/private/tmp/server_staging_v3230/orig/`(routes·services·models·config·database 다운로드, 서버 쓰기 0). DB 조회 스크립트 = `/private/tmp/server_staging_v3230/q*.py`(전부 읽기 전용 — find/count/aggregate/stat 만).
+- 이번 세션은 컨테이너 내 Mongo·Postgres·Redis·MinIO **읽기 조회가 허용됐다**(v3.229와 달리). 출처 표기: [P]=planner 실측(코드 file:line / DB / 로그), [E]=planner가 띄운 Explore 서브에이전트 실측(핵심 줄은 [P]가 재확인한 것만 "확정"으로 씀).
+- 로그 보존 범위: 컨테이너 로그는 2026-09-24 ~10시(UTC) 이후만 남아 있다(`maidol-app_pre_v3228_*.log` → `pre_v3229_*.log` → 현 컨테이너). 그 이전은 Mongo `point_events`·`character_jobs`·`frontend_errors`(앱 error 레벨 원격 로그)로 대신 추적했다.
+
+사용자 요청 원문:
+1. "캐릭터만들려고 별소모했는데 실수로 뒤로가기하니까 별만소모됐다."
+2. "닉네임바꾸기 기능 추가"
+3. "영상생성단계다했는데 안나옴경우 있음"
+4. "아티스트 생성할때 앞에 여자캐릭터로 만든 이력이 있으면 현재들어간 얼굴이미지가 남자여도 의상필터가 여자로됨"
+5. "별 소모되기 전에 팝업이 안뜨는 과정이 있는지"
+6. "top100 선정 기준이 플레이수, 하트수 말고 다른게 있어? 내가 내 곡 다운로드 받는건 여기에 포함 안되어야해. 로컬에 멜론의 top100 선정방식이 있다고 하던데 이걸 참고해서 지금 잘 되어있는지 봐봐."
+7. "구글이나 카카오로 가입했을때 추천코드로 별이 쌓이긴 하는데 넣는 칸이 없어서 쌓이는지 안쌓이는지 모르는 경우가 있을 것 같아서 추천코드로 가입해서 별을 받았다는 식으로 보여주면 좋겠어."
+
+현재 서버 파일 md5([P] 2026-09-25 00:31Z, 배포 직전 재대조 기준 — 다른 세션이 main.py·admin_*·analytics 를 수시 변경하므로 main.py 는 수정 대상 아님. main.py 는 00:36Z 에 다른 세션이 이미 변경함 `78ab7074…`):
+- routes/auth.py `931890e1317fd12305132d868d63d8cf`(mtime 09-24 04:20Z) · models/user.py `f127f33dfdd18f0eab8ba82a572c5be2`
+- routes/charts.py `31f3d78b198b8d3b02f1e3b42d638603`(mtime 09-24 23:26Z) · routes/tracks.py `3623fba367916b6757cfd9d6dc2a8225`(mtime 09-24 23:26Z) · services/chart_recovery.py `66b59ffc2c09490ab67afd8eb583b356`
+- (참고·무변경 예정) routes/character.py `a61f7865…` · routes/oauth.py `43f8d62e…` · routes/points.py `0d7bf5a4…` · services/points_service.py `3ad6a322…` · services/gen_jobs.py `d71d93c2…`
+
+## 0단계 Plan verification findings
+
+### 1. 아티스트 생성 ⭐ 소모 후 뒤로가기 → "별만 소모"
+
+#### 1-1. 서버 실측 — 최근 10일 `spend:character` 9건 전수 대조 [P] (q1·q2·q3)
+| 차감 시각(UTC) | user | job | 결과 | 소비(저장) |
+|---|---|---|---|---|
+| 09-23 12:36 | 18bd8131 | 6ab3c7b3… real | done 12:39:16 | 레거시 단일 doc(character_id 없음) `updated_at` 12:39:43 — 27초 뒤 저장(추정 확정) |
+| 09-23 14:22 | c3202520 | 6ab3e0b2… cartoon | done 14:24:28 | 레거시 단일 doc 14:28:24 저장(추정 확정) |
+| 09-24 06:21·06:24 | c19acda4 | 6ab4c16e·6ab4c22b | done | consumed save:create 09:10·09:26 (v3.227 원인 사건 — 이미 회수) |
+| 09-24 06:35 | 2f85f76c | 6ab4c49c… | done 06:36:44 | 새 아티스트 06:36:45 생성(레거시 추적 전 job) |
+| 09-24 06:55 | 2c6296a9 | 6ab4c969… | done 06:57:09 | 새 아티스트 06:57:09 생성 |
+| 09-24 09:14 | c19acda4 | 6ab4e9f5… | done | consumed save:create |
+| 09-24 13:23 · 16:29 | ea750ef6 | 6ab52444 · 6ab54feb | done | consumed save:create · save:update |
+- 결론: **v3.227 배포 이후 "캐릭터 ⭐10 차감 → 결과 유실·미환불" 사례는 0건(확정)**. 모든 job 이 done 이고 저장까지 이어졌다. 실패 job 이 없어 환불 누락도 없다.
+
+#### 1-2. "별만 소모"에 해당하는 실사례 — 슬롯 확장(⭐15) 후 생성 미완 [P]
+- **2f85f76c(구글 가입, 본인인증 없음)**: 09-24 08:59:51 `spend:extra_slot −15`(user_slots.extra_slots=1) → 09:03:25·14:08:25 `generate-sheet-async` **403 face_verification_required**(frontend_errors + 컨테이너 로그 `[face-verify] gate user=2f85f76c verified=False` → `status … verified=False consent=False`) → 얼굴 인증 기록 없음(Postgres `face_photo_verifications` 0행) → 두 번째 아티스트 0. 로그상 이후 `[ArtistV212] list … slots=1/2` — **슬롯은 남아 있다**(⭐은 영구 슬롯으로 전환됨, 사용자는 "별만 나갔다"고 인식할 수 있는 상태).
+  - 원인 경로(확정): 실사 사진 아티스트는 서버가 **과금 전** 403으로 막고, 앱은 FaceVerify 로 `replace` 한다(ArtistLoadingScreen.tsx:522-528). 본인인증(is_verified) 미완 계정은 `need_identity` 단계(FaceVerifyScreen.tsx:110-117)에서 막히고, 닫으면 `failApi('얼굴 인증이 필요해 생성을 중단했어요…')` 후 goBack(:236-244). **사진·질문·꾸미기를 다 끝낸 뒤에야** 본인인증 필요 사실을 알게 된다.
+- 18bd8131: 09-23 12:33:16 `extra_slot −15` 직후 12:33:18 generate 409 → 12:35:23 403 → 12:35:58 얼굴 인증 → 12:36:03 생성(레거시 doc 갱신). 레거시 doc 은 시트 2개가 슬롯 2로 환산돼(slots_service.py:22-37) 확장 후에도 2/2일 수 있다 → 409 가 slot_limit 였는지는 로그 소실로 **미확정**(추정).
+
+#### 1-3. 앱 코드 — 생성 요청·이탈 동작 [P 재확인]
+- 요청 시점: ArtistCody "이 옷으로 만들기" → 스택 `[Map, ArtistLoading]` reset(ArtistCodyScreen.tsx:697-711) → **ArtistLoading 마운트 effect 안에서** 사진/blob 준비·`/character/me`·능력 확인 후 POST(ArtistLoadingScreen.tsx:216-585, POST :308).
+- 이탈 처리: 앱 전체에 `BackHandler`·`beforeRemove`·`popstate` 처리 **없음**([E], grep 재확인). Android 하드웨어 back·웹 브라우저 back·Studio 탭 재탭이 모두 화면을 즉시 pop 한다. AbortController 없음 — 언마운트는 `cancelled=true`만(:583).
+- 추적 등록: job_id 수신 직후 **cancelled 여부와 무관하게** `registerArtistJob`(:316, outfit :402) → AsyncStorage `maibol-generation-jobs-v1` 영속 → 전역 추적기가 폴링·도착 알림(v3.227). 즉 **POST 이후 뒤로가기는 결과가 살아남는다**(확정).
+- 남은 틈(확정):
+  - (a) **준비 단계(POST 전) 이탈** — 이미 화면을 떠났는데도 POST 가 나가 ⭐10이 차감된다(사용자 인지 밖 과금). 결과는 추적기로 오지만 "뒤로 갔는데 별이 빠졌다"로 보인다.
+  - (b) 진행 화면 문구는 "작업이 끝날 때까지 이 화면을 벗어나지 마세요"(:661·:678, 사용자 결정 ea39dac 유지)인데, 실수로 뒤로가기 했을 때 **아무 안내도 없다** → 사용자는 "별만 나갔다"고 판단한다.
+  - (c) 실사 아티스트 본인인증 요구를 입력 **마지막**에야 알린다(1-2).
+  - (d) 슬롯 확장 직후 생성을 못 끝내면 "빈 슬롯이 남아 있다"는 안내가 없다(MyArtistsScreen.tsx:295-330, 확장 확인 문구에 "영구 확장"만).
+- 부수(같은 계열, 확정): **MusicLoadingScreen.tsx:341 `if (!isMounted) return;` 이 `registerGenJob`(:351)보다 앞** — 작곡 POST 응답 전에 화면을 떠나면 로컬 추적 등록이 빠진다(서버 원장·다음 기동 회수로만 복구). 작사(LyricsLoadingScreen.tsx:164)·커버(:846)·영상(:828)은 POST 전 등록이라 문제없음.
+
+#### 1-4. v3.227 추적기가 왜 "못 살렸나"
+- 서버 대조상 v3.227 이후 캐릭터 결과 유실은 없다 → 추적기는 **살렸다**. 사용자가 본 "별만 소모"는 ① 슬롯 확장 ⭐15 후 403·이탈(1-2, 슬롯은 보존) 또는 ② 이탈 직후 안내 부재로 결과 도착 전 "손실"로 판단한 경우(1-3 b)로 본다(추정 — 제보자·시각 미특정).
+
+### 2. 닉네임 변경 [P]
+- 앱: 설정의 "닉네임 변경" 행은 "준비 중인 기능입니다" 스텁(SettingsScreen.tsx:519-525). `ProfilePatch`(stores/authStore.ts:26-35)에 nickname 없음. `updateProfile` = PATCH `/auth/me/profile`(authStore.ts:127-150). 닉네임은 `useAuthStore.user` 에만 있고(비영속, /auth/me 로 재구성), 표시처: SettingsScreen.tsx:486·492·500·503·762(기본 기획사명 :168), MyMusicScreen.tsx:629·679-680, components/common/TrackComments.tsx:171 [E].
+- 서버: `PATCH /api/auth/me/profile`(routes/auth.py:584-700)은 존재하나 `ProfileUpdate`(models/user.py:204-212)에 **nickname 필드 없음** → 보내도 조용히 무시된다(pydantic 기본 ignore).
+- 규칙 현황: 가입 시 예약 닉네임(maidol_official)만 차단(auth.py:156, services/official.py:100-107). **길이·중복 검사 없음**, Postgres `users.nickname` 에 유니크 인덱스 없음(pg_indexes 실측), 현재 중복 닉네임 1그룹 존재, 길이 분포 2~15자.
+- 세션: `get_current_user` 는 Redis `session:{user_id}` JSON(닉네임 포함)을 current_user 로 쓴다(app/auth.py:58-67). 업로드·피드·댓글은 `current_user.get("nickname")` 을 **복사 저장**(feeds.py:329·861, tracks.py:2940 등) → 변경 시 **세션 갱신 필수**.
+- 비정규화 사본(Mongo 실측 건수): tracks.uploader_nickname 34 · feeds.author_nickname 4 · 댓글 author_nickname 2 · notifications.actor_nickname 78. 차트·곡 직렬화의 `agency_name`/`artist_name` 폴백이 uploader_nickname(charts.py:53-56) → 곡 표기에 직접 노출된다. ES `artist` 필드도 uploader_nickname 포함(search_service.py:207).
+- 참고 패턴: 탈퇴 시 닉네임 치환(auth.py:1186-1240 — PG + tracks.uploader_nickname), v3.229 `services/artist_name_sync.py`(write-through·캐시 삭제·ES 백그라운드 재색인·멱등).
+- 문서 `2_housing/백엔드_요청_프로필수정.md`(04-27, 우선순위 낮음): nickname 2~20자·`409 nickname_taken` 제안 — 미구현.
+
+### 3. 영상 디렉터 단계 완료 후 영상 미표시 [P]
+- 실사례(확정): **2f85f76c 09-24 07:00:28** `spend:share_video −5`(sns·center·circle·line·색 배경 조합) → MinIO `share/v8/6ab4c6d9…_c54410f3.mp4` **07:02:47 생성 완료(5.9MB, 존재 확인)** → 앱 `frontend_errors` 07:03:32 `[VideoDirector] share-video 실패 … Network Error`(응답 유실) → 07:04:11 재시도 **429**(완성 시 video 디렉터 피로가 적립돼 쿨다운) → 사용자는 영상을 한 번도 못 봄. v3.228 잔액 대사에서 같은 계정 정황이 이미 기록됨(REPORT.md:3090-3095).
+- 같은 계열 과거 사례: c19acda4 09-22 09:24 Network Error, 09-23 04:29·04:35·04:50(timeout 300s) — 09-23 3건은 ffmpeg 300s 초과 실패로 **환불 완료**(point_events refund:share_video 3건). v3.215 에서 ffmpeg 600s·정적 사전 합성으로 해소.
+- 현행(v3.228, 09-24 16:00Z 배포 이후): POST 전 `X-Gen-Request-Id` 원장 등록(VideoDirectorScreen.tsx:820-828) → 응답 없음·게이트웨이 오류는 "확인 중"으로 두고 원장·파일 조회로 회수(:870-893, `VIDEO_VERIFY_WINDOW_MS` 11분 :99, 추적기 cap 25분 services/genJobs/video.ts:13). **v3.228 이후 영상 생성 0건**(gen_jobs kind=video 0, 로그 POST 1건=09-24 12:44 성공) → 현행 경로의 실전 검증은 아직 없다.
+- 남은 틈:
+  - (a) **이미 완성됐지만 못 본 영상(07:00 건)** 은 현재 앱에서 다시 열 길이 없다. 같은 조합을 다시 요청하면 캐시 히트(무과금)지만 사용자는 조합을 기억 못 한다. 서버 보관함 API `GET /api/tracks/my/share-videos`·object 프록시(tracks.py:3025-3097)는 살아 있으나 **v3.187 대표 결정으로 앱 보관함 제거**(VideoDirectorScreen.tsx:5).
+  - (b) nginx `proxy_read_timeout 320s` < ffmpeg 상한 600s + heavy 슬롯 대기(무제한) — 긴 곡·동시 인코딩 시 응답 유실은 구조적으로 계속 생긴다(현행은 회수 경로로 흡수).
+  - (c) 구앱(1.2.0 미만) 사용자는 v3.228 회수 경로가 없다(업데이트 외 해법 없음 — 기록).
+  - (d) 완성 시점에 피로가 적립되므로, 응답을 못 받은 사용자의 "재시도"는 429 로 막힌다(구앱 한정 — 현행은 확인 중 상태로 재시도 자체를 막음).
+
+### 4. 의상 필터 성별 오판 [P 재확인]
+- 필터 성별 결정식(ArtistCodyScreen.tsx:187-191): `serverGender ?? apiResult.gender ?? pendingGender ?? profileGender`.
+- `serverGender` 는 진입 시 `listArtists()` 에서 **대상 아티스트가 없으면(신규 생성) "현재 kind 의 기본 아티스트 → 성별 있는 아티스트 → 아무 기본 → 아무나"** 를 골라 그 성별을 쓴다(:200-228). 신규 생성은 `targetCharacterId=null`(ArtistInputScreen.tsx:459)이라 **기존(예: 여자) 아티스트 성별이 1순위로 박힌다**. 사용자가 방금 답한 성별(`pendingGender`, ArtistInputScreen.tsx:830-834)은 무시된다 → **원인 확정**.
+- `apiResult.gender` 는 항상 비어 있는 죽은 폴백(characterTaskStore.ts:39-42). `profileGender`(AsyncStorage `aidol-artist-profile`, 슬롯별)도 이전 값 잔존 가능.
+- 얼굴 사진으로 성별을 판별하는 코드는 **없다**(서버·앱 모두). "얼굴이 남자여도"는 사진이 아니라 **성별 질문 답/기존 아티스트**가 필터를 정한다는 뜻.
+- 사용자가 바꿀 수단: 필터 켜기/끄기만("◯◯용만"↔"전체 보기", components/cody/CodyFilterBar.tsx:149-160), 남/여 전환 불가. 피커 열 때마다 ON 복귀(:244·:269). 적용 대상 상의/하의/신발(utils/codyCatalog.ts:20), 판정 `genderMatches`(:51-57), `normalizeArtistGender` 는 '남…/여…'로 시작할 때만 인식(:62-68).
+
+### 5. ⭐ 소모 전 확인 팝업 누락 경로 [E 전수 + P 재확인·DB 증거]
+서버 차감 지점(전수, grep `spend_points(`): character.py:897·1135·1792·2066(character 10) · generate.py:669(lyrics 5)·811·1015(compose 15) · upload.py:425·albums.py:695(cover 5) · upload.py:1120(cover_refine 5) · tracks.py:2616(share_video 5)·3286(instrumental 5) · voice_clone.py:232(voice_clone 5) · fatigue.py:165(skip 2/3/5) · points.py:43(/spend: hire_director 10·extra_slot 15) · admin_points.py:320(관리자).
+
+| # | 기능(⭐) | 트리거 | 차감 호출 | 차감 직전 확인 | 누락·우회 경로 |
+|---|---|---|---|---|---|
+| 1 | 새 아티스트(10) | ArtistCody "이 옷으로 만들기 ⭐N"(:442·:958) | ArtistLoading :308 | **부분** — MyArtists "＋추가" 진입 때만 ConfirmDialog(MyArtistsScreen.tsx:506-512) | **첫 아티스트**(Map→Dialogue→ArtistInput, DialogueScreen.tsx:184·MapScreen.tsx:817-827), 초안 이어하기(directorResume.ts:130-140), "이어서 만들기"(ArtistInput :899-903), 빈 상태 버튼(ArtistResult :833), **FaceVerify 완료 "확인" → 즉시 재요청**(FaceVerifyScreen.tsx:68-69) |
+| 2 | 아티스트 다시 만들기(10) | ArtistResult :665 | 동일 | 있음(:1236-1243·:1246-1260) | — |
+| 3 | 옷 갈아입히기(10) | ArtistResult :580-608 → Cody | ArtistLoading :395 | **없음**(버튼 라벨만) | 항상 |
+| 4 | 슬롯 확장(15) | MyArtists :306·:321 | characterService.ts:175 | 있음(:518-521) | ArtistLoading :539-545·generationTracker.ts:470-476 은 "⭐15로 확장" 하드코딩 |
+| 5 | 작사(5) | LyricsPromptReview :299, 다시 생성 LyricsResult :249 | LyricsLoading :180 | **없음**(비용 표기도 없음) | 항상 |
+| 6 | 작곡(15) | MusicGeneration :1432 | MusicLoading :336 | **없음**(비용 표기 없음) | 항상 |
+| 7 | Inst(5) | MyMusic 메뉴 | MyMusic :481 | 있음(:467-477) | 비용 하드코딩(trackService.ts:158) |
+| 8 | 커버 생성(5) | CoverGeneration :2499·:2513·:2520 | :266 | **없음** | 스타일 답 재편집(:1478) |
+| 9 | 커버 미세조정(5) | :2216·:2220 | :1875 | **조건부**(:1848-1856, refineCost 숫자일 때만) | /points/costs 실패·로딩 중이면 무확인 차감(:491-502) |
+| 10 | 영상(5) | VideoDirector :1358 | :837 | **조건부**(:798-806) | videoCost 미수신 시 무확인 |
+| 11 | 보이스(5) | VoiceCloneWizard :715 | :461 | **조건부**(:441-448) | 비용 미수신 시 무확인(구서버 폴백 :451) |
+| 12 | 유료 디렉터 영입(10) | DirectorLineup :128 | :76 `/points/spend` | **없음**, 연타 가드 없음 | 항상(실사용 0건 — point_events hire 0) |
+| 13 | 휴식 단축(2~5) | fatigueGate.ts:155-156 버튼 | fatigueService.ts:73 | 버튼 자체가 확인 | 아래 연쇄 |
+- **연쇄 과금(확정, DB 증거)**: 휴식 단축 후 "휴식 종료 → 확인" 또는 409(이미 해제)가 `onCleared` 를 부르고(fatigueGate.ts:69-81), 호출 화면은 **확인 없이 곧바로 생성 요청**을 보낸다(MusicLoading :404-407, LyricsLoading :250-253, CoverGeneration :739-743·:1688, MusicGeneration :1419, LyricsPromptReview :93, LyricsResult :139). Mongo 실측: 마지막 휴식 단축 후 **3초 이내 생성 차감 8건**(cover 3·character 2·lyrics 1·compose 1·instrumental 1; 예 2f85f76c 09-24 09:16:26 skip → 09:16:27 compose −15).
+- **휴식 단축 연타(확정)**: 단축 후 같은 다이얼로그가 같은 위치 버튼으로 즉시 재표시(fatigueGate.ts:69-73) → 15초 안 3회 이상 연속 단축 **12묶음**, 최대 8회 3.5초에 ⭐40(2f85f76c 09-24 09:16:22). `fatigue_skip` 은 전체 차감 이벤트 1위(66건·⭐182).
+- 하드코딩 비용(드리프트 위험): ArtistLoading :534-551·:564, generationTracker.ts:469-481, trackService.ts:158, DirectorLineup :80, "재학습 ⭐5"(MusicGeneration :1004·:1565, VoiceCloneWizard :822).
+- 웹/네이티브 차이·"다시 묻지 않기" 플래그: 없음.
+
+### 6. TOP100 선정 기준 — 멜론 자료 대비 [P]
+- 자료: `/Users/pearl/TripleJ/0_platform_music/melonChart.md`(2026-04-07 조사) — 순 청취자(1인 1회)·다운로드 순이용자(최초 1회, 재다운로드 제외), 음원점수 = 스트리밍×0.4 + 다운로드×0.6, TOP100 주간 = 24h×50% + 1h×50%, 심야(01~07) = 24h×100%, 음소거·스킵·일시정지 제외, 신곡 부스트·구곡 감쇠 없음.
+- 현행 산정(charts.py:1-13·:415-473) — **재생수(play_count)·하트(좋아요)는 순위에 쓰지 않는다**:
+  - 점수 = (로그인 사용자 순 청취자 수)×0.4 + (순 다운로더 수)×0.6. 주간 08~24시 = "24h"×0.5 + 1h×0.5, 01~07시 = "24h"만.
+  - 순 청취자 = `/charts/record-play` 에서 로그인 사용자만 Redis 셋 `chart:listeners:{hourly|daily|weekly|monthly}:…` 에 SADD(charts.py:183-288). 앱은 곡의 **70% 재생 도달 시 세션당 1회** 기록(services/playRecord.ts:62-112). v3.229 에서 30초 재호출 중복 방지 추가(:147-181). 비로그인 재생은 play_count 만 올리고 차트 제외.
+  - 순 다운로더 = `POST /tracks/download/{id}` 에서 SADD(tracks.py:2335-2424) — 기간별 1인 1회.
+  - 차트 데이터가 비면 **총 재생수(play_count, 비로그인·본인 포함) 순 폴백**(charts.py:435-437·:537-538·:558-563).
+  - 비공개 곡은 응답 단계에서 제외(:120).
+- **"내 곡 다운로드 제외" 요구 — 미충족(확정)**: download_track 은 업로더 본인 여부를 보지 않고 차트 셋에 넣는다(tracks.py:2352-2389). 게다가 앱에서 다운로드 진입점은 **내 곡(MyMusic)뿐**(MyMusicScreen.tsx:314·:550, TrackShareDownloadSheet.tsx:77) → 가중치 60% 인 다운로드 성분은 구조상 **100% 본인 다운로드**로만 채워진다. (실측: 30일 download_logs 1건 — 영향은 아직 작음)
+- 본인 재생: 역시 제외 없음. 30일 play_logs 155건 중 **본인 곡 재생 65건(42%)**, 5명.
+- 기타 갭:
+  - "24h" 가 **롤링 24시간이 아니라 KST 달력 일(00:00 리셋)**(`_time_keys` daily=YYYYMMDD, charts.py:68-77). 자정 직후·심야(01~07, 24h만 사용)엔 당일 0시 이후 데이터만 남아 순위가 비거나 폴백(총 재생수)으로 급변한다. 시간 셋 TTL 2h(:243)라 롤링 계산 불가.
+  - 동점 처리 없음(Redis set 순서) — 소규모 데이터에서 0.4점 동점 다수 → 순위가 요청마다 흔들릴 수 있다(오늘 일간 실측: 상위 15곡 중 14곡이 0.4점 동점).
+  - 음소거 재생 제외·기기/IP 이상 탐지·본인인증 가입 강제는 없음(본인인증은 스토어 일정 연동 — 범위 밖 기록).
+  - 멜론 대비 이미 충족: 1인 1회(기간별 셋), 0.4/0.6, 50:50, 심야 24h, 로그인만 집계, 30일 HOT100.
+
+### 7. 소셜 가입 추천코드 적립 안내 [P + E]
+- 서버(동작 확정): 초대 링크 → `app.maidol.ai.kr?ref=CODE`(referral.py:100-126) → 앱 `SocialLoginButtons` 가 `ref=` 를 `/api/auth/oauth/{provider}/login` 에 부착 → state 에 동봉(oauth.py:77-80·:147) → 콜백 신규 가입 시 `signup_bonus 50`·`beta_signup_bonus 50`·유효 코드면 `referred_by` 기록 + `referral_inviter 50`/`referral_joiner 50`(oauth.py:208-243). 리다이렉트는 `#token=` 만 전달(:262-265) — **가입 여부·추천 적용 결과를 앱에 알리지 않는다**.
+- 실측: 09-24 05:36 이후 소셜 가입 11건 **전원 referred + referral_joiner ⭐50 적립**(q12). 적립은 정상, "보이지 않는 것"이 문제(확정).
+- 이메일 가입: 폼에 "추천코드 (선택)"(components/auth/AuthPanel.tsx:572-580, 미성년 숨김), 응답 `referral.applied`(auth.py:307-310) — 앱은 이 값을 **쓰지 않는다**(authStore.ts:108-115 → 차트 탭 이동만).
+- 앱: `?ref=` 는 AuthPanel 모듈 로드 시 1회 읽어 폼 기본값으로만 씀(AuthPanel.tsx:40-49·:90) — **저장 안 함**(새로고침·재방문 시 유실). 로그인 모드 소셜 버튼에는 코드 입력칸 없음(:350). 네이티브 초대 딥링크 없음(App.tsx:581-590). 가입 후 안내 팝업·알림 없음. **⭐ 내역 화면 없음**(pointsStore 잔액만; genJobs/index.ts:114·120 오류 문구가 존재하지 않는 "별 사용 내역"을 안내). 서버 `GET /api/points/history`(points.py:90-110)는 있음 — action·amount·created_at 반환.
+
+## 항목별 원인/갭 요약
+| # | 판정 | 원인 |
+|---|---|---|
+| 1 | v3.227 이후 캐릭터 결과 유실 0건(확정). 제보 사례는 슬롯 ⭐15 후 본인인증 403·이탈(확정 1건) 또는 이탈 무안내로 인한 손실 오인(추정) | POST 전 이탈해도 과금 진행, 뒤로가기 무안내, 본인인증 요구를 입력 마지막에 알림, 빈 슬롯 안내 없음 |
+| 2 | 기능 없음(확정) | ProfileUpdate 에 nickname 없음, 앱 스텁, 사본 5종 전파·세션 갱신 필요 |
+| 3 | 09-24 07:00 응답 유실 + 재시도 429(확정, v3.228 이전). 현행은 회수 경로 존재·실전 미검증 | 완성됐지만 못 본 영상 재열람 길 없음, nginx 320s < 인코딩 상한 |
+| 4 | 확정 | 신규 생성에서도 기존 아티스트 성별이 1순위, 사용자 답 무시, 남/여 전환 불가 |
+| 5 | 누락 6경로 + 조건부 3 + 연쇄 7지점(확정, DB 증거) | 화면별 개별 구현, fail-open, 휴식 단축 onCleared 가 확인 없이 생성 |
+| 6 | 본인 다운로드 포함(확정), 본인 재생 포함, 24h 가 달력 일 | download/record-play 에 소유자 판정 없음, `_time_keys` daily |
+| 7 | 적립 정상·안내 부재(확정) | 콜백이 결과를 안 넘김, 앱이 register 응답·history 를 안 씀, ref 비영속 |
+
+## 변경 매트릭스
+### 서버 (staging `/private/tmp/server_staging_v3230/` — orig 보존, 수정본 `new/`, main.py 무변경)
+| ID | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1 | models/user.py | `ProfileUpdate.nickname: Optional[str] = Field(None, max_length=30)` | — |
+| S1 | routes/auth.py `update_profile` | nickname 전달 시: strip → 길이(기본 2~15) → 제어문자·앞뒤공백·연속공백 정리 → `is_reserved_nickname` → 중복(`lower(trim(nickname))`, 본인·탈퇴 제외) 409 `{"error":"nickname_taken"}` / 400 `{"error":"nickname_invalid","message":…}` → UPDATE 후 **Redis `session:{uid}` 의 nickname 갱신**(TTL 유지) → `nickname_sync.sync_user_nickname()` 호출. 응답에 `nickname_synced` 요약(건수). 값 원문 로그 금지(길이만) | `[NicknameChange]` |
+| S1 | services/nickname_sync.py(신규) | artist_name_sync 패턴 복제: `tracks.uploader_nickname`(uploader_id) · `feeds.author_nickname`(author_id) · 피드/곡 댓글 `author_nickname`(author_id — 컬렉션명 backend-dev 확인) update_many(필터 "이미 새 이름 아닌 것" 멱등) · 영향 곡 `cache:track:*`·`cache:chart:*` 삭제 · ES `artist` 재색인(background) · notifications.actor_nickname 은 기본 유지(결정 D3). never raise, errors 단계명만 | `[NicknameSync]` |
+| S2 | routes/tracks.py `download_track` | `uploader_id == user_id` 이면 차트 셋(SADD) **생략**, download_logs 에 `is_owner: true` 기록, download_count 는 현행 유지(결정 D5) | `[ChartOwnerExclude] download` |
+| S2 | routes/charts.py `record_play` | (결정 D5 기본=적용) 소유자 재생은 listener 셋 생략(play_count·play_logs·포인트는 현행). 소유자 조회는 `tracks.find_one({_id},{uploader_id})` 1회(+ Redis `track:owner:{id}` 1h 캐시 선택) | `[ChartOwnerExclude] play` |
+| S2 | routes/charts.py `_calc_top100` 등 | (D5) 롤링 24h: hourly 셋 TTL 2h→26h, 24h 순 청취자 = 최근 24개 hourly 셋 SUNION 카디널리티(다운로드 동일). 동점 정렬 = score → listeners_1h → listeners_24h → track_id(결정적). 빈 차트 폴백 = weekly 점수 → 그래도 없으면 play_count(현행) | `[ChartCalc]` |
+| S2 | services/chart_recovery.py | 재구성 시 소유자 이벤트 제외(`is_owner` 또는 uploader 조회), hourly 24개 재구성(롤링 채택 시) | `[ChartRecovery]` |
+- 서버 변경 없음: 항목 1·3·4·5·7(앱만으로 해결 — 3은 기존 `GET /tracks/my/share-videos`·object 프록시 재사용, 7은 기존 `GET /points/history` 재사용).
+- 금지 준수: main.py·admin_*·analytics 무변경. 새 라우터 파일 없음(main.py include 불요).
+
+### 앱 (2_housing)
+| ID | 파일 | 변경 | 추적자 |
+|---|---|---|---|
+| A1-1 | hooks/useGenerationLeaveGuard.ts(신규) + ArtistLoadingScreen.tsx (+ MusicLoading·LyricsLoading·InstLoading — D1) | 진행 중 `beforeRemove`(헤더·탭·웹 브라우저 back 포함) + Android `BackHandler` 가로채기 → showAlert("아직 만드는 중이에요", "나가도 만들던 결과는 완성되면 작업실에서 알려드려요.", [계속 기다리기 / 나가기]). 원칙 문구 "작업이 끝날 때까지 이 화면을 벗어나지 마세요"는 유지(이탈 권장 문구·버튼 추가 금지 — 가드는 사용자가 이미 나가려 할 때만) | `[LeaveGuard]` |
+| A1-2 | ArtistLoadingScreen.tsx | POST 직전(:308 앞) `cancelled` 재확인 → 이미 떠났으면 **요청 안 보냄**(무과금) + 초안 보존(failApi 문구 "시작 전에 나가서 만들지 않았어요. ⭐은 쓰이지 않았어요"). outfit(:395)도 동일 | `[ArtistLoading]` |
+| A1-3 | ArtistInputScreen.tsx(실사 사진 선택 직후) · MyArtistsScreen.tsx(슬롯 확장 확인) | `face-verify/status` 로 본인인증 미완이면 사진 단계에서 즉시 showAlert(실사는 본인인증 필요·가상 아티스트는 바로 가능). 슬롯 확장 성공 문구에 "빈 슬롯은 계속 남아 있어요" 추가, MyArtists 에 "빈 슬롯 N개" 표시 | `[ArtistInput]` `[MyArtists]` |
+| A1-4 | MusicLoadingScreen.tsx | `registerGenJob` 을 `if (!isMounted) return` 앞(또는 POST 전 rid 로 선등록)으로 이동 | `[GenJob:music]` |
+| A2 | stores/authStore.ts, screens/SettingsScreen.tsx, components/settings/NicknameEditModal.tsx(신규) | ProfilePatch.nickname 추가, 스텁 행 → 앱 내 모달(현재값·글자수 카운터·규칙 안내), 409 "이미 쓰는 닉네임이에요"/400 메시지 매핑, 성공 시 user 갱신 + showAlert("닉네임을 바꿨어요", "내 곡·피드·댓글 표기도 새 닉네임으로 바뀌어요.") | `[NicknameChange]` |
+| A3 | VideoDirectorScreen.tsx (+ services/trackService.ts 조회 함수) | 곡 선택 직후 `GET /tracks/my/share-videos` 중 그 곡 항목이 있으면 "지난번 만든 영상 보기(무료)" 칩 → object 프록시 URL 로 결과 화면(showVideoDone) — 보관함 탭 재도입 아님(D9). v3.228 회수 경로는 유지 | `[VideoDirector] 지난 영상` |
+| A4 | ArtistCodyScreen.tsx, components/cody/CodyFilterBar.tsx, utils/codyCatalog.ts | 신규 생성(`isSheetMode && !targetCharacterId`)은 `pendingGender` 만 사용(서버·프로필 폴백 제거), 대상 아티스트가 있을 때만 서버 성별. 필터 바에 남/여/전체 전환 칩, 답 없음=전체. `normalizeArtistGender` 에 소년/소녀·male/female·boy/girl 등 추가. 죽은 `apiResult.gender` 폴백 제거 | `[ArtistCody] 성별 필터` |
+| A5-1 | utils/starSpendConfirm.ts(신규) + services/pointCosts.ts(신규 — `/points/costs` 캐시·폴백 표) | `confirmStarSpend({title, cost, balance})` → showAlert([취소]/[⭐N 사용하기]), 비용 미수신이면 폴백 표로 **반드시 확인**(fail-closed) | `[StarConfirm]` |
+| A5-2 | ArtistCodyScreen(시트·옷 갈아입히기 공통 "이 옷으로 만들기"), LyricsPromptReview·LyricsResult(다시 생성), MusicGeneration(생성 시작), CoverGeneration(생성·스타일 재편집), DirectorLineup(영입 + 연타 가드), FaceVerify 완료 다이얼로그([취소]/[⭐N 사용하고 이어서 만들기]) | 누락 6경로 적용. MyArtists "＋추가" 진입 확인은 비용 없는 안내로 전환(차감 확인은 Cody 1회로 일원화 — D6) | `[StarConfirm]` |
+| A5-3 | CoverGeneration refine·VideoDirector·VoiceCloneWizard | 조건부 확인 → fail-closed(폴백 비용) | `[StarConfirm]` |
+| A5-4 | 휴식 단축 onCleared 연쇄 7지점(MusicLoading :404, LyricsLoading :250, CoverGeneration :739·:1688, MusicGeneration :1419, LyricsPromptReview :93, LyricsResult :139) | onCleared → 생성 직전 확인(A5-1)을 거치도록 변경. 로딩 화면(이미 확인을 받은 요청의 재시도)은 "휴식이 끝났어요. ⭐N을 사용해 이어서 만들까요?" 1회 | `[StarConfirm] fatigue-chain` |
+| A5-5 | utils/fatigueGate.ts | 단축 후 재표시 다이얼로그 버튼 0.8초 잠금(연타 흡수), 본문에 "이번에 단축에 ⭐N 사용" 누적 표시 | `[fatigue:*]` |
+| A5-6 | 하드코딩 비용 6곳 | pointCosts 조회로 교체 | — |
+| A6 | screens/ChartScreen.tsx | TOP100 탭 "차트 기준" 안내(showAlert): 로그인 사용자 순 청취자·순 다운로더, 곡 70% 이상 재생 1회, 본인 곡 재생·다운로드 제외, 좋아요·총 재생수 미반영 (D5 결과에 맞춰 문구 확정) | `[Chart]` |
+| A7-1 | components/auth/AuthPanel.tsx, components/auth/SocialLoginButtons.tsx, utils/pendingReferral.ts(신규) | `?ref=` 를 안전 저장(web localStorage try/catch, 7일 TTL, 키 `maidol-pending-ref-v1`) → 가입·로그인 모드 모두 "추천코드 ○○○ 적용돼요 — 구글·카카오로 가입해도 ⭐50을 받아요" 칩 + 로그인 모드에 "추천코드가 있어요" 펼침 입력(소셜 신규 가입에만 적용 안내). 가입 확인 후 삭제 | `[ReferralPending]` |
+| A7-2 | utils/rewardNotice.ts(신규) + authStore 로그인/가입 직후·앱 복귀 훅 | `GET /points/history?limit=50` 에서 `signup_bonus`·`beta_signup_bonus`·`referral_joiner`·`referral_inviter`·`verify_bonus`·`profile_bonus` 중 **미확인 이벤트**(AsyncStorage `maidol-reward-seen-v1:{uid}`, 72시간 이내)를 모아 showAlert 1회: "가입 선물이 도착했어요 · 가입 보너스 ⭐50 · 베타 가입 추가 ⭐50 · 추천코드 가입 ⭐50". 추천인은 "친구가 내 추천코드로 가입했어요 ⭐50". 대기 코드가 있었는데 referral_joiner 가 없으면 "추천코드가 확인되지 않아 추천 보상은 적용되지 않았어요" | `[RewardNotice]` |
+| A7-3 | screens/StarHistoryScreen.tsx(신규, D8) + StarGuideModal "내역 보기" | `/points/history` 목록(한글 라벨 표: 가입 보너스·추천 가입·친구 초대·재생 적립·작곡 사용·환불 …). genJobs/index.ts:114·120 "별 사용 내역" 문구를 실제 화면명과 일치 | `[StarHistory]` |
+
+## 역할 분담
+- **app-dev 1조(과금·이탈)**: A1-1~A1-4, A5-1~A5-6. 선행: A5-1(공통 유틸) → 나머지.
+- **app-dev 2조(프로필·표시)**: A2, A3, A4, A6, A7-1~A7-3. A2 는 S1 계약(아래)만 보고 병행 가능.
+- **backend-dev**: S1(닉네임) → S2(차트). staging 에서만 수정, 로컬 스모크(pytest 또는 스크립트) 후 배포 패키지·md5 목록 제출. 배포는 사용자 승인 뒤.
+- S1 계약(앱 합의): `PATCH /api/auth/me/profile {nickname}` → 200 사용자 객체(nickname 갱신) + `nickname_synced:{tracks,feeds,comments}` / 409 `{"error":"nickname_taken"}` / 400 `{"error":"nickname_invalid","message":"…"}`. nickname 미전달 시 현행 동작 불변.
+
+## 회귀 위험
+- A1-1 `beforeRemove` 가 성공 후 자동 전환(ArtistLoading → ArtistResult replace, FaceVerify replace, 슬롯 409 goBack)까지 막으면 흐름이 멈춘다 → 가드는 "진행 중 + 사용자 발 액션(POP/GO_BACK/탭)"에만, 코드 발 replace/reset 은 통과. 웹 브라우저 back 은 URL 이 먼저 바뀌는 한계가 있어 확인 후 되돌림 동작 검증 필요.
+- A1-2 준비 단계 중단이 v3.227 추적(등록은 응답 후)과 충돌하지 않는지 — POST 를 안 보냈으면 등록도 없어야 함.
+- A4 재생성·옷 갈아입히기(대상 있음)는 서버 성별 유지 — 신규만 바뀌는지.
+- A5 확인 팝업 추가가 v3.228 중복 차단(busyRef·proceedingRef)·v3.229 디렉터 1탭 복귀(utils/directorResume.ts)·자동 재개(FaceVerify replace) 흐름과 이중 팝업/재진입을 만들지 않는지. 확인 취소 시 busy 해제·단계 롤백.
+- A5-4 휴식 단축 후 확인 팝업이 연속 다이얼로그(showAlert 큐) 상태에서 겹치지 않는지.
+- A7-2 기존 회원(소급 지급 12명 등)에게 과거 보너스가 갑자기 뜨지 않게 72시간 창 + 최초 실행 시 기준시각 기록.
+- S1 세션 갱신 실패 시 이후 업로드·댓글에 옛 닉네임 복사 → 세션 갱신은 필수 단계(실패 시 500 대신 경고 + 다음 로그인까지 지연 기록). 동시 중복 변경 경합(유니크 인덱스 없음) → 트랜잭션 내 `SELECT … FOR UPDATE` 불가 구조라 최종 재확인 후 UPDATE(경합 창 허용, 기록).
+- S2 소유자 제외로 현재 소규모 차트가 더 비어 폴백 비중 증가, 롤링 24h 전환 직후 hourly 셋 TTL 26h 가 쌓이기 전 24시간은 기존 daily 와 혼용 필요(전환기 폴백: 롤링 셋 부족 시 daily 사용). Redis 메모리 증가(시간 셋 ×13) — 현 규모 무시 가능.
+- S2 record_play 에 Mongo 조회 1회 추가 — 재생 기록 지연(캐시로 완화).
+- 서버 재기동 시 v3.228 boot_id 죽은 작업 환불 — 진행 중 생성이 없을 때 배포.
+
+## test-designer 에게 줄 테스트 항목
+1. [A1] 아티스트 생성: (a) POST 전(준비 중) 뒤로가기 → 차감 0·요청 로그 0·초안 유지 (b) POST 후 뒤로가기/웹 back/Studio 탭 → 가드 팝업 → 나가기 → 결과 도착 알림·ArtistResult 회수·⭐10 1회 (c) 계속 기다리기 → 화면 유지 (d) 성공 후 자동 전환이 가드에 막히지 않음 (e) 본인인증 미완 계정이 실사 사진 선택 시 즉시 안내.
+2. [A1-4] 작곡 POST 응답 전 이탈 → 로컬 추적 등록·작업실 말풍선·도착 알림.
+3. [S1/A2] 닉네임: 정상 변경 → 설정·내 곡·차트 곡 표기·피드·댓글·검색 반영, 세션 갱신 후 새 댓글에 새 닉네임, 409 중복(대소문자·공백 변형), 400 길이·예약어, 동일값 재저장 멱등, 탈퇴 계정 닉네임과 중복 허용 여부, 로그에 원문 없음.
+4. [A3] 영상: (a) 응답 유실 모사(POST 후 네트워크 차단) → 확인 중 → 완성 표시·⭐5 1회 (b) 이미 만든 곡 선택 시 "지난번 만든 영상 보기" 칩 → 무과금 재생(point_events 증가 0) (c) 비공개 곡·커버 없는 곡 사전 차단 문구 (d) 회귀: 429 휴식 다이얼로그·409 합류.
+5. [A4] 여자 아티스트 보유 계정으로 신규 생성 + 성별 "남성" 답 → 필터 "남성용", 성별 스킵 → 전체, 칩으로 남/여 전환, 옷 갈아입히기(대상 여자)는 여자 유지.
+6. [A5] 표의 13경로 전부: 확인 팝업 표시·비용 값=`/points/costs`·취소 시 차감 0·busy 해제. `/points/costs` 실패 모사 시에도 확인 표시(fail-closed). 휴식 단축 → 휴식 종료 → 확인 팝업 → 취소 시 생성 차감 0. 단축 다이얼로그 0.8초 내 연타 흡수. 디렉터 영입 연타 1회만 차감. 회귀: v3.228 중복 차단, v3.229 디렉터 1탭 복귀, 첫 아티스트 경로.
+7. [S2/A6] 차트: 소유자 다운로드·재생은 `chart:*` 셋 미가산(download_logs `is_owner`)·play_count 는 증가, 타인 다운로드·재생 가산, 롤링 24h(자정 넘김 모사), 심야 24h 전용, 동점 결정적 정렬, 빈 차트 폴백, chart_recovery 재구성 결과가 소유자 제외와 일치, 비공개 곡 제외 유지, v3.229 30초 중복 방지 유지.
+8. [A7] 초대 링크 `?ref=` → 새로고침 후에도 칩 유지 → 구글/카카오 신규 가입 → 가입 선물 팝업 1회(가입·베타·추천 3줄) → 재로그인 시 재표시 없음. 무효 코드 → 미적용 안내. 이메일 가입 `referral.applied` 경로 동일 팝업. 추천인 계정 "친구가 가입" 1회. 기존 회원 로그인 시 과거 보너스 미표시. ⭐ 내역 화면 라벨.
+9. 공통: 팝업 전부 showAlert(시스템 Alert 0), MAIDOL 표기(AIDOL 노출 0), 이모지 ⭐ 외 0, "저작권 등록 가능/보장" 문구 0, "나가 있어도 계속 만들어져요"류 이탈 권장 문구 0(VoiceCloneWizard 기존 예외 유지).
+
+## 대표 결정 필요 (기본값으로 진행)
+- **D1 뒤로가기 가드 범위·문구**: 기본 = 아티스트·작곡·작사·Inst 진행 화면 4곳, [계속 기다리기]/[나가기] + "나가도 만들던 결과는 완성되면 작업실에서 알려드려요." (원칙 문구 "벗어나지 마세요"는 유지, 가드는 나가려 할 때만 표시).
+- **D2 개별 사례 조치**: 기본 = 2f85f76c 슬롯 ⭐15 환불 없음(슬롯 영구 보존·사용 가능, 1/2) · 09-24 07:00 영상 ⭐5 환불 없음(영상 보존 — A3 칩으로 무료 재열람). 개별 안내 메시지 발송 없음.
+- **D3 닉네임 규칙**: 기본 = 2~15자, 앞뒤 공백 제거·연속 공백 1칸, 중복 불가(대소문자 무시, 탈퇴 계정 제외), 예약어(MAIDOL 공식 계정명) 차단, 변경 간격 제한 없음(베타), 기존 곡·피드·댓글 표기는 새 닉네임을 따라감(소급), 지난 알림 문구(actor_nickname)는 이력으로 유지. 욕설 필터 없음.
+- **D4 기획사명(company_name) 전파**: v3.229 결정 5와 같이 이번 범위 밖(기록). 곡 표기의 "기획사" 자리는 uploader_nickname 이므로 닉네임 변경으로 바뀐다.
+- **D5 TOP100**: 기본 = 본인 다운로드 제외(요청 반영) + **본인 재생도 차트 집계 제외**(총 재생수 play_count·재생 ⭐ 적립은 유지) + 롤링 24시간 적용 + 빈 차트 폴백 = 주간 점수 → 총 재생수 + 동점 결정적 정렬 + 차트 화면 "차트 기준" 안내 추가. 곡 다운로드 수 표시(download_count)는 총계 유지. 좋아요는 반영하지 않음(멜론과 동일).
+- **D6 ⭐ 확인 일원화**: 기본 = 모든 차감 직전 1회 확인(비용·보유 표시), 아티스트는 Cody "이 옷으로 만들기" 1회로 일원화(MyArtists 진입 확인은 비용 없는 안내로), "다시 묻지 않기" 없음, 비용 미수신 시에도 확인(fail-closed).
+- **D7 휴식 단축 연타**: 기본 = 재표시 0.8초 버튼 잠금 + 누적 사용 표시. "남은 휴식 한 번에 단축" 버튼은 도입하지 않음.
+- **D8 가입 선물 안내·⭐ 내역**: 기본 = 가입 직후 1회 팝업(가입·베타·추천 합산) + 추천인 1회 팝업 + 최소 "스타 내역" 화면 도입.
+- **D9 영상 재열람**: 기본 = 곡 선택 시 "지난번 만든 영상 보기" 칩만(보관함 탭 재도입 아님 — v3.187 결정 존중).
+- **D10 본인인증 조기 안내**: 기본 = 실사 사진 선택 직후 안내(가상 아티스트 대안 제시).
+
+## 서버 배포 필요 여부
+- **필요**(S1 닉네임, S2 차트). 절차: staging `/private/tmp/server_staging_v3230/{orig,new}` → 로컬 스모크 → 배포 직전 라이브 md5 재대조(위 기준값과 다르면 다른 세션 변경분을 병합 후 재검증) → 사용자 승인 → scp·이미지 빌드·컨테이너 재생성(진행 중 생성 job 0 확인 후) → 스모크(닉네임 PATCH 200/409/400, 차트 top100 200·소유자 제외, `/points/history` 200) → 5분 무오류 로그.
+- 앱 배포: 웹(app.maidol.ai.kr) + APK/빌드는 기존 절차. S1 미배포 상태에서 A2 는 400/무시를 받으므로 **S1 배포 후 A2 노출**(또는 서버 응답에 nickname 반영 여부 확인해 실패 안내).
+- DB 쓰기·소급: S1 은 사용자 요청 시에만 사본 갱신(일괄 소급 스크립트 불필요). S2 는 기존 Redis 차트 셋의 소유자 기록을 지우지 않음(자연 만료 — 주간 8일·월간 32일, 즉시 정리 원하면 별도 승인).
+
+규칙: 서버 수정은 server_staging_v3230 에서만(orig 보존·배포 직전 md5 재대조). 프로덕션 쓰기(scp·build·재생성·.env·DB)는 사용자 승인·실행 뒤. main.py 무변경. 민감 정보는 플레이스홀더. 팝업은 showAlert, 표기 MAIDOL, 이모지 ⭐만, 이탈 권장 문구 금지, "저작권 등록 가능/보장" 금지. 코드 수정·커밋은 이 계획 승인 뒤 team-dev 루프에서.
+
+## v3.230 추가 항목 ⑧ (2026-09-25) — 본인인증 요구 전면 우회
+**요청 원문**: "아티스트 얼굴 넣으면 본인인증 하라고 뜬다는데. 본인인증은 추후 적용이라서 본인인증 하라고 뜨는 경우가 있다면 모두 넘어가도록 해놔야해."
+
+**Plan verification findings (오케스트레이터 실측)**
+- 라이브 `FACE_VERIFY_ENABLED=true`. `routes/character.py:885-893`·`:1771-1779` 실사 사진 첨부 시 `is_photo_verified` 미통과 → 403 `face_verification_required`(AWS 얼굴 인증 게이트).
+- 얼굴 인증 플로우 자체가 본인인증 선행을 요구: `routes/face_verify.py` `/consent`(:171), `/guardian/request`(:206), 검증(:291) 등에서 `users.is_verified` false → 403 `identity_verification_required`. 본인인증(PASS 등) 기능은 아직 없음 → 실사 얼굴 아티스트는 전원 막힘. `/status`(:125~) 가 `is_verified` 를 내려 앱 FaceVerifyScreen 이 "본인인증" 단계로 분기.
+- `_is_minor` 는 birth_date 미입력 시 성인 취급(게이트 미적용) — 본인인증 우회해도 미성년 보호자 동의 분기는 birth_date 가 있으면 그대로 동작.
+- 앱 본인인증 노출 파일: screens/FaceVerifyScreen.tsx, screens/ArtistInputScreen.tsx, screens/SettingsScreen.tsx, screens/DmInboxScreen.tsx, stores/authStore.ts.
+
+**계획**
+- S3(서버): config `identity_verify_required: bool = False`(env `IDENTITY_VERIFY_REQUIRED`). False 면 face_verify.py 의 모든 `is_verified` 게이트 통과, `/status` 는 `identity_required:false` 추가 + 앱 분기용 `is_verified` 는 원값 유지(또는 `identity_ok:true`). AWS 얼굴 인증(동의·라이브니스·대조)·미성년 보호자 동의·character.py 얼굴 게이트는 유지. 로그 `[face-verify] identity gate skipped user=…`. 추후 본인인증 도입 시 .env 한 줄로 복원.
+- A8(앱): 본인인증 요구 UI 전부 우회 — FaceVerifyScreen 본인인증 단계 건너뛰고 동의→촬영으로(서버 identity_required 미수신 구서버면 기존 동작), ArtistInput 의 본인인증 안내 제거(v3.230 D10 "본인인증 조기 안내"는 **취소** — 대신 얼굴 인증 안내로 대체 가능), Settings·DmInbox 의 본인인증 요구 문구/차단 점검(단순 정보 표시는 유지, 기능 차단·유도 팝업은 제거). 403 `identity_verification_required` 수신 시에도 본인인증 유도 대신 일반 안내.
+- 담당: 서버 S3 = backend-dev(v3.230 스테이징에 추가), 앱 ArtistInputScreen = 1조, FaceVerifyScreen·Settings·DmInbox·authStore = 2조.
+- 테스트: 미인증 성인 계정 → 동의 200·검증 진행, 미성년(birth_date 有) → 보호자 동의 분기 유지, flag True 로 되돌리면 기존 403, 앱 어디에서도 "본인인증" 유도 팝업/차단 없음(grep + 하니스).

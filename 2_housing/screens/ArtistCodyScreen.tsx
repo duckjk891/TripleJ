@@ -24,6 +24,8 @@ import { getFatigueStatus } from '../services/fatigueService';
 import { listArtists } from '../services/characterService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { guardArtistGeneration } from '../services/generationTracker';
+import { fetchPointCosts, getPointCostSync } from '../services/pointCosts';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { colors } from '../theme/colors';
 // v3.227(D·E): 피커 모달은 components/cody/*, 타입·순수 함수는 utils/codyCatalog, 조회는 services/catalogService.
 import CodyPickerModal from '../components/cody/CodyPickerModal';
@@ -35,8 +37,10 @@ import {
   DEFAULT_VIEW,
   brandNameOf,
   normalizeArtistGender,
+  resolveCodyDefaultGender,
   type AdItem,
   type Cat,
+  type CodyGenderChoice,
   type CodyViewState,
 } from '../utils/codyCatalog';
 
@@ -112,17 +116,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const isSheetMode = route?.params?.mode === 'sheet';
 
   // v3.76(MAIDOL v158): 캐릭터 생성 비용 — /points/costs 단일 소스(실패 시 10 폴백)
-  const [characterCost, setCharacterCost] = useState(10);
+  // v3.230 A5-6: services/pointCosts 캐시 경유(실패 시 폴백 표 — 서버 POINT_COSTS 동일)
+  const [characterCost, setCharacterCost] = useState(() => getPointCostSync('character'));
   const balance = usePointsStore((s) => s.balance);
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        const res = await api.get('/points/costs');
-        if (alive && res.data?.costs?.character != null) setCharacterCost(res.data.costs.character);
-      } catch (err: any) {
-        console.error('[ArtistCody] /points/costs 조회 실패', { status: err?.response?.status });
-      }
+      await fetchPointCosts();
+      if (alive) setCharacterCost(getPointCostSync('character'));
     })();
     usePointsStore.getState().fetchBalance();
     return () => { alive = false; };
@@ -179,18 +180,40 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // 빠른 카테고리 전환(스트립) 시 늦게 도착한 이전 응답이 목록을 덮지 않게 요청 번호로 가드
   const pickerReqRef = useRef(0);
   // v3.205(⑤)→v3.207(⑩): 아티스트 성별 자동 필터 — 서버 캐릭터 gender(1순위) →
-  // apiResult.gender → pendingGender → artistProfileStore 4단 폴백.
-  // 앱 재시작 후엔 apiResult/pendingGender가 비어(characterTaskStore persist 미등록) null이 되던
+  // pendingGender → artistProfileStore 폴백.
+  // 앱 재시작 후엔 pendingGender가 비어(characterTaskStore persist 미등록) null이 되던
   // 문제를 서버 조회값(GET /character/list — 직렬화에 gender 기존 포함)으로 해소.
+  // v3.230 A4: 신규 생성(sheet + 대상 없음)은 방금 답한 성별(pending → 영속 초안 답)만 쓴다 —
+  // 기존(예: 여자) 아티스트 성별이 1순위로 박혀 남자 아티스트를 만들 때 '여성용'만 보이던 제보(④).
+  // 대상 있음(재생성·옷 갈아입히기)만 서버 성별. 죽은 apiResult.gender 폴백 제거(항상 비어 있음).
   const profileGender = useArtistProfileStore((s) => s.profiles[taskStore.characterKind]?.gender);
   const [serverGender, setServerGender] = useState<'남' | '여' | null>(null);
-  const artistGender =
-    serverGender ??
-    normalizeArtistGender((apiResult as any)?.gender) ??
-    normalizeArtistGender(taskStore.pendingGender) ??
-    normalizeArtistGender(profileGender);
-  // 피커 열 때마다 기본 ON 복귀(openPicker에서 리셋)
-  const [genderFilterOn, setGenderFilterOn] = useState(true);
+  const isNewArtist = isSheetMode && !taskStore.targetCharacterId;
+  // 초안 답은 같은 흐름(대상 없음) 초안일 때만 — 재생성 초안 답이 신규에 섞이지 않게
+  const draftGender =
+    taskStore.draft && !taskStore.draft.targetCharacterId ? taskStore.draft.styleAnswers?.gender ?? null : null;
+  const { gender: defaultGender, source: genderSource } = resolveCodyDefaultGender({
+    isNewArtist,
+    pendingGender: taskStore.pendingGender,
+    draftGender,
+    serverGender,
+    profileGender,
+  });
+  // v3.230 A4: 필터 칩 남/여/전체 — null = 사용자가 아직 고르지 않음(기본값 = defaultGender, 없으면 전체).
+  // 사용자가 고른 값은 이 화면에 머무는 동안 피커를 다시 열어도 유지(기존 '열 때마다 ON 복귀' 대체).
+  const [genderChoice, setGenderChoice] = useState<CodyGenderChoice | null>(null);
+  const effectiveGenderChoice: CodyGenderChoice = genderChoice ?? defaultGender ?? 'all';
+  const loggedGenderRef = useRef('');
+  useEffect(() => {
+    const sig = `${genderSource}|${defaultGender}|${isNewArtist}`;
+    if (loggedGenderRef.current === sig) return;
+    loggedGenderRef.current = sig;
+    console.info(`[ArtistCody] 성별 필터 source=${genderSource} gender=${defaultGender ?? 'none'}`, { isNewArtist });
+  }, [genderSource, defaultGender, isNewArtist]);
+  const handleGenderChoice = (choice: CodyGenderChoice) => {
+    console.info('[ArtistCody] 성별 필터 칩 선택', { choice, defaultGender });
+    setGenderChoice(choice);
+  };
 
   const isLoggedIn = useAuthStore((s) => !!s.token);
 
@@ -199,6 +222,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // gender 보유 캐릭터 → 앱 기본 캐릭터 → gender 보유 첫 캐릭터. 실패는 무해(기존 폴백 유지).
   useEffect(() => {
     if (!isLoggedIn) return;
+    // v3.230 A4: 신규 생성은 서버(기존 아티스트) 성별을 쓰지 않으므로 조회 생략
+    if (isSheetMode && !useCharacterTaskStore.getState().targetCharacterId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -241,7 +266,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     setPickerCat(cat);
     setPickerTab('all');
     resetGroupBrand(cat);
-    setGenderFilterOn(true); // v3.205(⑤): 피커 열 때마다 성별 필터 기본 ON 복귀
     setPickerLoading(true);
     try {
       const { items, source } = await getCatalog(cat);
@@ -266,7 +290,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     setPickerCat(initialSub); // 기본 서브탭: 모자(스트립에서 가방 칸으로 들어오면 가방)
     setPickerTab('all');
     resetGroupBrand(initialSub);
-    setGenderFilterOn(true);
     setPickerLoading(true);
     try {
       const results = await Promise.allSettled(ACCESSORY_SUBCATS.map((c) => getCatalog(c)));
@@ -439,6 +462,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     .map((c) => [c, selected[c]] as const)
     .filter(([, item]) => !!item);
 
+  // v3.230 A5-2: ⭐ 확인 대기 중 재진입 방지
+  const applyConfirmingRef = useRef(false);
   const handleApply = async (opts: { skipStaleCheck?: boolean } = {}) => {
     // v3.227 A-보완: 추적 중인 아티스트 생성(processing·완성 미확인)이 있으면 팝업 후 중단(피로 게이트·잔액 체크 앞)
     if (guardArtistGeneration({ navigation, where: 'ArtistCody' })) return;
@@ -489,6 +514,30 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (bal != null && bal < characterCost) {
       if (__DEV__) console.info('[ArtistCody] 별 부족 사전 차단', { bal, cost: characterCost });
       showAlert('별이 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
+      return;
+    }
+    // v3.230 A5-2(D6): 아티스트 ⭐ 차감 확인은 여기 1회로 일원화 — 신규·첫 아티스트·이어서 만들기·
+    // 초안 복귀·옷 갈아입히기·다시 만들기 모두 이 버튼을 거친다. 휴식 게이트(위)가 먼저, 확인은 그다음.
+    if (applyConfirmingRef.current) {
+      console.info('[ArtistCody] ⭐ 확인 대기 중 — 재탭 무시');
+      return;
+    }
+    applyConfirmingRef.current = true;
+    let spendOk = false;
+    // 재생성(대상 cid 지정 — ArtistResult "다시 만들기" → ArtistInput{characterId})은 sheet 모드여도 "다시 만들기"
+    const regenTarget = isSheetMode && !!useCharacterTaskStore.getState().targetCharacterId;
+    try {
+      spendOk = await confirmStarSpend({
+        source: 'ArtistCody',
+        costKey: 'character',
+        cost: characterCost,
+        action: !isSheetMode ? '옷 갈아입히기' : regenTarget ? '아티스트 다시 만들기' : '새 아티스트 만들기',
+      });
+    } finally {
+      applyConfirmingRef.current = false;
+    }
+    if (!spendOk) {
+      console.info('[ArtistCody] ⭐ 확인 취소 — 생성 요청 없음', { mode: isSheetMode ? 'sheet' : 'outfit' });
       return;
     }
     // 카테고리별로 분류 — 의상류는 "기존 제거 후 새로 입힘", 헤어/문신은 "명시된 것만 변경"
@@ -971,9 +1020,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         setPickerTab={setPickerTab}
         view={currentView}
         updateView={updateView}
-        genderFilterOn={genderFilterOn}
-        setGenderFilterOn={setGenderFilterOn}
-        artistGender={artistGender}
+        genderChoice={effectiveGenderChoice}
+        defaultGender={defaultGender}
+        onGenderChoice={handleGenderChoice}
         selected={selected}
         staleIds={staleIds}
         isLoggedIn={isLoggedIn}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,7 +12,8 @@ import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
 import { useDirectorsStore } from '../stores/directorsStore';
-import api from '../services/api';
+import { spendHireDirector } from '../services/characterService';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { usePointsStore } from '../stores/pointsStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { useAuthStore } from '../stores/authStore';
@@ -62,6 +63,8 @@ export default function DirectorLineupScreen({ navigation }: any) {
       .map((k) => ({ category: k, list: map[k].sort((a, b) => a.hireCost - b.hireCost) }));
   }, []);
 
+  // v3.230 A5-2: 유료 영입 연타 가드(확인 대기·요청 중 재진입 0)
+  const hireBusyRef = useRef(false);
   const handleHire = async (d: DirectorCatalog) => {
     if (isHired(d.id)) {
       // 영입된 경우 → 선택 (현재 카테고리의 기본으로)
@@ -72,16 +75,27 @@ export default function DirectorLineupScreen({ navigation }: any) {
     // v193: 유료 디렉터(hireCost>0)는 별 10⭐ 차감(POST /points/spend) — 기본 디렉터는 무료 유지
     if (__DEV__) console.info('[DirectorLineup] hire', { id: d.id, paid: d.hireCost > 0 });
     if (d.hireCost > 0) {
+      if (hireBusyRef.current) {
+        console.info('[DirectorLineup] 영입 처리 중 — 재탭 무시', { id: d.id });
+        return;
+      }
+      hireBusyRef.current = true;
       try {
-        const res = await api.post('/points/spend', { action: 'hire_director', ref: `hire:${d.id}` });
+        // v3.230 A5-2(D6): ⭐ 차감 직전 확인 1회(비용 = /points/costs hire_director)
+        const ok = await confirmStarSpend({ source: 'DirectorLineup', costKey: 'hire_director', action: `${d.name} 영입` });
+        if (!ok) return;
+        const res = await spendHireDirector(d.id);
         usePointsStore.getState().fetchBalance();
         hire(d.id);
         useCompanyStore.getState().addExp(20, 'hire');
-        showAlert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요! (⭐10 사용, 잔액 ${res.data?.balance ?? '-'})`);
+        const spentLabel = typeof res?.spent === 'number' ? `⭐${res.spent} 사용, ` : '';
+        showAlert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요! (${spentLabel}잔액 ${res?.balance ?? '-'})`);
       } catch (err: any) {
         const status = err?.response?.status;
         console.error('[DirectorLineup] hire spend 실패', { id: d.id, status });
         showAlert('알림', status === 402 ? '스타(⭐)가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!' : '영입에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      } finally {
+        hireBusyRef.current = false;
       }
       return;
     }
