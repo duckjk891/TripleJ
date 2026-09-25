@@ -1,0 +1,105 @@
+--- notifications.py.orig	2026-09-25 14:11:32
++++ notifications.py	2026-09-25 14:11:47
+@@ -1,4 +1,4 @@
+-"""v192 — 인앱 알림 (팔로우/댓글/답글/좋아요/피드 업로드).
++"""v192 — 인앱 알림 (팔로우/댓글/답글/좋아요/피드 업로드, 관리자 스타 지급/차감).
+ 
+ Mongo `notifications` 컬렉션:
+   { user_id(수신자), type: follow|comment|reply|like|feed,
+@@ -21,7 +21,7 @@
+ 
+ router = APIRouter(prefix="/api/notifications")
+ 
+-VALID_TYPES = {"follow", "comment", "reply", "like", "feed"}
++VALID_TYPES = {"follow", "comment", "reply", "like", "feed", "star"}  # star: 관리자 스타 지급/차감(amount 필드 동반)
+ 
+ 
+ def _short(v) -> str:
+@@ -29,7 +29,7 @@
+     return s[:8]
+ 
+ 
+-async def push_notification(mongo, *, user_id, ntype, actor_id, actor_nickname, target_id=None, preview=None, target_type=None):
++async def push_notification(mongo, *, user_id, ntype, actor_id, actor_nickname, target_id=None, preview=None, target_type=None, extra=None):
+     """단건 알림 발행 — 자기 자신에게는 보내지 않는다. 실패해도 예외를 올리지 않음.
+ 
+     target_type(v3.177): 대상 종류('track' 등). None=피드(기존 하위호환) —
+@@ -51,6 +51,7 @@
+             "preview": (preview or "")[:120] or None,
+             "read": False,
+             "created_at": datetime.utcnow(),
++            **(extra or {}),
+         })
+         logger.info("[notify] push ok type=%s to=%s actor=%s", ntype, _short(user_id), _short(actor_id))
+     except Exception:
+--- admin_points.py.orig	2026-09-25 14:11:35
++++ admin_points.py	2026-09-25 14:12:06
+@@ -33,6 +33,7 @@
+ from ..models.user import age_years
+ from ..services import dm_service, points_service as svc
+ from .admin import _log_admin_action
++from .notifications import push_notification
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -41,6 +42,7 @@
+ # 관리자 조정 1회 수량 상한 (오입력 방지 — v180 확정)
+ MAX_ADJUST_AMOUNT = 10_000
+ MAX_REASON_LEN = 200
++MAX_MESSAGE_LEN = 100
+ REF_REASON_LEN = 40  # ref 임베드 사유 절단 길이(전문은 감사 details)
+ 
+ MAX_EVENTS_LIMIT = 100
+@@ -53,6 +55,9 @@
+     # 수동 검증으로 400 반환(pydantic 422 회피 — 비정수도 400 계약)
+     amount: Any = None
+     reason: str = ""
++    # 사용자 알림(알림 탭) — 기본 발송. message 는 사용자에게 보이는 문구(사유 reason 은 비공개)
++    notify: bool = True
++    message: str = ""
+ 
+ 
+ async def _require_user(conn, user_id: str) -> str:
+@@ -300,6 +305,13 @@
+             return JSONResponse(
+                 status_code=400,
+                 content={"error": f"사유는 1~{MAX_REASON_LEN}자로 입력해주세요."},
++            )
++
++        message = (body.message or "").strip()
++        if len(message) > MAX_MESSAGE_LEN:
++            return JSONResponse(
++                status_code=400,
++                content={"error": f"사용자 알림 문구는 {MAX_MESSAGE_LEN}자 이하로 입력해주세요."},
+             )
+ 
+         # ref — 시도별 유니크(uuid8) + 사유 요약 가시화(전문은 감사 details)
+@@ -364,9 +376,27 @@
+         "[admin-points] adjust done admin=%s target=%s direction=%s amount=%d balance=%d",
+         admin_tag, uid[:8], direction, amount, balance,
+     )
+-    return {"balance": balance, "event_ref": ref}
++    # 사용자 알림 (best-effort) — 실패해도 조정은 유지
++    notified = False
++    if body.notify:
++        try:
++            await push_notification(
++                get_mongo(),
++                user_id=uid,
++                ntype="star",
++                actor_id=str(current_user["id"]),
++                actor_nickname="MAIDOL",
++                target_type="star_grant" if direction == "grant" else "star_deduct",
++                preview=message or None,
++                extra={"amount": amount},
++            )
++            notified = True
++        except Exception:
++            logger.warning("[admin-points] adjust notify failed target=%s", uid[:8], exc_info=True)
+ 
++    return {"balance": balance, "event_ref": ref, "notified": notified}
+ 
++
+ # ---------------------------------------------------------------------------
+ # 5. 분석 대시보드 (v181) — GET /analytics/{daily|breakdown|demographics}
+ # ---------------------------------------------------------------------------

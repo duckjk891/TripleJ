@@ -68,8 +68,8 @@ export const resetStrikes = (id) => API.post(`/admin/users/${id}/strikes/reset`)
 export const getPointSummary = () => API.get('/admin/points/summary');
 export const getPointBalance = (userId) => API.get(`/admin/points/users/${userId}/balance`);
 export const getPointEvents = (userId, params) => API.get(`/admin/points/users/${userId}/events`, { params });
-export const adjustPoints = (user_id, direction, amount, reason) =>
-  API.post('/admin/points/adjust', { user_id, direction, amount, reason });
+export const adjustPoints = (user_id, direction, amount, reason, notify = true, message = '') =>
+  API.post('/admin/points/adjust', { user_id, direction, amount, reason, notify, message });
 export const getPointBreakdown = (days = 30) => API.get('/admin/points/analytics/breakdown', { params: { days } });
 
 // ---- tracks ----

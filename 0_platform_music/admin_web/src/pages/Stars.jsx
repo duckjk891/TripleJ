@@ -8,6 +8,10 @@ import { formatDate } from './Dashboard';
 
 const MAX_AMOUNT = 10000;
 
+// 앱 알림 탭 제목(앱 NotificationsScreen 의 star 문구와 동일하게 유지)
+const noticeTitle = (direction, n) =>
+  direction === 'grant' ? `스타 ${Number(n).toLocaleString?.() ?? n}개를 받았어요` : `스타 ${Number(n).toLocaleString?.() ?? n}개가 차감되었어요`;
+
 // point_events.action → 한글
 const ACTION_LABELS = {
   attendance: '출석체크', signup_bonus: '가입 보상', beta_signup_bonus: '베타 가입 보너스',
@@ -44,6 +48,8 @@ function UserPanel({ user, onChanged }) {
   const [direction, setDirection] = useState('grant');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
+  const [notify, setNotify] = useState(true);
+  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -74,16 +80,20 @@ function UserPanel({ user, onChanged }) {
       return;
     }
     const verb = direction === 'grant' ? '지급' : '차감';
+    const noticeLine = notify
+      ? `\n\n사용자 알림: "${noticeTitle(direction, n)}"${message.trim() ? `\n  + "${message.trim()}"` : ''}`
+      : '\n\n사용자 알림: 보내지 않음';
     const ok = await appConfirm(
-      `${user.nickname} 님에게 ⭐ ${n.toLocaleString()}개를 ${verb}합니다.\n사유: ${reason.trim()}\n\n현재 잔액 ${balance?.toLocaleString() ?? '-'} → ${(direction === 'grant' ? (balance ?? 0) + n : (balance ?? 0) - n).toLocaleString()}`,
+      `${user.nickname} 님에게 ⭐ ${n.toLocaleString()}개를 ${verb}합니다.\n사유(비공개): ${reason.trim()}\n\n현재 잔액 ${balance?.toLocaleString() ?? '-'} → ${(direction === 'grant' ? (balance ?? 0) + n : (balance ?? 0) - n).toLocaleString()}${noticeLine}`,
     );
     if (!ok) return;
     setBusy(true);
     try {
-      const res = await adjustPoints(user.id, direction, n, reason.trim());
-      await appAlert(`${verb} 완료. 현재 잔액 ⭐ ${res.data.balance.toLocaleString()}`);
+      const res = await adjustPoints(user.id, direction, n, reason.trim(), notify, message.trim());
+      await appAlert(`${verb} 완료. 현재 잔액 ⭐ ${res.data.balance.toLocaleString()}${res.data.notified ? '\n사용자에게 알림을 보냈습니다.' : ''}`);
       setAmount('');
       setReason('');
+      setMessage('');
       setPage(1);
       await load();
       onChanged?.();
@@ -115,7 +125,20 @@ function UserPanel({ user, onChanged }) {
             {busy ? '처리 중…' : direction === 'grant' ? '별 지급' : '별 차감'}
           </button>
         </form>
-        <p className="cell-sub" style={{ marginTop: 8 }}>1회 최대 {MAX_AMOUNT.toLocaleString()}개. 사유는 감사 기록에 남고 사용자에게는 보이지 않습니다.</p>
+        <div className="filters" style={{ marginTop: 10, marginBottom: 0 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.88rem', whiteSpace: 'nowrap' }}>
+            <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> 사용자에게 알림 보내기
+          </label>
+          {notify && (
+            <input className="input" type="text" maxLength={100} style={{ flex: 1, minWidth: 260 }}
+              placeholder="사용자에게 보일 메시지 (선택, 예: 이벤트 당첨을 축하해요!)"
+              value={message} onChange={(e) => setMessage(e.target.value)} />
+          )}
+        </div>
+        <p className="cell-sub" style={{ marginTop: 8 }}>
+          1회 최대 {MAX_AMOUNT.toLocaleString()}개. 사유는 감사 기록에만 남고 사용자에게 보이지 않습니다.
+          알림은 앱 알림 탭에 &quot;{noticeTitle(direction, Number(amount) || 'N')}&quot; 로 표시되고, 메시지를 적으면 그 아래 함께 보입니다.
+        </p>
       </div>
 
       <div className="card">
