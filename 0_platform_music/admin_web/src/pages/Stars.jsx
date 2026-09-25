@@ -9,8 +9,10 @@ import { formatDate } from './Dashboard';
 const MAX_AMOUNT = 10000;
 
 // 앱 알림 탭 제목(앱 NotificationsScreen 의 star 문구와 동일하게 유지)
-const noticeTitle = (direction, n) =>
-  direction === 'grant' ? `스타 ${Number(n).toLocaleString?.() ?? n}개를 받았어요` : `스타 ${Number(n).toLocaleString?.() ?? n}개가 차감되었어요`;
+const noticeTitle = (direction, n) => {
+  const shown = Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n).toLocaleString() : 'N';
+  return direction === 'grant' ? `스타 ${shown}개를 받았어요` : `스타 ${shown}개가 차감되었어요`;
+};
 
 // point_events.action → 한글
 const ACTION_LABELS = {
@@ -137,7 +139,7 @@ function UserPanel({ user, onChanged }) {
         </div>
         <p className="cell-sub" style={{ marginTop: 8 }}>
           1회 최대 {MAX_AMOUNT.toLocaleString()}개. 사유는 감사 기록에만 남고 사용자에게 보이지 않습니다.
-          알림은 앱 알림 탭에 &quot;{noticeTitle(direction, Number(amount) || 'N')}&quot; 로 표시되고, 메시지를 적으면 그 아래 함께 보입니다.
+          알림은 앱 알림 탭에 &quot;{noticeTitle(direction, amount)}&quot; 로 표시되고, 메시지를 적으면 그 아래 함께 보입니다.
         </p>
       </div>
 
