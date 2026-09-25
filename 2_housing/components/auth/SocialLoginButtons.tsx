@@ -13,6 +13,7 @@ import { BACKEND_BASE_URL } from '../../services/api';
 import { resetToChartTab } from '../../services/navigationRef';
 import { useAuthStore } from '../../stores/authStore';
 import { savePendingReferral } from '../../utils/pendingReferral';
+import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, notifyAccountSuspended } from '../../utils/kidsRestricted';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -29,6 +30,8 @@ const GENERIC_FAIL_MSG = '소셜 로그인에 실패했습니다. 잠시 후 다
 
 // 서버가 내려준 오류 문구는 검증 후에만 그대로 노출 — 문자열이 아니거나(null/객체) 과도하게 길면 고정 문구.
 function sanitizeServerMessage(value: unknown): string {
+  // v3.233: 보호자 동의 철회 계정 — 콜백 error=account_suspended(가정) 는 코드 문자열 대신 안내 문구
+  if (typeof value === 'string' && value.trim() === ACCOUNT_SUSPENDED_CODE) return KIDS_TEXT.accountSuspended;
   if (typeof value === 'string' && value.trim().length > 0 && value.length <= 80) return value.trim();
   return GENERIC_FAIL_MSG;
 }
@@ -92,7 +95,8 @@ export default function SocialLoginButtons({
           const ok = await useAuthStore.getState().loginWithToken(decodeURIComponent(tokenMatch[1]));
           if (!ok) {
             console.error(`[${logPrefix}] 콜백 토큰 세션 열기 실패`, { provider });
-            showAlert('알림', GENERIC_FAIL_MSG);
+            // v3.233: 이용 중지(account_suspended) 는 api 인터셉터가 이미 안내 — 일반 실패 팝업 생략(이중 팝업 방지)
+            if (useAuthStore.getState().error !== KIDS_TEXT.accountSuspended) showAlert('알림', GENERIC_FAIL_MSG);
           } else {
             // v3.216b F1: 로그인 성공 = 항상 차트 탭 착지 (App.tsx 딥링크 경로와 중복 호출돼도 멱등)
             resetToChartTab();
@@ -103,6 +107,12 @@ export default function SocialLoginButtons({
           let serverMsg: string | null = null;
           try { serverMsg = errMatch ? decodeURIComponent(errMatch[1]) : null; } catch { serverMsg = null; }
           console.error(`[${logPrefix}] 콜백에 토큰 없음`, { provider, hasError: !!errMatch });
+          // v3.233: 보호자 동의 철회 계정 — 서버 `#error=account_suspended` → 이용 중지 안내(App.tsx 딥링크 수신과 3초 중복 억제 공유)
+          if (isAccountSuspendedCallback(result.url)) {
+            console.info(`[KidsGuard] social login blocked — account suspended provider=${provider}`);
+            notifyAccountSuspended();
+            return;
+          }
           showAlert('알림', sanitizeServerMessage(serverMsg));
         }
       } else {

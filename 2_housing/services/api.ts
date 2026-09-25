@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { handleChildRestrictedError } from '../utils/kidsRestricted';
+import { handleAccountSuspendedError, handleChildRestrictedError } from '../utils/kidsRestricted';
 
 // 백엔드 서버 — AWS 이전 완료(2026-09-17): 기본값 = AWS EC2 (api.maidol.ai.kr, backend_9004 동일 코드).
 // 로컬/구서버로 되돌리려면 EXPO_PUBLIC_API_URL=http://100.127.225.55:9004 로 실행(재빌드만으로 전환).
@@ -58,6 +58,13 @@ api.interceptors.response.use(
       handleChildRestrictedError(error);
     } catch (e) {
       console.error('[KidsGate] 인터셉터 처리 실패', e);
+    }
+    // v3.233: 보호자 동의 철회로 이용 중지된 계정(403 code=account_suspended) 공통 안내 — 3초 중복 억제,
+    // 이메일 로그인은 화면 오류 줄로 안내(팝업 생략). 다른 오류·구서버는 무동작, 오류는 그대로 reject.
+    try {
+      handleAccountSuspendedError(error);
+    } catch (e) {
+      console.error('[KidsGuard] 인터셉터 처리 실패', e);
     }
     return Promise.reject(error);
   }

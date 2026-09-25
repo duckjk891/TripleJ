@@ -12,7 +12,7 @@ import {
   type NicknameResult,
 } from '../utils/nicknameRules';
 import { clearPendingReferral, noteSignupReferral } from '../utils/pendingReferral';
-import { noteKidsMode, type AgeGroup, type KidsPermissions } from '../utils/kidsRestricted';
+import { isAccountSuspendedError, KIDS_TEXT, noteKidsMode, type AgeGroup, type KidsPermissions } from '../utils/kidsRestricted';
 
 interface AuthUser {
   id: string;
@@ -98,6 +98,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
       return true;
     } catch (err: any) {
+      // v3.233: 보호자 동의 철회(403 account_suspended) — 서버 문구·코드 대신 앱 고정 안내(그 외 오류는 기존 그대로)
+      if (isAccountSuspendedError(err)) {
+        console.info('[KidsGuard] login blocked — account suspended');
+        set({ error: KIDS_TEXT.accountSuspended, isLoading: false });
+        return false;
+      }
       set({ error: err.response?.data?.error || err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
       return false;
     }
@@ -117,7 +123,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err: any) {
       console.error('[authStore] loginWithToken 실패', { status: err?.response?.status });
       setAuthToken(null);
-      set({ error: '소셜 로그인에 실패했습니다. 다시 시도해주세요.', isLoading: false, token: null, user: null });
+      // v3.233: 이용 중지(account_suspended) 는 전용 문구(팝업은 api 인터셉터가 이미 안내)
+      const suspended = isAccountSuspendedError(err);
+      set({ error: suspended ? KIDS_TEXT.accountSuspended : '소셜 로그인에 실패했습니다. 다시 시도해주세요.', isLoading: false, token: null, user: null });
       return false;
     }
   },

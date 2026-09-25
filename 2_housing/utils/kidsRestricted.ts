@@ -35,6 +35,13 @@ export const KIDS_TEXT = {
   voiceBlocked: '어린이 계정은 내 목소리 기능을 쓸 수 없어요.',
   safetyTitle: '온라인 안전 안내',
   safetyRowLabel: '온라인 안전 안내',
+  // v3.233 보호자 관리(E5) — dm_friends 허용 어린이·동의 철회(suspended)
+  dmFriendsHint: '서로 팔로우한 친구와 MAIDOL 공식 계정에만 메시지를 보낼 수 있어요.',
+  dmFriendsEmpty: '서로 팔로우한 친구가 아직 없어요.',
+  dmFriendsLoadFailed: '친구 목록을 불러오지 못했어요. 잠시 후 다시 시도해주세요.',
+  dmFriendsInboxEmpty: 'MAIDOL 공식 계정과 서로 팔로우한 친구와의 대화를 여기서 볼 수 있어요.',
+  accountSuspendedTitle: '이용이 중지된 계정이에요',
+  accountSuspended: '보호자가 이용을 중지했어요. 보호자에게 문의해 주세요.',
 } as const;
 
 /** 온라인 안전 안내 5항목(K4) — KidsSafetyNotice 와 설정 "다시 보기" 공용 */
@@ -65,6 +72,27 @@ export function kidsPermissionAllowed(user: KidsUserLike | null | undefined, key
 /** 생년월일 잠금 여부 — 서버 birth_date_locked === true 일 때만(구서버 = false) */
 export function isBirthDateLockedUser(user: KidsUserLike | null | undefined): boolean {
   return !!user && user.birth_date_locked === true;
+}
+
+// ── v3.233 어린이 DM(보호자 dm_friends 허용) — 표시 대화 필터(순수) ─────────
+
+/**
+ * 어린이 받은편지함에 보일 대화: 공식 계정 + (friendIds 가 있으면) 서로 팔로우한 상대.
+ * friendIds = null(맞팔 조회 실패·권한 없음) 이면 공식 계정 대화만 — v3.232 동작과 동일.
+ * officialId 미확인이면 공식 대화는 판별 불가 → 맞팔 상대 대화만(낯선 대화 노출 없음).
+ */
+export function filterChildDmConversations<T extends { peer?: { id?: string | number | null } | null }>(
+  convs: readonly T[],
+  officialId: string | null,
+  friendIds: ReadonlySet<string> | null,
+): T[] {
+  return convs.filter((cv) => {
+    const pid = cv?.peer?.id;
+    if (pid === undefined || pid === null) return false;
+    const id = String(pid);
+    if (officialId && id === officialId) return true;
+    return !!friendIds && friendIds.has(id);
+  });
 }
 
 // ── 모드 전환 로그(authStore 가 user 를 교체할 때 호출) ────────────────────
@@ -180,4 +208,94 @@ export function handleChildRestrictedError(err: any): boolean {
   if (!info) return false;
   notifyChildRestricted(info);
   return true;
+}
+
+// ── v3.233 계정 이용 중지(보호자 동의 철회 → suspended) ─────────────────────
+// 서버 계약(가정 — 정본은 서버 DEPLOY.md): 로그인·인증 요청이 403
+//   `{"error": "<사람이 읽는 문구>", "code": "account_suspended"}` 또는 FastAPI `{"detail": {...같은 키}}`.
+// error 자체가 코드 문자열 "account_suspended" 인 경우도 같은 것으로 본다. 문구는 앱 고정 문구로 통일.
+
+export const ACCOUNT_SUSPENDED_CODE = 'account_suspended';
+
+/** axios 오류 또는 응답 data 가 계정 이용 중지(account_suspended) 인가 */
+export function isAccountSuspendedError(errOrData: any): boolean {
+  try {
+    if (!errOrData || typeof errOrData !== 'object') return false;
+    const data = errOrData.isAxiosError || errOrData.response ? errOrData.response?.data : errOrData;
+    if (!data || typeof data !== 'object') return false;
+    const candidates = [data, data.detail].filter((d) => d && typeof d === 'object');
+    return candidates.some((d: any) => d.code === ACCOUNT_SUSPENDED_CODE || d.error === ACCOUNT_SUSPENDED_CODE);
+  } catch {
+    return false;
+  }
+}
+
+let lastSuspendedNotifiedAt = -Infinity;
+
+/**
+ * services/api.ts 응답 인터셉터용 — account_suspended 면 안내 팝업(3초 중복 억제) 후 true.
+ * 이메일 로그인(/auth/login)은 로그인 화면 오류 줄로 같은 문구를 보여주므로 팝업 생략(이중 안내 방지).
+ * 그 외 오류는 무동작 false(기존 경로 불변).
+ */
+export function handleAccountSuspendedError(err: any, now: number = Date.now()): boolean {
+  if (!isAccountSuspendedError(err)) return false;
+  const url: string = typeof err?.config?.url === 'string' ? err.config.url : '';
+  const isEmailLogin = /\/auth\/login\/?$/.test(url);
+  console.warn(`[KidsGuard] account suspended status=${err?.response?.status ?? 'unknown'} popup=${!isEmailLogin}`);
+  if (isEmailLogin) return true;
+  notifyAccountSuspended(now);
+  return true;
+}
+
+/**
+ * 이용 중지 안내 팝업(앱 내 다이얼로그) — 인터셉터·소셜 콜백(#error=account_suspended) 공용, 3초 중복 억제.
+ * @returns 이번 호출로 팝업을 띄웠는가
+ */
+export function notifyAccountSuspended(now: number = Date.now()): boolean {
+  if (now - lastSuspendedNotifiedAt < NOTIFY_DEDUP_MS) return false;
+  lastSuspendedNotifiedAt = now;
+  try {
+    showAlert(KIDS_TEXT.accountSuspendedTitle, KIDS_TEXT.accountSuspended);
+  } catch (e) {
+    console.error('[KidsGuard] 이용 중지 안내 팝업 실패', { err: e });
+  }
+  return true;
+}
+
+/**
+ * 소셜 로그인 콜백 URL 이 이용 중지 차단인가 — 서버 v3.233 계약: `…/oauth/callback#error=account_suspended`
+ * (기존 소셜 오류와 같은 fragment 방식). 쿼리(?error=)·다른 파라미터 뒤(&error=)도 같은 값이면 인정.
+ */
+export function isAccountSuspendedCallback(url: string | null | undefined): boolean {
+  if (typeof url !== 'string' || !url) return false;
+  const m = url.match(/[#&?]error=([^&#]+)/);
+  if (!m) return false;
+  try {
+    return decodeURIComponent(m[1]).trim() === ACCOUNT_SUSPENDED_CODE;
+  } catch {
+    return false;
+  }
+}
+
+/** 테스트 전용: 이용 중지 안내 중복 억제 시계 초기화 */
+export function __resetAccountSuspendedNotifyForTest(): void {
+  lastSuspendedNotifiedAt = -Infinity;
+}
+
+// ── v3.233 금칙어(400 word_filtered) 문구 — 보호자 허용 어린이의 글·댓글 등록 실패 안내 ──
+const WORD_FILTERED_FALLBACK = '사용할 수 없는 표현이 들어 있어요. 다른 말로 바꿔주세요.';
+
+/** 서버 400 `{error, code:'word_filtered'}`(또는 detail 래핑) 이면 사람이 읽는 문구, 아니면 null */
+export function getWordFilteredMessage(err: any): string | null {
+  try {
+    const data = err?.isAxiosError || err?.response ? err.response?.data : err;
+    if (!data || typeof data !== 'object') return null;
+    const candidates = [data, data.detail].filter((d) => d && typeof d === 'object');
+    for (const d of candidates as any[]) {
+      if (d.code === 'word_filtered') return pickHumanText(d.error) || pickHumanText(d.message) || WORD_FILTERED_FALLBACK;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

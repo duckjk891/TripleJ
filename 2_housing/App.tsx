@@ -44,6 +44,8 @@ import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore, restoreSession } from './stores/authStore';
+import { isAccountSuspendedCallback, notifyAccountSuspended } from './utils/kidsRestricted';
+import { startKidsForegroundRefresh } from './utils/kidsRefresh';
 // v3.207 ⑪: 튜토리얼 first-run 게이트 — 부팅 1회 판별(신규 설치 vs 기존 유저)
 import {
   clearServerTutorialSeen,
@@ -530,6 +532,13 @@ function useOAuthCallback() {
       try {
         const hash = (globalThis as any)?.location?.hash || '';
         const m = hash.match(/[#&]token=([^&]+)/);
+        // v3.233: 보호자 동의 철회 계정 — 서버가 `…/oauth/callback#error=account_suspended` 로 복귀 → 이용 중지 안내
+        if (!m && isAccountSuspendedCallback(hash)) {
+          console.info('[KidsGuard] social login blocked — account suspended (web)');
+          try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
+          notifyAccountSuspended();
+          return;
+        }
         if (!m) return;
         webOAuthTokenPending = true;
         const token = decodeURIComponent(m[1]);
@@ -557,6 +566,12 @@ function useOAuthCallback() {
         if (!url || !url.includes('oauth/callback')) return;
         const m = url.match(/[#&?]token=([^&]+)/);
         if (__DEV__) console.info('[SocialLogin] OAuth 딥링크 콜백 수신', { hasToken: !!m });
+        // v3.233: `aidol://oauth/callback#error=account_suspended` — 이용 중지 안내(버튼 측 수신과 중복 억제 공유)
+        if (!m && isAccountSuspendedCallback(url)) {
+          console.info('[KidsGuard] social login blocked — account suspended (deeplink)');
+          notifyAccountSuspended();
+          return;
+        }
         if (!m) return;
         const token = decodeURIComponent(m[1]);
         if (handledTokenRef.current === token) return; // openAuthSessionAsync 경로와 중복 방지
@@ -639,6 +654,8 @@ export default function App() {
   useEffect(() => { initRewardedAds(); }, []);
   // v3.227 A-보완: 생성 job 추적기 1회 기동(멱등)
   useEffect(() => { startGenerationTracker(); }, []);
+  // v3.233: 보호자 설정 즉시 반영 — 어린이 계정만 포그라운드 복귀 시 /auth/me 조용히 갱신(30초 간격, 성인 호출 0)
+  useEffect(() => startKidsForegroundRefresh(), []);
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
   useEffect(() => {
     initPlaybackReconciler();

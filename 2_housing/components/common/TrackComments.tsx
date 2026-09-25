@@ -13,6 +13,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { profileImageUrl } from '../../services/authService';
 import ReportModal from '../ReportModal';
 import { useIsChild, useKidsPermission, KIDS_TEXT } from '../../utils/kidsMode';
+import { isChildRestrictedError } from '../../utils/kidsMode'; // v3.233: 403 이중 팝업 방지
 
 export interface TrackComment {
   id: string;
@@ -93,6 +94,8 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
       await load();
     } catch (err: any) {
       console.error('[TrackComments] submit failed', { trackId, status: err?.response?.status });
+      // v3.233: 어린이 403(보호자 허용 철회 등)은 인터셉터가 안내 — 이중 팝업 방지
+      if (isChildRestrictedError(err)) return;
       showAlert('알림', err?.response?.data?.error || '댓글 등록에 실패했어요.');
     } finally {
       setSubmitting(false);

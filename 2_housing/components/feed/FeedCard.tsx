@@ -15,6 +15,7 @@ import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 import { fetchOfficial, getCachedOfficial } from '../../services/officialService';
 import { useIsChild, useKidsPermission, KIDS_TEXT, isChildRestrictedError } from '../../utils/kidsMode';
+import { getWordFilteredMessage } from '../../utils/kidsMode'; // v3.233: 금칙어 400 안내
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -101,6 +102,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   const isChild = useIsChild();
   const canComment = useKidsPermission('comment');
   const commentBlocked = isChild && !canComment;
+  // v3.233: 보호자 글쓰기 허용(feed_post → feed_write) 어린이는 내 글 공개 전환 가능(서버 PUT 도 feed_write 게이트)
+  const canFeedWrite = useKidsPermission('feed_write');
+  const feedWriteBlocked = isChild && !canFeedWrite;
 
   const toggleLike = async () => {
     if (!requireLogin()) return;
@@ -153,6 +157,10 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
       setReplyTarget(null);
     } catch (err: any) {
       console.error('[FeedCard] 댓글 등록 실패', { feedId: feed.id, status: err?.response?.status });
+      // v3.233: 어린이 403 은 인터셉터가 안내(이중 팝업 방지) · 금칙어 400 은 서버 안내 문구
+      if (isChildRestrictedError(err)) return;
+      const wf = getWordFilteredMessage(err);
+      if (wf) { showAlert('알림', wf); return; }
       showAlert('오류', '댓글 등록에 실패했습니다.');
     } finally {
       setPosting(false);
@@ -349,7 +357,8 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
             <>
               {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환
                   v3.232 B1: 어린이는 숨김(서버 PUT /feeds/{id} 403 — 글 수정 제한) */}
-              {!isChild && (
+              {/* v3.233: 보호자가 글쓰기(feed_write)를 허용한 어린이는 표시 — feedWriteBlocked 만 숨김 */}
+              {!feedWriteBlocked && (
               <TouchableOpacity style={styles.menuItem} disabled={visBusy} onPress={() => { setMenuOpen(false); toggleVisibility(); }}>
                 <Feather name={isPublic ? 'lock' : 'globe'} size={16} color={feedTheme.sub} />
                 <AppText variant="footnote" style={{ color: feedTheme.sub }}>

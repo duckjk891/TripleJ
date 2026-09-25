@@ -19,6 +19,7 @@ import TrackRow, { RowTrack } from '../components/TrackRow';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { useIsChild, useKidsPermission, KIDS_TEXT } from '../utils/kidsMode';
+import { isChildRestrictedError, getWordFilteredMessage } from '../utils/kidsMode'; // v3.233: 403·금칙어 안내
 
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -256,6 +257,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       navigation.goBack();
     } catch (err: any) {
       console.error('[FeedCompose] 등록 실패', { kind, status: err?.response?.status });
+      // v3.233: 어린이 403 은 인터셉터가 안내(이중 팝업 방지) · 금칙어 400 은 서버 안내 문구
+      if (isChildRestrictedError(err)) return;
+      const wf = getWordFilteredMessage(err);
+      if (wf) { showAlert('알림', wf); return; }
       showAlert('오류', `${isCommunity ? '공지' : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`);
     } finally {
       setPosting(false);

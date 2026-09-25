@@ -7148,3 +7148,22 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 5. 2차 착수 전 이번 REPORT 에 실측(어린이 0·나이 모름 31) 재기록.
 
 규칙: 서버 수정은 server_staging_v3232 에서만(orig 보존). 프로덕션 쓰기(코드 반영·.env·DB)는 사용자 승인 뒤. 비밀값·개인정보 미기재(테스트 계정 id 는 REPORT 에만 앞 8자). 팝업 showAlert/앱 내 다이얼로그, 표기 MAIDOL, 이모지 ⭐만. 코드 수정·커밋은 계획 승인 뒤 team-dev 루프에서.
+
+# v3.233 (2026-09-25) — 보호자 관리 API(E5)·심사용 계정(성인·어린이)
+**요청 원문**: "지금 google play 어른 계정이 있으니까 그걸 기반으로 어린이 계정하나 만들자." / (붙여넣은 절차: 백엔드가 `2_housing/백엔드_요청_보호자관리.md` 관리 API → 어린이 테스트 계정 `playreview_child@lotusai.co.kr` 관리 링크를 휴대폰 인증 없이 발급 → Play Console 안내문 `[링크]`) / "어른계정은 playreview@lotusai.co.kr 로 만들어줘. 바로 진행해줘."
+
+**정본 사양**: `/Users/pearl/TripleJ/2_housing/백엔드_요청_보호자관리.md` (§1 링크 형식, §2 decide 변경, §3 저장값, §4 새 API 6종, §5 심사용 otp_exempt, §6 admin, §7 로그). 보호자 웹 페이지는 홈페이지 저장소 `maidol/www/guardian/index.html`(다른 세션 제작·배포 완료, `https://maidol.ai.kr/guardian/`, `?demo=consent|manage` 미리보기) — 이 페이지의 요청·응답 계약을 그대로 맞춘다(페이지 소스를 읽어 확인).
+
+**Plan verification findings (오케스트레이터 실측)**
+- DB: `playreview@lotusai.co.kr`·`playreview_child@lotusai.co.kr` 없음(lotusai 도메인은 kimpearl@ 1개). `guardian_consents` 열: id, child_user_id, guardian_name, guardian_phone, consent_token, status, method, requested_at, decided_at, consent_type — manage_token·feed_post·dm_friends·otp_exempt·revoked_at 없음 → **DB 스키마 추가 필요(ALTER, 대표 1줄 실행)**. `user_consents`(consent_key terms/privacy/overseas/marketing/age14 등, version 2026-07-30.v1). users.account_status 값 active/pending_consent/withdrawn — `suspended` 신규.
+- v3.232 배포 상태: KIDS_MODE_ENABLED off(09:55Z), kids_policy.py 가 kids_permissions(feed_write·comment·dm_friends) 를 내려주되 1차는 전부 false. 보호자 동의 `guardian_consent_enabled` off, 알림 어댑터 mock.
+- 앱: utils/kidsMode.ts useKidsPermission('feed_write'|'comment'|'dm_friends'), 2조 DM 은 어린이에게 공식 계정만 표시.
+
+**범위**
+- S(서버): §2 decide 에서 manage_token 발급·mock 응답 manage_url, 알림 어댑터 consent_url 을 `https://maidol.ai.kr/guardian/?token=` 형식으로, §3 저장(별도 테이블 `guardian_manage` 권장 — 기존 guardian_consents 무변경이 회귀상 안전, 판단은 backend), §4 API 6종(`/api/guardian/manage/{token}` GET·otp·otp/verify·settings PUT·revoke·delete-request, 세션=Redis 30분, OTP 5분·1시간 5회·5회 오답 폐기, OTP 발송은 mock 어댑터 — 실발송 업체 미계약), 보호자 설정 → kids_policy 의 kids_permissions(feed_post → feed_write·comment, dm_friends) 연결 + F1 DM 제한에 dm_friends(서로 팔로우만) 반영, revoke → suspended 로그인 403, delete-request 운영 대기열(기존 탈퇴/삭제 요청 저장 구조 재사용 또는 신규 컬렉션). 라우터 등록은 main.py 무변경 원칙 — 불가피하면 보고(대표 승인 후 최소 변경). §6 admin 페이지는 관리자 웹(다른 세션 소유) 대신 **admin API 만**(목록·관리 링크 재발송·심사용 발급) 또는 스크립트로 대체 — 판단 보고.
+- 계정: 성인 `playreview@lotusai.co.kr`(성인 생년월일, 약관 동의 기록, 일반 가입과 동일 필드)·어린이 `playreview_child@lotusai.co.kr`(만 10세, 보호자 동의 agreed mock 기록, guardian_manage otp_exempt=true, 만료 없는 manage 링크) 생성 스크립트 — **비밀번호는 대표가 터미널에서 숨김 입력(오케스트레이터·로그·argv·셸 히스토리에 남지 않게)**, 멱등(이미 있으면 중단), dry-run 기본.
+- A(앱): 보호자 허용 반영 — useKidsPermission 이 서버값을 그대로 쓰는지 확인, dm_friends=true 인 어린이는 DM 에서 서로 팔로우한 사람과의 대화·새 대화(상대 찾기는 맞팔 목록에서만, 검색 없음) 가능, feed_post=true 면 글쓰기·댓글 허용(사진 첨부는 계속 금지). suspended 로그인 403 안내 문구.
+- 킬 스위치: 어린이 모드 on 전환은 계정 생성·배포 뒤 대표 승인(`.env`).
+
+**회귀 보호**: 성인·킬 스위치 off 동작 불변(v3.232 동일성 스위트 재사용), 기존 guardian consent request/decide 흐름(플래그 off 상태) 불변, 로그 규칙(§7) 준수.
+**배포**: DB 백업 → ALTER/CREATE 1줄 → 코드 반영 → 빌드·재생성(off) → 스모크 → 계정 생성 스크립트(대표) → 킬 스위치 on(대표) → 심사용 관리 링크 확인.

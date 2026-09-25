@@ -15,6 +15,10 @@ import { AppText, Avatar, EmptyState, Button } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError } from '../utils/identityGate';
 import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
+// v3.233 E5: 보호자 dm_friends 허용 어린이 — 맞팔 친구 DM
+import { useKidsPermission, filterChildDmConversations, isChildRestrictedError } from '../utils/kidsMode';
+import { fetchMutualFollows, type FollowUser } from '../services/followService';
+import { refreshKidsPermissionsIfChild } from '../utils/kidsRefresh';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -56,6 +60,12 @@ export default function DmInboxScreen() {
   const user = useAuthStore((s) => s.user);
   // v3.232 K6(B1·B2): 어린이 = 공식 계정 대화만(공지·고객센터). 새 메시지·검색·요청 탭 숨김. 성인·age_group 없음 = false
   const isChild = useIsChild();
+  // v3.233 E5: 보호자가 dm_friends 를 허용한 어린이 = 공식 계정 + 서로 팔로우한 친구와 대화.
+  //   새 대화 상대는 맞팔 목록에서만(닉네임·#태그 검색 없음), 메시지 요청 탭 없음. 허용 없음(기본) = v3.232 그대로.
+  const canDmFriends = useKidsPermission('dm_friends');
+  const childFriendsDm = isChild && canDmFriends;
+  const [friends, setFriends] = useState<FollowUser[] | null>(null); // null = 미조회·실패 → 공식 계정만
+  const [friendsLoading, setFriendsLoading] = useState(false);
   // v3.230 A8: 서버 DM 게이트가 막는 기능(일반 회원 검색·대화 시작) 여부 — 표시용(차단 화면 아님)
   const [peerDmLimited, setPeerDmLimited] = useState(false);
   const [tab, setTab] = useState<'messages' | 'requests'>('messages');
@@ -91,6 +101,8 @@ export default function DmInboxScreen() {
       // v3.232 K6: 어린이는 공식 계정 id 로 목록을 거른다(officialService 캐시 공유, 실패 시 null → 공식 대화만 표시 원칙 유지)
       if (isChild) {
         console.info('[KidsMode] dm official-only');
+        // v3.233: 보호자가 방금 dm_friends 를 켰을 수 있음 — 진입 시 권한 갱신(30초 간격, 어린이만). 바뀌면 store → 화면 즉시 전환
+        refreshKidsPermissionsIfChild('dm-inbox');
         fetchOfficial().then((o) => { if (o) setOfficial(o); });
       }
       const [c, r] = await Promise.all([api.get('/dm/conversations'), api.get('/dm/requests')]);
@@ -105,6 +117,46 @@ export default function DmInboxScreen() {
   }, [user, isChild]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // v3.233 E5: 맞팔 목록(services/followService — 기존 GET /follows/followers·following 교집합). 실패 = null(공식만)
+  const loadFriends = useCallback(async () => {
+    setFriendsLoading(true);
+    try {
+      setFriends(await fetchMutualFollows());
+    } catch (err: any) {
+      console.error('[KidsDM] 맞팔 목록 처리 실패', { message: err?.message });
+      setFriends(null);
+    } finally {
+      setFriendsLoading(false);
+    }
+  }, []);
+  useFocusEffect(useCallback(() => {
+    if (!childFriendsDm || !user) return;
+    console.info('[KidsDM] friends mode');
+    loadFriends();
+  }, [childFriendsDm, user, loadFriends]));
+
+  const openFriendPicker = () => {
+    console.info('[KidsDM] friend picker open');
+    setComposeOpen(true);
+    if (!official) fetchOfficial().then((o) => { if (o) setOfficial(o); });
+    loadFriends();
+  };
+
+  // v3.233 E5: 친구·공식 대화 시작 — 서버 F1 이 dm_friends·맞팔을 다시 검사(403 child_restricted 는 인터셉터 안내)
+  const startFriendConversation = async (peerId: string) => {
+    const isOfficial = !!official && String(official.official_id) === String(peerId);
+    console.info('[KidsDM] 대화 시작', { official: isOfficial });
+    try {
+      const res = await api.post('/dm/conversations', { peer_id: peerId });
+      setComposeOpen(false);
+      navigation.navigate('DmChat', { conversation: res.data });
+    } catch (err: any) {
+      console.error('[KidsDM] 대화 시작 실패', { status: err?.response?.status, official: isOfficial });
+      if (isChildRestrictedError(err)) return;
+      showAlert('알림', '대화를 시작하지 못했어요. 잠시 후 다시 시도해주세요.');
+    }
+  };
 
   const openCompose = async () => {
     setComposeOpen(true);
@@ -126,6 +178,17 @@ export default function DmInboxScreen() {
 
   // v3.71: 새 메시지 버튼을 네이티브 헤더 우측에 배치(본문 헤더는 제거됨)
   useLayoutEffect(() => {
+    // v3.233 E5: 친구 DM 허용 어린이 — 새 메시지 = 맞팔 친구 선택 시트(검색 없음)
+    if (childFriendsDm) {
+      navigation.setOptions({
+        headerRight: () => (
+          <TouchableOpacity onPress={openFriendPicker} accessibilityLabel="새 메시지" style={{ marginRight: 12, padding: 4 }}>
+            <Feather name="edit" size={20} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+      return;
+    }
     // v3.232 K6: 어린이는 새 메시지(상대 찾기) 진입 없음
     if (isChild) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
@@ -224,6 +287,87 @@ export default function DmInboxScreen() {
   const officialId = official?.official_id ? String(official.official_id) : null;
   const childData = officialId ? convs.filter((cv) => String(cv.peer?.id) === officialId) : [];
   const childHasOfficialConv = childData.length > 0;
+
+  // v3.233 E5: 친구 DM 허용 어린이 — 공식 + 맞팔 대화, 요청 탭·검색 없음, 새 대화는 맞팔 목록 시트
+  if (childFriendsDm) {
+    const friendIds = friends ? new Set(friends.map((f) => String(f.id))) : null;
+    const visibleConvs = filterChildDmConversations(convs, officialId, friendIds);
+    const hasOfficialConv = !!officialId && visibleConvs.some((cv) => String(cv.peer?.id) === officialId);
+    const pickable = (friends || []).filter((f) => !officialId || String(f.id) !== officialId);
+    return (
+      <View style={styles.container}>
+        {official && !hasOfficialConv ? (
+          <TouchableOpacity style={styles.convRow} onPress={() => startFriendConversation(official.official_id)}>
+            <Avatar name={official.nickname || 'maidol_official'} size={44} />
+            <AppText variant="body" style={{ marginLeft: spacing.md }}>
+              {official.nickname || 'maidol_official'}
+            </AppText>
+            <View style={styles.officialBadge}>
+              <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+        {loading ? (
+          <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
+        ) : error ? (
+          <EmptyState title={error} action={<Button label="다시 시도" variant="tonal" onPress={load} />} />
+        ) : visibleConvs.length > 0 ? (
+          <FlatList data={visibleConvs} keyExtractor={(it) => it.conversation_id} renderItem={renderConv} />
+        ) : (
+          <EmptyState title={KIDS_TEXT.dmFriendsInboxEmpty} hint={KIDS_TEXT.dmFriendsHint} />
+        )}
+
+        <Modal visible={composeOpen} transparent statusBarTranslucent animationType="slide" onRequestClose={closeCompose}>
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeCompose} accessibilityLabel="닫기 배경">
+            <TouchableOpacity
+              style={[styles.sheet, { height: composeSheetHeight, paddingBottom: insets.bottom }]}
+              activeOpacity={1}
+              onPress={() => {}}
+            >
+              <View style={styles.header}>
+                <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
+                <TouchableOpacity onPress={closeCompose} accessibilityLabel="닫기" style={{ padding: 4 }}>
+                  <Feather name="x" size={22} color={colors.text.muted} />
+                </TouchableOpacity>
+              </View>
+              <AppText variant="caption" tone="secondary" style={styles.composeHint}>{KIDS_TEXT.dmFriendsHint}</AppText>
+              <View style={{ flex: 1, marginTop: spacing.md }}>
+                {official ? (
+                  <TouchableOpacity style={styles.convRow} onPress={() => startFriendConversation(official.official_id)}>
+                    <Avatar name={official.nickname || 'maidol_official'} size={40} />
+                    <AppText variant="body" style={{ marginLeft: spacing.md }}>
+                      {official.nickname || 'maidol_official'}
+                    </AppText>
+                    <View style={styles.officialBadge}>
+                      <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+                {friendsLoading && !friends ? (
+                  <AppText variant="footnote" tone="muted" style={[styles.searchStatus, { marginTop: spacing.md }]}>친구 목록을 불러오는 중...</AppText>
+                ) : friends === null ? (
+                  <AppText variant="footnote" tone="muted" style={[styles.searchStatus, { marginTop: spacing.md }]}>{KIDS_TEXT.dmFriendsLoadFailed}</AppText>
+                ) : pickable.length === 0 ? (
+                  <AppText variant="footnote" tone="muted" style={[styles.searchStatus, { marginTop: spacing.md }]}>{KIDS_TEXT.dmFriendsEmpty}</AppText>
+                ) : (
+                  <FlatList
+                    data={pickable}
+                    keyExtractor={(it) => String(it.id)}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity style={styles.convRow} onPress={() => startFriendConversation(String(item.id))} accessibilityLabel={`${item.nickname}에게 메시지`}>
+                        <Avatar name={item.nickname || '?'} uri={profileUri(item.profile_image)} size={40} />
+                        <AppText variant="body" style={{ marginLeft: spacing.md }}>{item.nickname}</AppText>
+                      </TouchableOpacity>
+                    )}
+                  />
+                )}
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      </View>
+    );
+  }
 
   if (isChild) {
     return (
