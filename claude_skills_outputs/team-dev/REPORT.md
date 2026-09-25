@@ -3248,3 +3248,10 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 다른 세션이 00:36Z 재기동하며 로그 볼륨을 또 누락 — 이번 재생성에서 복구. 재발 방지 전달 필요.
 - 본인인증 우회 상태에서 미성년 판정은 자가 입력 생년월일에만 의존(미입력 시 성인 경로) — 본인인증 도입 전 수용.
 - 기존 부풀린 차트 기록은 삭제하지 않음(자연 만료). 가입 경로 닉네임 예약어 변형 차단은 v3.230b 후속 배포.
+
+### v3.230b (2026-09-25) — 가입 닉네임 예약어 변형 차단 (서버 후속 배포)
+- 요청: "가입할 때는 "maidol official"이 아직 통과됩니다. <- 이거 막아줘."
+- 서버 3파일(services/official.py 공용 `clean_nickname`·`reserved_key`·`is_reserved_nickname`, routes/auth.py 이메일·보호자 가입 적용, routes/oauth.py 소셜 가입 — 예약어 변형이면 `{provider}_{uid8}` 대체 이름). 닉네임 변경과 같은 함수 객체 사용. 기존 가입자 데이터 무변경. 스테이징 37/37.
+- 배포: 사용자 1줄 scp(3 OK, `.bak_pre_v3230b`) → 롤백 태그 `maidol-app:pre-v3230b-live`, 로그 `maidol-app_pre_v3230b_*.log` → 빌드(이미지 md5 = 패치본, main.py 유지) → 진행 중 0 확인 → 05:11:24Z 재생성(로그 볼륨 유지).
+- 스모크: health 200, 이메일 가입 "maidol official" → 400 `[official] reserved nickname blocked`(계정 미생성), 공용 판정 변형 3종 차단·허용 2종 통과, 채움 문자 제거 확인, Traceback/ERROR 0.
+- 미결: 가입 경로 닉네임 길이 제한(현재 무제한, 변경은 2~15자) — 대표 결정 대기.
