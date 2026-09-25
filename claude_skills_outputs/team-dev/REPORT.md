@@ -3298,3 +3298,15 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 **배포**: 사용자 DB 백업·코드 17 OK(`.bak_pre_v3232`) → 롤백 태그 `pre-v3232-live`·로그 보관 → 빌드(이미지 md5 = 패치본, main.py 유지) → 진행 중 0 → 09:55:49Z 재생성(킬 스위치 off, 로그 볼륨 유지). 스모크: health 200, 어린이 관련 로그 0줄(off 에서 신규 코드 미실행), errors 0·5xx 0, probe kids_mode_enabled=False·is_child 0, 비로그인 공개 응답(곡 목록·카테고리·공식 계정) 해시 동일, 광고 active 는 원래 무작위 정렬(500건·키 동일), 차트는 재기동 재계산으로 값 변동(차트 코드 무변경). 웹 배포(AppEntry-30b04f6d…) 코드 반영 확인.
 
 **남은 것(2차·외부)**: QA 계정 지정 + 킬 스위치 on 검증(대표 승인·.env), 보호자 동의 실발송·본인확인 업체, 보호자 관리 페이지, 소셜 가입 연령 확인, 처리방침·약관 개정(법무), Play Console 제출, 광고 ID 미전송 실기기 확인, 생년월일 없던 계정의 첫 입력으로 어린이 전환 경로(보호자 절차 없음), 금칙어 한글 숫자 전화번호 미검출.
+
+## v3.233 (2026-09-26) — 보호자 관리 API·심사용 계정·소통 경로 금칙어·어린이 모드 ON (PLAN 정본 = PLAN.md `# v3.233`, 사양 = 2_housing/백엔드_요청_보호자관리.md)
+**요청**: "지금 google play 어른 계정이 있으니까 그걸 기반으로 어린이 계정하나 만들자." / 보호자 관리 API·심사용 관리 링크 절차(붙여넣기) / "어른계정은 playreview@lotusai.co.kr 로 만들어줘. 바로 진행해줘." / 금칙어를 모든 사용자 DM·댓글에 / "별 100개 넣고 금칙어도 같이 켜줘."
+
+**수행 결과**
+- 서버(수정 13·신규 2, main.py 무변경 — referral.py public_router 에 결합): `guardian_manage` 테이블(자녀당 1행), `/api/guardian/manage/{token}` GET·otp·otp/verify·settings PUT·revoke·delete-request(OTP 6자리 5분·1시간 5회·5회 오답 폐기, 세션 Redis 30분 토큰 결속, otp_exempt 는 스크립트 전용), decide 동의 시 manage_token 발급(mock 응답 manage_url), 동의 링크 `https://maidol.ai.kr/guardian/?token=`, 보호자 설정 → kids_permissions(feed_post→feed_write·comment, dm_friends → 맞팔 DM 즉시 accepted), revoke → suspended(이메일·소셜 로그인·기존 JWT 403 account_suspended), 삭제 요청 → issue_reports, admin 목록·재발송 API, `WORD_FILTER_SOCIAL_ALL_USERS`(성인 DM·피드 글·댓글·곡 댓글 — 욕설·성적·혐오만), 금칙어 어절 경계 매칭(오탐 수정), 철회된 동의 링크 409, access log 토큰 마스킹.
+- 앱(d31f68e): 맞팔 DM(공식 + 맞팔, 새 대화는 맞팔 목록), feed_post 허용 시 글·댓글, account_suspended 공통 안내(로그인·소셜 #error·인터셉터), 어린이만 복귀·DM 진입 시 /auth/me 권한 갱신(30초).
+- 테스트: 서버 217/217 + 스크립트 21/21 + v3.228·v3.230·v3.231 회귀 PASS(v3.232 스위트 3건은 범위 고정 검사 — 의도), 성인 오탐 194문장 적중 0·차단 100/100, 앱 하니스 312/312 + v3.232 g1·g3 PASS. tester 버그(금칙어 오탐·권한 즉시 반영·철회 링크·IFS) 수정 재검증.
+
+**배포(2026-09-25T23:17Z / ON 23:20Z)**: DB 백업 `pre_v3233_*` → 스키마(guardian_manage) → 코드 15 OK(`.bak_pre_v3233`) → 롤백 태그 `pre-v3233-live` → 빌드·재생성(off) 스모크(health·오류 0·공개 응답 해시 동일·관리 API 404/401·CORS·마스킹) → 심사용 계정 생성(대표 터미널, 비밀번호 숨김 입력): 성인 `playreview@lotusai.co.kr`(41aea541), 어린이 `playreview_child@lotusai.co.kr`(bb6a1759, 만 10세, 보호자 동의 agreed mock, guardian_manage otp_exempt) → 어린이 ⭐100 지급(admin_grant, note review_child_seed_v3233) → `.env` KIDS_MODE_ENABLED=true·WORD_FILTER_SOCIAL_ALL_USERS=true(`.env.bak_pre_v3233_kids`) → 재생성. 확인: is_child n=1(심사용 어린이만), 관리 링크 GET 200(인증 없이, age 10·settings 모두 false), 오류 0, 공개 응답 동일.
+
+**남은 것**: Play Console 로그인 세부정보(성인·어린이 계정 + 관리 링크 + 영어 안내문), 보호자 동의 실발송·본인확인 업체(실제 어린이 가입은 여전히 불가), 소셜 가입 연령 확인, 처리방침·약관 개정, nginx access.log 토큰 잔존, 심사자가 "동의 철회" 시 복구 1줄(DEPLOY §4-5), 앱 APK 반영.
