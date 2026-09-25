@@ -11,12 +11,13 @@ import { spacing } from '../theme/spacing';
 
 interface Notification {
   id: string;
-  type: 'follow' | 'comment' | 'reply' | 'like' | 'feed';
+  type: 'follow' | 'comment' | 'reply' | 'like' | 'feed' | 'star';
   actor_id: string;
   actor_nickname?: string;
   target_id?: string | null;
   target_type?: string | null; // v3.177: 'track' 이면 곡 관련 알림(→플레이어), null=피드
   preview?: string | null;
+  amount?: number; // star: 관리자 지급/차감 수량 (target_type 'star_grant' | 'star_deduct')
   read: boolean;
   created_at?: string;
 }
@@ -28,6 +29,13 @@ const TYPE_META: Record<string, { icon: any; label: (n: Notification) => string 
   reply: { icon: 'corner-down-right', label: (n) => `${n.actor_nickname}님이 내 댓글에 답글을 남겼어요` },
   like: { icon: 'heart', label: (n) => `${n.actor_nickname}님이 내 피드를 좋아해요` },
   feed: { icon: 'edit-3', label: (n) => `${n.actor_nickname}님이 새 피드를 올렸어요` },
+  // 관리자 스타 지급/차감 — 관리자 웹 '별 관리'에서 발송. preview = 운영자가 적은 메시지(선택)
+  star: {
+    icon: 'star',
+    label: (n) => (n.target_type === 'star_deduct'
+      ? `스타 ${(n.amount ?? 0).toLocaleString()}개가 차감되었어요`
+      : `스타 ${(n.amount ?? 0).toLocaleString()}개를 받았어요`),
+  },
 };
 
 const parseUtc = (iso: string) => new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z');
@@ -100,6 +108,8 @@ export default function NotificationsScreen() {
   const open = (n: Notification) => {
     if (n.type === 'follow') {
       navigation.navigate('UserChannel', { authorId: n.actor_id, name: n.actor_nickname });
+    } else if (n.type === 'star') {
+      navigation.navigate('StarHistory');
     } else if (n.target_type === 'track' && n.target_id) {
       // v3.177: 곡 댓글 알림 → 해당 곡 플레이어(상세시트 댓글 탭에서 확인)
       if (__DEV__) console.info('[Notifications] open track', { trackId: n.target_id });
