@@ -13,7 +13,8 @@ import LoginStartButton from './LoginStartButton';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
-export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message';
+// v3.232 K11(G2): 'track_comment'(곡 댓글) 추가 — 전 사용자 신규 신고 대상. 구서버는 400 문구를 그대로 표시.
+export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message' | 'track_comment';
 
 const REASONS: { code: string; label: string }[] = [
   { code: 'portrait', label: '초상권 침해' },
@@ -55,6 +56,8 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
     setBusy(true); setError('');
     // 신고 사유 원문은 남기지 않고 길이만 기록
     if (__DEV__) console.info('[ReportModal] submit', { target_type: targetType, target_id: targetId, reason_code: reasonCode, text_len: text.length });
+    // v3.232 K11: 곡 댓글 신고(신규 대상) 추적 로그 — 기존 대상 4종은 로그 불변
+    if (targetType === 'track_comment') console.info('[TrackCommentReport] submit', { target_id: targetId, reason_code: reasonCode });
     try {
       await api.post('/reports/', {
         target_type: targetType,

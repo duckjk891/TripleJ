@@ -33,6 +33,7 @@ import { useCallback } from 'react';
 import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { useIsChild, isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 import { fetchPointCosts } from '../services/pointCosts';
 import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
@@ -394,6 +395,11 @@ type ScreenMode = 'dialogue' | 'loading' | 'result';
 
 export default function CoverGenerationScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.232 K15 [KidsGate]: 어린이 계정 — 배경·장소 "사진 올리기" 숨김(글 설명·건너뛰기·다듬기 유지). 성인은 false.
+  const isChild = useIsChild();
+  const bgQuestion = isChild
+    ? '배경이나 장소 생각이 있나요? 말로 설명해도 돼요. 없으면 건너뛰어요!'
+    : '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!';
   const musicStore = useMusicStore();
   const scrollRef = useRef<ScrollView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -841,7 +847,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       expression: coverExtras.expression || undefined, // v3.169 — 인물 표정
       palette: coverExtras.palette || undefined,
       background_prompt: coverExtras.bgPrompt || undefined,
-      background_object_name: coverExtras.bgObjectName || undefined,
+      // v3.232 K15: 어린이는 배경 사진(이전에 올린 잔존값 포함)을 싣지 않는다(성인은 기존 그대로)
+      background_object_name: (isChildNow() ? null : coverExtras.bgObjectName) || undefined,
       lyrics_excerpt: coverExtras.lyricsExcerpt || undefined,
       // v3.152: 실사/가상 분기 — 가상이면 화풍 라벨 동봉 (서버가 일러스트 강제 프롬프트로 전환)
       character_kind: charObjectName ? (coverExtras.charKind || 'real') : undefined,
@@ -1161,7 +1168,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const proceedToBg = (echoOf?: number) => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!', ...(echoOf != null ? { echoOfStep: echoOf } : {}) },
+      { type: 'director', text: bgQuestion, ...(echoOf != null ? { echoOfStep: echoOf } : {}) },
     ]);
     setStep(1.85);
   };
@@ -1208,6 +1215,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   // 배경 — 사진 업로드 (DocumentPicker image/* 관행)
   const handleBgPhoto = async () => {
+    if (isChildNow()) {
+      // v3.232 K15: 버튼 숨김 — 방어
+      console.info('[KidsGate] cover bg photo blocked');
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.photoBlocked);
+      return;
+    }
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (res.canceled || !res.assets || !res.assets[0]) return;
@@ -1355,7 +1368,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       case 1.75: return '이 곡의 가사 내용을 반영해서 만들까요? 가사를 반영하면 장면은 가사에 맡기고, 아니면 구도·배경·색감을 하나씩 여쭤볼게요. (추가 비용 없어요)';
       case 1.8: return '어떤 구도로 담을까요? 딱히 없으면 건너뛰어도 좋아요!';
       case 1.82: return '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!';
-      case 1.85: return '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!';
+      case 1.85: return bgQuestion;
       case 1.9: return '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!';
       default: return '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.';
     }
@@ -1438,7 +1451,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   // v3.204(④): 특수 버튼 — 1.85(배경) '사진 올리기', 1.7(의상) '꾸미기 가기'
   const editExtraActionsForStep = (s: number): AnswerEditExtraAction[] | undefined => {
-    if (s === 1.85) {
+    if (s === 1.85 && !isChild) { // v3.232 K15: 어린이는 수정 모달에도 '사진 올리기' 없음
       return [{
         label: '사진 올리기',
         onPress: async () => {
@@ -2460,11 +2473,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           // v3.150: 배경·장소 — 사진 업로드 / 텍스트 설명 / 건너뛰기
           <>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+              {!isChild && (
               <TouchableOpacity style={[styles.optionBtnOutline, { flex: 1, marginTop: 0 }]} onPress={handleBgPhoto} disabled={bgUploading} activeOpacity={0.8}>
                 {bgUploading
                   ? <ActivityIndicator size="small" color={colors.accent.primary} />
                   : <AppText style={styles.optionBtnOutlineText}>사진 올리기</AppText>}
               </TouchableOpacity>
+              )}
               <TouchableOpacity style={[styles.optionBtnOutline, { flex: 1, marginTop: 0 }]} onPress={handleBgSkip} activeOpacity={0.8}>
                 <AppText style={styles.optionBtnOutlineText}>건너뛰기</AppText>
               </TouchableOpacity>

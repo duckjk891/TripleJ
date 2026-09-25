@@ -3,7 +3,7 @@
 //   → 커버 이미지 선택(선택 — 미선택 시 서버 cover_image_url=None 기본) → 저작권 확인(필수)
 //   → POST /tracks/upload(진행률) → (커버 있으면) POST /upload/image type=cover → 완료 팝업.
 // 계약/제한값은 services/trackService.ts 헤더 주석 참조(실서버 openapi 실측 + tracks.py:1238).
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -33,6 +33,7 @@ import {
 } from '../services/trackService';
 // v3.104(B-5): 커버 보관함에서 선택 — 파일 선택과 병행(둘 중 하나만, cover_object_name form 필드로 발매)
 import { useCoverLibraryStore, PickedCover } from '../stores/coverLibraryStore';
+import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 
 // MAIDOL UploadPage.jsx:10-11 폼 선택지 관행
 const GENRES = ['발라드', '댄스', '힙합', 'R&B', '인디', '록', 'Electronic', 'Ambient', 'Lo-fi', 'Cinematic', '기타'];
@@ -44,6 +45,15 @@ function formatSize(bytes?: number): string {
 }
 
 export default function TrackUploadScreen({ navigation }: any) {
+  // v3.232 K16 [KidsGate]: 어린이 계정은 내 음원·곡 커버 직접 업로드 불가 — 진입 가드(현재 앱 진입점 없음, 방어).
+  const isChild = useIsChild();
+  useEffect(() => {
+    if (!isChild) return;
+    console.info('[KidsGate] track upload blocked');
+    showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정은 음원이나 사진을 올릴 수 없어요.');
+    navigation.goBack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isChild]);
   const [audioFile, setAudioFile] = useState<PickedFile | null>(null);
   const [coverFile, setCoverFile] = useState<PickedFile | null>(null);
   // v3.104(B-5): 커버 보관함 선택 결과 — coverFile과 상호 배타(둘 중 하나만)

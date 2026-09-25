@@ -6881,3 +6881,270 @@ MAIDOL 베타 테스트에 참여해 주셔서 감사합니다. 현재 MAIDOL은
 - DB 쓰기: Mongo·Postgres 쓰기 없음. ES 재색인(공개곡 27건 upsert)은 배포 시 자동 1회 — 배포 승인에 포함해 고지.
 
 규칙: 서버 수정은 server_staging_v3231 에서만(orig 보존). 프로덕션 쓰기는 사용자 승인 뒤. 비밀값 미기재. 팝업 showAlert, 표기 MAIDOL, 이모지 ⭐만. 코드 수정·커밋은 계획 승인 뒤 team-dev 루프에서.
+
+---
+
+# v3.232 (2026-09-25) — 어린이 모드
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 03a1c8d = v3.231). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004/app`(읽기 전용). 분석용 원본 = `/private/tmp/server_staging_v3232/orig/`(app 트리 전체 .py 119개, .bak·static 제외, 서버 쓰기 0). 실측 스크립트 = `/private/tmp/server_staging_v3232/q1.py·q2.py`(Postgres SELECT 만). 기획서 = `2_housing/어린이모드_기획서.md`(273행 전부 확인 — 파일:라인 인용 다수가 현재 코드와 어긋나 아래 표로 재확정). 출처 [P]=planner 실측·코드 확인.
+
+사용자 요청 원문:
+"어린이 기획서를 기반으로 앱을 전반적으로 수정해야할 것 같은데. 잘 생각해서 기존 기능에 문제가 절대 없도록 만들어야되. 지금 상태를 체크해서 저장해두고 어린이 기획서를 반영해서 새로운 버전을 만들어줘"
+
+체크포인트(완료, 되돌림 기준): git 태그 `checkpoint-pre-kids-20260925`(HEAD 03a1c8d) · 서버 이미지 `maidol-app:checkpoint-pre-kids-20260925`(9a0076591bb4 = 현재 latest, 06:25Z).
+
+서버 파일 md5 기준값([P] 2026-09-25, 배포 직전 재대조 — 다른 세션이 오늘 auth.py·oauth.py·official.py(05:21Z)·tracks.py·search_service.py(06:25Z)를 바꿈):
+config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85b52366da1b39c3f4` · routes/auth.py `abffbf0add39f8c4f77115287085ad1c` · services/dm_service.py `cb5fa56f1ec11f23cb365d541043d519` · routes/dm.py `c051757fa444d49e06148e057591c443` · routes/upload.py `74c18f239a347ae405de34548f17a9ce` · routes/feeds.py `5e051562412bfc18570236859d2531ae` · routes/tracks.py `21ac424dd71d7e2b9cdfb355c090e483` · routes/character.py `a61f7865f7907e41f86ebb0662a7fbc8` · routes/face_verify.py `6ba27ce6d7a037ac0231953fdc446794` · routes/voice_clone.py `48a6b607c1aabbd9b9f04af75e136231` · routes/generate.py `4842bb5623cf55c3f6be00da9ae88a7a` · routes/business.py `886744df7305eb4e9c9d31704f0807c9` · routes/reports.py `8ebfa941c29303a142eb25e989db2735` · routes/admin.py `42603988c709095c43fe000cf7f9a461` · main.py `78ab70741f8dc476e879c330608e0bc7`(수정 대상 아님)
+
+## 0단계 Plan verification findings
+
+### 1. DB 실측 — 배포 즉시 누가 어린이가 되는가 [P q1·q2, 2026-09-25]
+| 항목 | 값 |
+|---|---|
+| 전체 계정 | 43 (전부 account_status=active, pending_consent 0) — provider local 24 · kakao 10 · google 9 / role user 33 · customer 8 · admin 2 |
+| 생년월일 입력 | 12 (local 10 · kakao 1 · google 1) — 만 나이 분포 16세 1명 · 19세 1명 · 나머지 20세 이상(최소 16 · 최대 37) |
+| **생년월일 없음(나이 모름)** | **31 / 43 = 72%** — kakao 9 · google 8 · local 14(2026-03~09 이메일 가입 중 생년월일 필수화 이전·선택 입력 계정) |
+| 만 13세 미만(child) | **0** (상태 무관 0) |
+| 만 13세(teen) | 0 |
+| guardian_consents | 3행(signup: agreed 1 · rejected 1 · expired 1, 모두 method=mock, 2026-07 테스트) — 3건 모두 아동 계정이 이미 삭제됨(09-24 테스트 계정 정리) |
+| is_verified | 4 (kakao 인증 트랙) |
+→ **결론: 코드를 배포하고 킬 스위치를 켜도 현재 어린이 모드로 바뀌는 계정은 0명.** 나이 모름 31명은 어린이로 취급하지 않는다(아래 플래그 설계) — 이 31명을 어린이로 보면 즉시 대규모 회귀.
+
+### 2. 서버 설정·보호자 동의 현황 [P]
+- `settings.guardian_consent_enabled` = **False**(config.py:180 기본값, 운영 .env 에 GUARDIAN_CONSENT_ENABLED 키 없음 — 컨테이너 settings 실측 False). identity_verify_required=False, face_verify_enabled=True, frontend_url=https://app.maidol.ai.kr.
+- 발송 어댑터 `services/guardian_notify.py` = **mock**(로그만 남기고 consent_url 반환, SMS 없음). 본인확인 어댑터 `services/guardian_verify.py` = **mock**(즉시 통과).
+- **보호자 동의 착지 페이지가 없다**: consent_url = `{frontend_url}/guardian-consent/{token}` → `https://app.maidol.ai.kr/guardian-consent/x` 는 200 이지만 앱 웹 SPA 홈(index.html)으로 떨어진다(curl 확인). 구 MAIDOL 웹의 `GuardianConsentPage.jsx`(/Users/pearl/TripleJ-maidol/0_platform_music/frontend/src/pages/)는 이식되지 않았다. 앱 authService.ts:14 도 "decide 는 보호자 웹 착지 페이지 전용 — 앱에서 호출하지 않음".
+- → guardian_consent_enabled 를 지금 켜면: 만 14세 미만이 가입 요청 → pending_consent 계정 생성(로그인 403) → 보호자에게 아무것도 가지 않고, 앱이 보여주는 "테스트 모드" 링크도 동의 화면이 아님 → **영구 대기 계정만 쌓인다.** 이번 버전에서 켜지 않는다(대표 결정 D2 기본값).
+- 동의 처리 로직 자체는 있음: auth.py:976 request(플래그 OFF 503) · :1075 notice · :1124 decide(verify mock → agreed 시 active 전환, verify_reward_points>0 이면 ⭐ 지급). 가입 차단: auth.py:323-337(register 는 만14 미만이면 항상 400 guardian_consent_required).
+
+### 3. 연령·계정 코드 현황 [P]
+- 서버 나이 계산: models/user.py:20-33 `age_years`·`is_under_14`(GUARDIAN_CONSENT_AGE=14, birth None=False, `date.today()` = 컨테이너 UTC 기준). age_group 개념 없음. 세션(Redis session dict, auth.py(루트):33-68)에 birth_date 없음 → 어린이 판정은 PG fresh 조회 필요(dm_service._fetch_gate_row :158-165 관행).
+- `/auth/me` (routes/auth.py:646-686): birth_date 포함, age_group 없음. `/auth/login` (:436-481): user 에 id·email·nickname·profile_image·company_name·display_title·role 만(birth_date 없음) → 앱은 이메일 로그인 직후 나이를 모른다. 앱 loginWithToken(소셜·세션 복원)은 /auth/me 사용(stores/authStore.ts:97-114).
+- 소셜 가입(routes/oauth.py:302-398): google 은 생년월일 없음, kakao/naver 는 provider 가 주면 is_verified 계정에 birth_date 저장(:380-390). **만 14세 미만 게이트 없음** — kakao 가 아동 생년월일을 주면 보호자 동의 없이 active 가입(현재 해당 0명). 실측상 kakao 10명 중 9명은 생년월일 미수신.
+- **생년월일 수정**: PATCH /auth/me/profile(auth.py:688-897) — 본인인증 계정만 잠금(:759-770). 미인증은 변경·삭제(null) 자유 → 첫 입력 시 만14 미만 날짜를 넣어도 보호자 절차 없음(기존 공백, E3 소관). 앱 SettingsScreen 저장은 **미인증이면 매번 birth_date 를 보낸다(값 그대로여도)**(screens/SettingsScreen.tsx:166-176) → E4 잠금은 "같은 값 재전송 = 통과"여야 회귀가 없다.
+- 프로필 완성 ⭐10: auth.py:857-867 (birth_date·gender·region 3종) / 앱 배지 SettingsScreen.tsx:510-516.
+- 앱 가입 게이트: components/auth/AuthPanel.tsx:218-242(만14 미만 → signup-config 조회 → ON=보호자 폼, OFF=blocked), blocked 화면 :538-549("이전으로" :546 → 생년월일 재입력 가능), 게이트 문구 :555 "가입 전에 생년월일과 내/외국인 여부를 확인합니다."(기준 나이 비노출 — 중립 확인 요건 충족), 미성년 소셜 버튼 숨김 :695. 앱 다른 곳에 나이 로직 없음(faceVerify 의 만19 minor 는 서버값).
+
+### 4. DM 현황 — 어린이 DM 은 사실상 이미 닫혀 있다 [P]
+- 게이트 `assert_can_dm`(services/dm_service.py:211-275): ① 보내는 사람 is_verified 필수(공식 상대만 면제 :230-240) ④ 받는 사람 만14 미만이면 그 아이가 나를 팔로우해야 함(:253-257) ⑤ 비팔로우 = 메시지 요청(pending, DM_REQUIRE_MUTUAL=False :60). 사용자 검색 `search_users`(:988-)도 is_verified 필수(:1020-1023). 본인인증 미도입(v3.230)으로 is_verified=4명(kakao) 뿐.
+- 어린이(미인증)는 이미 공식 계정 외 DM 불가. 단 kakao 인증 트랙으로 들어온 아동은 is_verified=True 라 DM·검색 가능 → F1 필요. 다른 사람 → 아동: ④로 "아이가 나를 팔로우"면 요청 가능 → F1 로 공식 외 전면 차단.
+- 앱: DM 진입은 HomeHeaderActions.tsx:131-141(무조건 렌더) 1곳, 공식 CS DM = SettingsScreen.tsx:365-400(GET /dm/official → POST /dm/conversations), DmInbox 새 메시지 검색 :130-152(GET /dm/users/search), 공식 고정 행 :276-289, 사진 첨부 DmChatScreen.tsx:396-398(POST /upload/dm-image :148). 공식 공지 DM(브로드캐스트)도 받은편지함으로 온다 → 아이콘을 숨기면 공지·CS 답장을 못 읽는다(기획서 B1 과 충돌 — 아래 D3).
+
+### 5. 기획서 인용 vs 현재 코드(재확정) [P + Explore 2건]
+| 기획서 | 현재 실제 위치 | 비고 |
+|---|---|---|
+| A1 authStore.ts:16-31 | stores/authStore.ts:16-31 AuthUser | 일치 |
+| A2 App.tsx:524-575 | App.tsx:523-580 useOAuthCallback | 소셜은 토큰→/auth/me |
+| A3 AuthPanel 218-242, 539-546 | AuthPanel.tsx:218-242, :538-549 | 일치 |
+| A4 Settings 786-815 | SettingsScreen.tsx:780-815(입력), 저장 :153-196 | 저장이 매번 birth_date 전송 |
+| A5 187-189, 512 | :187-191, :510-516 | |
+| B1 HomeHeaderActions:131 | :131-141 (unread 폴링 :52) | 유일한 DmInbox 진입 |
+| B2 DmInbox 120-157 | :120-170 | 공식 고정 행 :276-289 |
+| B3 DmChat 148, 163-187 | :148(upload) · :163-187(pickImage) · 버튼 :396-398 | |
+| B4 Feed 388-392 / MyMusic 862 / UserChannel 394 | FeedScreen.tsx:387-392 FAB · MyMusicScreen.tsx:851-862 · UserChannelScreen.tsx:386-394(본인 채널만) | 3곳이 전부 |
+| B5 FeedCompose 25, 88-148, 161 | MAX_FEED_IMAGES :25 · 사진 버튼 :322-328 · 업로드 :161 · 아이템 첨부 :371-374 · 제출 :242 | |
+| B6 FeedCard:140, TrackComments:79 | FeedCard.tsx:461-477 입력(:140 POST) · TrackComments.tsx:169-195 입력(:79 POST) | FeedCard 1곳이 4화면 공용 |
+| B7 ReportModal:16 | ReportModal.tsx:16 타입 · 사용처 PlayerScreen:1468·FeedCard:483-484·DmChat:422 · MyReportsScreen.tsx:17 라벨 | 곡 댓글 신고·메뉴 없음 확정(삭제만 :147-150) |
+| C1 ArtistInput 316-319, 647-741, 745-761 | 종류 카드 :1149-1158 · handleSelectKind :745-763 · 사진 올리기 :1161-1163(:647-680) · 이전 사진 :1165-1167(:710-741) · 사진 없이 :1169-1171(:684-705) · **화풍 이미지 업로드 :1257-1264(:788-800)** | 기획서에 화풍 이미지 누락 |
+| C1 서버 | ArtistLoadingScreen.tsx:276-349 — **가상(cartoon)도 `file`(얼굴 사진)·`style_image` 전송**(:307-316, :334) | "그림체 허용"만으로는 사진이 들어간다 |
+| C2 FaceVerify | 진입 2곳: ArtistInputScreen.tsx:640 · ArtistLoadingScreen.tsx:571-574 | |
+| C3 ArtistResult 1093, 1396 / MusicGen 1539-1580, 2098 | ArtistResult :1307-1321(내 목소리) · :1393-1397 · :1093 / MusicGen :1530-1545 · :1547-1592(:1578) · :2033-2105(:2098) · 자동 적용 :998-1036 · VoiceManage :383-387 | |
+| C4 CoverGeneration | :2463-2466 버튼 · :1210-1235 handleBgPhoto · 수정 모달 :1440-1448 | 글 설명·건너뛰기 대안 있음 |
+| C5 TrackUpload | **진입 없음**(App.tsx:708 라우트만, MyMusic 진입 제거됨 :836-837) · 참고 음원 MusicGen :1822-1850(:1271) → MusicLoadingScreen.tsx:279-283 업로드 | |
+| C6 Settings 480-501 | 아바타 :484 → :247-253 → :204-230 업로드 · :232-245 삭제 | "AI 아티스트 이미지로" 기능 없음 |
+| C7 Settings 828-873 | 지역 :828-839 · SNS :840-872 | 소개글 입력 UI 없음, 지역·SNS 는 공개 화면에 미표시(bio 만 UserChannel :249-251) |
+| D1 useRewardedSkipAd 93, 196-216 | preload :76-115 · requestOptions :93-95 · init :193-216 · 호출 App.tsx:637, fatigueGate.ts:126·189 | |
+| D2 광고·쇼핑 | ArtistDetail :84-94·:116-124·:212-240 · ArtistCody openItemLink :354-362 → CodyItemCard.tsx:83 · ArtistResult 판매처 :895-901·:1025-1031 · Player :1366-1406(:1402) · Feed :235-245 · FeedDetail :145-154 · UserChannel :206-222 · MyMusic :649-665 · FeedCompose 아이템 첨부 :371 | Player 광고 fetch :693-712 는 렌더 안 됨(죽은 코드) |
+| D3 consentTexts | consentTexts.ts:123-131(age14) · REQUIRED :212 | |
+| 403 처리 | services/api.ts:44-55 — 전역 403 처리 없음(401 경고만) | 신규 코드 매핑 지점 |
+
+### 6. 서버 제한 지점(현재 라우트:라인, 전부 /api 하위) [P]
+| # | 엔드포인트 | 위치 | 현재 인증 |
+|---|---|---|---|
+| F1 | POST /dm/conversations · GET /dm/users/search · (방어) 메시지 전송 | dm.py:152 · :265 · dm_service.assert_can_dm :211 · send_message :533 | 필수 |
+| F2 | POST /upload/dm-image · /upload/feed-image | upload.py:852 · :794 | 필수 |
+| F3 | POST /feeds/ · PUT /feeds/{id} · POST /feeds/{id}/comments · POST /tracks/{id}/comments | feeds.py:312 · :587 · :822 · tracks.py:3098 | 필수 |
+| F4 | /character/upload-original-photo · generate-sheet · generate-sheet-async · refine · POST locations(실제 장소 사진) · cartoon/cartoon-async 의 `file`·`style_image` | character.py:561 · :757 · :1653 · :2310 · :3193 · :989 · :1839 | 필수 |
+| F4 | /face-verify/consent · guardian/request · verify · session (status·DELETE 는 허용) | face_verify.py:180 · :211 · :284 · :458 (:140 · :483) | 필수 |
+| F5 | /voice-clone/create · {id}/verify · regenerate-phrase · check-availability (list·get·delete·audio 허용) · /generate/ 의 persona_model=voice_persona · /generate/{id}/start/ | voice_clone.py:147 · :292 · :404 · :420 · generate.py:750(→_create_generation_impl, 선체크 :794-802) · :955 | 필수 |
+| F6 | /upload/cover-background · /upload/image(type cover·profile) · /tracks/upload · /generate/upload-reference/ · /generate/ 의 reference_audio_url | upload.py:152 · :186 · tracks.py:1836 · generate.py:419 · :867 | 필수 |
+| F7 | POST /auth/me/profile-image(DELETE 허용) · PATCH /auth/me/profile 의 region·sns_links·bio | auth.py:1251 · :688 | 필수 |
+| F8 | GET /business/ads/active · /ads/catalog · POST /ads/{id}/click | business.py:410 · :511 · :646 | **무인증**(click 은 optional) |
+| G2 | POST /reports/ + 관리자 조치 | reports.py:43-52 · :535 · 증거 :147-250 · admin.py:850-935 | |
+| G4 | POST /generate/lyrics/ | generate.py:625 | 필수 |
+- 금칙어 필터: 서버·앱 어디에도 없음 확정(grep 금칙·욕설·profan·badword 0건; 닉네임 예약어 official.py:116 만 있음).
+- 기존 미성년 로직(회귀 금지): 광고 분석에서 만14 미만 이벤트 제외 business.py:1091-1106 · 얼굴 인증 만19 미만 보호자 동의 face_verify.py:40-71 · DM ④ 만14 미만 수신 보호.
+
+### 7. AdMob [P]
+- react-native-google-mobile-ads **16.3.2**(package.json:40, node_modules 실측) → Android play-services-ads **25.0.0**, UMP 4.0.0(패키지 sdkVersions). 가족 정책 인증 목록 기준(19.0.0+) 충족 — 기획서와 일치.
+- API: `MobileAds().setRequestConfiguration({ tagForChildDirectedTreatment, tagForUnderAgeOfConsent, maxAdContentRating: MaxAdContentRating.G, testDeviceIdentifiers })`(src/types/RequestConfiguration.ts, 전역·언제든 호출 가능) · 요청별 `RewardedAd.createForAdRequest(unitId, { requestNonPersonalizedAdsOnly: true, serverSideVerificationOptions })`(RequestOptions.ts:31).
+- 현재: 보상형 1종만. init(App.tsx:637 → useRewardedSkipAd.ts:193-216)은 테스트 기기만 설정. preload(:76-115)는 로그인 user.id 있을 때만(비로그인 광고 없음), requestOptions = SSV 만(:93-95). 사용자 전환 시 preloadedForUserId 로 재생성(:84).
+
+## 기획서 vs 현재 코드 — 핵심 차이
+1. **착장 카탈로그 빈 목록(F8) 그대로 하면 어린이는 아티스트 의상을 못 고른다**: 의상 피커가 /ads/catalog(폴백 /ads/active)를 쓴다(services/catalogService.ts:64-86). → 어린이에게는 목록은 주되 구매 링크·가격을 빼는 방식으로 변경(D9).
+2. **가상(그림체) 경로도 얼굴 사진·화풍 이미지를 받는다** → F4 는 "cartoon 허용"이 아니라 "cartoon 의 file·style_image·original_object_name 거부"여야 한다. `/character/refine`(실사 다듬기, photo 필수)·`POST /character/locations`(실제 장소 사진)·`/upload/image`(곡 커버·프로필 직접 업로드)도 기획서 목록에 없던 사진 입구.
+3. **DM 아이콘 숨김(B1)은 공식 공지·CS 답장 수신을 막는다** → 아이콘 유지, 받은편지함은 공식 계정 대화만·새 메시지 검색 숨김(D3).
+4. **보호자 동의를 켜도 동의할 페이지가 없다**(2번) → E2 는 발송·본인확인뿐 아니라 착지 페이지까지 2차.
+5. **보호자 허용(피드·댓글·친구 DM)은 보호자 관리 페이지(E5)가 생겨야 켤 수 있다** → 1차에서는 허용값이 항상 꺼짐 = 어린이 피드 쓰기·댓글·DM 은 항상 막힘(기획서 기본값과 같음). 코드는 허용값을 읽는 구조로 만들어 2차에서 저장소만 붙인다.
+6. 이메일 로그인 응답에 생년월일이 없다 → age_group 을 login 응답에도 넣어야 앱이 즉시 모드를 안다.
+7. TrackUpload 는 진입이 없다(서버만 막으면 충분, 앱은 화면 진입 가드만).
+8. 전역 403 처리 없음 → 신규 코드 전용 인터셉터(성인은 이 코드를 받을 일이 없어 영향 0).
+9. 소개글 입력 UI 없음 · 지역·SNS 는 공개 표시 없음 → C7 은 입력 숨김 + 서버 저장 무시로 충분.
+
+## 단계 분할과 근거
+**1차 = v3.232(이번) — 외부 계약·법무 없이 코드만으로 끝나고, 꺼 두면 성인에게 0 영향인 것**
+- 서버: E1(age_group 등 응답 키 추가) · 킬 스위치 · F1~F8 · E4(플래그 켜짐 시 생년월일 잠금) · G1(자체 목록 금칙어 모듈, 1차 적용 대상 = 어린이만) · G2(곡 댓글 신고, 전 사용자 — 가산 기능) · G4(어린이 작사 지시문) · A5(어린이 프로필 완성 기준).
+- 앱: A1(useIsChild) · A4(잠금 UI) · A5 · B1~B8(DM 공식만·피드/댓글 입력 숨김·사진 첨부 숨김·곡 댓글 신고·안전 안내) · C1~C7(가상 + 사진 없이만, 얼굴 인증·목소리·음원·배경 사진·프로필 사진·지역/SNS 숨김) · D1(아동 광고 설정) · D2(광고 카드·구매 링크 숨김) · 403 인터셉터.
+- 근거: 현재 어린이 0명 + 신규 어린이 가입 불가(보호자 동의 OFF 유지) → 배포 후 실사용자 영향 0, 테스트 계정으로만 검증. 모든 분기가 `KIDS_MODE_ENABLED && age_group=='child'` 뒤에 있어 끄면 즉시 원복.
+
+**2차 = v3.233 이후 — 외부 의존·법무·대표 결정이 필요한 것**
+- E2 보호자 동의 실발송(문자·알림톡 업체) + 보호자 본인확인(PASS 등 업체) + **보호자 동의 착지 웹 페이지** → 그 뒤 GUARDIAN_CONSENT_ENABLED=true.
+- E5 보호자 관리 웹(maidol.ai.kr/guardian 등: 피드 글·댓글·친구 DM 허용, 동의 철회, 삭제 요청) + 저장 테이블 → 1차 허용값 함수에 연결.
+- E3 소셜 가입 연령 확인(생년월일 없는 계정 "연령 확인 필요" 상태 + API 차단) + 첫 생년월일 입력이 만14 미만이면 보호자 절차로 전환 + A2 앱 연령 확인 화면 + A3 가입 게이트 개편(차단 화면·"이전으로" 제거 — 보호자 동의가 켜져야 의미).
+- 금칙어 전 사용자 적용(IARC "채팅 조정") · G3 어린이 피드에서 신고 접수 콘텐츠 숨김 · C6 "내 AI 아티스트 이미지를 프로필로" · 관리자 웹(생년월일 정정 도구, 신고 목록 track_comment 라벨 — admin_web 별도 배포).
+- D3 처리방침 제10조·약관·계정 삭제 안내·앱 동의 문구(age14 문구 연령별 분리) — 법무 검토·7일 전 공지 · Play Console 타겟층·등급 설문·데이터 보안·심사용 어린이 계정 · AdMob 광고 ID 미전송 실기기 확인 · 나이 모름 로그인 사용자(72%) 광고 처리 결정.
+- 근거: 업체 계약·법무·스토어 제출은 코드로 끝나지 않고, 보호자 동의 경로가 열리기 전에는 어린이가 실제로 가입할 수 없으므로 1차가 먼저 배포돼도 법적·정책 공백이 생기지 않는다. Play 가족 정책 심사는 타겟층에 만 13세 미만을 넣는 시점(2차 끝)부터 적용.
+
+## 플래그 설계
+- 서버 config.py(신규, 기존 키 불변):
+  - `kids_mode_enabled: bool = False` (.env KIDS_MODE_ENABLED) — **킬 스위치**. False 면 모든 제한 함수가 DB 조회 없이 즉시 "제한 없음" 반환 → 성인·어린이 모두 현행과 같은 동작(응답에 추가 키만 존재).
+  - `kids_test_child_user_ids: str = ""` (.env KIDS_TEST_CHILD_USER_IDS, 쉼표 구분 UUID) — QA 전용 강제 어린이(운영 DB 쓰기 없이 검증). kids_mode_enabled 가 True 일 때만 의미.
+  - `word_filter_all_users: bool = False` (.env WORD_FILTER_ALL_USERS) — 금칙어를 성인에게도 적용(2차 결정 전까지 False).
+- 판정(신규 services/kids_policy.py):
+  - `age_group(birth_date, today=kst_today())` → 'child'(<13) · 'teen'(13) · 'adult'(≥14) · 'unknown'(None). KST 날짜 기준(기존 is_under_14 는 건드리지 않음).
+  - `async is_child_user(user_id, conn=None) -> bool`: `if not settings.kids_mode_enabled: return False`(DB 0회) → 강제 목록 → PG `SELECT birth_date FROM users WHERE id=$1`(conn 없으면 풀에서 1회 acquire) → age_group=='child'. **'unknown'·'teen' 은 False.**
+  - `optional_child_from_request(request)`: 무인증 라우트(F8)용 — 플래그 OFF 면 즉시 False, ON 이면 Authorization 헤더 JWT 를 조용히 디코드(Redis 세션·DAU 기록 없음 — get_current_user_optional 을 붙이면 DAU 통계가 바뀌므로 쓰지 않는다).
+  - `kids_permissions(user_id)` → 1차 고정 `{"feed_write": False, "comment": False, "dm_friends": False}`(2차에 보호자 설정 테이블 조회로 교체).
+  - `child_restricted(feature)` → `JSONResponse(403, {"error": "<한국어 안내>", "code": "child_restricted", "feature": feature})`. **error 에 사람이 읽는 문구**(앱 여러 화면이 data.error 를 그대로 표시 — 코드 문자열 노출 방지), 앱 인터셉터는 `code` 로 판별.
+- 응답 키 추가(E1): /auth/me · /auth/login user · /auth/register user · PATCH /auth/me/profile 응답에 `age_group`, `kids_restricted`(= 플래그 && child), `kids_permissions`, `birth_date_locked`(= 플래그 && 기존 birth_date 있음 && 미인증 — 인증 계정은 기존 잠금 규칙 그대로). 기존 키·값 불변. login 은 SELECT 에 birth_date 컬럼만 추가(응답 기존 키 불변).
+- 앱 판정: `useIsChild() = user?.kids_restricted === true`(서버가 플래그·나이를 모두 반영한 값 — 앱은 생년월일 계산 안 함). 구서버·키 없음 = false. 서버 킬 스위치를 끄면 다음 /auth/me(앱 재시작·세션 복원) 부터 앱도 일반 모드.
+- 분기 원칙(성인 경로 불변 보장): 모든 서버 제한은 **핸들러 첫 부분의 `if await is_child_user(...)`: return child_restricted(...)** 한 줄 추가 형태 — 성인은 조건 False 로 기존 코드를 그대로 통과. 앱은 `isChild ? <대안> : <기존 JSX>` 가 아니라 `{!isChild && 기존 요소}` 로 감싸 기존 JSX·props 를 한 글자도 바꾸지 않는다.
+
+## 변경 매트릭스
+
+### 서버 (staging `/private/tmp/server_staging_v3232/{orig,new}` — orig 보존, main.py 무변경·DB 스키마 변경 없음)
+| ID | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S0 | config.py · services/kids_policy.py(신규) | 위 플래그 3종 + 판정·응답 헬퍼 | `[kids] check user=%s child=%s src=pg\|forced`(ON 일 때만) |
+| S1 (E1) | routes/auth.py(me :646-686 · login :436-481 · register :403-426 · update_profile 응답 :868-897), models/user.py(age_group 순수 함수 위치 선택 가능) | 응답 키 4종 추가. login SELECT 에 birth_date | `[kids] me age_group=%s restricted=%s` (DEBUG) |
+| S2 (E4) | routes/auth.py update_profile(:759-783 인근) | 플래그 ON + 기존 birth_date 있음 + 전달값이 **다르거나 null** → 400 `{"error":"생년월일은 가입 후 바꿀 수 없어요. 고객센터로 문의해주세요.","code":"birth_date_locked"}`. 같은 값 재전송·첫 입력(null→값) 통과. 인증 계정 기존 분기(:759-770) 우선 유지 | `[kids.birth_lock] blocked user=%s` |
+| S3 (F7) | routes/auth.py update_profile · upload_profile_image(:1251) | 어린이: PATCH 의 region·sns_links·bio 키를 **조용히 제외**(200, 나머지 저장), 프로필 사진 업로드 403(삭제 허용) | `[kids.profile] strip fields=%d user=%s` |
+| S4 (A5) | routes/auth.py :857-867 | 어린이만 완성 조건 = birth_date && gender(지역 제외). 성인 조건 불변 | `[star-econ] profile_bonus +10 user=%s kids=1` |
+| S5 (F1) | routes/dm.py create_conversation(:152)·search_dm_users(:265) · services/dm_service.py assert_can_dm(:211) | 라우트: 나 또는 상대가 어린이이고 상대/내가 공식 계정이 아니면 403 child_restricted(검색은 어린이면 403). 서비스(send_message·공식 발송 경로 방어): 같은 조건 `_deny("child", …)` — 공식 계정↔어린이는 양방향 허용(공지·CS 유지). 기존 ①~⑥ 순서·문구 불변 | `[dm] gate denied stage=child` |
+| S6 (F2·F6) | routes/upload.py(:852 dm-image · :794 feed-image · :152 cover-background · :186 image[cover·profile]) · routes/tracks.py(:1836 upload) · routes/generate.py(:419 upload-reference) | 어린이 403 | `[kids] restricted feature=%s user=%s` |
+| S7 (F3) | routes/feeds.py(:312 create · :587 update · :822 comment) · routes/tracks.py(:3098 comment) | 어린이 && `kids_permissions` 해당 값 False → 403(1차는 항상) | 동일 |
+| S8 (F4) | routes/character.py(:561 · :757 · :1653 · :2310 · :3193 → 403 / :989 · :1839 → `file`·`style_image`·`original_object_name` 중 하나라도 있으면 403, 텍스트·프리셋·use_saved_sheet 는 허용) · routes/face_verify.py(:180 · :211 · :284 · :458 → 403) | ⭐ 차감·잡 생성 **전**에 검사 | 동일 |
+| S9 (F5·F6) | routes/voice_clone.py(:147 · :292 · :404 · :420) · routes/generate.py(_create_generation_impl — persona_model=='voice_persona' 또는 reference_audio_url 있음 → 403, 차감·gj 락 전 / :955 start 동일) | style_persona(아티스트 스타일)는 허용 | 동일 |
+| S10 (F8) | routes/business.py(:410 active · :511 catalog · :646 click) | 어린이(optional_child_from_request): active·catalog 항목에서 product_url·link_url·price_krw 를 null 로(목록·이미지 유지 — 의상 피커 보호), click 은 기록 없이 `{"ok": true, "skipped": "child"}`. 성인·비로그인은 코드 경로·gzip 캐시 그대로(어린이 응답은 캐시 키 분리 또는 캐시 미사용) | `[kids.ads] strip links n=%d` |
+| S11 (G1) | services/word_filter.py(신규) · constants/word_filter_ko.py(신규 자체 목록) | `check_text(text, child: bool) -> Optional[reason]`: 정규화(NFKC·공백·특수문자·반복 제거) 후 욕설·성적·혐오 목록 부분일치 + **어린이 전용 개인정보 패턴**(전화번호·이메일·URL/도메인·"카톡 아이디/오픈채팅"·주소(동·아파트 호수)·학교명(○○초/중)). 적용 지점 = feeds create/update·feed comment·track comment·DM 전송·PATCH nickname/company_name·/generate/lyrics prompt·/generate prompt·title·character user_text·곡 공개 title(upload-from-generation·PUT /tracks) — **1차 호출 조건 = 어린이 || word_filter_all_users**. 400 `{"error":"사용할 수 없는 표현이 들어 있어요. 다른 말로 바꿔주세요.","code":"word_filtered"}`, ⭐ 차감 전. 원문 로그 금지(길이·사유 코드만) | `[wordfilter] hit reason=%s len=%d child=%s` |
+| S12 (G2) | routes/reports.py(:43 TARGET_TYPES·:47 _TARGET_META 에 `"track_comment": ("track_comments","author_id")`, 증거 스냅샷 분기 :216 패턴 복제) · routes/admin.py(:850 화이트리스트에 track_comment = comment 와 동일 규칙, delete 조치 = track_comments 삭제 + tracks.comment_count 음수 방지 감소 :926 패턴) · reports.py:304 · admin.py:619 목록 스냅샷 dict 에 track_comment 추가 | 전 사용자. 기존 4종 동작 불변 | `[report] create ok type=track_comment` · `[admin-report] track_comment delete` |
+| S13 (G4) | routes/generate.py lyrics(:625) → 가사 생성 호출부 | 어린이만 사용자 프롬프트 뒤에 고정 지시문("초등학생이 불러도 괜찮은 표현만, 폭력·성적·욕설·음주 금지") 추가. 성인 프롬프트 바이트 동일. 이미지 생성은 현행 기본 안전 설정 유지(OpenAI moderation 파라미터 미지정=auto 확인) | `[kids.lyrics] child guard appended` |
+- 서버 배포 후 운영 .env 추가(승인 필요): 1단계 `KIDS_MODE_ENABLED=false`(기본값과 같아 생략 가능) → 성인 무변화 확인 → 2단계 `KIDS_MODE_ENABLED=true`, `KIDS_TEST_CHILD_USER_IDS=<점검용 maidol.co.kr 계정 1개>`.
+
+### 앱 (2_housing)
+| ID | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| K1 (A1) | stores/authStore.ts(:16-31 AuthUser 에 age_group·kids_restricted·kids_permissions·birth_date_locked 선택 필드) · utils/kidsMode.ts(신규: `useIsChild()`, `isChildNow()`(store 동기 조회), `useKidsPermission(key)`, 문구 상수) | login/register/updateProfile 응답의 새 키가 기존 병합 로직으로 자연 반영되는지 확인(login 은 `set({user})` 전체 교체 :88 — 새 키 포함됨) | `[KidsMode] mode=child\|normal src=me\|login` (전환 시 1회) |
+| K2 | services/api.ts(:44-55) | 응답 인터셉터: `data.code==='child_restricted'`(또는 data.detail?.code) → showAlert('어린이 계정에서는 쓸 수 없어요', data.error) 3초 중복 억제. 그 외 경로 불변 | `[KidsGate] 403 feature=%s` |
+| K3 (A4·A5·C6·C7) | screens/SettingsScreen.tsx | 편집 모달: `birth_date_locked` 면 생년월일 입력 비활성 + "생년월일은 가입 후 바꿀 수 없어요. 고객센터로 문의해주세요." + **저장 patch 에서 birth_date 제외**(인증 잠금 :166-176 과 같은 방식). 어린이: 지역·SNS 입력 숨김 + patch 에서 region·sns_links 제외, ⭐10 배지 조건 = birth_date && gender, 아바타 선택지에서 "사진 선택" 제거("기본 이미지로"만), 계정 관리에 "온라인 안전 안내" 행 | `[KidsMode] settings child ui` |
+| K4 (B8) | components/kids/KidsSafetyNotice.tsx(신규) · App.tsx(인증 사용자 확정 effect :630-634 옆) | 어린이 첫 로그인 1회(AsyncStorage `kids-safety-seen:{uid}`, try/catch) — 앱 내 다이얼로그(showAlert 또는 기존 모달 컴포넌트 규격)로 안전 안내 5항목(실명·학교·전화번호·주소 올리지 않기, 모르는 사람 연락 거절, 이상한 내용 신고, 보호자에게 말하기, 사진 올리지 않기). 설정 행에서 다시 보기 | `[KidsNotice] shown uid=%s` |
+| K5 (D1) | hooks/useRewardedSkipAd.ts | preload(:76) 에서 isChildNow() 면 load 전에 `setRequestConfiguration({tagForChildDirectedTreatment:true, tagForUnderAgeOfConsent:true, maxAdContentRating:G, testDeviceIdentifiers 유지})` 1회 적용(모듈 플래그 `childAdConfigApplied`) + requestOptions 에 `requestNonPersonalizedAdsOnly:true` 추가, preload 재사용 키를 `userId+child` 로. **성인은 requestOptions 객체·init 호출이 현행과 동일**. 어린이 설정이 한 번 적용된 앱 실행 동안은 유지(D7) | `[KidsAd] child config applied` |
+| K6 (B1·B2) | screens/DmInboxScreen.tsx | 어린이: 새 메시지(:120-128 헤더 아이콘)·검색 입력(:258-305) 숨김, 공식 고정 행(:276-289)만, 목록은 공식 계정 대화만 필터(방어), 요청 탭 숨김. HomeHeaderActions 는 **변경 없음**(D3) | `[KidsMode] dm official-only` |
+| K7 (B3) | screens/DmChatScreen.tsx(:396-398) | 어린이: 사진 첨부 버튼 숨김 | — |
+| K8 (B4·D2) | screens/FeedScreen.tsx(:387-392 FAB · :235-245 아이템 링크) · screens/MyMusicScreen.tsx(:851-862 · :649-665) · screens/UserChannelScreen.tsx(:386-394 · :206-222) · screens/FeedDetailScreen.tsx(:145-154) | 어린이 && !feed_write: 글쓰기 진입 숨김. 어린이: 아이템 카드의 구매 링크 탭 비활성(카드·이미지 표시는 유지) | — |
+| K9 (B5) | screens/FeedComposeScreen.tsx | 진입 방어: 어린이 && !feed_write 면 showAlert 후 goBack. (2차 보호자 허용 대비) 어린이면 사진 버튼(:322-328)·아이템 첨부(:371-374) 숨김 | `[KidsGate] compose blocked` |
+| K10 (B6) | components/feed/FeedCard.tsx(:461-477) · components/common/TrackComments.tsx(:169-195) | 어린이 && !comment: 입력 행 숨김 + "보호자가 허용하면 댓글을 쓸 수 있어요" 한 줄. 답글 버튼도 숨김 | — |
+| K11 (B7·G2) | components/common/TrackComments.tsx · components/ReportModal.tsx(:16 타입에 'track_comment') · screens/MyReportsScreen.tsx(:17 라벨 "곡 댓글") | **전 사용자**: 남의 곡 댓글에 "신고" 텍스트 버튼(FeedCard 댓글 신고 :424-428 과 같은 조건 `!canDelete && user`) → ReportModal(targetType='track_comment'). 구서버 400 이면 "지원하지 않는 신고 대상" 문구 그대로 표시 | `[TrackCommentReport] open/submit` |
+| K12 (C1) | screens/ArtistInputScreen.tsx · screens/ArtistLoadingScreen.tsx | 어린이: 종류 카드(:1149-1158)에서 실사 숨김 → 가상 자동 선택(forceKind 'real' 파라미터도 가상으로 강등 + 안내), 사진 올리기(:1161-1163)·이전 사진(:1165-1167)·화풍 이미지 업로드(:1257-1264) 숨김, "사진 없이 만들기"·화풍 프리셋 유지. 초안 복원 시 photoUri·reuseOriginal·styleImageUri 무시. ArtistLoading(:276-349)은 어린이면 file·style_image·original_object_name 을 붙이지 않음(방어) + 403 child_restricted 를 기존 오류 경로로 표시 | `[KidsGate] artist virtual-only` |
+| K13 (C2) | screens/FaceVerifyScreen.tsx | 진입 가드(어린이면 showAlert 후 goBack) — 진입점 2곳(ArtistInput :640 · ArtistLoading :571-574)은 어린이가 사진 경로에 못 가므로 도달 불가지만 방어 | — |
+| K14 (C3) | screens/ArtistResultScreen.tsx(:1307-1321 · :1393-1397 · :1093 · 판매처 :1025-1031) · screens/MusicGenerationScreen.tsx(:1530-1545 · :1547-1592 · :2033-2105 · 편집 모달 선택지 :605·:624 · 자동 적용 :998-1036 · 참고 음원 :1822-1850) · screens/VoiceManageScreen.tsx(:383-387) · screens/VoiceCloneWizardScreen.tsx(진입 가드) | 어린이: "내 목소리" 선택지·목소리 만들기·관리 진입 숨김, 연결 클론 자동 적용 skip, 참고 음원 "파일 업로드" 숨김(다른 선택지 유지), 판매처 보기 숨김. 간편 목소리(voice_preset) 유지 | `[KidsGate] voice hidden` |
+| K15 (C4) | screens/CoverGenerationScreen.tsx(:2463-2466 · 수정 모달 :1440-1448) | 어린이: 배경 "사진 올리기" 숨김(글 설명·건너뛰기 유지) | — |
+| K16 (C5) | screens/TrackUploadScreen.tsx | 진입 가드(현재 진입 없음 — 방어만) | — |
+| K17 (D2) | screens/ArtistDetailScreen.tsx(:212-240 광고 카드) · screens/ArtistCodyScreen.tsx(:354-362 openItemLink) · components/cody/CodyItemCard.tsx(:83 링크 버튼) · screens/PlayerScreen.tsx(:1366-1406 "자세히 보기") | 어린이: 광고 카드 섹션 숨김, 구매 링크 버튼 숨김(의상 선택·착용 표시는 유지) | — |
+- 앱 배포: 서버만 배포해도 제한은 작동(구 앱은 일반 오류 문구로 표시). 앱 숨김·광고 설정은 새 빌드부터(웹 app.maidol.ai.kr 도 같은 코드).
+
+## 역할 분담 (파일 충돌 없음)
+- **backend-dev**: S0→S1→S2~S13 순서(S0 kids_policy 를 먼저 만들어 나머지가 import). staging new/ 에서만, orig 보존, 로컬 구문 검사 + 판정 단위 테스트(age_group 경계: 생일 전날·당일·윤년 2/29, KST 자정) + TestClient 가능한 라우트 스모크. 배포 직전 md5 재대조(위 기준값 — auth.py·tracks.py 는 오늘 다른 세션 변경분 병합).
+- **app-dev 1조(기반·설정·광고)**: K1 · K2 · K3 · K4 · K5 — stores/authStore.ts, utils/kidsMode.ts(신규), services/api.ts, screens/SettingsScreen.tsx, components/kids/KidsSafetyNotice.tsx(신규), App.tsx, hooks/useRewardedSkipAd.ts. **K1 계약(`useIsChild`, `isChildNow`, `useKidsPermission('feed_write'|'comment'|'dm_friends')`)을 첫 커밋으로 먼저 올려** 2·3조가 import.
+- **app-dev 2조(소셜·피드·재생)**: K6 · K7 · K8 · K9 · K10 · K11 + K17 중 PlayerScreen — DmInboxScreen, DmChatScreen, FeedScreen, MyMusicScreen, UserChannelScreen, FeedDetailScreen, FeedComposeScreen, FeedCard, TrackComments, ReportModal, MyReportsScreen, PlayerScreen.
+- **app-dev 3조(창작·얼굴·목소리·광고 카드)**: K12 · K13 · K14 · K15 · K16 + K17 중 ArtistDetail·ArtistCody·CodyItemCard — ArtistInputScreen, ArtistLoadingScreen, FaceVerifyScreen, ArtistResultScreen, MusicGenerationScreen, VoiceManageScreen, VoiceCloneWizardScreen, CoverGenerationScreen, TrackUploadScreen, ArtistDetailScreen, ArtistCodyScreen, components/cody/CodyItemCard.tsx.
+- **test-designer**: 아래 항목 + 성인 응답 스냅샷 비교 스크립트.
+
+## 회귀 위험과 보호 방법
+| 위험 | 보호 |
+|---|---|
+| 나이 모름 72%(31명)가 어린이로 오판 | age_group 'unknown' → 제한 없음(판정 함수 단위 테스트 + 실측 31명 샘플 /auth/me kids_restricted=false) |
+| 성인 요청에 추가 DB 조회·지연 | 플래그 OFF = 조회 0. ON = 제한 대상 라우트에서만 PK 조회 1회(피드 목록·차트·재생 등 읽기 경로엔 없음). F8 무인증 라우트는 JWT 디코드만(DAU·Redis 무접촉) |
+| E4 잠금으로 기존 앱 저장 실패 | 같은 값 재전송 통과(현 앱이 매번 보냄), 첫 입력 허용. 잠금은 플래그 ON 에서만. 새 앱은 잠금 시 필드를 보내지 않음. 구 앱에서 생년월일을 지우거나 바꾸는 경우만 400(의도) |
+| F8 의상 피커 빈 화면 | 목록 유지 + 링크·가격만 제거(D9). gzip 캐시가 어린이/성인 응답을 섞지 않게 캐시 분리 |
+| 공식 공지·CS DM 끊김 | DM 아이콘 유지, 공식 계정↔어린이 양방향 허용(S5), 브로드캐스트(_deliver_official_message) 경로 테스트 |
+| 신규 오류 코드가 기존 화면에 코드 문자열로 노출 | error=한국어 문구, code 별도(S0). 인터셉터는 code 만 봄 |
+| 광고 설정이 성인에게 새어감 | 성인만 쓰는 앱 실행에선 setRequestConfiguration 추가 호출 없음·requestOptions 동일. 어린이 로그인 후 성인 전환 시에만 아동 설정 유지(D7, 보수적) |
+| 금칙어 오탐으로 성인 작업 중단 | 1차 성인 미적용(플래그 OFF). 어린이 오탐은 문구로 안내, ⭐ 차감 전 검사 |
+| v3.228 genJobs 락·환불 순서 | 어린이 검사는 gj.user_lock·차감 **전**(generate.py:766 분기 이전 또는 impl 선두) — 성인 경로는 조건 False 로 기존 순서 그대로 |
+| v3.227 사진 소실 가드·H-1 | 어린이는 사진 경로 자체가 없음. 성인 photoIntent·reuseOriginal 로직 불변(K12 는 {!isChild && …} 래핑만) |
+| v3.229·v3.230 디렉터 복귀·⭐ 확인·이탈 가드 | 해당 화면의 과금·확인 코드 미수정. 숨김은 선택지 렌더만 |
+| v3.230 DM 본인인증 차단 유지·공식 DM 허용 | assert_can_dm ①~⑥ 불변, 어린이 조건은 추가 단계 |
+| v3.230b/c 닉네임 규칙 | 닉네임 검증 순서 불변, 금칙어는 어린이만·규칙 검증 뒤 |
+| v3.231 답변 편집·검색 | 미접촉(ArtistInput 은 종류 카드·사진 버튼만, 편집 로직 미수정) |
+| 곡 댓글 신고(가산) | 기존 댓글 목록 응답·삭제 불변, 신고 버튼 조건 = FeedCard 와 동일 |
+| 기존 미성년 로직(광고 분석 제외·얼굴 인증 만19·DM ④) | 코드 미수정(회귀 테스트로 확인) |
+| 다른 세션 동시 수정(auth.py·tracks.py 오늘 변경) | 배포 직전 md5 재대조·3-way 병합, 백업 태그 pre-v3232-live |
+
+## test-designer 에게 줄 테스트 항목
+**A. 성인·기존 기능 회귀(플래그 OFF 와 ON 두 번 모두 수행)**
+1. 응답 스냅샷 비교(스크립트): 점검용 성인 계정으로 배포 전·후 /auth/me · /auth/login · PATCH /auth/me/profile(같은 값) · /feeds/timeline · /tracks/search?q=로맨스 · /charts/* · /business/ads/catalog?category=상의(항목 키 집합·product_url 유무) · /dm/conversations · /dm/unread-count · /face-verify/status · /voice-clone/list · /character/me → **차이는 추가 키 4종(age_group·kids_restricted·kids_permissions·birth_date_locked)만**.
+2. 가입·로그인: 이메일 가입(성인, 추천코드 포함 ⭐50+50·베타 ⭐50) · 만14 미만 생년월일 → "준비 중" 차단 화면(현행) · 로그인·로그아웃·앱 재시작 세션 복원 · 구글·카카오 소셜 로그인(웹·네이티브 딥링크) · 비밀번호 재설정 · 회원탈퇴.
+3. 설정: 기획사 정보 편집(생년월일 없음 계정: 첫 입력 → 저장·⭐10 완성 보상 / 있음 계정: 같은 값 저장 200·다른 값·지우기 400 문구(플래그 ON)·플래그 OFF 면 현행대로 변경 가능) · 인증 계정 잠금 현행 · 지역·SNS 저장 · 닉네임 변경(v3.230) · 프로필 사진 업로드·기본 이미지 · 공지사항 · 고객센터 오류신고 DM.
+4. 창작: 작사(⭐ 확인·피로 게이트·genJobs 복귀) · 작곡(내 목소리 클론 적용·참고 음원 업로드·연주곡) · 커버(배경 사진·글·건너뛰기·다듬기) · 영상 디렉터 · 아티스트 실사(사진·이전 사진·사진 없이·얼굴 인증 동의·만19 미만 보호자 동의 안내)·가상(사진·화풍 이미지·프리셋)·의상 피커(카탈로그 목록·구매 링크·찜)·다듬기(refine)·재생성 · 보이스 클론 위저드·관리 · 답변 편집(v3.231).
+5. 소셜: 피드 글쓰기(사진 4장·아이템 첨부·BGM) · 수정·공개 전환·삭제 · 좋아요 · 댓글·답글·삭제 · 피드·댓글·곡·DM 메시지 신고 · 곡 댓글 신규 신고(성인 → 관리자 신고 목록에 track_comment 표시·삭제 조치 시 댓글 수 감소·본인 댓글 신고 400·중복 409) · 내 신고 내역 라벨 · DM(인증 계정 검색·요청·수락·거절·차단·사진·공식 CS) · 알림.
+6. 재생·차트·검색: 차트(본인 제외 v3.230)·검색(로맨스·장르 v3.231)·플레이어 착장 탭 "자세히 보기"·곡 댓글 · 재생목록·큐(비회원·승계) · 공유.
+7. 광고·별: 디렉터 휴식 창 "광고 보고 30분 단축"(실기기: 로드·시청·SSV 적립 — 성인은 requestOptions 에 requestNonPersonalizedAdsOnly 없음 로그 확인) · 출석·스타 내역·관리자 스타 지급 알림.
+8. 관리자·비즈: 관리자 웹 신고 처리(기존 4종 + track_comment) · 사용자 관리 · 비즈 대시보드(만14 미만 이벤트 제외 로직 현행).
+
+**B. 어린이 모드(KIDS_MODE_ENABLED=true + KIDS_TEST_CHILD_USER_IDS=점검 계정)**
+9. /auth/me·login: age_group(실제 나이값)·kids_restricted=true·kids_permissions 전부 false. 앱: 로그 `[KidsMode] mode=child`, 첫 로그인 안전 안내 1회(재시작 시 재표시 없음, 설정에서 다시 보기).
+10. 서버 우회 차단(curl 로 직접 호출, 전부 403 code=child_restricted, ⭐ 잔액 불변): F1 대화 시작(일반 사용자)·검색 / 공식 계정 대화 시작·전송 = 성공 / 다른(인증) 계정 → 어린이 대화 시작 403 / 관리자 공지 발송이 어린이에게 도착 · F2 dm-image·feed-image · F3 피드 작성·수정·피드 댓글·곡 댓글 · F4 실사 시트(sync·async)·원본 업로드·refine·장소 사진·cartoon+file·cartoon+style_image·cartoon+original_object_name / cartoon 텍스트·프리셋 = 성공 · 얼굴 인증 consent·guardian/request·verify·session / status·DELETE = 200 · F5 클론 create·verify·regenerate·check-availability / list = 200 · generate persona_model=voice_persona·reference_audio_url · F6 cover-background·/upload/image(cover·profile)·tracks/upload·upload-reference · F7 프로필 사진 업로드 403·PATCH region/sns_links 무시(200, 값 저장 안 됨) · F8 catalog·active 항목 product_url/price null·이미지 유지, click skipped.
+11. 금칙어(어린이): 닉네임·기획사명·작사 프롬프트·작곡 제목·아티스트 설명·곡 공개 제목에 욕설/전화번호/URL/학교명 → 400 word_filtered 문구, ⭐ 미차감. 정상 문장 통과(오탐 샘플 20개: "시발점", "개나리", "010 스타일" 등 경계 사례 기록). 성인 동일 입력 = 통과(플래그 OFF).
+12. 앱 UI(어린이): DM 아이콘 유지·받은편지함 공식만·검색·새 메시지 없음·사진 첨부 없음 · 피드 FAB·내 채널·보관함 글쓰기 없음 · 피드·곡 댓글 입력 없음(목록 읽기 가능, 신고 가능) · 아티스트: 실사 카드 없음·가상 자동·사진/이전 사진/화풍 이미지 버튼 없음·사진 없이 만들기 → 생성 성공 · 목소리: 내 목소리·만들기·관리·참고 음원 업로드 없음, 간편 목소리 가능 · 커버: 배경 사진 버튼 없음 · 설정: 생년월일 잠금 표시·지역/SNS 없음·⭐10 조건(생년월일+성별)·아바타 "사진 선택" 없음 · 광고 카드·구매 링크·판매처 보기 없음(의상 선택·착용 이미지는 보임) · 곡 발행·차트·검색·재생·플레이리스트·출석·스타 정상.
+13. 광고(실기기, 어린이): 로그 `[KidsAd] child config applied` 후 광고 로드·시청·SSV 적립 정상 · 로그아웃 → 성인 로그인(같은 실행) = 아동 설정 유지(D7) · 앱 재시작 후 성인 = 현행.
+14. 킬 스위치: KIDS_MODE_ENABLED=false 로 되돌려 재기동 → 같은 테스트 계정 kids_restricted=false, 모든 F 엔드포인트 성인과 동일, 앱 재시작 시 일반 모드.
+15. 생일 경계: kids_policy 단위 테스트(만 13세 생일 전날 child·당일 teen, KST 00:00~08:59 UTC 전날 구간, 2/29 생) · 테스트 계정 강제 목록에서 빼면 즉시 일반.
+16. 구 앱(현재 스토어 빌드) + 신 서버: 성인 전 기능 정상(키 추가만) · 어린이 계정이 차단 API 호출 시 기존 오류 표시 경로로 한국어 문구(코드 문자열 노출 없음).
+17. 공통: 팝업 전부 showAlert/앱 내 다이얼로그, 표기 MAIDOL, 이모지 ⭐ 외 0, 로그에 생년월일·전화번호·원문 미기록.
+
+## 대표 결정 필요 (기본값으로 진행)
+- **D1 킬 스위치 운영값**: 기본 = 배포는 OFF → 성인 스냅샷 동일 확인 → QA 계정으로 ON 검증 → **ON 유지**(현재 어린이 0명이라 켜도 실사용자 영향 0, 잠금 E4 만 성인에게 보임).
+- **D2 보호자 동의(guardian_consent_enabled)**: 기본 = **OFF 유지**. 이유: 발송 mock·본인확인 mock·동의 착지 페이지 없음 → 켜면 만14 미만 가입자가 영구 대기. 2차에서 업체 계약·착지 페이지 후 ON.
+- **D3 어린이 DM**: 기본 = 이번엔 **완전히 끔(공식 계정 공지·고객센터만)**, 아이콘은 유지. 친구 DM 은 2차 보호자 관리 이후.
+- **D4 금칙어 방식·범위**: 기본 = 자체 단어 목록(서버 상수) + **어린이만 적용**. 전 사용자 적용(WORD_FILTER_ALL_USERS)은 오탐 검토 후 2차 결정 — IARC "채팅 조정=예" 의 전제.
+- **D5 최소 가입 나이**: 기본 = 이번엔 정하지 않음(가입 자체가 막혀 있음). 2차 보호자 동의 개통 시 결정(후보: 없음 / 만 7세).
+- **D6 생년월일 잠금 대상**: 기본 = 킬 스위치 ON 이면 **전 사용자**(이미 입력된 값 변경·삭제 불가, 첫 입력 허용, 정정은 고객센터 → 2차 관리자 도구 전까지 DB 수정은 대표 승인). 대안: 만 14세 미만만 잠금.
+- **D7 광고 계정 전환**: 기본 = 어린이 계정이 로그인한 앱 실행 동안은 아동 광고 설정 유지(앱 재시작 시 초기화). 성인만 쓰는 기기는 현행과 동일.
+- **D8 나이 모름 로그인 사용자(31/43) 광고**: 기본 = 1차 현행(맞춤 광고). Play 가족 정책 제출 전(2차) E3 로 생년월일을 받은 뒤 다시 결정(가족 정책은 "나이 모름"도 아동 설정 요구).
+- **D9 착장 카탈로그(F8)**: 기본 = 어린이에게도 의상 목록·이미지는 제공, 구매 링크·가격·광고 카드만 제거(기획서의 "빈 목록"은 아티스트 의상 선택을 깨뜨림).
+- **D10 프로필 사진(C6)**: 기본 = 1차는 기본 아바타만(업로드 차단), "내 AI 아티스트 이미지로 지정"은 2차 신규 기능.
+- **D11 곡 댓글 신고(G2)**: 기본 = 모든 사용자에게 추가.
+- **D12 테스트 계정 강제 지정(KIDS_TEST_CHILD_USER_IDS)**: 기본 = 도입, 점검용 maidol.co.kr 계정 1개. Play 심사용 어린이 계정은 2차에 보호자 동의 절차로 정식 생성.
+- **D13 착장 찜(위시)**: 기본 = 어린이도 유지(구매 링크는 없음).
+- **D14 앱 출시**: 기본 = 서버 먼저(제한 즉시 작동), 앱은 다음 스토어 빌드에 포함(버전 번호는 대표 결정).
+
+## 외부 의존(코드 밖) — 2차 선행 과제
+1. 보호자 동의 문자·알림톡 발송 업체 계약 + 보호자 본인확인(PASS·휴대폰 인증) 업체 계약 — 가장 오래 걸림, 먼저 착수.
+2. 개인정보처리방침 제10조(⑤⑥⑦ 초안)·제2조 ⑨·이용약관·계정 삭제 안내 개정(법무 검토, 시행 7일 전 공지, lotusai.co.kr·maidol.ai.kr 게시).
+3. Play Console: 타겟층(6~8·9~12세 추가)·콘텐츠 등급 재설문·데이터 보안·심사용 어린이 계정·영문 안내 — 앱 기능과 처리방침 게시 이후.
+4. AdMob 아동 설정 시 광고 ID 미전송 실기기 확인(네트워크 로그), iOS 출시 시 Apple 연령 등급 재답변.
+
+## 파일 변경 비율 추정
+- 앱: TS/TSX 215개 중 수정 29 + 신규 3(utils/kidsMode.ts · components/kids/KidsSafetyNotice.tsx · (선택) constants/kidsTexts.ts) ≈ **15%**.
+- 서버: .py 119개 중 수정 15(config·auth·dm_service·dm·upload·feeds·tracks·character·face_verify·voice_clone·generate·business·reports·admin·models/user) + 신규 3(services/kids_policy.py · services/word_filter.py · constants/word_filter_ko.py) ≈ **15%**.
+- 합계 ≈ 50 / 334 ≈ **15% — 40% 미만.** 단 각 파일 변경은 "가드 한 줄 + 래핑" 위주라 줄 수 기준으로는 더 작음(최대: kids_policy·word_filter 신규, ArtistInputScreen·SettingsScreen·TrackComments).
+
+## 배포 계획
+1. 사전: 운영 **DB 백업**(pg_dump -Fc + mongodump archive gzip → EC2 `/home/ubuntu/maidol/backups/pre_v3232_<ts>`, 09-24 pre_test_purge 절차와 동일) — 1차는 스키마·데이터 쓰기가 없지만 E4·F7 이 사용자 입력 저장 경로를 바꾸므로 권장. 이미지 태그 `pre-v3232-live`(현재 latest). 진행 중 생성 job 0 확인.
+2. 서버: staging new/ → 구문 검사·단위 테스트 → 배포 직전 md5 재대조(기준값 위, 불일치 파일은 3-way 병합) → **사용자 승인** → 코드 반영·docker build·컨테이너 교체(KIDS_MODE_ENABLED 미설정=OFF) → 기동 로그 확인 → 테스트 A-1 스냅샷 비교(추가 키만) → 5분 무오류.
+3. 킬 스위치 ON(**승인 필요**): .env 에 `KIDS_MODE_ENABLED=true`, `KIDS_TEST_CHILD_USER_IDS=<점검 계정>` 추가 → 컨테이너 재생성(.env 반영은 재시작 필요) → 테스트 B → 문제 시 .env 원복 + 재생성(이미지 교체 불필요) 또는 `maidol-app:checkpoint-pre-kids-20260925` 로 롤백.
+4. 앱: frontend 커밋·push → 웹(app.maidol.ai.kr) 배포 → 스토어 빌드는 대표 일정.
+5. 2차 착수 전 이번 REPORT 에 실측(어린이 0·나이 모름 31) 재기록.
+
+규칙: 서버 수정은 server_staging_v3232 에서만(orig 보존). 프로덕션 쓰기(코드 반영·.env·DB)는 사용자 승인 뒤. 비밀값·개인정보 미기재(테스트 계정 id 는 REPORT 에만 앞 8자). 팝업 showAlert/앱 내 다이얼로그, 표기 MAIDOL, 이모지 ⭐만. 코드 수정·커밋은 계획 승인 뒤 team-dev 루프에서.

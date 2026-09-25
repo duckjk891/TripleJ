@@ -90,6 +90,8 @@ import VideoDirectorScreen from './screens/VideoDirectorScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
 import AppDialogHost from './components/AppDialogHost';
+// v3.232 K4(B8): 어린이 계정 첫 로그인 1회 온라인 안전 안내(일반 사용자 무동작)
+import KidsSafetyNotice from './components/kids/KidsSafetyNotice';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import FaceVerifyScreen from './screens/FaceVerifyScreen';
@@ -720,6 +722,8 @@ export default function App() {
           <GlobalModals />
           {/* v3.85: 전역 앱 내 다이얼로그 (showAlert → dialogStore) — 시스템 팝업 대체 */}
           <AppDialogHost />
+          {/* v3.232 K4: 어린이 계정 온라인 안전 안내 1회 트리거(렌더 없음) */}
+          <KidsSafetyNotice />
           {/* v3.217 ①(b): 인앱 브라우저(카카오톡 등) 감지 → 외부 브라우저 탈출 유도 — 웹 전용 */}
           {Platform.OS === 'web' ? <InAppEscapeBanner /> : null}
         </View>

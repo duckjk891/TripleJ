@@ -19,6 +19,7 @@ import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock'
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import { playTrackNow } from '../services/playback';
+import { useIsChild } from '../utils/kidsMode';
 
 interface FeedTrack {
   id: string;
@@ -50,6 +51,7 @@ export default function FeedDetailScreen() {
   const route = useRoute<any>();
   const feedId = String(route.params?.feedId ?? '');
   const user = useAuthStore((s) => s.user);
+  const isChild = useIsChild(); // v3.232 K8(D2): 어린이 아이템 카드 구매 링크 비활성
   const [feed, setFeed] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -141,14 +143,15 @@ export default function FeedDetailScreen() {
     );
   };
 
+  // v3.232 K8(D2): 어린이는 링크 없는 카드처럼(탭 무반응·'자세히 보기' 숨김) — 카드·이미지는 유지
   const renderItemBlock = (it: FeedItemAttach, key: string) => (
     <TouchableOpacity
       key={key}
       style={styles.itemCard}
-      activeOpacity={it.url ? 0.7 : 1}
+      activeOpacity={it.url && !isChild ? 0.7 : 1}
       accessibilityLabel={`아이템 ${it.name || ''}`}
       onPress={() => {
-        if (!it.url) return;
+        if (!it.url || isChild) return;
         if (__DEV__) console.info('[FeedDetail] 아이템 링크 열기', { name: it.name });
         Linking.openURL(it.url).catch((err) => console.error('[FeedDetail] 아이템 링크 실패', { url: it.url, message: err?.message }));
       }}
@@ -160,7 +163,7 @@ export default function FeedDetailScreen() {
         <AppText variant="caption" tone="accent">{it.category || '아이템'}</AppText>
         <AppText variant="footnote" numberOfLines={2} style={{ color: feedTheme.sub }}>{it.name || ''}</AppText>
       </View>
-      {it.url ? (
+      {it.url && !isChild ? (
         <View style={styles.itemLink}>
           <AppText variant="caption" tone="accent">자세히 보기</AppText>
           <Feather name="external-link" size={12} color={colors.accent.primary} />

@@ -37,6 +37,9 @@ import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS, CONSENT_VERSION, AI_GENERATION_NOTICE } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
 import { AppText, seedColor } from '../components/ui';
+// v3.232 K3: 어린이 모드(서버 kids_restricted) · 생년월일 잠금(서버 birth_date_locked)
+import { useIsChild, useBirthDateLocked, isChildNow, KIDS_TEXT } from '../utils/kidsMode';
+import { showKidsSafetyNotice } from '../components/kids/KidsSafetyNotice';
 
 // v3.92(A-18): 인구통계 선택지 — MAIDOL backend user.py GENDERS/REGIONS 계약값 그대로
 const GENDER_OPTIONS: Array<{ value: 'male' | 'female' | 'other' | null; label: string }> = [
@@ -78,6 +81,12 @@ function Chip({
 export default function SettingsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const { user, isLoading, error, login, register, logout, clearError, updateProfile, setUser } = useAuthStore();
+  // v3.232 K3: 둘 다 서버 키가 true 일 때만 — 구서버·성인·나이 모름은 false(기존 화면 그대로)
+  const isChild = useIsChild();
+  const birthLocked = useBirthDateLocked();
+  useEffect(() => {
+    if (isChild) console.info('[KidsMode] settings child ui');
+  }, [isChild]);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [editCompany, setEditCompany] = useState('');
   const [editTitle, setEditTitle] = useState('');
@@ -152,13 +161,15 @@ export default function SettingsScreen({ navigation }: any) {
 
   const saveProfileEdit = async () => {
     const birth = buildBirthDate();
-    if ('error' in birth) {
+    // v3.232 K3(A4): 생년월일 잠금이면 입력값을 보내지 않으므로 검증도 생략(잠금 UI 로 수정 불가)
+    if ('error' in birth && !birthLocked) {
       setEditError(birth.error);
       return;
     }
     // SNS 채널 — 빈 행 제외 후 클라 검증(MAIDOL Header.jsx 관행). URL 값 자체는 로그 금지.
     const snsLinks = editSns.map((u) => u.trim()).filter(Boolean);
-    if (snsLinks.some((u) => !/^https?:\/\//i.test(u))) {
+    // v3.232 K3(C7): 어린이는 SNS 입력이 숨겨져 전송하지 않으므로 검증 생략
+    if (!isChild && snsLinks.some((u) => !/^https?:\/\//i.test(u))) {
       setEditError('SNS 링크는 http:// 또는 https:// 로 시작하는 주소를 입력해주세요.');
       return;
     }
@@ -172,11 +183,18 @@ export default function SettingsScreen({ navigation }: any) {
       sns_links: snsLinks,
     };
     if (!verifiedLocked) {
-      patch.birth_date = birth.value;
+      patch.birth_date = 'value' in birth ? birth.value : undefined;
       patch.gender = editGender;
     }
+    // v3.232 K3(A4): 생년월일 잠금(서버 birth_date_locked) — birth_date 미전송(인증 잠금과 같은 방식)
+    if (birthLocked) delete patch.birth_date;
+    // v3.232 K3(C7): 어린이 — 지역·SNS 미전송(서버도 무시)
+    if (isChild) {
+      delete patch.region;
+      delete patch.sns_links;
+    }
     if (__DEV__) {
-      console.info('[SettingsScreen] profile save start', { snsCount: snsLinks.length, verifiedLocked });
+      console.info('[SettingsScreen] profile save start', { snsCount: snsLinks.length, verifiedLocked, birthLocked, child: isChild });
     }
     setEditSaving(true);
     const { ok, starGranted } = await updateProfile(patch);
@@ -202,6 +220,11 @@ export default function SettingsScreen({ navigation }: any) {
   const [avatarBusy, setAvatarBusy] = useState(false);
 
   const pickAndUploadAvatar = async () => {
+    // v3.232 K3(C6): 어린이 프로필 사진 업로드 차단(방어 — 선택지에서도 숨김, 서버도 403)
+    if (isChildNow()) {
+      showAlert('안내', KIDS_TEXT.photoBlocked);
+      return;
+    }
     try {
       // expo-image-picker 미설치 — 기존 이미지 선택 관행(ArtistInputScreen DocumentPicker image/*) 재사용
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
@@ -246,6 +269,14 @@ export default function SettingsScreen({ navigation }: any) {
 
   const handleAvatarPress = () => {
     if (avatarBusy) return;
+    // v3.232 K3(C6·D10): 어린이 — "사진 선택" 없이 기본 이미지만
+    if (isChild) {
+      const kidButtons: AppAlertButton[] = [];
+      if (user?.profile_image) kidButtons.push({ text: '기본 이미지로', onPress: removeAvatar });
+      kidButtons.push({ text: user?.profile_image ? '취소' : '확인', style: 'cancel' });
+      showAlert('프로필 사진', `${KIDS_TEXT.photoBlocked} 기본 이미지를 사용해요.`, kidButtons);
+      return;
+    }
     const buttons: AppAlertButton[] = [{ text: '사진 선택', onPress: pickAndUploadAvatar }];
     if (user?.profile_image) buttons.push({ text: '기본 이미지로', onPress: removeAvatar });
     buttons.push({ text: '취소', style: 'cancel' });
@@ -508,8 +539,9 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.emailText}>{user.email}</AppText>
           <TouchableOpacity style={styles.profileEditBtn} onPress={openProfileEdit}>
             <AppText style={styles.profileEditBtnText}>기획사 정보 편집</AppText>
-            {/* v3.190: 프로필(생년월일·성별·지역) 미완성 시 ⭐10 보상 배지 노출 */}
-            {!(user.birth_date && user.gender && user.region) ? (
+            {/* v3.190: 프로필(생년월일·성별·지역) 미완성 시 ⭐10 보상 배지 노출
+                v3.232 K3(A5): 어린이는 지역 입력이 없어 생년월일·성별 2종 기준(서버 S4 와 동일) */}
+            {!(user.birth_date && user.gender && (isChild || user.region)) ? (
               <View style={styles.verifyBadge}>
                 <AppText variant="caption" style={styles.verifyBadgeText}>완성하고 ⭐10 받기</AppText>
               </View>
@@ -545,6 +577,19 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.settingLabel}>내 신고 내역</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
+        {/* v3.232 K4(B8): 어린이 — 온라인 안전 안내 다시 보기 */}
+        {isChild && (
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => {
+              console.info('[KidsNotice] 설정 행 탭');
+              showKidsSafetyNotice();
+            }}
+          >
+            <AppText style={styles.settingLabel}>{KIDS_TEXT.safetyRowLabel}</AppText>
+            <AppText style={styles.settingArrow}>{'>'}</AppText>
+          </TouchableOpacity>
+        )}
         {/* v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역 */}
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
@@ -783,6 +828,10 @@ export default function SettingsScreen({ navigation }: any) {
                     인증이 완료된 계정은 생년월일·성별을 수정할 수 없어요.
                   </AppText>
                 )}
+                {/* v3.232 K3(A4): 서버 생년월일 잠금(미인증·기존 값 있음) — 인증 계정은 위 안내가 우선 */}
+                {birthLocked && !user.is_verified && (
+                  <AppText style={styles.verifiedNotice}>{KIDS_TEXT.birthDateLocked}</AppText>
+                )}
                 <AppText style={styles.modalLabel}>생년월일 (선택)</AppText>
                 <View style={styles.birthRow}>
                   <TextInput
@@ -792,7 +841,7 @@ export default function SettingsScreen({ navigation }: any) {
                     value={editBirthY}
                     onChangeText={(v) => setEditBirthY(v.replace(/\D/g, '').slice(0, 4))}
                     keyboardType="number-pad"
-                    editable={!editSaving && !user.is_verified}
+                    editable={!editSaving && !user.is_verified && !birthLocked}
                   />
                   <TextInput
                     style={[styles.input, styles.birthInput]}
@@ -801,7 +850,7 @@ export default function SettingsScreen({ navigation }: any) {
                     value={editBirthM}
                     onChangeText={(v) => setEditBirthM(v.replace(/\D/g, '').slice(0, 2))}
                     keyboardType="number-pad"
-                    editable={!editSaving && !user.is_verified}
+                    editable={!editSaving && !user.is_verified && !birthLocked}
                   />
                   <TextInput
                     style={[styles.input, styles.birthInput]}
@@ -810,7 +859,7 @@ export default function SettingsScreen({ navigation }: any) {
                     value={editBirthD}
                     onChangeText={(v) => setEditBirthD(v.replace(/\D/g, '').slice(0, 2))}
                     keyboardType="number-pad"
-                    editable={!editSaving && !user.is_verified}
+                    editable={!editSaving && !user.is_verified && !birthLocked}
                   />
                 </View>
                 <AppText style={styles.modalLabel}>성별 (선택)</AppText>
@@ -825,6 +874,8 @@ export default function SettingsScreen({ navigation }: any) {
                     />
                   ))}
                 </View>
+                {/* v3.232 K3(C7): 어린이 — 지역·SNS 입력 숨김(개인정보 최소화) */}
+                {!isChild && (<>
                 <AppText style={styles.modalLabel}>지역 (선택)</AppText>
                 <View style={styles.chipWrap}>
                   {REGION_OPTIONS.map((r) => (
@@ -871,6 +922,7 @@ export default function SettingsScreen({ navigation }: any) {
                     <AppText style={styles.snsAddText}>+ URL 추가</AppText>
                   </TouchableOpacity>
                 )}
+                </>)}
                 {!!editError && <AppText style={styles.editErrorText}>{editError}</AppText>}
               </ScrollView>
               <View style={styles.modalBtnRow}>

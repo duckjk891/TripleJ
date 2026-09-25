@@ -11,6 +11,7 @@ import { AppText } from '../ui';
 import { useWishlistStore, type WishItem } from '../../stores/wishlistStore';
 import { colors } from '../../theme/colors';
 import { getSubCategoryOrder } from '../../services/catalogService';
+import { useIsChild } from '../../utils/kidsMode';
 import {
   DEFAULT_VIEW,
   GENDER_FILTER_CATS,
@@ -88,6 +89,8 @@ export default function CodyPickerModal({
   const wishListLoaded = useWishlistStore((s) => s.listLoaded);
   const wishListLoading = useWishlistStore((s) => s.listLoading);
   const wishListError = useWishlistStore((s) => s.listError);
+  // v3.232 K17 [KidsGate]: 어린이 계정 — 위시 탭 "판매처 보기" 숨김(위시 목록·해제는 유지). 성인은 false.
+  const isChild = useIsChild();
 
   // ── v3.205(⑤) 성별 자동 필터 — 목록에 선적용(대분류·색상 등 패싯 수치도 필터 후 기준) ──
   // genderMatches: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
@@ -305,7 +308,7 @@ export default function CodyPickerModal({
                         </AppText>
                       ) : null}
                       {/* v3.109: 판매처 링크 — 위시 탭에도 동일 노출(판매종료 아이템도 링크는 유효) */}
-                      {item.product_url ? (
+                      {item.product_url && !isChild ? (
                         <TouchableOpacity
                           style={styles.itemLinkBtn}
                           onPress={() => openItemLink(item)}

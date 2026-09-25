@@ -21,6 +21,7 @@ import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 import { useLikesStore } from '../stores/likesStore';
 // v3.207 ①: 코치마크 anchor — 글쓰기 Fab 스포트라이트(비로그인·Fab 숨김 시 미등록 → 카드 fallback)
 import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
+import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
@@ -93,6 +94,10 @@ export default function FeedScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const playerStore = usePlayerStore();
+  // v3.232 K8(B4·D2): 어린이 — 보호자 허용 없으면 글쓰기 진입 숨김, 아이템 카드 구매 링크 비활성. 성인·age_group 없음 = false
+  const isChild = useIsChild();
+  const canFeedWrite = useKidsPermission('feed_write');
+  const feedWriteBlocked = isChild && !canFeedWrite;
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -127,9 +132,9 @@ export default function FeedScreen() {
     }
   }, []);
   useEffect(() => {
-    if (!user || fabHidden) unregisterAnchor('feed-compose');
+    if (!user || fabHidden || feedWriteBlocked) unregisterAnchor('feed-compose');
     return () => unregisterAnchor('feed-compose');
-  }, [user, fabHidden]);
+  }, [user, fabHidden, feedWriteBlocked]);
 
   // v3.210 ①: 로그아웃 시 내 글 탭에 남지 않도록 [전체]로 복귀
   useEffect(() => {
@@ -232,14 +237,15 @@ export default function FeedScreen() {
   };
 
   // v3.70: [item] 마커 → 아이템 카드(공구 광고). 링크 있으면 '자세히 보기'로 이동.
+  // v3.232 K8(D2): 어린이는 링크 없는 카드처럼(탭 무반응·'자세히 보기' 숨김) — 카드·이미지는 유지
   const renderItemBlock = (it: FeedItemAttach, key: string) => (
     <TouchableOpacity
       key={key}
       style={styles.itemCard}
-      activeOpacity={it.url ? 0.7 : 1}
+      activeOpacity={it.url && !isChild ? 0.7 : 1}
       accessibilityLabel={`아이템 ${it.name || ''}`}
       onPress={() => {
-        if (!it.url) return;
+        if (!it.url || isChild) return;
         if (__DEV__) console.info('[FeedScreen] 아이템 링크 열기', { name: it.name });
         Linking.openURL(it.url).catch((err) => console.error('[FeedScreen] 아이템 링크 실패', { url: it.url, message: err?.message }));
       }}
@@ -251,7 +257,7 @@ export default function FeedScreen() {
         <AppText variant="caption" tone="accent">{it.category || '아이템'}</AppText>
         <AppText variant="footnote" numberOfLines={2} style={{ color: feedTheme.sub }}>{it.name || ''}</AppText>
       </View>
-      {it.url ? (
+      {it.url && !isChild ? (
         <View style={styles.itemLink}>
           <AppText variant="caption" tone="accent">자세히 보기</AppText>
           <Feather name="external-link" size={12} color={colors.accent.primary} />
@@ -384,7 +390,8 @@ export default function FeedScreen() {
 
       {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
       {/* v3.210 ①: [내 공지] 탭에서는 kind='community'로 작성 진입(MyMusicScreen 새 공지 작성 관행) */}
-      {user ? (
+      {/* v3.232 K8(B4): 어린이(보호자 허용 없음)는 글쓰기 Fab 숨김 */}
+      {user && !feedWriteBlocked ? (
         <Fab
           onPress={() => {
             const kind = tab === 'notice' ? 'community' : 'feed';
@@ -415,7 +422,7 @@ export default function FeedScreen() {
       ) : null}
 
       {/* v3.204 ⑥ → v3.213: 피드 튜토리얼 — 로그인 시에만(Fab 렌더 조건과 정합) */}
-      <TutorialOverlay screenKey="feed" steps={TUTORIAL_STEPS} enabled={!!user} />
+      <TutorialOverlay screenKey="feed" steps={TUTORIAL_STEPS} enabled={!!user && !feedWriteBlocked} />
     </ScreenLayout>
   );
 }

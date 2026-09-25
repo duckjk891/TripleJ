@@ -12,6 +12,7 @@ import {
   type NicknameResult,
 } from '../utils/nicknameRules';
 import { clearPendingReferral, noteSignupReferral } from '../utils/pendingReferral';
+import { noteKidsMode, type AgeGroup, type KidsPermissions } from '../utils/kidsRestricted';
 
 interface AuthUser {
   id: string;
@@ -28,6 +29,12 @@ interface AuthUser {
   nationality?: string | null; // domestic | foreign
   sns_links?: string[];
   is_verified?: boolean; // 본인인증 계정은 birth_date/gender 수정 금지(서버 400)
+  // v3.232 K1 어린이 모드 — 서버(/auth/me·login·register·PATCH profile)가 주는 선택 키. 구서버 = 없음(=일반 모드).
+  // 앱 판정은 kids_restricted === true 하나뿐(utils/kidsMode useIsChild) — 생년월일 계산 안 함.
+  age_group?: AgeGroup | null; // child(<13) | teen(13) | adult(>=14) | unknown
+  kids_restricted?: boolean; // = 서버 KIDS_MODE_ENABLED && child
+  kids_permissions?: KidsPermissions | null; // 보호자 허용(1차 전부 false)
+  birth_date_locked?: boolean; // = 플래그 ON && 기존 birth_date 있음 && 미인증
 }
 
 /** PATCH /auth/me/profile 페이로드 — undefined=미전송, null=지우기 (백엔드 exclude_unset 계약) */
@@ -86,6 +93,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       setAuthToken(token);
       AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {}); // 세션 영속화(앱 재시작 유지)
       set({ token, user, isLoading: false });
+      noteKidsMode(user, 'login');
       // 로그인: 이 계정이 쓰던 재생목록을 복원해서 보여준다(보관 목록이 없으면 담아둔 목록 승계)
       try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
       return true;
@@ -103,6 +111,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (!user?.id) throw new Error('invalid user payload');
       AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
       set({ token, user, isLoading: false });
+      noteKidsMode(user, 'me');
       try { usePlayerStore.getState().restoreQueueFor(String(user.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(social)', { err }); }
       return true;
     } catch (err: any) {
@@ -130,6 +139,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       setAuthToken(token);
       AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
       set({ token, user, isLoading: false });
+      noteKidsMode(user, 'register');
       // 회원가입: 가입 직전까지 비회원으로 담아둔 재생목록을 그대로 새 계정에 승계(보존)
       try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
       return true;
@@ -161,6 +171,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         user: state.user ? { ...state.user, ...updated } : state.user,
         isLoading: false,
       }));
+      noteKidsMode(useAuthStore.getState().user, 'profile');
       return { ok: true, starGranted: !!profile_bonus_granted };
     } catch (err: any) {
       set({
@@ -212,12 +223,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     return result;
   },
-  setUser: (patch) =>
-    set((state) => ({ user: state.user ? { ...state.user, ...patch } : state.user })),
+  setUser: (patch) => {
+    set((state) => ({ user: state.user ? { ...state.user, ...patch } : state.user }));
+    // v3.232 K1: getMe 보강 등으로 kids_restricted 가 들어오면 전환 로그(변화 없으면 무기록)
+    if (patch && 'kids_restricted' in patch) noteKidsMode(useAuthStore.getState().user, 'me');
+  },
   logout: () => {
     setAuthToken(null);
     AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
     set({ token: null, user: null });
+    noteKidsMode(null, 'logout');
     // 내 재생목록(큐)은 로그인 사용자 기능 → 로그아웃 시 초기화(재진입 시 비회원에겐 아무것도 남기지 않음)
     try { usePlayerStore.getState().resetOnLogout(); } catch (err) { console.error('[authStore] resetOnLogout 실패', { err }); }
     // v3.219 [DraftKeep]: 계정 전환 오염 방지 — 디렉터 작업 draft 일괄 청소.

@@ -19,6 +19,7 @@ import { colors } from '../theme/colors';
 import { useVoiceStore } from '../stores/voiceStore';
 import { usePointsStore } from '../stores/pointsStore';
 import api from '../services/api';
+import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 import {
   createVoiceClone,
   getVoiceClone,
@@ -70,6 +71,15 @@ const GEN_SLOW_TRIES = 24; // 약 2분 경과 안내
 export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const resumeCloneId: string | undefined = (route.params as any)?.resumeCloneId;
+  // v3.232 K14 [KidsGate]: 어린이 계정은 목소리 클로닝 진입 불가(진입점 숨김 — 방어). 성인은 false.
+  const isChild = useIsChild();
+  useEffect(() => {
+    if (!isChild) return;
+    console.info('[KidsGate] voice hidden — VoiceCloneWizard 진입 차단', { resume: !!resumeCloneId });
+    showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.voiceBlocked);
+    navigation.goBack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isChild]);
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [cloneId, setCloneId] = useState<string | null>(resumeCloneId ?? null);
@@ -135,7 +145,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
   // ── 재개: 클론 GET 후 상태 기반으로 2 또는 3단계 진입 ──
   useEffect(() => {
-    if (!resumeCloneId) return;
+    if (!resumeCloneId || isChild) return; // v3.232 K14: 어린이는 재개 조회 없음(위에서 닫힘)
     (async () => {
       try {
         console.log('[VoiceCloneWizard] resume 진입, clone_id=', resumeCloneId);

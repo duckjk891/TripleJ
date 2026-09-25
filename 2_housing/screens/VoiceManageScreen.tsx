@@ -19,6 +19,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
 import { deleteVoiceClone, getVoiceClone, VoiceClone } from '../services/voiceService';
 import api from '../services/api';
+import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 
 // v3.83: 클론 상태 배지 (MAIDOL MyVoiceCloneSection STATUS_BADGE 이식 — 기술 용어 최소화)
 const CLONE_STATUS_BADGE: Record<string, string> = {
@@ -47,6 +48,8 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   // 마이페이지·작곡 중 진입은 mode:'voices' → 아티스트 관련 UI(현재 목소리/간편 만들기/
   // 연결 배지·설정 프롬프트) 전부 숨기고 [내 목소리 목록 + 만들기]만 노출.
   const voicesMode = (route.params as any)?.mode === 'voices';
+  // v3.232 K14 [KidsGate]: 어린이 계정 — 내 목소리 만들기·검증 재개·아티스트 연결 숨김(간편 목소리·목록 삭제는 유지)
+  const isChild = useIsChild();
 
   // v3.83: 정식 클로닝 목록
   const clones = useVoiceStore((s) => s.clones);
@@ -196,6 +199,11 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
 
   // ── v3.83: 클론 행 탭 — 검증 대기면 위저드 3단계 재개 / ready면 아티스트 목소리 설정 ──
   const handleCloneTap = (c: VoiceClone) => {
+    if (isChild) {
+      console.info('[KidsGate] voice hidden — 클론 선택 차단', { status: c.status });
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.voiceBlocked);
+      return;
+    }
     if (c.status === 'awaiting_verify') {
       console.log('[VoiceManage] 클론 검증 재개:', c.clone_id);
       navigation.navigate('VoiceCloneWizard' as any, { resumeCloneId: c.clone_id });
@@ -378,7 +386,10 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
           <View style={styles.createDivider} />
           </>)}
 
+          {/* v3.232 K14: 어린이는 내 목소리 만들기 없음 — 안내 한 줄 */}
+          {isChild && <AppText style={styles.sectionDesc}>{KIDS_TEXT.voiceBlocked}</AppText>}
           {/* v3.83: 정식 클로닝(노래+문장낭독 검증) — 4단계 위저드 진입 */}
+          {!isChild && (
           <TouchableOpacity
             style={styles.wizardBtn}
             onPress={() => {
@@ -397,6 +408,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
               </AppText>
             )}
           </TouchableOpacity>
+          )}
         </View>
 
         {/* ── 목록 ── */}
@@ -405,7 +417,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         </AppText>
         {clonesLoading && clones.length === 0 ? (
           <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 16 }} />
-        ) : clones.length === 0 ? (
+        ) : clones.length === 0 && !isChild ? (
           <AppText style={styles.emptyText}>
             아직 만든 목소리가 없어요. 위에서 내 목소리를 만들어보세요.
           </AppText>
@@ -450,8 +462,8 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
                 )}
                 <AppText style={styles.personaStatus}>
                   {CLONE_STATUS_BADGE[c.status] || `상태: ${c.status || '알 수 없음'}`}
-                  {awaiting ? ' — 탭해서 검증 녹음 마저 하기' : ''}
-                  {ready && !voicesMode ? ' — 탭하면 아티스트 목소리로 설정' : ''}
+                  {awaiting && !isChild ? ' — 탭해서 검증 녹음 마저 하기' : ''}
+                  {ready && !voicesMode && !isChild ? ' — 탭하면 아티스트 목소리로 설정' : ''}
                 </AppText>
               </View>
               <TouchableOpacity

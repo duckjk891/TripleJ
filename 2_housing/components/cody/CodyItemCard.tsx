@@ -7,6 +7,7 @@ import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { brandNameOf, formatPrice, type AdItem } from '../../utils/codyCatalog';
 import { adImageUrl, pickerStyles as styles } from './codyShared';
+import { useIsChild } from '../../utils/kidsMode';
 
 interface Props {
   item: AdItem;
@@ -23,6 +24,8 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
   const isSample = item.id.startsWith('sample_');
   const brand = brandNameOf(item);
   const price = formatPrice(item.price_krw);
+  // v3.232 K17 [KidsGate]: 어린이 계정 — 가격·판매처 링크 숨김(카드·이미지·선택·찜은 유지). 성인은 false.
+  const isChild = useIsChild();
   return (
     <TouchableOpacity
       style={[styles.itemCard, isPicked && styles.itemCardPicked]}
@@ -73,11 +76,11 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
       {item.color ? (
         <AppText style={styles.itemBrand} numberOfLines={1}>{item.color}</AppText>
       ) : null}
-      {price ? (
+      {price && !isChild ? (
         <AppText style={styles.itemPrice} numberOfLines={1}>{price}</AppText>
       ) : null}
       {/* v3.109: 판매처 링크 — product_url 있는 아이템만 노출 */}
-      {item.product_url ? (
+      {item.product_url && !isChild ? (
         <TouchableOpacity
           style={styles.itemLinkBtn}
           onPress={() => onOpenLink(item)}

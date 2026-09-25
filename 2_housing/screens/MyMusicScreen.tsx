@@ -46,6 +46,7 @@ import { playTrackNow } from '../services/playback';
 // v3.228 W1: Inst. job 전역 추적(작업실 말풍선·도착 알림·재시작 환불 정리) — 곡별 서버 claim은 그대로
 import { registerGenJob } from '../services/generationTracker';
 import { findInstJobForTrack } from '../services/genJobs/inst';
+import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 
 interface Track {
   id: number;
@@ -90,6 +91,10 @@ function getCoverUrl(coverImage: string): string {
 export default function MyMusicScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  // v3.232 K8(B4·D2): 어린이 — 보호자 허용 없으면 작성 버튼 숨김, 아이템 구매 링크 비활성. 성인·age_group 없음 = false
+  const isChild = useIsChild();
+  const canFeedWrite = useKidsPermission('feed_write');
+  const feedWriteBlocked = isChild && !canFeedWrite;
   const lyricsStore = useLyricsStore();
   const { track: playingTrack } = usePlayerStore();
   const hasMiniPlayer = !!playingTrack;
@@ -650,10 +655,10 @@ export default function MyMusicScreen({ navigation }: any) {
                 <TouchableOpacity
                   key={`it${i}`}
                   style={styles.feedItemCard}
-                  activeOpacity={it.url ? 0.7 : 1}
+                  activeOpacity={it.url && !isChild ? 0.7 : 1}
                   accessibilityLabel={`아이템 ${it.name || ''}`}
                   onPress={() => {
-                    if (!it.url) return;
+                    if (!it.url || isChild) return; // v3.232 K8(D2): 어린이 구매 링크 비활성(카드 유지)
                     Linking.openURL(it.url).catch((err) =>
                       console.error('[MyMusic] 아이템 링크 실패', { message: err?.message }));
                   }}
@@ -852,6 +857,8 @@ export default function MyMusicScreen({ navigation }: any) {
         const list = activeTab === 'feed' ? feeds : notices;
         return (
           <View style={styles.feedList}>
+            {/* v3.232 K8(B4): 어린이(보호자 허용 없음)는 작성 버튼 숨김 */}
+            {!feedWriteBlocked && (
             <TouchableOpacity
               style={styles.composeBtn}
               activeOpacity={0.8}
@@ -865,6 +872,7 @@ export default function MyMusicScreen({ navigation }: any) {
               <Feather name="edit-3" size={16} color={colors.accent.primary} />
               <AppText style={styles.albumCreateText}>{activeTab === 'feed' ? '새 피드 작성' : '새 공지 작성'}</AppText>
             </TouchableOpacity>
+            )}
             {list.length === 0 ? (
               feedLoading ? (
                 <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />

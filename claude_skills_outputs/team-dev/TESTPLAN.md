@@ -4480,3 +4480,253 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **FAIL 게이트**: 다른 질문 칸에 저장(AE-U1) · 뒤쪽 대화 손실·위치 이탈(AE-U3) · 편집 전 성별/이름/컨셉으로 생성(AE-U6) · 생성·이동 중 편집(AE-U8) · 사진 바꾸기 중 답 유실·사진 소실·동의 누락/중복(AE-U9) · review 자동 이동 잔존·⭐ 문구·구 초안 중복(AE-U10) · 편집 결과 유실(AE-U12) · v3.227/229/230 회귀(AE-U13·X-G1) · 운동 기본 잔존·이중 로드(SR-U2) · 비로그인 차단 우회(SR-U4) · 검색 화면 회귀(SR-U5) · categories 키 누락(GS-S1) · 재색인 무한 반복·비공개 노출(GS-S2) · 아무말 게이트 약화(GS-S3) · 벡터 질의·응답 변경·원문 로그(GS-S4) · 곡 수정 실패·응답 변화(GS-S6) · 다른 재색인 경로가 categories 삭제(GS-S7) · 검색 순위 회귀(GS-A1) · 재대조·진행 중 재시작(S-P1·S-P2) · 정책 문구(X-T1).
 - **최상위 FAIL**: 팀 유료 생성, prod 계정 생성, prod 곡 수정(PUT), 팀의 수동 재색인·scp·재시작(사용자 승인·실행 전), 실존 인물 사진 사용, 비밀값·원문 식별자 증적 기재.
 - **판정 회부(결함이면 FAIL)**: AE-U9 사진 바꾸기 중 취소 시 기존 사진 처리 · SR-U2 로맨스 없는 서버 목록 늦게 도착. **기록·보고만**: AE-U1 사진 모드 문구 추론·중복 버블 · AE-U4 편집 중 뒤로 가기 · AE-U7 거부 뒤 상태·questioning 단계 거부 · AE-U12 구 번들이 'review' 초안 읽기 · SR-U4 폴백 전용 이름 · GS-S2 역방향 불일치·재색인 소요 · GS-S4 글자 포함 오탐("기록"→Rock) · GS-S6 응답 지연 · D6 표기 정리(대상 아님).
+
+## v3.232 (2026-09-25) — 어린이 모드 1차
+
+> 대상: PLAN.md v3.232(:6884~7150), 기획서 `2_housing/어린이모드_기획서.md`(273행), planner "test-designer 에게 줄 테스트 항목" 1~17 + "회귀 위험과 보호 방법" 전 항목. **대표 결정 확정(PLAN D1~D14 기본값)**: D1 킬 스위치 **OFF 로 배포 → 성인 동일 확인 → QA 지정 계정으로 ON 검증 → ON 유지** · D2 보호자 동의(`guardian_consent_enabled`) **OFF 유지** · D3 어린이 DM **완전 차단(공식 계정 공지·고객센터만)**, 편지 아이콘은 유지 · D4 금칙어 = **자체 목록 + 어린이만**(`WORD_FILTER_ALL_USERS=false`) · D5 최소 가입 나이 미정 · D6 생년월일 잠금 = **ON 이면 전 사용자**(첫 입력·같은 값 재전송은 통과) · D7 어린이가 로그인한 앱 실행 동안 아동 광고 설정 유지 · D8 나이 모름 로그인 사용자 광고 현행 · D9 착장 카탈로그 = 목록·이미지 유지, **구매 링크·가격만 제거** · D10 프로필 사진 = **기본 아바타만**(업로드 차단) · D11 곡 댓글 신고 = **전체 사용자** · D12 QA 강제 지정(`KIDS_TEST_CHILD_USER_IDS`) 도입 · D13 착장 찜 유지 · D14 서버 먼저, 앱은 다음 빌드.
+> **역할(오케스트레이터 확정)**: 서버 1명 = S0~S13(스테이징 `/private/tmp/server_staging_v3232/{orig,new}` + `tests/` 로컬 fake) / 앱 1조(기반·설정·광고) = K1~K5(`stores/authStore.ts`·`utils/kidsMode.ts`(신규)·`services/api.ts`·`screens/SettingsScreen.tsx`·`components/kids/KidsSafetyNotice.tsx`(신규)·`App.tsx`·`hooks/useRewardedSkipAd.ts`) / 앱 2조(소셜·피드·재생) = K6~K11 + K17 중 PlayerScreen / 앱 3조(창작·얼굴·목소리) = K12~K16 + K17 중 ArtistDetail·ArtistCody·CodyItemCard. 1조의 K1 계약(`useIsChild`·`isChildNow`·`useKidsPermission`)이 첫 커밋.
+> **최우선 원칙 — "기존 기능에 문제가 절대 없도록"**: 이 버전의 판정 1순위는 어린이 제한이 잘 걸리는가가 아니라 **어린이가 아닌 모든 사용자에게 아무것도 바뀌지 않았는가**다. ① 킬 스위치 OFF 에서 성인·청소년·생년월일 없음(현재 72%) 계정의 모든 API 응답이 원본과 같음(차이는 응답 키 4종 추가뿐) ② ON 에서도 비어린이는 같음(유일한 의도된 차이 = D6 생년월일 잠금) ③ 앱은 `age_group`·`kids_restricted` 키가 없는 구서버에서 기존 동작 ④ v3.227~v3.231 전 기능 회귀. 이 네 묶음(RG·AR·KE-E1·KE-E2)은 하나라도 FAIL 이면 배포·ON 전환 중단.
+> **테스트 환경 제약(필수 전제)**: iOS 시뮬레이터 없음. 로컬 웹 빌드는 **Worklets 크래시** → 앱 로직은 **Node 하네스**(RN mock: react-native·AsyncStorage(throw 주입 가능)·navigation(`navigate`/`replace`/`goBack` 캡처)·showAlert 스텁(버튼 콜백 직접 호출)·api 스텁(응답 주입·요청 캡처)·`react-native-google-mobile-ads` 스텁(`MobileAds().setRequestConfiguration`·`RewardedAd.createForAdRequest` 인자 캡처)·가짜 타이머)로 [unit] 판정. 화면 표시 여부는 **순수 판정 함수 추출**(예: `canShowDmCompose(isChild)`, `stripChildPatch(patch, isChild, locked)`) 또는 react-test-renderer 하네스, 안 되면 **코드 리뷰(diff 정독)** — 각 시나리오에 어느 방식인지 적는다. 배치·문구 육안은 **배포 후 폰 웹(app.maidol.ai.kr)·PC 크롬 모바일 에뮬레이션(375×812) 수동 E2E**. AdMob·하드웨어 back 은 실기기 APK 전까지 "대기". 서버 = 스테이징 **로컬 fake 테스트**(pytest — 페이크 PG(asyncpg 스텁: 쿼리 문자열·횟수 캡처)·페이크 Mongo(조작 로그 캡처)·fakeredis·MinIO/Suno/OpenAI/AWS Rekognition 스텁(호출 횟수 캡처)·가짜 시계(KST/UTC)) → 배포 후 **무쓰기 스모크**(GET 위주, 쓰기는 아래 데이터 안전 범위만). **어린이 ON 검증은 `KIDS_TEST_CHILD_USER_IDS` 에 지정한 QA 테스트 계정(C)으로만** — 실사용자 계정을 어린이로 만들거나 생년월일을 바꾸는 일 0.
+> **데이터 안전**: prod **계정 생성 금지**(가입 경로 `/auth/register`·소셜 신규 가입은 스테이징에서만) · **팀 유료 생성 0회**(어린이 "허용" 경로(그림체 텍스트·프리셋 시트, 간편 목소리 작곡 등)의 성공 판정은 스테이징 fake 로만 — prod 에서는 ⭐ 확인 다이얼로그 **[취소]**까지, 필요하면 DevTools Request blocking) · 실사용자 데이터 변경 0(신고·DM·댓글·피드를 실사용자 대상으로 만들지 않음) · prod 쓰기 허용 범위 = 테스트 계정 본인 프로필 PATCH(같은 값·QA 계정 C 의 region/sns 무시 확인)·로그인 세션·`GET /tracks/search` 가 남기는 `search_logs`(건수 기록) — 그 밖의 쓰기(공식 DM 메시지 전송, 곡 댓글 신고 1건)는 **사용자 승인 시에만** · `.env` 변경·컨테이너 재생성·DB 백업은 사용자 승인 뒤 오케스트레이터 실행 · 계정은 `TEST_USER_EMAIL`(A, 성인)·`TEST_CHILD_QA_EMAIL`(C, 강제 어린이) 플레이스홀더 — 토큰·user_id 원문·`<SSH_HOST>`·.env 값·생년월일·전화번호 증적 기재 금지(id 는 앞 8자) · 얼굴 사진 E2E 는 실존 인물 사진 금지.
+
+### 항목 매핑 (planner 1~17 + 회귀 위험 → 시나리오)
+| # | planner 항목 | 시나리오 |
+|---|---|---|
+| A1 | 성인 응답 스냅샷 비교 | RG-S1·RG-S2·RG-A1·RG-A2 |
+| A2 | 가입·로그인·소셜·재설정·탈퇴 | RG-S1 ⑥·AU-S1·KM-U2·KE-E1 |
+| A3 | 설정(생년월일·⭐10·지역·SNS·닉네임·사진·CS DM) | AU-S2~S4·KM-U4·KE-E1·KE-E2 |
+| A4 | 창작 전 경로 | RG-S3·CR-S1·CR-S2·CA-U1~U5·AR-U3·KE-E1 |
+| A5 | 소셜(피드·댓글·신고·DM) | DM-S1·DM-S2·FD-S1·RP-S1·RP-S2·SO-U1~U6·KE-E1 |
+| A6 | 재생·차트·검색·큐·공유 | RG-S5·SO-U7·AR-U3·KE-E1 |
+| A7 | 광고·별 | KM-U6·AD-S1·KE-E5 |
+| A8 | 관리자·비즈 | RP-S2·RG-S5 ①·S-P3 |
+| B9 | /auth/me·login 어린이 값·안전 안내 | AU-S1·KC-A1·KM-U1·KM-U5·KE-E3 |
+| B10 | 서버 우회 차단 | UP-S1·CR-S1·CR-S2·FD-S1·DM-S1·AD-S1·KC-A2·KC-A3 |
+| B11 | 금칙어 | WF-S1~S3·KC-A2 ⑧ |
+| B12 | 앱 UI(어린이) | SO-U1~U7·CA-U1~U6·KM-U4·KE-E3 |
+| B13 | 광고 실기기 | KM-U6·KE-E5 |
+| B14 | 킬 스위치 되돌림 | KP-S2·KC-A4·S-P4 |
+| B15 | 생일 경계·강제 목록 해제 | KP-S1·KP-S2·KC-A4 |
+| B16 | 구 앱 + 신 서버 | AR-U2·KE-E4 |
+| B17 | 공통 정책·로그 | X-T1·X-L1 |
+| 회귀 | 나이 모름 오판 · 추가 DB 조회 · E4 로 기존 저장 실패 · 의상 피커 빈 화면 · 공식 DM 끊김 · 코드 문자열 노출 · 광고 설정 누수 · 금칙어 오탐 · v3.228 genJobs 순서 · v3.227 사진 가드 · v3.229·v3.230 디렉터 복귀·⭐ 확인·이탈 가드 · v3.230 DM 본인인증·공식 DM · v3.230b/c 닉네임 · v3.231 답변 편집·검색 · 곡 댓글 가산 · 기존 미성년 로직 · 다른 세션 동시 수정 | RG-S1~S5·RG-O1·AU-S2·AD-S1·DM-S2·KM-U3·KM-U6·WF-S2·WF-S3·AR-U1~U4·S-P1 |
+
+### KP — 판정·플래그 (서버 S0: `config.py`·`services/kids_policy.py`)
+
+**KP-S1. `age_group` 경계 [unit/서버] — FAIL 게이트(나이 모름·청소년을 어린이로 판정)**
+- Given: 가짜 시계, `kst_today()` 주입. 생년월일 픽스처 = {None, 오늘 기준 만 13세 생일 전날·당일·다음날, 만 12세 364일, 만 14세 당일, 만 6세, 2/29 생(윤년·평년 기준일 2/28·3/1), 미래 날짜, 1900-01-01, 문자열 "2013-09-25"·date 객체·datetime 객체}.
+- Then: None → 'unknown' · 만 13세 생일 **전날 = 'child', 당일 = 'teen'** · 만 14세 당일 = 'adult' · 2/29 생의 만 나이 증가일 규칙이 기존 `models/user.py:20-33 age_years` 와 같은지 기록(다르면 FAIL — 같은 사람이 경로마다 다른 나이) · KST 기준: UTC 2026-09-24 15:00(=KST 09-25 00:00)~23:59 구간에서 KST 날짜 사용(생일 당일 KST 00:05 에 'teen') · 미래 날짜·입력 타입별 예외 0(미래 → 'child' 또는 'unknown' 중 구현값 기록, 예외 발생이면 FAIL) · **기존 `is_under_14`(UTC `date.today()`) 는 hunk 0** — 두 기준(KST/UTC)이 공존함을 기록(만 14세 판정은 가입 게이트 전용이라 이번 영향 없음).
+
+**KP-S2. `is_child_user` · 킬 스위치 · 강제 목록 [unit/서버] — 최상위 FAIL 게이트(OFF 에서 DB 조회·제한 발생)**
+- When: `kids_mode_enabled` {False, True} × `kids_test_child_user_ids` {"", "uuidC", " uuidC , uuidX ", "UUIDC"(대문자), "잘못된값,,"} × 대상 {C, 성인, 생년월일 없음, 만 10세 생년월일, 존재하지 않는 id, None} × conn {전달, 미전달}.
+- Then: **False(OFF) → 모든 조합 False, PG 쿼리 0회, 풀 acquire 0회, 로그 `[kids]` 0줄** · ON: 강제 목록에 있으면 True(`src=forced`, PG 0회), 공백·대소문자 처리 규칙 기록(대문자 UUID 불일치로 False 가 되면 QA 검증 실패 원인 — 기록), 잘못된 값·빈 항목 → 예외 0 · 만 10세 → True(`src=pg`, 쿼리 1회 `SELECT birth_date FROM users WHERE id=$1`) · 생년월일 없음·청소년·성인·없는 id → False · conn 전달 시 새 acquire 0 · PG 예외 → **False(제한 없음)로 떨어지는지 True 로 떨어지는지 구현값 기록 — 판정 회부**(fail-open 이면 어린이 우회, fail-closed 면 DB 장애 때 성인 전원 403 → 성인 보호 관점에서 fail-closed 가 성인 요청을 막으면 FAIL).
+- 강제 목록에서 C 를 빼고 설정 재로딩 → 즉시 False(캐시 잔존 0).
+
+**KP-S3. `optional_child_from_request`(무인증 라우트) [unit/서버] — FAIL 게이트(DAU·세션 통계 변화)**
+- When: OFF/ON × {헤더 없음, `Bearer` 빈 값, 만료 JWT, 서명 위조, 형식 오류, 정상 성인, 정상 C, 쿠키 토큰만}.
+- Then: OFF → JWT 디코드 0·즉시 False · ON → 오류 토큰 전부 False(401·예외 0 — **무인증 라우트가 토큰 오류로 401 을 내면 FAIL**) · 모든 경우 Redis 세션 조회·`dau:*`·접속 기록 쓰기 0(fakeredis 명령 로그 0) · `get_current_user_optional` 호출 0.
+
+**KP-S4. 응답 헬퍼·권한 [unit/서버]** — `child_restricted(feature)` = 403 `{"error": 한국어 문장, "code":"child_restricted", "feature": feature}`(error 에 영문 코드·"child_restricted" 문자열 0) · `kids_permissions(uid)` = `{"feed_write":False,"comment":False,"dm_friends":False}` 고정(DB 0회) · feature 이름 목록 전수(업로드·DM·피드·캐릭터·얼굴·목소리·생성·프로필) 기록.
+
+**KP-S5. 설정 가산성 [unit/서버]** — `diff orig/app/config.py new/app/config.py` = 필드 3개(`kids_mode_enabled=False`·`kids_test_child_user_ids=""`·`word_filter_all_users=False`) 추가만, 기존 필드·기본값·env 이름 hunk 0 · .env 에 새 키가 없을 때 기동 성공·세 값 기본 · `KIDS_MODE_ENABLED=true`·`"1"`·`"False"` 파싱 결과 기록.
+
+### RG — 기존 기능 동일성 (최우선, 서버)
+
+**RG-S1. 킬 스위치 OFF 차등 하니스 [unit/서버] — 최상위 FAIL 게이트(비어린이 응답·부작용 변화)**
+- Given: 스테이징 `orig/`·`new/` 두 앱을 **같은 페이크 DB 스냅샷**으로 각각 기동(요청마다 DB 복원). KIDS 관련 env 미설정. 사용자 픽스처 = 성인(만 30, 미인증) · 성인 인증(kakao, is_verified) · 청소년(만 13) · **생년월일 없음**(local·kakao·google 각 1) · 만 10세 생년월일(현재 prod 0명이지만 OFF 동작 확인용) · 공식 계정 · 관리자.
+- When: 변경 매트릭스의 **모든 대상 엔드포인트**(S1~S13 — auth me/login/register/profile/profile-image, dm conversations/search/send, upload 6종, feeds create/update/comment, tracks comment/upload/upload-from-generation/PUT, character 7종, face-verify 6종, voice-clone 8종, generate/·start·upload-reference·lyrics, business ads active/catalog/click, reports create·admin 목록·조치) × 사용자 픽스처 × {정상 입력, 대표 오류 입력(필수 누락·권한 없음·없는 id)}.
+- Then(orig 대비): ① HTTP status 동일 ② JSON 본문 동일 — **auth 4개 응답의 추가 키 4종(`age_group`·`kids_restricted`·`kids_permissions`·`birth_date_locked`)만 차이**, 추가 키 값은 OFF 에서 `kids_restricted=false`·`birth_date_locked=false`(`age_group` 은 실제 나이값, `kids_permissions` 값은 기록), 타임스탬프·생성 id 는 정규화 후 비교 ③ DB 쓰기 조작 로그(컬렉션·필터·필드) 동일 ④ ⭐ 원장 호출(차감·환불·지급) 동일 ⑤ 외부 스텁 호출 수(MinIO put·Suno·OpenAI·Rekognition) 동일 ⑥ 가입(`/auth/register` 성인·추천코드·베타 ⭐50·v3.230c 닉네임 2~15자·예약어) 응답·쓰기 동일 ⑦ 로그 `[kids`·`[wordfilter]` 0줄, `users.birth_date` 조회 추가 0(login SELECT 의 컬럼 추가 1건만 허용) ⑧ 만 10세 생년월일 사용자도 orig 과 같음(OFF 에서는 어린이 제한 0 — 기존 DM ④ 수신 보호·광고 분석 만14 제외는 원래대로).
+- 결과물: 엔드포인트×사용자 행렬 표(PASS/차이 내용) — 차이 1칸이라도 추가 키 외 항목이면 FAIL.
+
+**RG-S2. 킬 스위치 ON 비어린이 동일성 [unit/서버] — 최상위 FAIL 게이트**
+- Given: RG-S1 과 같은 하니스, `KIDS_MODE_ENABLED=true`, `KIDS_TEST_CHILD_USER_IDS=<C 픽스처>`, `WORD_FILTER_ALL_USERS` 미설정.
+- Then: 성인·성인 인증·청소년·생년월일 없음·공식·관리자 전원 RG-S1 ①~⑥ 동일 · **유일한 허용 차이 = D6 생년월일 잠금**(AU-S2 행렬의 400 두 칸 + `birth_date_locked` 값) · 금칙어 호출 0(성인 욕설 포함 입력도 orig 과 같은 결과) · PG 추가 조회 = **제한 대상 라우트에서만 1회**, 읽기 경로(`/feeds/timeline`·`/charts/*`·`/tracks/search`·`/tracks/{id}`·record-play·`/dm/conversations` GET·`/dm/unread-count`)는 0회 · 무인증 `/business/ads/*` 응답 바이트(gzip 포함)·캐시 적중 동작 orig 동일.
+- 추가: 로컬 부하 비교 — 성인 `POST /feeds/`(fake) 100회 평균 지연 증가를 기록(PK 조회 1회 수준 기대, 기준 없음 — 기록만).
+
+**RG-S3. 과금·잡 순서 보존(v3.228) [unit/서버] — FAIL 게이트(어린이 검사 위치 때문에 성인 순서가 바뀜·어린이 차감 후 거부)**
+- ① 성인: `new/` 에서 v3.228 S1-S2~S1-S10(영상 중복 과금·다듬기 동시·커버/작사/작곡 동시·재시작 환불 boot_id sweep·멱등 `X-Gen-Request-Id`·게이트 순서·소비/재배달·recoverable 계약·`GEN_JOBS_KINDS` 킬 스위치) 테스트 재실행 전부 PASS ② 어린이(C): 차단 대상 생성 요청(voice_persona·reference_audio_url·실사 시트·cartoon+file)이 **`gj.user_lock`·⭐ 차감·요청 원장 기록·잡 생성 전**에 403 — 원장(gen_requests)·gen_jobs·point_events 쓰기 0, 락 키 잔존 0 · 같은 요청 ID 로 재시도 → 역시 403(원장에 거절 기록이 남아 409 등으로 바뀌면 기록) ③ 어린이 **허용** 생성(그림체 텍스트, style_persona 작곡, 간편 목소리) → 성인과 같은 순서로 차감·잡 생성(스테이징 fake) ④ 금칙어 400 도 차감·락 전(WF-S3).
+
+**RG-S4. 서버 diff 형태 정적 검사 [unit/서버 — 정적] — FAIL 게이트(비대상 변경)**
+- `diff -r orig new`: 대상 = config·models/user(선택)·auth·dm_service·dm·upload·feeds·tracks·character·face_verify·voice_clone·generate·business·reports·admin + 신규 3(kids_policy·word_filter·constants/word_filter_ko) 외 hunk 0 · **main.py hunk 0** · DB 스키마·마이그레이션·인덱스 생성 0 · 각 라우트 hunk 가 "핸들러 선두 `if await is_child_user(...)` → return" 또는 "응답 dict 키 추가" 또는 "금칙어 호출(조건: child or word_filter_all_users)" 형태인지 전수 표 · 기존 분기(`is_under_14`·business.py:1091-1106 만14 이벤트 제외·face_verify.py:40-71 만19 보호자·dm_service ①~⑥·auth.py:759-770 인증 잠금·v3.230⑧ `identity_verify_required` 우회) hunk 0 또는 무의미 변경만 · `py_compile` 전 파일 0 오류.
+
+**RG-S5. 다른 버전 서버 회귀 재실행 [unit/서버] — FAIL 게이트**
+- ① v3.230 NK-S1~S6(닉네임 규칙·예약어·세션 갱신·사본 소급·인가) — 금칙어가 **규칙 검증 뒤**에만(규칙 위반 입력의 오류 문구가 orig 과 같음), CH-S1~S8(차트 소유자 제외·롤링 24h·응답 키셋) ② v3.229 N-S1~S3(개명 동기화·가수명 직렬화) · record-play 30초 중복 방지·재생 1회 = 1기록(tracks.py 변경분이 재생 경로에 hunk 0) ③ v3.231 GS-S4~S7(한/영 별칭·regex 폴백·`PUT /tracks/{id}` ES 재색인·다른 재색인 경로) — tracks.py 에 금칙어(곡 공개 제목)가 들어가도 PUT 재색인·응답 불변 ④ v3.230⑧ 본인인증 우회: `IDENTITY_VERIFY_REQUIRED` 미설정 → 미인증 성인 `/face-verify/consent` 200, birth_date 있는 만19 미만 → 보호자 동의 분기 유지, True 로 바꾸면 기존 403(face_verify.py 에 어린이 가드를 넣은 뒤에도 순서·문구 동일) ⑤ v3.230 DM: 미인증 성인 → 공식 계정 대화 200, 일반 사용자 403 `identity`(기존 문구) ⑥ v3.227 H-1 `original_object_name` Form 소유권·H-3 원본 접근 매트릭스 ⑦ v3.227 W2-A1 `/business/ads/catalog` 응답 계약(성인·무인증) ⑧ 스테이징 pytest 전체 PASS.
+
+**RG-A1. 배포 전·후 성인 응답 스냅샷 — OFF [api] — 최상위 FAIL 게이트**
+- 스냅샷 스크립트(설계 — 코드는 서버 담당/오케스트레이터가 작성, 산출물은 scratchpad, 토큰은 환경 변수로만): A 로 로그인 1회 → 아래 요청의 status·재귀 키 집합·결정적 값(카운트·정렬 순서·id 앞 8자) 저장. 대상 = `POST /auth/login`(A) · `GET /auth/me` · `PATCH /auth/me/profile`(현재 값 그대로: nickname·gender·birth_date·region — A 는 생년월일 있는 미인증 계정 권장) · `GET /auth/signup-config` · `/feeds/timeline` · `/charts/top100`·`/charts/categories`·`/charts/category/로맨스` · `/tracks/search?q=로맨스`(search_logs 1행 — 실행 횟수 기록) · `/business/ads/active` · `/business/ads/catalog?category=상의`(항목 키 집합·`product_url`/`link_url`/`price_krw` 존재·항목 수) · 무인증 같은 두 광고 요청 · `/dm/conversations` · `/dm/unread-count` · `/dm/official` · `/face-verify/status` · `/voice-clone/list` · `/character/me` · `/points/costs` · `/points/history` · `/generate/jobs/recoverable` · `/notifications`(목록 GET).
+- 배포 **전** 1회(기준) → OFF 배포 직후 1회 → 비교: status 동일, 키 집합 차이 = auth 3응답(login user·me·profile PATCH)의 추가 키 4종만, 값 차이 = 시간 경과로 바뀌는 차트·타임라인 순서(2회 연속 기준 측정으로 드리프트 폭 먼저 기록 후 판정) 외 0 · 추가 키 값: `kids_restricted=false`·`birth_date_locked=false` · 비교 결과 표를 REPORT 에 첨부(값 원문 대신 해시·개수).
+
+**RG-A2. ON 전환 후 성인 스냅샷 [api] — 최상위 FAIL 게이트** — S-P4 직후 RG-A1 스크립트 재실행: OFF 결과와 비교해 차이 = A 의 `birth_date_locked=true`(생년월일 있는 미인증 계정) 1개뿐 · `kids_restricted=false`·`age_group` = A 실제 나이값 · 광고 catalog 항목에 `product_url`·`price_krw` 그대로 · PATCH 같은 값 200(D6 — 같은 값 재전송 통과) · 추가로 A 로 `PATCH` birth_date 를 **다른 값** 1회 → 400 `birth_date_locked`·한국어 문구, DB 값 불변(GET /auth/me 로 확인) — 이 1건이 D6 의 의도된 성인 영향.
+
+**RG-O1. 전 계정 판정 무쓰기 점검 [ops — 읽기 전용]** — ON 전환 직후 컨테이너 안에서 SELECT 전용 스크립트(planner q1 방식): 전체 계정의 `age_group` 분포와 `is_child_user` 결과 집계 → child = **C 1명(강제)** 외 0, unknown = 실측 31 전후(신규 가입 증감 기록), teen 0 · 쓰기·세션 접근 0 · 결과는 개수만 기록(id·생년월일 미기재). planner 의 "나이 모름 31명 /auth/me 샘플"은 남의 토큰이 필요하므로 이 집계로 대체.
+
+**RG-O2. 배포 후 7일 관측 [ops — 읽기 전용]** — 하루 1회 로그 집계: `code=child_restricted` 403 발생 user 수(**C 외 1명이라도 있으면 즉시 FAIL → 킬 스위치 OFF**), `[kids.birth_lock] blocked` 건수(실사용자 발생 시 앱 버전·경로 기록 — 구 앱에서 생년월일 지우기 시도일 가능성), `[wordfilter]` 건수(OFF 성인 0 기대), `[kids.ads]` 건수(C 외 0), 5xx·Traceback 수(배포 전 7일 평균 대비), `/business/ads/*` 응답 시간 p95 변화.
+
+### AU — 계정 응답·생년월일 잠금·프로필 (서버 S1~S4)
+
+**AU-S1. 응답 키 4종(E1) [unit/서버]**
+- 행렬: 엔드포인트 {`GET /auth/me`, `POST /auth/login`의 user, `POST /auth/register`의 user(스테이징), `PATCH /auth/me/profile` 응답} × 플래그 {OFF, ON} × 사용자 {성인 미인증(생년월일 있음), 성인 인증, 청소년, 생년월일 없음, 만 10세, C(강제·실제 성인 나이), C(강제·생년월일 없음)}.
+- Then: 네 곳 모두 키 4종 존재(한 곳이라도 빠지면 앱이 이메일 로그인 직후 모드를 모름 → FAIL) · `kids_restricted` = ON && child(강제 포함) · `age_group` = **실제 나이 기준값**(C 강제여도 'adult'/'unknown' — 앱은 이 값으로 판정하지 않음, KM-U1) · `birth_date_locked` = ON && 기존 birth_date 있음 && 미인증(인증 계정은 false 인지·기존 잠금 규칙이 별도로 도는지 기록) · `kids_permissions` 성인 값 기록(모두 false 로 내려오면 KM-U1 ⑤ 성인 무시 확인이 필수) · login SELECT 에 birth_date 추가 외 기존 키·값 동일 · 로그 `[kids] me age_group=... restricted=...` 는 DEBUG(운영 INFO 레벨 0줄)이며 생년월일 원문 0.
+
+**AU-S2. 생년월일 잠금 행렬(E4·D6) [unit/서버] — FAIL 게이트(기존 앱 저장 실패·잠금 우회)**
+- When: 플래그 {OFF, ON} × 기존값 {None, "2000-01-15"} × 인증 {미인증, 인증} × 전달 {키 없음, null, "", 같은 값 "2000-01-15", 같은 값 다른 표기("2000-1-15"·"2000-01-15T00:00:00"·"2000.01.15"), 다른 값, 형식 오류 "abc"}.
+- Then(ON·미인증): 기존 None → null·""·키 없음 = 통과(값 None 유지) / 날짜 = **첫 입력 통과**(저장) · 기존 값 → 키 없음 통과 · **같은 값 통과(200, 다른 필드 저장)** · 같은 값 다른 표기 → 정규화해 같은 값으로 보는지 기록(**현 앱 SettingsScreen 이 보내는 실제 표기로 400 이 나면 FAIL** — 앱 저장 코드 :166-176 의 직렬화 형식을 코드 리뷰로 확정해 픽스처에 넣는다) · 다른 값·null·"" → 400 `{"error":"생년월일은 가입 후 바꿀 수 없어요. 고객센터로 문의해주세요.","code":"birth_date_locked"}`, **같은 요청의 다른 필드(닉네임·성별 등)도 저장 0**(부분 저장 여부 기록 — 부분 저장이면 판정 회부) · 형식 오류 → 기존 400(검증 순서: 기존 형식 오류가 먼저인지 잠금이 먼저인지 기록).
+- Then(ON·인증): 기존 인증 잠금 분기(:759-770)가 먼저 — 응답 코드·문구 orig 동일.
+- Then(OFF): 전 조합 orig 동일(미인증 변경·삭제 자유 — 현행).
+- 경계 기록(E3 소관·2차): ON 에서 기존 None 계정이 첫 입력으로 만 10세 날짜를 넣으면 저장 통과 → 즉시 어린이 모드(보호자 절차 없음). 실사용자가 이 경로로 어린이가 될 수 있음을 REPORT 에 명시.
+
+**AU-S3. 어린이 프로필 필드·사진(F7) [unit/서버]** — C(ON): PATCH {nickname, gender, company_name, region, sns_links, bio} → 200, region·sns_links·bio **DB 쓰기 0**(기존 값 유지 — 이미 저장된 값을 지우는지 두는지 기록), 나머지 저장, 로그 `[kids.profile] strip fields=3` · 응답에 region 이 요청값으로 되돌아오는지 DB 값으로 오는지 기록(요청값을 되돌려주면 앱에 "저장된 것처럼" 보임 — 기록) · `POST /auth/me/profile-image` 403 child_restricted·MinIO put 0 · `DELETE` 200 · 성인(ON) 같은 요청 orig 동일.
+
+**AU-S4. 프로필 완성 ⭐10(A5) [unit/서버] — FAIL 게이트(이중 지급·성인 조건 변화)** — 어린이: birth_date+gender 충족 PATCH → ⭐10 1회, 로그 `[star-econ] profile_bonus +10 ... kids=1`, 같은 PATCH 재전송 → 0회(기존 멱등 키 그대로) · 성인(ON·OFF): 지역 없으면 지급 0(현행), 3종 충족 → 1회 · 이미 받은 계정 → 0 · 어린이→성인 전환(강제 목록 해제) 뒤 region 입력 → 추가 지급 0(이미 받음).
+
+### DM — 어린이 DM 공식 계정만 (서버 S5)
+
+**DM-S1. 대화 시작·사용자 검색 행렬 [unit/서버] — FAIL 게이트(성인 DM 게이트 변화·공식 CS 차단)**
+- When(ON): `POST /dm/conversations` 보내는 쪽 {C, 성인 인증, 성인 미인증, 공식} × 받는 쪽 {C, 성인 인증, 성인 미인증, 공식, 만 10세 생년월일(비강제·실제 어린이)} · `GET /dm/users/search` {C, 성인 인증, 성인 미인증}.
+- Then: C ↔ 공식 = **양방향 200**(기존 대화 있으면 같은 대화 반환) · C → 일반 사용자 403 child_restricted · 일반 사용자 → C 403(메시지 요청 pending 생성 0) · 어린이끼리 403 · C 검색 403 · 성인↔성인·성인→공식: orig 과 **status·문구·단계 순서 동일**(① 본인인증 → ④ 만14 미만 수신 보호 → ⑤ 메시지 요청 — 어린이 조건이 기존 단계보다 앞에 끼어 성인 문구가 바뀌면 FAIL) · OFF: 전부 orig.
+
+**DM-S2. 메시지 전송·공식 발송 방어 [unit/서버] — FAIL 게이트(공지·CS 답장 끊김)** — ① ON 이전에 만들어진 C↔일반 사용자 대화(픽스처) → 양쪽 `send_message` 모두 거부(`_deny("child")`, 로그 `[dm] gate denied stage=child`), 대화·기존 메시지 조회 GET 200(읽기 유지 — 숨김은 앱 몫) ② 관리자 공지 브로드캐스트(`_deliver_official_message`) → C 포함 전원 도착, C 수 = 대상 수 ③ 공식 CS 답장 → C 도착 ④ C → 공식 메시지 전송 200 ⑤ 사진 메시지 경로는 UP-S1 에서 차단 ⑥ `/dm/unread-count`·읽음 처리·차단·요청 수락/거절(성인) orig 동일.
+
+### LIM — 업로드·창작·피드·광고 제한 (서버 S6~S10·S13)
+
+**UP-S1. 업로드 6종(F2·F6) [unit/서버]** — C(ON): `POST /upload/dm-image`·`/upload/feed-image`·`/upload/cover-background`·`/upload/image?type=cover`·`type=profile`·`/tracks/upload`·`/generate/upload-reference/` → 403 child_restricted, **파일 읽기·MinIO put·DB 쓰기 0**(multipart 본문을 다 받기 전에 거절되는지·임시 파일 잔존 0) · `/upload/image` 의 다른 type(있으면 전수) → 허용/거부 구현값 기록 · 성인 전 엔드포인트 orig 동일(RG-S2 재확인).
+
+**CR-S1. 캐릭터·얼굴 인증(F4) [unit/서버] — FAIL 게이트(⭐ 차감 뒤 403·그림체 경로로 사진 유입)**
+- C(ON) 403: `/character/upload-original-photo` · `generate-sheet`·`generate-sheet-async`(실사) · `/character/refine` · `POST /character/locations` · cartoon/cartoon-async 에 `file` · `style_image` · `original_object_name` 중 **하나라도** 있음(각각 단독 3케이스 + 조합) — 모두 ⭐ 원장·character_jobs·MinIO 0 · `/face-verify/consent`·`guardian/request`·`verify`·`session` 403 / `status`·`DELETE` 200.
+- C(ON) 허용(스테이징 fake 만): cartoon 텍스트만 · 프리셋 화풍 · `use_saved_sheet` · 의상 적용(cody) → 성인과 같은 차감·잡 흐름, 사용자 텍스트는 금칙어 통과 후.
+- 성인: v3.227 H-1·H-3·사진 소실 가드 관련 서버 테스트 재실행 PASS, 얼굴 게이트(`face_verification_required`) 문구·순서 orig 동일.
+
+**CR-S2. 목소리·작곡 생성(F5·F6) [unit/서버] — FAIL 게이트(성인 작곡 경로 변화)** — C(ON): `/voice-clone/create`·`{id}/verify`·`regenerate-phrase`·`check-availability` 403 / `list`·`get`·`delete`·`audio` 200 · `POST /generate/` `persona_model=voice_persona` 403 · `reference_audio_url` 있음 403 · `/generate/{id}/start/` 동일 조건 403 · `style_persona`·간편 목소리(voice_preset)·연주곡 → 허용(fake) · 모두 gj 락·차감 **전**(RG-S3) · 성인: v3.229 V-S1(`SUNO_VOICE_AUDIO_WEIGHT` 기본 off)·V-S2 로그, voice_persona 작곡·참고 음원 작곡 요청 본문(Suno 스텁 캡처) orig 바이트 동일.
+
+**FD-S1. 피드·댓글(F3) [unit/서버]** — C(ON): `POST /feeds/`·`PUT /feeds/{id}`·`POST /feeds/{id}/comments`·`POST /tracks/{id}/comments` → 403(`kids_permissions` 가 1차 고정 false) · 피드·댓글 목록 GET·좋아요·본인 과거 댓글 삭제 → 200(삭제가 막히면 기록 — 어린이가 자기 글을 못 지우는 문제) · 테스트 전용으로 `kids_permissions` 를 True 로 패치하면 통과 + 금칙어 적용(2차 대비 분기 확인) · 성인 orig 동일(알림 생성·comment_count 증가 포함).
+
+**AD-S1. 광고·착장 카탈로그(F8·D9) [unit/서버] — FAIL 게이트(캐시로 성인에게 링크 없는 응답·어린이에게 링크 있는 응답)**
+- When(ON): `GET /business/ads/active`·`/ads/catalog?category=상의`·`?category=전체` 요청 순서 {무인증 → C → 성인 → C → 무인증} 과 역순, 같은 캐시 TTL 안에서 · `POST /ads/{id}/click` {무인증, 성인, C}.
+- Then: C → 항목 수·id·이미지·브랜드·카테고리·성별 필드 성인과 동일, `product_url`·`link_url`·`price_krw` = null(키는 존재 — 키 삭제면 앱 필터/정렬이 깨지는지 CA-U6 에서 확인) · **성인·무인증 응답은 순서와 무관하게 orig 바이트 동일**(gzip·ETag 포함) · 캐시 키 분리 또는 어린이 캐시 미사용 확인 · click: C → `{"ok":true,"skipped":"child"}`, ad_clicks·통계 쓰기 0 / 성인·무인증 orig 동일 · 로그 `[kids.ads] strip links n=%d` C 요청에서만 · v3.227 가격 필터(W2)·성별 필터(v3.230 CG)는 C 목록에서 가격이 null 이라 어떻게 동작하는지 기록(CA-U6).
+
+**LY-S1. 어린이 작사 지시문(G4) [unit/서버]** — `POST /generate/lyrics/`: C → LLM 스텁에 넘어간 프롬프트 = 사용자 프롬프트 + 고정 지시문(초등학생 적합·폭력/성적/욕설/음주 금지) 1회, 로그 `[kids.lyrics] child guard appended` · 성인(ON·OFF) → 프롬프트 **바이트 동일**(캡처 비교) · 창작 모드(v3.229 R-U5 작사 창작 모드) 경로도 같은 규칙 · 이미지 생성 moderation 파라미터 orig 동일(미지정=auto).
+
+### WF — 금칙어(서버 S11)
+
+**WF-S1. 정규화·목록 [unit/서버]** — `check_text(text, child)`: 욕설·성적·혐오 대표어 각 3개 이상 × 변형 {원형, 띄어쓰기 삽입, 특수문자 삽입(ㅅ.ㅂ), 반복 문자, 전각/호환 자모(NFKC), 초성만, 영문 대소문자} → 사유 코드 반환 · 어린이 전용 개인정보 패턴: 전화번호(010-1234-5678·01012345678·공일공 표기·국제 +82), 이메일, URL/도메인(`http`, `www.`, `.com`, `.kr`, 짧은 URL), "카톡 아이디"·"오픈채팅"·"인스타 아이디", 주소(○○동 ○○아파트 ○동 ○호), 학교명(○○초·○○중·○○초등학교) → child=True 에서만 적중, child=False 에서는 None · 빈 문자열·None·10,000자 → 예외 0, 1ms 단위 처리 시간 기록.
+
+**WF-S2. 오탐 코퍼스 [unit/서버] — 판정 회부(오탐으로 어린이 핵심 기능 중단)** — 정상 문장 30개 이상 통과 기대: "시발점", "개나리", "수박씨", "캐나다", "강아지 산책", "010 스타일 음악", "2010년대 감성", "10월 5일 공연", "사랑해 너를", "초코 우유", "중간고사 끝", "해운대 바다 노래", "동화 같은 이야기", "아파트 불빛", "별 헤는 밤", "학교 가는 길"(학교명 패턴 오탐 여부), "우리 동네"(주소 오탐 여부), 영문 곡 제목 "Shift", "Assassin", "Scunthorpe", 흔한 가사 20줄(기존 공개 곡 가사가 아닌 팀 작성 문장) · 결과 표(통과/적중·사유)를 REPORT 에 기록 — 핵심 창작 입력(작사 프롬프트·곡 제목)에서 흔한 표현이 막히면 판정 회부.
+
+**WF-S3. 적용 지점·순서 [unit/서버] — FAIL 게이트(성인 적용·⭐ 차감 뒤 검사·닉네임 규칙 순서 변경)**
+- 지점 전수: feeds create/update · feed comment · track comment · DM 전송 · PATCH nickname·company_name · `/generate/lyrics/` prompt · `/generate/` prompt·title · character user_text · 곡 공개 title(upload-from-generation · `PUT /tracks/{id}`).
+- Then: 호출 조건 = child || `word_filter_all_users` — 성인(ON·OFF, `WORD_FILTER_ALL_USERS` 미설정) 호출 0(스파이) · C 적중 → 400 `{"error":"사용할 수 없는 표현이 들어 있어요. 다른 말로 바꿔주세요.","code":"word_filtered"}`, **⭐ 차감·락·잡·DB 쓰기 전** · 닉네임: v3.230b/c 규칙(2~15자·예약어 변형·중복)이 먼저, 규칙 통과 후에만 금칙어(규칙 위반 입력의 응답이 orig 동일) · `WORD_FILTER_ALL_USERS=true` 테스트 전용 설정 시 성인에도 적용되는지(2차 대비) · 로그 `[wordfilter] hit reason=%s len=%d child=%s` — **원문·일부 발췌 0**.
+
+### RP — 곡 댓글 신고(서버 S12, 전체 사용자)
+
+**RP-S1. 신고 생성 [unit/서버]** — `POST /reports/` `target_type='track_comment'`: 남의 댓글 → 201, 증거 스냅샷(댓글 본문·작성자·곡 id — 기존 comment 스냅샷 패턴과 같은 필드) · 본인 댓글 → 400 · 같은 사용자 중복 → 409 · 없는 댓글 → 404 · 삭제된 곡의 댓글 → 기록 · 로그 `[report] create ok type=track_comment` · 기존 4종(feed·comment·track·dm_message) 요청·응답·스냅샷 orig 동일 · C(ON)도 신고 가능(신고는 제한 대상 아님).
+
+**RP-S2. 관리자 목록·조치 [unit/서버] — FAIL 게이트(comment_count 음수·기존 4종 조치 변화)** — 관리자 신고 목록(reports.py:304·admin.py:619)에 track_comment 스냅샷 표시 · 조치 delete → `track_comments` 문서 삭제 + `tracks.comment_count` 1 감소(0 에서 음수 방지) · 기각 → 댓글 유지 · 이미 작성자가 지운 댓글에 delete 조치 → 예외 0·카운트 불변 · 로그 `[admin-report] track_comment delete` · 기존 4종 조치 결과 orig 동일 · 관리자 웹(admin_web) 라벨은 2차(목록에 알 수 없는 타입이 떠도 화면 깨짐 0인지 코드 리뷰로 기록).
+
+### KC — 배포 후 어린이 서버 우회 차단 (QA 계정 C, ON) [api]
+
+**KC-A1. 계정 응답 [api]** — C 로그인·`/auth/me` → `kids_restricted=true`·`kids_permissions` 전부 false·`age_group` = C 실제 나이값·`birth_date_locked` 규칙대로 · A 는 RG-A2 값 그대로.
+
+**KC-A2. 차단 행렬 403 [api] — FAIL 게이트(하나라도 통과·⭐ 변화)** — C 토큰 curl, 각 요청 전후 `/points/balance`(또는 `/auth/me` 잔액) 비교, 전부 403 `code=child_restricted`·잔액 불변 · ① `POST /dm/conversations`(A 대상) · `GET /dm/users/search?q=a` ② A 토큰으로 `POST /dm/conversations`(C 대상) → 403 ③ `POST /upload/dm-image`·`/upload/feed-image`·`/upload/cover-background`·`/upload/image`(cover·profile)·`/tracks/upload`·`/generate/upload-reference/` — 1×1 PNG·0.1초 무음 WAV(팀 제작) ④ `POST /feeds/`·`PUT /feeds/{C 가 쓴 글 없으면 생략}`·`/feeds/{공식 공지 id}/comments`·`/tracks/{공개 곡}/comments` ⑤ `/character/generate-sheet-async`(실사)·`upload-original-photo`·`refine`·`POST /character/locations`·cartoon-async+file·+style_image·+original_object_name(A 소유가 아닌 가짜 값) ⑥ `/face-verify/consent`·`guardian/request`·`verify`·`session` / `status` 200 ⑦ `/voice-clone/create`·`check-availability` / `list` 200 · `POST /generate/` persona_model=voice_persona·reference_audio_url ⑧ 금칙어: C 로 PATCH nickname(욕설·전화번호 포함) → 400 word_filtered, 닉네임 불변 · `/generate/lyrics/` prompt 에 욕설 → 400, ⭐ 불변 ⑨ `POST /auth/me/profile-image` 403.
+- **어떤 차단 요청이 403 이 아니라 200/202 로 처리되면 과금·쓰기가 발생할 수 있으므로 ⑤⑦⑧ 은 스테이징 CR-S1·CR-S2·WF-S3 PASS 뒤에만 실행**, 실행 중 하나라도 2xx 면 즉시 중단·잔액 대사.
+
+**KC-A3. 허용 경로·광고 [api]** — C: `GET /dm/official` 200 · `POST /dm/conversations`(공식) 200(기존 대화 반환 — 메시지 전송 1건은 **사용자 승인 시에만**) · `/feeds/timeline`·`/charts/top100`·`/charts/category/로맨스`·`/tracks/{id}`·record-play(공개 곡 1회 — 재생수 +1 은 실데이터 영향이 작아 허용 여부 사용자 확인, 불허면 생략) · `PATCH /auth/me/profile` {region, sns_links} → 200·재조회 시 값 미저장 · `/business/ads/catalog?category=상의` → 항목 수 = A 결과와 같음, `product_url`·`price_krw` null · 무인증·A 재요청 → 링크 있음(캐시 혼입 0) · `POST /business/ads/{id}/click` C → skipped.
+
+**KC-A4. 킬 스위치·강제 목록 되돌림 [api] — FAIL 게이트(끄면 원복 안 됨)** — (S-P4 롤백 리허설, 사용자 승인) ① `KIDS_TEST_CHILD_USER_IDS` 에서 C 제거·재생성 → C `/auth/me` `kids_restricted=false`, KC-A2 ① 요청이 성인과 같은 응답(기존 DM 게이트 문구) ② 다시 C 넣고 `KIDS_MODE_ENABLED=false` → 같은 결과 + A `birth_date_locked=false`, A 다른 생년월일 PATCH 는 **실행하지 않음**(실제로 바뀌므로 — 값 키만 확인) ③ 최종 D1 값(ON + C 지정)으로 복귀 · 각 단계 컨테이너 재생성 전 진행 중 생성 0 확인(S-P2 절차).
+
+### KM — 앱 1조(기반·설정·광고: K1~K5)
+
+**KM-U1. `utils/kidsMode.ts` 계약 [unit/앱] — 최상위 FAIL 게이트(성인을 어린이로 판정)**
+- 입력: user {null, 키 없음(구서버), `kids_restricted:false`, `kids_restricted:true`, `kids_restricted:"true"`(문자열), `age_group:'child'`+`kids_restricted:false`, `age_group:'adult'`+`kids_restricted:true`(C 강제), `kids_permissions` 없음/일부/전부 true}.
+- Then: `useIsChild()`·`isChildNow()` = **`kids_restricted === true` 일 때만 true** — `age_group` 으로 판정하면 FAIL(C 강제 검증 불가 + 구서버 오판 위험), 문자열 "true" → false · `useKidsPermission(key)`: 어린이 && 값 true 일 때만 true, 어린이 && 키 없음 → false · ⑤ **성인은 `kids_permissions` 값과 무관하게 어떤 화면도 숨기지 않음** — 호출부가 반드시 `isChild && !permission` 형태인지 2·3조 diff 전수 grep(`useKidsPermission(` 사용처 표) · 전환 로그 `[KidsMode] mode=child|normal src=me|login` 모드가 바뀔 때만 1회(렌더마다 0).
+
+**KM-U2. authStore 병합·계정 전환 [unit/앱] — FAIL 게이트(이전 계정의 어린이 상태가 남음)** — ① 이메일 로그인(`set({user})` 전체 교체 :88) → 새 키 반영 ② 소셜·세션 복원(`loginWithToken` → `/auth/me`) → 반영 ③ `updateProfile` 응답 병합 → 키 갱신(`birth_date_locked` false→true 반영) ④ 로그아웃 → user null → `isChildNow()` false ⑤ **C 로그아웃 → A 로그인(같은 실행)** → A 화면 전부 성인(DM 새 메시지·피드 FAB·실사 카드 보임) ⑥ AsyncStorage 에 저장된 구버전 user(키 없음) 하이드레이트 → false, 다음 `/auth/me` 뒤 반영 ⑦ AuthUser 타입의 새 필드는 전부 optional(`tsc` — 기존 사용처 수정 0) ⑧ 가입 흐름(AuthPanel·SocialLoginButtons) hunk 0 — 만14 미만 "준비 중" 차단 화면·"이전으로"·소셜 버튼 숨김(:695)·추천코드 대기(v3.230 RF-U1·U2) 현행.
+
+**KM-U3. 403 `child_restricted` 인터셉터(K2) [unit/앱] — FAIL 게이트(기존 오류 처리 변화)** — `services/api.ts` 응답 인터셉터: ① 403 `{code:'child_restricted', error}` 최상위 · `{detail:{code,...}}` 형태 → showAlert('어린이 계정에서는 쓸 수 없어요', error) 1회, 3초 안 반복 5회 → 1회, 3초 뒤 → 다시 1회 ② 호출부는 여전히 reject 를 받음(인터셉터가 오류를 삼켜 호출부가 성공으로 처리하면 FAIL — 로딩 스피너 고착·⭐ 차감 안내 오표시) ③ 다른 403(`face_verification_required`·`identity_verification_required`·DM 게이트·`guardian_consent_required`)·400 `birth_date_locked`·`word_filtered`·401·409(v3.228 편입)·5xx → 인터셉터 동작 0, 기존 경로 그대로(호출부 문구 표시) ④ `Alert.alert` 0 ⑤ 로그 `[KidsGate] 403 feature=%s`.
+
+**KM-U4. SettingsScreen(K3) [unit/앱 + 코드 리뷰] — FAIL 게이트(성인 설정 저장 회귀)**
+- 저장 patch 순수 함수(추출 권장) 행렬: {성인 OFF(locked=false)·성인 ON(locked=true)·인증 계정·C} × {생년월일 있음·없음} × 편집 {닉네임만, 지역, SNS, 생년월일 입력}.
+- Then: **성인 locked=false → patch 가 orig 과 deep-equal**(미인증이면 매번 birth_date 포함 — 현행) · locked=true → birth_date 키 제외 + 입력 비활성 + 안내 문구 · 인증 계정 → 기존 잠금 경로(:166-176) 그대로 · C → region·sns_links 제외, 지역·SNS 입력 숨김, ⭐10 배지 조건 = birth_date && gender · 아바타 선택지 C = "기본 이미지로"만(사진 선택 0), 성인 = 현행 · 계정 관리 "온라인 안전 안내" 행 C 만 · 닉네임 변경(v3.230 NK-U1~U3)·공지사항·고객센터 오류신고 DM(:365-400 `GET /dm/official` → `POST /dm/conversations`) hunk 0 또는 래핑만 · 400 `birth_date_locked` 수신 시(구 데이터·경합) 서버 문구 표시, 다른 필드 저장 실패 안내가 오해를 주는지 기록.
+
+**KM-U5. 온라인 안전 안내(K4) [unit/앱]** — C 첫 로그인 → 앱 내 다이얼로그 1회(5항목), AsyncStorage `kids-safety-seen:{uid}` 저장 · 재시작 → 0회 · 다른 어린이 uid → 1회 · AsyncStorage get/set throw → 크래시 0, 이번 실행에서 1회만 · 성인 → 0회·저장 0 · 설정 행에서 다시 보기 · 다른 팝업(가입 선물 v3.230 RF-U3·공지·튜토리얼 v3.215)과 겹칠 때 순서·중복 기록(겹쳐서 하나가 사라지면 판정 회부) · 로그 `[KidsNotice] shown uid=<앞 8자>`.
+
+**KM-U6. AdMob 아동 설정(K5·D7) [unit/앱 — 광고 SDK 스텁] — 최상위 FAIL 게이트(성인 광고 요청 변화)**
+- ① 성인 로그인 실행: `setRequestConfiguration` 호출 = orig 과 같은 횟수·같은 인자(init :193-216 의 testDeviceIdentifiers 만) · `createForAdRequest(unitId, requestOptions)` 인자 **orig deep-equal**(SSV 만, `requestNonPersonalizedAdsOnly` 키 없음) · preload 재사용 키 동작(사용자 전환 재생성 :84) 동일 ② 비로그인: preload 0(현행) ③ C: load 전에 `{tagForChildDirectedTreatment:true, tagForUnderAgeOfConsent:true, maxAdContentRating:G, testDeviceIdentifiers 유지}` 1회, requestOptions 에 `requestNonPersonalizedAdsOnly:true` + SSV 유지, 로그 `[KidsAd] child config applied` 1회 ④ C → 로그아웃 → A 로그인(같은 실행): 아동 전역 설정 유지(D7) · A 의 requestOptions 는 성인 형태인지 비맞춤인지 구현값 기록 · preload 키 userId+child 로 광고 재생성 ⑤ 재시작 후 A → ① 과 동일 ⑥ 휴식 창 "광고 보고 30분 단축" 흐름(fatigueGate :126·:189)·SSV 적립·v3.230 SC-F1·F2(연쇄·연타 차단) 하니스 재실행 PASS.
+
+### SO — 앱 2조(소셜·피드·재생: K6~K11 + K17 Player)
+
+**SO-U1. DmInboxScreen(K6·D3) [unit/앱 + 코드 리뷰]** — C: 새 메시지 아이콘(:120-128)·검색 입력(:258-305)·요청 탭 숨김, 공식 고정 행(:276-289) 표시, 목록 = 공식 계정 대화만(서버 목록에 일반 대화가 섞여 와도 필터) · **성인: 렌더 트리 orig 동일**(v3.216 G1-4 시트화·공식 고정 행, v3.230 DM 본인인증 안내/우회 동작) · `HomeHeaderActions.tsx` hunk 0(편지 아이콘·unread 폴링 :52 유지 — 어린이도 공지·CS 답장 확인 가능) · 로그 `[KidsMode] dm official-only`.
+
+**SO-U2. DmChatScreen(K7)** [unit/앱 + 코드 리뷰] — C: 사진 첨부 버튼(:396-398) 숨김, 텍스트 전송·신고(:422) 유지 · 성인 orig 동일 · C 가 공식 대화에서 전송 → 200 경로 정상.
+
+**SO-U3. 글쓰기 진입·아이템 구매 링크(K8) [unit/앱 + 코드 리뷰]** — C: FeedScreen FAB(:387-392)·MyMusic(:851-862)·UserChannel 본인 채널(:386-394) 글쓰기 진입 숨김 · 아이템 카드 링크(Feed :235-245·FeedDetail :145-154·UserChannel :206-222·MyMusic :649-665) 탭 비활성(카드·이미지 표시) · **성인: FAB·진입·링크 동작 orig 동일**(kids_permissions 가 false 로 내려와도 — KM-U1 ⑤) · 피드 탭 3종(v3.205 [전체]/[내 피드]/[내 공지])·공지 배지 hunk 0.
+
+**SO-U4. FeedComposeScreen(K9)** [unit/앱] — C && !feed_write 로 진입(딥링크·뒤로가기 스택 잔존) → showAlert 후 goBack, `/upload/feed-image`·`POST /feeds/` 0 · 테스트용 feed_write=true C → 사진 버튼·아이템 첨부 숨김, 글만 · 성인: 사진 4장·아이템 첨부·BGM·공개 스위치 기본값 orig 동일 · 로그 `[KidsGate] compose blocked`.
+
+**SO-U5. 댓글 입력(K10)** [unit/앱 + 코드 리뷰] — C && !comment: FeedCard(:461-477, 4화면 공용)·TrackComments(:169-195) 입력 행·답글 버튼 숨김 + "보호자가 허용하면 댓글을 쓸 수 있어요" · 댓글 목록 읽기·본인 과거 댓글 삭제 표시 현행 · 성인 입력·답글·삭제 orig 동일.
+
+**SO-U6. 곡 댓글 신고 — 전체 사용자(K11·D11) [unit/앱] — FAIL 게이트(성인 곡 댓글 화면 회귀)** — TrackComments: 로그인 && 남의 댓글(`!canDelete && user`) → "신고" 버튼, 본인 댓글 → 삭제만(현행 :147-150), 비로그인 → 신고 0 · 탭 → ReportModal(`targetType='track_comment'`, 대상 id = 댓글 id) · 제출 성공 → 기존 신고 완료 안내 · 구서버 400 → "지원하지 않는 신고 대상" 류 서버 문구 그대로 · 409 → 기존 중복 안내 · MyReportsScreen 라벨 "곡 댓글"(:17), 알 수 없는 타입 라벨 폴백 현행 · ReportModal 기존 사용처(Player :1468·FeedCard :483-484·DmChat :422) 타입·동작 불변 · 로그 `[TrackCommentReport] open/submit`.
+
+**SO-U7. PlayerScreen(K17 일부) + 재생 회귀 [unit/앱 + 코드 리뷰] — FAIL 게이트(재생 1회 기록·큐 회귀)** — C: 착장 탭 "자세히 보기"(:1366-1406) 숨김, 착장 이미지 표시 · 성인 orig 동일 · PlayerScreen diff 가 착장 링크 래핑 외 hunk 0 — `services/playRecord.ts`(v3.229 재생 1회 = record-play 1회)·곡 댓글·재생목록(v3.36 정책·v3.223 append)·미디어세션 가수명(v3.229 N-U1)·다운로드 경로 hunk 0 · 기존 Player 재생 하니스 재실행.
+
+### CA — 앱 3조(창작·얼굴·목소리: K12~K17)
+
+**CA-U1. ArtistInputScreen(K12) [unit/앱] — 최상위 FAIL 게이트(성인 아티스트 흐름·v3.231 편집 회귀)**
+- C: 종류 카드(:1149-1158) 실사 숨김 → 가상 자동 선택 · `forceKind:'real'` 파라미터(재생성 진입) → 가상으로 강등 + 안내 · 사진 올리기(:1161-1163)·이전 사진(:1165-1167)·화풍 이미지 업로드(:1257-1264) 숨김 · "사진 없이 만들기"·화풍 프리셋 유지 · 초안 복원 시 photoUri·reuseOriginal·styleImageUri 무시(사진 재요구 `requirePhotoAgain` 이 어린이에게 뜨지 않는지) · 얼굴 인증 진입(:640) 도달 0 · 로그 `[KidsGate] artist virtual-only`.
+- 성인: **AE-U1~U13(v3.231 답변 편집·review·Cody 복귀) 전체 재실행 PASS** · v3.227 W0-U1~U3(photoIntent 영속·사진 단계 되돌림·생성 직전 가드)·W1-U11(이전 사진) PASS · 실사 사진 선택 → `acceptPhotoWithConsentPrecheck` 1회(v3.230⑧ 본인인증 우회 상태 그대로) · diff 가 `{!isChild && 기존 요소}` 래핑·가상 강등 분기 외 hunk 0.
+
+**CA-U2. ArtistLoadingScreen(K12 방어) [unit/앱] — FAIL 게이트(성인 요청 본문 변화)** — FormData 캡처: C → `file`·`style_image`·`original_object_name` 0(초안에 남아 있어도) · 성인 → orig 과 필드 집합·순서 동일 · C 403 child_restricted → 기존 오류 경로 표시, ⭐ 차감 안내 0 · v3.230 L-U1~L-U7(이탈 가드·POST 전 이탈 무과금·응답 전 추적 등록)·v3.228 W1-U1~U5(genJobs 기록·추적·finalize·중복 가드) 재실행 PASS · FaceVerify 진입(:571-574) C 도달 0.
+
+**CA-U3. FaceVerifyScreen·TrackUploadScreen 진입 가드(K13·K16)** [unit/앱] — C 로 직접 navigate → showAlert 후 goBack, 서버 호출 0 · 성인: FaceVerify 동의→촬영(v3.230⑧ 본인인증 단계 건너뜀)·만19 미만 보호자 안내 orig 동일 · TrackUpload 성인 진입 동작 현행(App.tsx:708 라우트만).
+
+**CA-U4. 목소리 숨김(K14) [unit/앱] — FAIL 게이트(성인 작곡 자동 적용·⭐ 확인·디렉터 복귀 회귀)** — C: ArtistResult "내 목소리"(:1307-1321)·:1393-1397·:1093·판매처(:1025-1031) 숨김 · MusicGeneration 내 목소리 선택지(:1530-1545·:1547-1592·편집 모달 :605·:624)·만들기(:2033-2105) 숨김, **연결 클론 자동 적용(:998-1036) skip**, 참고 음원 "파일 업로드"(:1822-1850)만 숨김(다른 선택지 유지), 간편 목소리 유지 · VoiceManage(:383-387)·VoiceCloneWizard 진입 가드 · 로그 `[KidsGate] voice hidden` · 성인: 자동 적용·참고 세기 질문(v3.229 V-U1 조건화)·연주곡 체인(V-G1)·⭐ 확인(v3.230 SC-U1·SC-R1·해당 SC-P)·디렉터 1탭 복귀(v3.229 R-U1~R-U5)·genJobs 작곡 추적(v3.228 W1-U1~U3) 하니스 재실행 PASS, 요청 본문(persona_model·reference_audio_url·audio_weight) orig 동일.
+
+**CA-U5. CoverGenerationScreen(K15)** [unit/앱 + 코드 리뷰] — C: 배경 "사진 올리기"(:2463-2466)·수정 모달(:1440-1448) 숨김, 글 설명·건너뛰기·다듬기 유지 · 성인 orig 동일 · v3.228 W2-U1~U3(재진입 자동 재요청 봉합·다듬기 원장·구서버 폴백) 재실행 PASS.
+
+**CA-U6. 광고 카드·구매 링크(K17) [unit/앱 + 코드 리뷰] — FAIL 게이트(어린이 의상 선택 불가·성인 링크 소실)** — C: ArtistDetail 광고 카드(:212-240) 숨김 · ArtistCody `openItemLink`(:354-362)·CodyItemCard 링크 버튼(:83) 숨김 · **의상 목록·선택·착용 표시·찜(D13) 유지** · 서버가 `price_krw=null` 을 줄 때 v3.227 가격 필터·정렬·가격 표시(`toLocaleString`)가 크래시·NaN 표시 0(catalogService 캐시 경유 포함) · v3.230 CG-U1~U4 성별 필터 C 에서도 동작 · 성인: W2-U1~U6(피커 회귀)·링크 열림 orig 동일.
+
+### AR — 앱 공통 회귀
+
+**AR-U1. 성인 렌더·요청 동일성 [unit/앱 — 하니스 + 코드 리뷰] — 최상위 FAIL 게이트** — 변경 화면 전수(Settings·DmInbox·DmChat·Feed·MyMusic·UserChannel·FeedDetail·FeedCompose·FeedCard·TrackComments·Player·ArtistInput·ArtistLoading·FaceVerify·ArtistResult·MusicGeneration·VoiceManage·VoiceCloneWizard·Cover·TrackUpload·ArtistDetail·ArtistCody·CodyItemCard): `kids_restricted=false` user 로 렌더한 트리(react-test-renderer 가능 화면) 또는 순수 판정 함수 결과가 orig 과 같음 · 렌더 불가 화면은 diff 정독으로 "기존 JSX·props·핸들러 한 글자도 변경 없음, `{!isChild && …}` 래핑·훅 import 만" 표 작성 · 성인 경로의 API 호출 순서·본문(api 스텁 캡처) orig 동일.
+
+**AR-U2. 구서버·키 없음 [unit/앱] — 최상위 FAIL 게이트(구서버에서 기능 숨김)** — `/auth/me`·login 응답에 새 키 없음 → 모든 화면 성인 동작, 새 API 호출 0, 안전 안내 0, 광고 성인 설정 · 서버가 403 child_restricted 를 주지 않으므로 인터셉터 0 · 신 앱 + 구서버 조합에서 곡 댓글 신고 제출 → 서버 400 문구 표시(크래시 0).
+
+**AR-U3. v3.227~v3.231 회귀 하니스 재실행 [unit/앱] — FAIL 게이트** — ① v3.227 W0-U1~U4·W1-U1~U13·W2-U1~U6 ② v3.228 W0-U1~U9·W1-U1~U4·W2-U1~U3·W3-U1~U2·X-R2 ③ v3.229 R-U1~R-U8(디렉터 1탭 복귀·튜토리얼 앵커)·V-U1·N-U1·playRecord 재생 1회 ④ v3.230 L-U1~U9·SC-U1·U2·SC-F1~F3·SC-R1·SC-H1·VD-U1~U4·CG-U1~U4·NK-U1~U3·CH-U1·RF-U1~U6 · v3.230⑧ 본인인증 유도 문구 grep 0 ⑤ v3.231 AE-U1~U13·SR-U1~U5(검색 로맨스·비로그인 차단) ⑥ 대표 규칙: 비회원 재생목록(v3.36)·비로그인 검색 차단·팝업 showAlert.
+
+**AR-U4. tsc·diff 범위 [unit — 정적] — FAIL 게이트** — `npx tsc --noEmit` 0 · 조별 diff 범위: 1조 = authStore·kidsMode(신규)·api·Settings·KidsSafetyNotice(신규)·App·useRewardedSkipAd / 2조 = PLAN K6~K11 파일 + PlayerScreen / 3조 = PLAN K12~K16 파일 + ArtistDetail·ArtistCody·CodyItemCard — 그 밖 hunk 0 · **AuthPanel·SocialLoginButtons·HomeHeaderActions·SearchScreen·ChartScreen·playback.ts·playRecord.ts·utils/directorResume.ts·utils/fatigueGate.ts·starSpendConfirm 계열 hunk 0** · 조 간 같은 파일 동시 수정 0.
+
+### KE — E2E (핵심 여정·회귀만)
+
+**KE-E1. 성인 핵심 여정 — 서버 OFF + 새 웹 [e2e] — 팀 과금 0 — 최상위 FAIL 게이트** — 웹 배포 후 폰 웹, A: 로그인·로그아웃·새로고침 세션 복원 → 설정 기획사 정보 편집(같은 값 저장·지역·SNS·닉네임 화면 진입만) → 아바타 "사진 선택" 선택지 존재 → 홈 편지 아이콘 → 받은편지함 새 메시지·검색 보임 → 고객센터 오류신고 DM 열림 → 피드 FAB·작성 화면(사진 버튼·아이템 첨부 보임, 게시 안 함) → 곡 상세 댓글 입력칸 보임·남의 댓글 "신고" 버튼 → 신고 모달 열고 **닫기** → 차트 TOP100·검색 로맨스 칩(v3.231) → 곡 재생·재생목록 append → Player 착장 "자세히 보기" 열림 → 아티스트 ＋추가 → 실사/캐릭터 카드 둘 다·사진 올리기·이전 사진 보임 → 작곡 대화 "내 목소리" 선택지 보임(연결 클론 있으면 자동 적용 안내) → ⭐ 확인 **[취소]** → 커버 배경 "사진 올리기" 보임 → 의상 피커 구매 링크 보임 → 디렉터 휴식 창 "광고 보고 30분 단축" 버튼 보임(웹은 광고 미지원 현행 표시) · 콘솔 오류 0 · `[KidsMode] mode=normal` 외 `[Kids*]` 로그 0.
+
+**KE-E2. 성인 여정 — 서버 ON [e2e] — 최상위 FAIL 게이트** — S-P4 뒤 A 로 KE-E1 의 설정·DM·피드·곡 댓글·아티스트·작곡·의상 링크 구간 재수행 → 전부 같음 + 설정 생년월일 입력 비활성·"생년월일은 가입 후 바꿀 수 없어요…" 안내(D6) · 저장(닉네임 등 다른 필드) 200 · 나이 모름 계정이 있으면(테스트 계정 B 가 생년월일 없음일 때만) 생년월일 첫 입력 칸 활성 확인 — **실제 저장은 하지 않음**.
+
+**KE-E3. 어린이 QA 계정 여정 — 서버 ON [e2e] — 팀 과금 0** — C 로 폰 웹 로그인 → 안전 안내 1회 → 새로고침 0회 → 설정: 생년월일 잠금·지역/SNS 없음·아바타 "기본 이미지로"만·"온라인 안전 안내" 행 → 편지 아이콘 → 공식 고정 행만·새 메시지/검색/요청 탭 없음 → 공식 대화 열기(사진 버튼 없음, 전송은 승인 시) → 피드 FAB 없음·내 채널·보관함 글쓰기 없음 → 피드·곡 댓글 목록 보임·입력칸 대신 안내 한 줄·남의 곡 댓글 "신고" 버튼 보임(제출 안 함) → 아티스트 ＋추가 → 실사 카드 없음·가상 자동·사진/이전 사진/화풍 이미지 버튼 없음·"사진 없이 만들기" → 질문 → Cody → 의상 목록·이미지 보임·구매 링크 없음 → "이 옷으로 만들기" ⭐ 확인 **[취소]** → 작곡 대화: 내 목소리·목소리 만들기·참고 음원 파일 업로드 없음, 간편 목소리 있음 → ⭐ 확인 [취소] → 커버: 배경 사진 버튼 없음 → Player 착장 "자세히 보기" 없음 → 아티스트 상세 광고 카드 없음 → 차트·검색·재생·재생목록·출석·스타 내역 정상 · URL 직접 입력으로 `/FeedCompose`·음성 위저드 진입 → 안내 후 되돌아감 · 콘솔 `[KidsMode] mode=child` 1회 · 이모지 ⭐ 외 0·시스템 Alert 0.
+
+**KE-E4. 구 앱 + 신 서버 [e2e — 조건부: 현재 설치 APK(v1.2.0 계열) 기기가 있을 때]** — ON 상태에서 A: 로그인·설정 저장(구 앱은 미인증이면 birth_date 를 매번 보냄 → 같은 값 200)·DM·피드·작곡 [취소]·의상 피커 정상 · C: 차단 기능 탭 → 기존 오류 표시 경로에 한국어 문구(`child_restricted`·`word_filtered` 영문 코드 노출 0), 앱 크래시 0 · 구 앱에서 A 가 생년월일을 **지우는** 동작은 실행하지 않음(서버 AU-S2 로 판정). 기기 없으면 "대기".
+
+**KE-E5. 광고 실기기 [e2e — APK 대기]** — 새 빌드 설치 기기: A 광고 시청 → SSV 적립 정상·logcat 요청에 비맞춤 파라미터 없음 → 로그아웃 → C 로그인 → `[KidsAd] child config applied` → 광고 로드·시청·적립 정상 · 네트워크 로그에서 광고 ID 전송 여부 기록(2차 Play 제출 근거) · C → A 전환(같은 실행) 아동 설정 유지(D7) · 재시작 후 A 현행.
+
+### S-P — 서버 배포 게이트 [ops]
+
+**S-P1. 재대조·범위 [ops] — FAIL 게이트(다른 세션 변경 덮어쓰기)** — 배포 직전 라이브 md5 = PLAN 기준값 16종(config `672c7468…`·models/user `d91de49c…`·auth `abffbf0a…`·dm_service `cb5fa56f…`·dm `c051757f…`·upload `74c18f23…`·feeds `5e051562…`·tracks `21ac424d…`·character `a61f7865…`·face_verify `6ba27ce6…`·voice_clone `48a6b607…`·generate `4842bb56…`·business `886744df…`·reports `8ebfa941…`·admin `42603988…`·main `78ab7074…`) — 불일치 파일은 새 라이브 본에 diff 3-way 재적용(`patch --dry-run` 선행) + RG-S1·RG-S2·스테이징 pytest 재실행 · 반영 대상 = 수정 15 + 신규 3 외 0(main.py 0), 각 파일 `.bak_pre_v3232` · 백업 이미지 태그 `pre-v3232-live` 존재 확인.
+
+**S-P2. 사전 점검·백업 [ops] — FAIL 게이트(진행 중 생성 있는 채 재생성 → boot_id sweep 환불)** — gen_jobs processing·generations pending/processing·inst_jobs·character_jobs·영상 인코딩·voice clone 진행 = 0 확인 → DB 백업(pg_dump -Fc + mongodump, `backups/pre_v3232_<ts>`) 파일 크기 0 초과 확인 → 사용자 승인 → 반영·docker build·재생성(KIDS 키 미설정 = OFF). 체크포인트 이미지 `maidol-app:checkpoint-pre-kids-20260925` 존재 확인(롤백 대상).
+
+**S-P3. OFF 배포 스모크 [ops] — 최상위 FAIL 게이트** — health 200 · 기동 로그 Traceback 0 · RG-A1 비교 PASS · v3.228 `/generate/jobs/recoverable` 200 · v3.230 CH 차트·`/points/costs` 스키마 동일 · v3.231 검색(`_hybrid_search_core` 무쓰기 호출) 결과 수 기준값 동일 · 관리자 웹 신고 목록 열림(기존 4종 표시) · 비즈 대시보드 GET 200 · 5분 오류 0 · 여기서 FAIL 이면 ON 전환 금지·롤백.
+
+**S-P4. ON 전환·롤백 경로 [ops] — FAIL 게이트** — 사용자 승인 → .env `KIDS_MODE_ENABLED=true`·`KIDS_TEST_CHILD_USER_IDS=<C>` 추가(값 기록은 앞 8자) → 진행 중 생성 0 확인 → 재생성 → RG-A2·RG-O1·KC-A1~A3 → KE-E2·KE-E3 → KC-A4 리허설 → 최종 ON 유지(D1) · 문제 시 롤백 절차 문서화: 1단계 .env 원복+재생성(이미지 유지) / 2단계 `pre-v3232-live` 이미지 / 3단계 체크포인트 이미지 — 각 단계 예상 소요·확인 명령 기록.
+
+### X — 공통 정책
+
+**X-T1. 정책 문구 [unit — 정적] — FAIL 게이트(이모지·AIDOL·시스템 Alert·영문 코드 노출)** — 이번 diff 신규 문자열 전수(서버 error 문구 child_restricted·birth_date_locked·word_filtered, 앱 인터셉터 제목, 안전 안내 5항목, "보호자가 허용하면 댓글을 쓸 수 있어요", 잠금 안내, 가상 강등 안내, 설정 행): 이모지 0(⭐ 예외), `\bAIDOL\b` 0(MAIDOL), `Alert.alert` 0, 사용자에게 보이는 곳에 `child_restricted`·`kids`·영문 code 0 · 가입 게이트 문구(:555 "가입 전에 생년월일과 내/외국인 여부를 확인합니다.")·기준 나이 비노출 현행 유지(중립 연령 확인) · 어린이 대상 문구가 쉬운 말(초등학생 기준)인지 리뷰 기록.
+
+**X-L1. 로그·개인정보 [unit — 정적] — FAIL 게이트(생년월일·원문 로그)** — 신규 로그 prefix 전수(`[kids]`·`[kids.birth_lock]`·`[kids.profile]`·`[kids.ads]`·`[kids.lyrics]`·`[wordfilter]`·`[report] ... track_comment`·`[KidsMode]`·`[KidsGate]`·`[KidsAd]`·`[KidsNotice]`·`[TrackCommentReport]`)에 생년월일·전화번호·이메일·금칙어 적중 원문·토큰 0 · user id 는 기존 로그 관행 범위 · OFF 에서 서버 신규 로그 0줄 · 앱 remoteLogger(v3.227 W1-U8 방어) 전송량 증가가 어린이 로그인 시에만인지 기록.
+
+### 게이트 요약
+
+- **트랙 구조**: 서버 = KP-S1~S5 → RG-S1~S5(최우선) → AU·DM·UP·CR·FD·AD·LY·WF·RP 전부 PASS(스테이징 fake) → RG-A1 배포 전 기준값 → S-P1·S-P2 → 사용자 승인·OFF 배포 → S-P3(RG-A1 비교) → 사용자 승인·ON 전환(S-P4) → RG-A2·RG-O1·KC-A1~A4 → RG-O2 7일. 앱 = 1조 KM-U1~U6 / 2조 SO-U1~U7 / 3조 CA-U1~U6 + 공통 AR-U1~U4·X-T1·X-L1 + tsc 0 → 웹 배포(서버 OFF 배포 뒤 — 구서버에서도 AR-U2 로 안전) → KE-E1 → (ON 뒤) KE-E2·KE-E3 → KE-E4 조건부·KE-E5 APK 대기.
+- **태그별 수(총 69)**: [unit] 52(서버 = KP-S1~S5 5 · RG-S1~S5 5 · AU-S1~S4 4 · DM-S1~S2 2 · UP-S1·CR-S1·CR-S2·FD-S1·AD-S1·LY-S1 6 · WF-S1~S3 3 · RP-S1~S2 2 = 27 / 앱 = KM-U1~U6 6 · SO-U1~U7 7 · CA-U1~U6 6 · AR-U1~U4 4 = 23 / 정적 공통 = X-T1·X-L1 2) · [api] 6(RG-A1·RG-A2·KC-A1~A4) · [e2e] 5(KE-E1~E5, E4 조건부·E5 APK 대기) · [ops] 6(RG-O1·RG-O2·S-P1~P4).
+- **비용 상한**: 팀 과금 0(⭐ 확인은 전부 [취소], 어린이 허용 생성은 스테이징 fake). prod 쓰기 = 테스트 계정 A·C 본인 프로필 PATCH(같은 값·무시 확인)·로그인 세션·search_logs(건수 기록) + 사용자 승인 시 공식 DM 1건·record-play 1회. prod 계정 생성 0, 실사용자 데이터 변경 0.
+- **최상위 FAIL(배포·ON 중단)**: OFF 에서 비어린이 응답·부작용 차이(RG-S1·RG-A1·S-P3) · ON 에서 비어린이 차이(D6 잠금 외)(RG-S2·RG-A2) · OFF 에서 DB 조회·제한 발생(KP-S2) · 나이 모름·청소년 어린이 판정(KP-S1·KM-U1·RG-O1) · C 외 사용자 child_restricted 발생(RG-O2) · 성인 렌더·요청 변화(AR-U1) · 구서버에서 기능 숨김(AR-U2) · 성인 광고 요청 변화(KM-U6) · 성인 아티스트 흐름 회귀(CA-U1) · 성인 여정 회귀(KE-E1·KE-E2) · 팀 유료 생성·prod 계정 생성·실사용자 데이터 변경·비밀값 기재.
+- **FAIL 게이트**: DAU 변화·무인증 401(KP-S3) · 차감 뒤 403·v3.228 순서(RG-S3·CR-S1·CR-S2) · 비대상 변경(RG-S4·AR-U4) · 다른 버전 서버 회귀(RG-S5) · 생년월일 잠금이 현 앱 저장을 깸(AU-S2) · 완성 ⭐ 이중 지급(AU-S4) · 성인 DM 게이트 변화·공식 CS 차단(DM-S1·DM-S2) · 캐시 혼입(AD-S1) · 금칙어 성인 적용·차감 뒤 검사·닉네임 순서(WF-S3) · comment_count 음수·기존 신고 조치 변화(RP-S2) · 차단 우회(KC-A2) · 원복 실패(KC-A4) · 이전 계정 어린이 상태 잔존(KM-U2) · 인터셉터가 기존 오류 처리 변경·오류 삼킴(KM-U3) · 성인 설정 저장 회귀(KM-U4) · 곡 댓글 화면 회귀(SO-U6) · 재생 1회·큐 회귀(SO-U7) · 성인 요청 본문 변화(CA-U2) · 성인 작곡 자동 적용·⭐ 확인 회귀(CA-U4) · 어린이 의상 선택 불가·가격 null 크래시(CA-U6) · v3.227~v3.231 하니스(AR-U3) · 배포 재대조·진행 중 재생성·롤백 경로(S-P1·S-P2·S-P4) · 정책 문구·로그 개인정보(X-T1·X-L1).
+- **판정 회부(결함이면 FAIL)**: KP-S1 2/29 규칙이 기존 age_years 와 다름 · KP-S2 DB 예외 시 fail-open/closed · AU-S2 다른 표기 같은 값·잠금 400 시 부분 저장 · WF-S2 창작 핵심 표현 오탐 · KM-U5 다른 팝업과 겹침. **기록·보고만**: KP-S1 KST/UTC 기준 공존 · KP-S2 강제 목록 대소문자 · AU-S1 성인 `kids_permissions` 값·인증 계정 `birth_date_locked` · AU-S2 기존 None 계정 첫 입력으로 어린이가 되는 경로(E3·2차) · AU-S3 region 응답값 · FD-S1 어린이 본인 댓글 삭제 가능 여부 · AD-S1 키 null vs 삭제 · RP-S2 관리자 웹 라벨(2차) · KM-U6 ④ 전환 후 성인 requestOptions · RG-S2 지연 · RG-O1 unknown 수 증감.

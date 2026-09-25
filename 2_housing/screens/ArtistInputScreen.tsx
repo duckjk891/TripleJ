@@ -20,6 +20,7 @@ import { BACKEND_BASE_URL } from '../services/api';
 import { listArtists } from '../services/characterService';
 import { hasArtistDraftProgress } from '../utils/directorResume';
 import { useAuthStore } from '../stores/authStore';
+import { isKidsRestrictedUser, KIDS_TEXT } from '../utils/kidsMode';
 import { useCharacterTaskStore, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
@@ -78,6 +79,14 @@ const RESTORE_REVIEW_PROMPT = '의상 고르기를 멈췄어요. 고치고 싶�
 // v3.231 A1-b: 사진 바꾸기 안내 — 사진 재업로드 안내(PHOTO_REUPLOAD_BUBBLE)와 분리
 const PHOTO_CHANGE_BUBBLE = '바꿀 사진을 올려주세요. 사진 없이 설명만으로 만들 수도 있어요.';
 const GO_CODY_BUBBLE = '좋아요! 이제 어떤 옷을 입혀줄지 골라볼까요?';
+// v3.232 K12 [KidsGate]: 어린이 계정 = 캐릭터(가상) + 사진 없이만 — 어린이 전용 안내(성인 문구 불변)
+const KIDS_GREETING = (title: string) =>
+  `안녕하세요 ${title}님! 캐릭터 아티스트를 만들어볼까요? 설명을 들려주시면 그림으로 그려드릴게요.`;
+const KIDS_DRAFT_DROPPED_BUBBLE =
+  '어린이 계정은 사진 없이 캐릭터로만 만들 수 있어요. 이전에 하던 내용 대신 처음부터 캐릭터로 만들어볼게요.';
+const KIDS_STYLE_STEP_PROMPT = '어떤 그림체(화풍)로 그릴까요? 샘플 중에 골라주세요.';
+const KIDS_VIRTUAL_PICKED_BUBBLE = '좋아요! 캐릭터로 만들어드릴게요. 설명만 들려주시면 돼요. 마지막에 화풍(그림체)을 고르게 돼요.';
+const KIDS_REAL_BLOCKED_MSG = '어린이 계정에서는 캐릭터 아티스트만 만들 수 있어요. 내 아티스트에서 캐릭터로 새로 만들어주세요.';
 
 /** v3.231 A1-b: 사진 바꾸기를 그만두거나(그대로 두기) 그 도중 재시작해 멈췄던 단계로 돌아올 때 다시 보여줄 현재 안내 */
 function stepPromptFor(step: Step, qIndex: number, withPhoto: boolean, restoreReview: boolean): string | null {
@@ -97,6 +106,16 @@ function resolveDraftPhotoIntent(d: ArtistDraft): ArtistPhotoIntent {
     if (m.text === TEXT_ONLY_BUBBLE) return 'text';
   }
   return null;
+}
+
+/** v3.232 K12: 어린이 계정이 이어갈 수 없는 초안 — 실사·사진 사용 의도·[이전 사진 사용]·실사 고정 진입 */
+function isKidsUnsafeArtistDraft(d: ArtistDraft): boolean {
+  return (
+    d.selectedKind === 'real' ||
+    d.forceKind === 'real' ||
+    !!d.reuseOriginalObjectName ||
+    resolveDraftPhotoIntent(d) === 'photo'
+  );
 }
 
 /** v3.227 H-1: 사진 재요구 시 되돌아갈 지점(사진 재업로드 후 멈췄던 단계·질문으로 복귀)
@@ -128,6 +147,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const { user } = useAuthStore();
   const titleLabel = user?.display_title || '대표';
   const taskStore = useCharacterTaskStore();
+  // v3.232 K12 [KidsGate]: 어린이 계정(서버 kids_restricted) — 실사·사진·화풍 이미지·사진 바꾸기 숨김, 가상 자동 선택.
+  // 성인·구서버(키 없음)는 false → 아래 모든 분기가 기존 동작 그대로.
+  const isChild = isKidsRestrictedUser(user);
+  // 어린이가 실사·사진 초안을 가진 경우 폐기했는지(첫 렌더에서만 기록 — 안내 버블용)
+  const kidsDraftDroppedRef = useRef(false);
 
   // v3.81: 레거시(구 계약) 슬롯 추가 진입 시 kind 강제(같은 kind 생성=기존 덮어씀 방지).
   // v3.103(B-1): 재생성(characterId) 진입 시에도 kind 강제 — 서버가 kind 불일치 재생성을 400으로 거부.
@@ -148,6 +172,15 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       const st = useCharacterTaskStore.getState();
       const d = st.draft;
       if (!d) return null;
+      // v3.232 K12: 어린이는 실사·사진 초안을 이어가지 않는다(사진 재요구·사진 버블 없이 가상 처음부터)
+      if (isChild && isKidsUnsafeArtistDraft(d)) {
+        console.info('[KidsGate] artist virtual-only — 실사·사진 초안 폐기', {
+          kind: d.selectedKind, forceKind: d.forceKind, restore: restoreParam,
+        });
+        useCharacterTaskStore.getState().clearDraft();
+        kidsDraftDroppedRef.current = true;
+        return null;
+      }
       if (restoreParam) {
         const cid = regenCharacterIdParam ?? st.targetCharacterId ?? null;
         const kindMismatch = !!d.selectedKind && d.selectedKind !== st.characterKind;
@@ -205,11 +238,14 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.227 H-1 [ArtistDraft]: 사진 사용 의도 복원 + 사진 재요구 판정. 로컬 photoUri는 항상 null로
   // 시작하므로(URI 비영속) 의도='photo'로 사진 단계를 지난 draft는 사진 단계(welcome)로 되돌린다.
   // 질문 답변·qIndex·화풍 컨셉은 보존 → 재업로드 후 멈췄던 단계로 복귀. 사진 없이는 진행 불가.
-  const restoredPhotoIntent: ArtistPhotoIntent = resumableDraft
+  const restoredPhotoIntentRaw: ArtistPhotoIntent = resumableDraft
     ? resolveDraftPhotoIntent(resumableDraft)
     : restoreParam
       ? useCharacterTaskStore.getState().photoIntent
       : null;
+  // v3.232 K12: 어린이는 사진 의도를 이어받지 않는다(사진 재요구·사진 소스 복원 없음)
+  const restoredPhotoIntent: ArtistPhotoIntent =
+    isChild && restoredPhotoIntentRaw === 'photo' ? null : restoredPhotoIntentRaw;
   // v3.227 W0 후속: 같은 앱 세션(서버 실패 후 재진입 등)에서 store 메모리에 사진이 남아 있으면 그 사진을
   // 그대로 이어서 쓴다 — 사진 재요구 안내를 띄우지 않는다(재요구는 파일이 실제로 사라진 경우만).
   const memoryPhoto: { uri: string; name: string } | null = (() => {
@@ -236,6 +272,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.82: forceKind 진입이어도 kind 언급 문구는 표시하지 않음(내부 로직만 유지)
   // v3.112: 신규 추가(forceKind 없음)는 실사/가상 선택부터 — 첫 인사도 선택 유도로 분기
   const [chat, setChat] = useState<ChatMessage[]>(() => {
+    if (!restoredChat && isChild) {
+      // v3.232 K12: 어린이 첫 인사(사진 요청·실사 선택 유도 없음) + 초안 폐기 안내
+      return [
+        { type: 'director', text: KIDS_GREETING(titleLabel) },
+        ...(kidsDraftDroppedRef.current ? [{ type: 'director' as const, text: KIDS_DRAFT_DROPPED_BUBBLE }] : []),
+      ];
+    }
     if (!restoredChat) {
       return [
         {
@@ -273,7 +316,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // 구 초안 승격(실사 마지막 답 뒤 questioning → review)
     if (restoredStep === 'review' && resumableDraft!.step !== 'review') return withPrompt(REVIEW_PROMPT);
     // 구 초안 승격(가상 마지막 답 뒤 questioning / 가상 review → style) — 화풍 질문을 다시 보여준다
-    if (restoredStep === 'style' && resumableDraft!.step !== 'style') return withPrompt(STYLE_STEP_PROMPT);
+    if (restoredStep === 'style' && resumableDraft!.step !== 'style') return withPrompt(isChild ? KIDS_STYLE_STEP_PROMPT : STYLE_STEP_PROMPT);
     return base;
   });
 
@@ -314,7 +357,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // welcome에서 두 선택 카드로 고른다. forceKind(재생성·레거시 빈 kind) 진입 시 고정.
   // 기존 v3.80 토글(isVirtualMode boolean)은 selectedKind 파생값으로 대체.
   const [selectedKind, setSelectedKind] = useState<'real' | 'virtual' | null>(
-    resumableDraft ? resumableDraft.selectedKind : forceKind ?? null
+    // v3.232 K12: 어린이는 가상 자동 선택(실사 카드 없음)
+    isChild ? 'virtual' : resumableDraft ? resumableDraft.selectedKind : forceKind ?? null
   );
   const isVirtualMode = selectedKind === 'virtual';
   const [styleSamples, setStyleSamples] = useState<StyleSample[]>([]);
@@ -372,6 +416,22 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // v3.232 K12 [KidsGate]: 어린이 — 가상 고정·화풍 이미지 잔존값 제거, 실사 고정 진입(재생성·레거시 실사 슬롯)은 차단.
+  // (isChild 가 늦게 확정돼도 다시 적용. 성인은 조건 false 로 아무것도 하지 않는다)
+  useEffect(() => {
+    if (!isChild) return;
+    if (forceKind === 'real') {
+      console.info('[KidsGate] artist virtual-only — 실사 고정 진입 차단', { regen: !!regenCharacterId });
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_REAL_BLOCKED_MSG);
+      navigation.goBack();
+      return;
+    }
+    console.info('[KidsGate] artist virtual-only', { restored: !!resumableDraft, dropped: kidsDraftDroppedRef.current });
+    if (selectedKind !== 'virtual') setSelectedKind('virtual');
+    useCharacterTaskStore.getState().setInput({ characterKind: 'virtual', styleImageUri: null, styleImageName: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isChild]);
+
   // v3.219 [ArtistDraft]: 진행 대화를 store에 미러링(커버 v3.202 H-⑤ 패턴) — 사용자 진행이
   // 있을 때만 기록. 텍스트/enum만 담기므로 store persist(partialize)로 앱 재시작에도 생존.
   useEffect(() => {
@@ -402,7 +462,9 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setChat([
       {
         type: 'director',
-        text: forceKind
+        text: isChild
+          ? KIDS_GREETING(titleLabel) // v3.232 K12
+          : forceKind
           ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
           : `안녕하세요 ${titleLabel}님! 어떤 아티스트를 만들까요? 실사로 만들기와 캐릭터로 만들기 중에 골라주세요.`,
       },
@@ -410,7 +472,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setQIndex(0);
     setStyleAnswers(EMPTY_ANSWERS);
     setCurrentInput('');
-    setSelectedKind(forceKind ?? null);
+    setSelectedKind(isChild ? 'virtual' : forceKind ?? null); // v3.232 K12: 어린이 = 가상 고정
     setPendingConceptText('');
     setPhotoUri(null);
     setPhotoName('');
@@ -564,7 +626,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     if (isVirtualMode && (target.step === 'style' || (target.step === 'review' && !reviewKeepsVirtual))) {
       // 화풍 단계 복귀 — 보관 컨셉이 비어 있으면 답변으로 다시 계산
       if (!pendingConceptText) setPendingConceptText(conceptTextFrom(styleAnswers));
-      pushDirector(STYLE_STEP_PROMPT);
+      pushDirector(isChild ? KIDS_STYLE_STEP_PROMPT : STYLE_STEP_PROMPT);
       setStep('style');
       loadStyleSamples();
       return;
@@ -601,6 +663,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // 기존 사진(photoUri·[이전 사진 사용] 원본·의도)은 새 사진이 확정될 때까지 그대로 둔다 —
   // 선택 창을 닫거나 앱을 다시 켜도 기존 사진 유지, [지금 사진 그대로 두기]로 원래 단계 복귀.
   const startPhotoChange = () => {
+    if (isChild) return; // v3.232 K12: 어린이는 사진 바꾸기 없음(버블 탭 비활성 — 방어)
     console.info('[ArtistAnswerEdit] 사진 바꾸기', { step, qIndex, kind: selectedKind, hadPhoto: hasPhotoSource });
     setAnswerEdit(null);
     setShowResumeNotice(false);
@@ -645,6 +708,12 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   // ── Photo pick → 사진 확약(MAIDOL v137) → 6단계 질문 시작 ─────
   const handlePickPhoto = async () => {
+    if (isChild) {
+      // v3.232 K12: 버튼 숨김 — 방어
+      console.info('[KidsGate] artist virtual-only — 사진 선택 차단');
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.photoBlocked);
+      return;
+    }
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (!res.canceled && res.assets && res.assets[0]) {
@@ -709,7 +778,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // 얼굴 인증 게이트를 그대로 수행한다(인증 우회 없음).
   const handleReusePrevPhoto = () => {
     const obj = prevOriginal;
-    if (!obj) return;
+    if (!obj || isChild) return; // v3.232 K12: 어린이는 [이전 사진 사용] 없음(버튼 숨김 — 방어)
     showAlert(
       '사진 확인',
       '이전에 올린 사진으로 만들어요. 이 사진은 본인이거나, 사진 속 인물의 동의를 받았음을 확인해주세요.\n\n사진은 캐릭터 생성에만 사용되며 AI 학습에 쓰이지 않아요.',
@@ -743,6 +812,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // ── v3.112: 실사/가상 명시 선택(구 v3.80 토글 대체) ─────
   // 선택 시 characterKind를 store에 반영하고, 화풍 잔존값(이전 선택의 preset/업로드)은 클리어.
   const handleSelectKind = (kind: 'real' | 'virtual') => {
+    if (isChild && kind === 'real') return; // v3.232 K12: 어린이는 실사 카드 없음(방어)
     if (__DEV__) console.info('[ArtistInput] 스타일 선택', { kind });
     setSelectedKind(kind);
     taskStore.setInput({
@@ -753,7 +823,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     });
     if (kind === 'virtual') {
       pushUser('그림으로 만들게요');
-      pushDirector('좋아요! 캐릭터로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
+      pushDirector(isChild ? KIDS_VIRTUAL_PICKED_BUBBLE : '좋아요! 캐릭터로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
     } else {
       pushUser('실사로 만들게요');
       pushDirector('좋아요! 실사 스타일로 만들어드릴게요. 사진을 올리거나, 사진 없이 설명만으로 시작할 수 있어요.');
@@ -786,6 +856,12 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   // v3.80: 화풍 직접 업로드 — 샘플 선택과 상호 배타
   const handlePickStyleImage = async () => {
+    if (isChild) {
+      // v3.232 K12: 화풍 이미지 업로드 버튼 숨김 — 방어
+      console.info('[KidsGate] artist virtual-only — 화풍 이미지 업로드 차단');
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.photoBlocked);
+      return;
+    }
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (!res.canceled && res.assets && res.assets[0]) {
@@ -802,7 +878,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.80: 화풍 확정 → 코디 선택 화면으로 (기존 실사 흐름과 동일 진입점)
   const handleStyleConfirm = () => {
     if (!selectedPresetKey && !styleUpload) {
-      showAlert('알림', '화풍을 하나 골라주세요. 샘플 중에 고르거나 이미지를 직접 올릴 수 있어요.');
+      showAlert('알림', isChild ? '화풍을 하나 골라주세요.' : '화풍을 하나 골라주세요. 샘플 중에 고르거나 이미지를 직접 올릴 수 있어요.');
       return;
     }
     // v3.227 H-1: 사진 의도인데 사진(또는 [이전 사진 사용] 원본)이 없으면 진행 불가 — 사진 단계로
@@ -894,7 +970,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       // v3.164: 나이 서버 영속
       taskStore.setInput(pendingFromAnswers(answers));
       setPendingConceptText(conceptTextFrom(answers));
-      pushDirector(STYLE_STEP_PROMPT);
+      pushDirector(isChild ? KIDS_STYLE_STEP_PROMPT : STYLE_STEP_PROMPT);
       setStep('style');
       loadStyleSamples();
       return;
@@ -957,7 +1033,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     leaving,
     step,
   });
-  const photoBubbleIdx = latestPhotoBubbleIndex(chat);
+  // v3.232 K12: 어린이는 사진 바꾸기 없음 — 사진/설명 선택 버블은 편집 대상이 아니다(-1 = 없음)
+  const photoBubbleIdx = isChild ? -1 : latestPhotoBubbleIndex(chat);
 
   const handleUserBubbleTap = (idx: number) => {
     const msg = chat[idx];
@@ -1058,9 +1135,14 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.227 H-1: 사진 의도인데 store에 사진이 없으면 숨김 — 의상 단계로 건너뛰면 사진 없이 생성된다
   const resumeMissingPhoto = photoIntent === 'photo' && !taskStore.photoUri && !taskStore.reuseOriginalObjectName;
   // v3.231: 사진 바꾸기·재요구 중(photoResume)·'처음부터' 이후에는 이전 입력 재개 버튼을 숨긴다(이전 사진으로 새는 것 방지)
+  // v3.232 K12: 어린이는 가상·사진 없는 입력만 이어서 만들기(실사·사진 입력이 남은 store 는 재개 안 함)
+  const kidsResumeBlocked =
+    isChild &&
+    (taskStore.characterKind !== 'virtual' || taskStore.photoIntent === 'photo' || !!taskStore.photoUri ||
+      !!taskStore.reuseOriginalObjectName || !!taskStore.styleImageUri);
   const canResume =
     (restoreParam || !!taskStore.apiError) && !!(taskStore.conceptText || taskStore.userText) && !resumeMissingPhoto &&
-    !photoResume && !resumeDismissed;
+    !photoResume && !resumeDismissed && !kidsResumeBlocked;
   const handleResume = () => {
     if (__DEV__) console.info('[ArtistInput] 이어서 만들기 — 의상 선택 재개', {
       restoreParam, hadError: !!taskStore.apiError,
@@ -1148,10 +1230,12 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               두 선택 카드부터. 선택(또는 forceKind 고정) 후에 사진/텍스트-only 버튼 표시. */}
           {selectedKind === null ? (
             <>
+              {!isChild && (
               <TouchableOpacity style={styles.kindCard} onPress={() => handleSelectKind('real')}>
                 <AppText style={styles.kindCardTitle}>실사로 만들기</AppText>
                 <AppText style={styles.kindCardDesc}>사진 또는 설명으로 실제 사람 같은 아티스트를 만들어요</AppText>
               </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.kindCard} onPress={() => handleSelectKind('virtual')}>
                 <AppText style={styles.kindCardTitle}>캐릭터로 만들기</AppText>
                 <AppText style={styles.kindCardDesc}>원하는 화풍(그림체)을 골라 캐릭터 아티스트를 만들어요</AppText>
@@ -1159,11 +1243,14 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             </>
           ) : (
             <>
+              {/* v3.232 K12: 어린이는 사진 올리기·이전 사진 사용 없음(사진 없이 만들기만) */}
+              {!isChild && (
               <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
                 <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
               </TouchableOpacity>
+              )}
               {/* v3.227 H-1(W1): [이전 사진 사용] — 실사 + 신서버 + 본인 원본이 있을 때만 */}
-              {!isVirtualMode && prevOriginal && (
+              {!isChild && !isVirtualMode && prevOriginal && (
                 <PrevPhotoButton objectName={prevOriginal} onPress={handleReusePrevPhoto} />
               )}
               {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 생성 */}
@@ -1178,13 +1265,17 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               )}
               {/* v3.112: 선택 되돌리기 — forceKind(재생성·레거시) 진입 시 숨김(kind 강제 유지)
                   v3.231 D2: 사진 바꾸기 중에는 숨김(실사↔캐릭터 전환은 '처음부터'로만) */}
-              {!forceKind && photoResume?.reason !== 'change' && (
+              {!isChild && !forceKind && photoResume?.reason !== 'change' && (
                 <TouchableOpacity style={styles.kindResetBtn} onPress={handleResetKind}>
                   <AppText style={styles.kindResetBtnText}>
                     {isVirtualMode ? '그림 선택됨 — 다시 고르기' : '실사 선택됨 — 다시 고르기'}
                   </AppText>
                 </TouchableOpacity>
               )}
+              {isChild && (
+                <AppText style={styles.textOnlyHint}>사진 없이 설명만으로 캐릭터 아티스트를 만들어요.</AppText>
+              )}
+              {!isChild && (
               <AppText style={styles.textOnlyHint}>
                 {photoResume?.reason === 'change'
                   ? '새 사진을 올리면 답해둔 내용 그대로 멈췄던 곳부터 이어서 진행해요.'
@@ -1194,6 +1285,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                   ? '캐릭터로 만들기: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
                   : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
               </AppText>
+              )}
             </>
           )}
         </View>
@@ -1254,6 +1346,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               })}
             </ScrollView>
           )}
+          {/* v3.232 K12: 어린이는 화풍 이미지 직접 업로드 없음(프리셋만) */}
+          {!isChild && (
           <TouchableOpacity
             style={[styles.styleUploadBtn, styleUpload && styles.styleUploadBtnActive]}
             onPress={handlePickStyleImage}
@@ -1262,6 +1356,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               {styleUpload ? `업로드됨: ${styleUpload.name}` : '화풍 이미지 직접 업로드'}
             </AppText>
           </TouchableOpacity>
+          )}
           {/* v3.109: 세로 잘림 재수정 — flex:0(웹에서 flex-basis 압축) 대신 grow/shrink만 끄고
               minHeight 확보(applyBtn 공통). 높이는 내용대로(auto) 유지된다. */}
           <TouchableOpacity

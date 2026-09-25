@@ -18,6 +18,7 @@ import { AppText, Avatar, Button, EmptyState, Tag } from '../components/ui';
 import TrackRow from '../components/TrackRow';
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 
 const mediaUri = (obj?: string | null): string | null =>
   obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}` : null;
@@ -39,6 +40,10 @@ export default function UserChannelScreen() {
   const { authorId, name, initialTab } = route.params || {};
   const { user } = useAuthStore();
   const playerStore = usePlayerStore();
+  // v3.232 K8(B4·D2): 어린이 — 보호자 허용 없으면 작성 버튼 숨김, 아이템 구매 링크 비활성. 성인·age_group 없음 = false
+  const isChild = useIsChild();
+  const canFeedWrite = useKidsPermission('feed_write');
+  const feedWriteBlocked = isChild && !canFeedWrite;
 
   const [profile, setProfile] = useState<any>(null);
   const [followerCount, setFollowerCount] = useState(0);
@@ -207,10 +212,10 @@ export default function UserChannelScreen() {
                 <TouchableOpacity
                   key={`it${i}`}
                   style={styles.feedItemCard}
-                  activeOpacity={it.url ? 0.7 : 1}
+                  activeOpacity={it.url && !isChild ? 0.7 : 1}
                   accessibilityLabel={`아이템 ${it.name || ''}`}
                   onPress={() => {
-                    if (!it.url) return;
+                    if (!it.url || isChild) return; // v3.232 K8(D2): 어린이 구매 링크 비활성(카드 유지)
                     Linking.openURL(it.url).catch((err) =>
                       console.error('[UserChannel] 아이템 링크 실패', { message: err?.message }));
                   }}
@@ -383,7 +388,8 @@ export default function UserChannelScreen() {
       {/* 피드/커뮤니티 — v3.159: 마이페이지와 동일한 작성 버튼(dashed)·FeedCard */}
       {(tab === 'feed' || tab === 'community') && (
         <View style={styles.feedList}>
-          {isSelf ? (
+          {/* v3.232 K8(B4): 어린이(보호자 허용 없음)는 작성 버튼 숨김 */}
+          {isSelf && !feedWriteBlocked ? (
             <TouchableOpacity
               style={styles.composeBtn}
               activeOpacity={0.8}

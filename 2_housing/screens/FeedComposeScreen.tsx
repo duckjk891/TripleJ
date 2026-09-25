@@ -18,6 +18,7 @@ import { AppText, Button } from '../components/ui';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { useIsChild, useKidsPermission, KIDS_TEXT } from '../utils/kidsMode';
 
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -35,6 +36,11 @@ interface AttachedImage {
 
 export default function FeedComposeScreen({ navigation, route }: any) {
   const user = useAuthStore((s) => s.user);
+  // v3.232 K9(B5): 어린이 — 보호자 허용 없으면 진입 차단(안내 후 뒤로). 허용돼도(2차) 사진·아이템 첨부는 숨김.
+  // 성인·age_group 없음 = isChild false → 기존 동작 그대로
+  const isChild = useIsChild();
+  const canFeedWrite = useKidsPermission('feed_write');
+  const feedWriteBlocked = isChild && !canFeedWrite;
   // v3.115: kind 지원 — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입 시 kind='community'.
   // 계약(백엔드 feeds.py v133 실측): community는 텍스트 블록만 허용(track 400·image 400·bgm 400, title은 무시·null 저장)
   // → 커뮤니티 모드에선 제목·음악 첨부·사진 첨부 UI를 숨긴다. 가사 복사(클립보드)와 [item] 마커(텍스트 블록)는 계약상 허용이라 유지.
@@ -256,8 +262,18 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     }
   };
 
+  // v3.232 K9: 어린이(보호자 허용 없음) 진입 방어 — 앱 내 다이얼로그 안내 후 이전 화면으로
+  useEffect(() => {
+    if (!feedWriteBlocked) return;
+    console.info('[KidsGate] compose blocked', { kind });
+    showAlert('알림', KIDS_TEXT.feedWriteNeedsGuardian);
+    if (navigation.canGoBack?.()) navigation.goBack();
+  }, [feedWriteBlocked]);
+
   // v3.73: 타이틀·취소는 네이티브 상단바(App.tsx)로 이동, 등록 버튼은 headerRight로 주입
   useLayoutEffect(() => {
+    // v3.232 K9: 어린이 차단 상태에선 등록 버튼 없음
+    if (feedWriteBlocked) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
       headerRight: () => (
         <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel="피드 등록" style={{ marginRight: 12 }}>
@@ -271,6 +287,15 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <AppText tone="secondary" center style={{ marginTop: 80 }}>로그인 후 피드를 작성할 수 있어요.</AppText>
+      </View>
+    );
+  }
+
+  // v3.232 K9: 어린이 진입 방어 — 작성 UI 대신 안내만(뒤로가기는 아래 effect)
+  if (feedWriteBlocked) {
+    return (
+      <View style={styles.container}>
+        <AppText tone="secondary" center style={{ marginTop: 80 }}>{KIDS_TEXT.feedWriteNeedsGuardian}</AppText>
       </View>
     );
   }
@@ -320,7 +345,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
 
         {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 4장.
             v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
-        {!isCommunity ? (
+        {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
+        {!isCommunity && !isChild ? (
           <TouchableOpacity style={styles.attachBtn} onPress={pickImage} accessibilityLabel="사진 첨부">
             <Feather name="image" size={18} color={colors.accent.primary} />
             <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
@@ -367,11 +393,14 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           <AppText variant="body" tone="accent">내 가사 복사</AppText>
         </TouchableOpacity>
 
-        {/* v3.70: 아티스트 착장 아이템 첨부(공구/광고) — 내 곡 선택 → 그 곡의 착장에서 선택 */}
+        {/* v3.70: 아티스트 착장 아이템 첨부(공구/광고) — 내 곡 선택 → 그 곡의 착장에서 선택
+            v3.232 K9(D2): 어린이는 아이템(구매 링크) 첨부 없음 */}
+        {!isChild && (
         <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('item'); setItemChoices(null); setPickerOpen(true); }} accessibilityLabel="아이템 첨부">
           <Feather name="shopping-bag" size={18} color={colors.accent.primary} />
           <AppText variant="body" tone="accent">착장 아이템 첨부</AppText>
         </TouchableOpacity>
+        )}
 
         {/* 첨부된 아이템 미리보기 */}
         {attachedItems.map((it, i) => (

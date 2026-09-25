@@ -11,6 +11,8 @@ import api from '../../services/api';
 import { showAlert } from '../../utils/appAlert';
 import { useAuthStore } from '../../stores/authStore';
 import { profileImageUrl } from '../../services/authService';
+import ReportModal from '../ReportModal';
+import { useIsChild, useKidsPermission, KIDS_TEXT } from '../../utils/kidsMode';
 
 export interface TrackComment {
   id: string;
@@ -50,6 +52,12 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
   const [replyTo, setReplyTo] = useState<TrackComment | null>(null);
   // v3.182(대표): 입력창 auto-grow — 초기 38(아바타·보내기와 동일), 개행 시 위로 늘어남(최대 120)
   const [inputHeight, setInputHeight] = useState(38);
+  // v3.232 K11(G2): 곡 댓글 신고 — 전 사용자(남의 댓글, 로그인). 신고 대상 댓글 id
+  const [reportTarget, setReportTarget] = useState<string | null>(null);
+  // v3.232 K10(B6): 어린이 && 보호자 댓글 허용 없음 → 입력·답글 숨김(목록 읽기·신고는 유지). 성인·age_group 없음 = false
+  const isChild = useIsChild();
+  const canComment = useKidsPermission('comment');
+  const commentBlocked = isChild && !canComment;
 
   const load = useCallback(async () => {
     if (!trackId) { setLoading(false); return; } // v3.179(검증픽스): 영구 스피너 방지
@@ -139,7 +147,7 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
       </View>
       <AppText style={styles.commentText}>{c.text}</AppText>
       <View style={styles.commentActions}>
-        {!isReply && (
+        {!isReply && !commentBlocked && (
           <TouchableOpacity onPress={() => { setReplyTo(c); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
             <AppText style={styles.actionText}>답글</AppText>
           </TouchableOpacity>
@@ -149,6 +157,19 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
             <AppText style={[styles.actionText, styles.deleteText]}>삭제</AppText>
           </TouchableOpacity>
         )}
+        {/* v3.232 K11: 남의 댓글 신고 — FeedCard 댓글 신고와 같은 조건(!canDelete && user) */}
+        {!canDelete(c) && user ? (
+          <TouchableOpacity
+            onPress={() => {
+              if (__DEV__) console.info('[TrackCommentReport] open', { trackId, commentId: c.id });
+              setReportTarget(String(c.id));
+            }}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityLabel="곡 댓글 신고"
+          >
+            <AppText style={[styles.actionText, styles.deleteText]}>신고</AppText>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -214,8 +235,17 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
           ))}
         </View>
       )}
-      {/* 작성 입력 — 하단 배치 */}
-      {inputBlock}
+      {/* 작성 입력 — 하단 배치. v3.232 K10: 어린이(보호자 허용 없음)는 입력 대신 안내 한 줄 */}
+      {commentBlocked ? (
+        <AppText style={styles.kidsNotice}>{KIDS_TEXT.commentNeedsGuardian}</AppText>
+      ) : inputBlock}
+      {/* v3.232 K11(G2): 곡 댓글 신고 — POST /reports/ target_type=track_comment */}
+      <ReportModal
+        visible={!!reportTarget}
+        targetType="track_comment"
+        targetId={String(reportTarget || '')}
+        onClose={() => setReportTarget(null)}
+      />
     </View>
   );
 }
@@ -256,4 +286,5 @@ const styles = StyleSheet.create({
   commentActions: { flexDirection: 'row', gap: 16, marginTop: 6 },
   actionText: { fontSize: 12, color: colors.text.secondary, fontWeight: '600' },
   deleteText: { color: colors.text.muted },
+  kidsNotice: { marginTop: 14, fontSize: 12, color: colors.text.muted, textAlign: 'center' },
 });

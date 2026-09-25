@@ -14,6 +14,7 @@ import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError } from '../utils/identityGate';
+import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -53,6 +54,8 @@ export default function DmInboxScreen() {
   const composeSheetHeight = Math.max(0, winH - composeTopLimit - spacing.md);
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
+  // v3.232 K6(B1·B2): 어린이 = 공식 계정 대화만(공지·고객센터). 새 메시지·검색·요청 탭 숨김. 성인·age_group 없음 = false
+  const isChild = useIsChild();
   // v3.230 A8: 서버 DM 게이트가 막는 기능(일반 회원 검색·대화 시작) 여부 — 표시용(차단 화면 아님)
   const [peerDmLimited, setPeerDmLimited] = useState(false);
   const [tab, setTab] = useState<'messages' | 'requests'>('messages');
@@ -85,6 +88,11 @@ export default function DmInboxScreen() {
           console.info('[IdentityBypass] dm eligibility', { limited });
         })
         .catch((e: any) => console.error('[DmInbox] eligibility 조회 실패(무시)', { status: e?.response?.status }));
+      // v3.232 K6: 어린이는 공식 계정 id 로 목록을 거른다(officialService 캐시 공유, 실패 시 null → 공식 대화만 표시 원칙 유지)
+      if (isChild) {
+        console.info('[KidsMode] dm official-only');
+        fetchOfficial().then((o) => { if (o) setOfficial(o); });
+      }
       const [c, r] = await Promise.all([api.get('/dm/conversations'), api.get('/dm/requests')]);
       setConvs(c.data?.conversations || []);
       setRequests(r.data?.requests || []);
@@ -94,7 +102,7 @@ export default function DmInboxScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, isChild]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -118,6 +126,8 @@ export default function DmInboxScreen() {
 
   // v3.71: 새 메시지 버튼을 네이티브 헤더 우측에 배치(본문 헤더는 제거됨)
   useLayoutEffect(() => {
+    // v3.232 K6: 어린이는 새 메시지(상대 찾기) 진입 없음
+    if (isChild) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
       headerRight: () => (
         <TouchableOpacity onPress={openCompose} accessibilityLabel="새 메시지" style={{ marginRight: 12, padding: 4 }}>
@@ -210,6 +220,38 @@ export default function DmInboxScreen() {
   }
 
   const data = tab === 'messages' ? convs : requests;
+  // v3.232 K6: 어린이 — 메시지 탭 고정, 공식 계정 대화만(방어 필터: 공식 id 미확인이면 빈 목록)
+  const officialId = official?.official_id ? String(official.official_id) : null;
+  const childData = officialId ? convs.filter((cv) => String(cv.peer?.id) === officialId) : [];
+  const childHasOfficialConv = childData.length > 0;
+
+  if (isChild) {
+    return (
+      <View style={styles.container}>
+        {/* 공식 계정 고정 행 — 기존 대화가 없을 때만(공지·고객센터 문의 시작) */}
+        {official && !childHasOfficialConv ? (
+          <TouchableOpacity style={styles.convRow} onPress={() => startConversation(official.official_id)}>
+            <Avatar name={official.nickname || 'maidol_official'} size={44} />
+            <AppText variant="body" style={{ marginLeft: spacing.md }}>
+              {official.nickname || 'maidol_official'}
+            </AppText>
+            <View style={styles.officialBadge}>
+              <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+        {loading ? (
+          <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
+        ) : error ? (
+          <EmptyState title={error} action={<Button label="다시 시도" variant="tonal" onPress={load} />} />
+        ) : childHasOfficialConv ? (
+          <FlatList data={childData} keyExtractor={(it) => it.conversation_id} renderItem={renderConv} />
+        ) : (
+          <EmptyState title="MAIDOL 공식 계정의 공지와 고객센터 답장을 여기서 볼 수 있어요." hint={KIDS_TEXT.dmOfficialOnly} />
+        )}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

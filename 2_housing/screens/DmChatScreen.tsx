@@ -22,6 +22,7 @@ import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar } from '../components/ui';
 import ReportModal from '../components/ReportModal';
+import { useIsChild, isChildRestrictedError } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -85,6 +86,7 @@ export default function DmChatScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const user = useAuthStore((s) => s.user);
+  const isChild = useIsChild(); // v3.232 K7: 어린이 사진 첨부 숨김
   const [conv, setConv] = useState<any>(route.params?.conversation);
   const cid = conv?.conversation_id;
   const peer = conv?.peer || {};
@@ -222,6 +224,8 @@ export default function DmChatScreen() {
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
+      // v3.232 B2: 서버 403 child_restricted(본문 또는 detail 안의 code)는 api 인터셉터가 이미 안내 — 자체 팝업 생략
+      if (isChildRestrictedError(err)) return;
       // v3.230 A8: 서버 '본인인증 후 이용' 문장은 노출하지 않고 준비 중 안내로(본인인증 유도 금지)
       showAlert('알림', isIdentityRequiredError(err?.response?.status, err?.response?.data)
         ? DM_UNAVAILABLE_MESSAGE
@@ -391,9 +395,12 @@ export default function DmChatScreen() {
           ) : null}
           {/* v3.207(⑤): 수동 리프트(marginBottom+kbLift) 제거 — keyboard-controller KAV padding이 담당 */}
           <View style={styles.inputBar}>
+            {/* v3.232 K7(B3): 어린이는 사진 첨부 없음(서버 /upload/dm-image 도 403) */}
+            {!isChild && (
             <TouchableOpacity onPress={pickImage} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
               <Feather name="image" size={20} color={attachedImage ? colors.text.muted : colors.text.secondary} />
             </TouchableOpacity>
+            )}
             <TextInput
               style={styles.input}
               placeholder="메시지 입력..."

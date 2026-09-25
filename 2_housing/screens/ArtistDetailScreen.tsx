@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
+import { useIsChild } from '../utils/kidsMode';
 
 interface Artist {
   id: string;
@@ -73,6 +74,8 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
   const playerStore = usePlayerStore();
   const { artistId, artistName } = route.params || {};
+  // v3.232 K17 [KidsGate]: 어린이 계정 — 광고(착용/협찬 제품) 카드 섹션 숨김. 성인은 false.
+  const isChild = useIsChild();
 
   const [artist, setArtist] = useState<Artist | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -210,7 +213,7 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
         </View>
 
         {/* 착용/협찬 제품 섹션 */}
-        {ads.length > 0 && (
+        {!isChild && ads.length > 0 && (
           <View style={styles.section}>
             <AppText style={styles.sectionTitle}>💼 이 아티스트의 아이템</AppText>
             <FlatList

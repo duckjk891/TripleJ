@@ -49,6 +49,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
 import Marquee from '../components/Marquee';
 import TrackComments from '../components/common/TrackComments';
+import { useIsChild } from '../utils/kidsMode';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
@@ -201,6 +202,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false); // v3.193: 플레이리스트 담기 시트(회원)
   const [showReport, setShowReport] = useState(false);           // 신고 모달
   const user = useAuthStore((s) => s.user);
+  // v3.232 K17(D2): 어린이 — 착장 구매 링크('자세히 보기') 숨김(착장 사진·이름·위시 유지). 성인·age_group 없음 = false
+  const isChild = useIsChild();
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -1392,7 +1395,8 @@ export default function PlayerScreen({ route, navigation }: any) {
                             </View>
                             <AppText style={styles.outfitItemCat}>{item.category || '아이템'}</AppText>
                             <AppText style={styles.outfitItemName} numberOfLines={2}>{item.name || ''}</AppText>
-                            {hasUrl ? (
+                            {/* v3.232 K17(D2): 어린이는 구매 링크 버튼('자세히 보기'/'링크 없음') 자체를 숨김 — 착장 사진·이름·위시는 유지 */}
+                            {isChild ? null : hasUrl ? (
                               <TouchableOpacity
                                 style={styles.outfitDetailBtn}
                                 onPress={() => {

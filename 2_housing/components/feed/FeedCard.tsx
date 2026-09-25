@@ -14,6 +14,7 @@ import ReportModal from '../ReportModal';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 import { fetchOfficial, getCachedOfficial } from '../../services/officialService';
+import { useIsChild, useKidsPermission, KIDS_TEXT, isChildRestrictedError } from '../../utils/kidsMode';
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -96,6 +97,10 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   const [commentText, setCommentText] = useState('');
   const [posting, setPosting] = useState(false);
   const [commentReport, setCommentReport] = useState<string | null>(null); // 신고 대상 댓글 id
+  // v3.232 K10(B6): 어린이 && 보호자 댓글 허용 없음 → 댓글 입력·답글 숨김(목록 읽기·신고 유지). 성인·age_group 없음 = false
+  const isChild = useIsChild();
+  const canComment = useKidsPermission('comment');
+  const commentBlocked = isChild && !canComment;
 
   const toggleLike = async () => {
     if (!requireLogin()) return;
@@ -207,6 +212,8 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
       onUpdated?.();
     } catch (err: any) {
       console.error('[Feed] 공개 전환 실패', { feedId: feed.id, status: err?.response?.status });
+      // v3.232 B1: 서버 403 child_restricted 는 api 인터셉터가 이미 안내 — 자체 팝업 생략(이중 팝업 방지)
+      if (isChildRestrictedError(err)) return;
       if (err?.response?.status === 400) {
         showAlert('알림', err?.response?.data?.error || '신고 처리로 제한된 콘텐츠는 공개 상태를 바꿀 수 없어요.');
       } else {
@@ -340,13 +347,16 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
         <View style={styles.menu}>
           {isMine ? (
             <>
-              {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환 */}
+              {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환
+                  v3.232 B1: 어린이는 숨김(서버 PUT /feeds/{id} 403 — 글 수정 제한) */}
+              {!isChild && (
               <TouchableOpacity style={styles.menuItem} disabled={visBusy} onPress={() => { setMenuOpen(false); toggleVisibility(); }}>
                 <Feather name={isPublic ? 'lock' : 'globe'} size={16} color={feedTheme.sub} />
                 <AppText variant="footnote" style={{ color: feedTheme.sub }}>
                   {visBusy ? '변경 중...' : isPublic ? '비공개로 전환' : '공개로 전환'}
                 </AppText>
               </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); deleteFeed(); }}>
                 <Feather name="trash-2" size={16} color={colors.status.error} />
                 <AppText variant="footnote" style={{ color: colors.status.error }}>삭제</AppText>
@@ -418,9 +428,11 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
                       </View>
                       <AppText variant="footnote" style={{ color: feedTheme.sub }}>{cbody}</AppText>
                       <View style={styles.commentActions}>
+                        {!commentBlocked && (
                         <TouchableOpacity onPress={() => replyTo(cc)} accessibilityLabel="답글">
                           <AppText variant="caption" style={{ color: feedTheme.muted }}>답글</AppText>
                         </TouchableOpacity>
+                        )}
                         {!canDelete && user ? (
                           <TouchableOpacity onPress={() => setCommentReport(cc.id)} accessibilityLabel="댓글 신고">
                             <AppText variant="caption" style={{ color: feedTheme.muted }}>신고</AppText>
@@ -457,8 +469,10 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
             </View>
           ) : null}
 
-          {/* 입력 */}
-          {user ? (
+          {/* 입력 — v3.232 K10: 어린이(보호자 허용 없음)는 입력 대신 안내 한 줄 */}
+          {user && commentBlocked ? (
+            <AppText variant="caption" style={{ marginTop: spacing.sm, color: feedTheme.muted }}>{KIDS_TEXT.commentNeedsGuardian}</AppText>
+          ) : user ? (
             <View style={styles.commentInputRow}>
               <TextInput
                 style={styles.commentInput}

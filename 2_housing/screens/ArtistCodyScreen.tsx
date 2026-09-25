@@ -26,6 +26,7 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { guardArtistGeneration } from '../services/generationTracker';
 import { fetchPointCosts, getPointCostSync } from '../services/pointCosts';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 // v3.227(D·E): 피커 모달은 components/cody/*, 타입·순수 함수는 utils/codyCatalog, 조회는 services/catalogService.
 import CodyPickerModal from '../components/cody/CodyPickerModal';
@@ -353,6 +354,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // product_url 없는 아이템(샘플 더미 포함)은 버튼 미노출.
   const openItemLink = (item: { id: string; product_url?: string }) => {
     if (!item.product_url) return;
+    // v3.232 K17 [KidsGate]: 어린이 계정은 판매처(구매 링크)로 이동하지 않는다 — 클릭 기록도 없음.
+    // (피커 카드 링크 버튼은 CodyItemCard 가 숨김. 위시 탭 등 남은 진입은 여기서 안내만)
+    if (isChildNow()) {
+      console.info('[KidsGate] cody item link blocked', { id: item.id });
+      showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정에서는 판매처로 이동할 수 없어요.');
+      return;
+    }
     if (!item.id.startsWith('sample_')) {
       api.post(`/business/ads/${item.id}/click`).catch(() => {});
     }

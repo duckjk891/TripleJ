@@ -39,6 +39,7 @@ import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 import { useGenerationLeaveGuard, LEAVE_GUARD_DEFAULT_BODY } from '../hooks/useGenerationLeaveGuard';
 import { getPointCostSync, fetchPointCosts } from '../services/pointCosts';
+import { isChildNow, isChildRestrictedError, KIDS_TEXT } from '../utils/kidsMode';
 
 // v3.230 A1-2: 요청(POST) 전에 화면을 떠나면 요청을 보내지 않는다 — 이 경우 과금 요청 자체가 없다
 const LEFT_BEFORE_REQUEST_MSG = '시작 전에 나가서 만들지 않았어요. ⭐은 쓰이지 않았어요. 입력한 내용은 유지돼요.';
@@ -46,6 +47,11 @@ const PRE_REQUEST_GUARD_BODY =
   '작업이 끝날 때까지 이 화면을 벗어나지 마세요.\n아직 요청을 보내기 전이에요. 지금 나가면 만들지 않아요.';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
+
+// v3.232 K12 [KidsGate]: 어린이 계정 — 요청 전 차단 안내(요청 자체가 없으므로 ⭐ 무관)
+const KIDS_REAL_SHEET_MSG = '어린이 계정에서는 캐릭터 아티스트만 만들 수 있어요. 아티스트 만들기에서 캐릭터로 다시 시도해주세요.';
+const KIDS_REAL_OUTFIT_MSG = '어린이 계정에서는 실사 아티스트의 옷을 바꿀 수 없어요.';
+const KIDS_REFINE_MSG = '어린이 계정에서는 사진으로 다듬기를 쓸 수 없어요.';
 
 function characterPreviewUrl(previewPath: string): string {
   // cache-buster: RN Image가 같은 URL이면 옛 이미지 캐시 사용 → 새 시트로 갱신 안 됨
@@ -259,6 +265,16 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
     const markRequestSent = () => {
       if (!cancelled) setRequestSent(true);
     };
+    // v3.232 K12 [KidsGate]: 어린이 계정이 사진이 필요한 경로(실사 시트·실사 옷 입히기·다듬기)로 들어오면
+    // 요청을 보내지 않고 입력을 보존한 채 돌아간다(서버 403 child_restricted 전 방어 — 성인은 호출되지 않음)
+    const kidsBlock = (kind: 'sheet' | 'outfit' | 'refine', msg: string) => {
+      console.warn('[KidsGate] artist virtual-only — 요청 안 보냄', { kind });
+      taskStore.failApi(msg);
+      allowLeave();
+      navigation.goBack();
+      setTimeout(() => showAlert(KIDS_TEXT.restrictedTitle, msg), 100);
+    };
+    const childNow = isChildNow();
     const callApi = async () => {
       try {
         const photoUri = taskStore.photoUri;
@@ -277,7 +293,17 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           // ── 신규 캐릭터 시트 생성 — v3.76: 비동기(job) + 텍스트-only 허용(MAIDOL v161) ──
           // v3.80: 가상화(그림) 모드 — cartoon 엔드포인트 + style_preset XOR style_image
           const isVirtual = taskStore.characterKind === 'virtual';
-          const hasPhoto = !!photoUri;
+          if (childNow && !isVirtual) {
+            kidsBlock('sheet', KIDS_REAL_SHEET_MSG);
+            return;
+          }
+          // v3.232 K12: 어린이는 얼굴 사진·화풍 이미지를 붙이지 않는다(가상 + 텍스트·프리셋만)
+          if (childNow && (photoUri || taskStore.styleImageUri)) {
+            console.info('[KidsGate] artist virtual-only — 사진·화풍 이미지 제외', {
+              photo: !!photoUri, styleImage: !!taskStore.styleImageUri,
+            });
+          }
+          const hasPhoto = !!photoUri && !childNow;
           // v3.227 H-1(W1): [이전 사진 사용] — 사진 파일 대신 서버 원본 경로(실사 전용 — cartoon은 미지원)
           const reuseOriginal = !hasPhoto && !isVirtual ? taskStore.reuseOriginalObjectName || null : null;
           // v3.227 H-1: 생성 직전 가드(API 호출·⭐ 차감 전) — 실사인데 사진으로 만들기로 했던(의도='photo')
@@ -329,7 +355,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           if (targetCid) form.append('character_id', targetCid);
           if (isVirtual) {
             // style_image XOR style_preset — 둘 중 하나만
-            if (taskStore.styleImageUri) {
+            if (taskStore.styleImageUri && !childNow) {
               const styleName = taskStore.styleImageName || (taskStore.styleImageUri.split('/').pop() ?? 'style.jpg');
               await appendFileToForm(form, 'style_image', taskStore.styleImageUri, styleName, inferMimeType(styleName));
             } else if (taskStore.stylePreset) {
@@ -380,6 +406,11 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           // doc.art_style로 복원(화풍 붕괴 금지). character_id 지정 재생성이라 슬롯 미소모.
           const isVirtualOutfit = taskStore.characterKind === 'virtual';
           const outfitCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
+          if (childNow && !isVirtualOutfit) {
+            // 실사 옷 입히기 = 서버 원본 사진(original_object_name) 경로 — 어린이 불가
+            kidsBlock('outfit', KIDS_REAL_OUTFIT_MSG);
+            return;
+          }
 
           // 코디 선택분 — v3.76: 서버 정식 계약(object_name 필드)으로 전송
           const items: AppliedItem[] = useOutfitStore.getState().items;
@@ -462,6 +493,10 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           return;
         } else {
           // ── refine: 얼굴/체형 미세조정 (옷 입히기 아님). 기존 /character/refine 흐름 유지 ──
+          if (childNow) {
+            kidsBlock('refine', KIDS_REFINE_MSG);
+            return;
+          }
           const currentSheetUrl = taskStore.apiResult?.preview_url || null;
           if (!currentSheetUrl) {
             throw new Error('현재 캐릭터 시트를 찾을 수 없어요. 다시 시도해주세요.');
@@ -626,6 +661,11 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         taskStore.failApi(msg);
         allowLeave();
         navigation.goBack();
+        // v3.232 K12: 403 child_restricted 는 api 인터셉터가 이미 공통 안내 — 화면 팝업 생략(이중 팝업 방지, 그 외 오류 불변)
+        if (isChildRestrictedError(err)) {
+          console.info('[KidsGate] artist 403 child_restricted — 인터셉터 안내로 대체');
+          return;
+        }
         setTimeout(() => {
           showAlert('오류', msg);
         }, 100);

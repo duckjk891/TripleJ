@@ -14,7 +14,8 @@ import { spacing, radius } from '../theme/spacing';
 const REASON_LABEL: Record<string, string> = {
   portrait: '초상권 침해', copyright: '저작권 침해', sexual: '성적·불쾌 콘텐츠', abuse: '욕설·괴롭힘', other: '기타',
 };
-const TYPE_LABEL: Record<string, string> = { track: '곡', feed: '피드', comment: '댓글', dm_message: '메시지' };
+// v3.232 K11(G2): track_comment = 곡 댓글 신고(신규)
+const TYPE_LABEL: Record<string, string> = { track: '곡', feed: '피드', comment: '댓글', dm_message: '메시지', track_comment: '곡 댓글' };
 const STATUS_LABEL: Record<string, string> = {
   pending: '처리 대기', reviewing: '검토 중', actioned: '조치 완료', dismissed: '기각', resolved: '처리 완료',
 };

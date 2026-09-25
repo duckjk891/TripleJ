@@ -31,6 +31,7 @@ import {
 } from '../services/characterService';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
 import { useAuthStore } from '../stores/authStore';
+import { isKidsRestrictedUser, KIDS_TEXT } from '../utils/kidsMode';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 // v3.229 N4: 개명 직후 재생 큐·미디어세션 가수명 반영
@@ -81,6 +82,8 @@ const mapUsedItemsToWorn = (arr: any[]): WornItem[] =>
 export default function ArtistResultScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  // v3.232 K14·K17 [KidsGate]: 어린이 계정 — 내 목소리 연결·판매처 보기·실사 재생성/꾸미기 숨김·차단. 성인은 false.
+  const isChild = isKidsRestrictedUser(user);
   // v3.81: MyArtists 목록에서 카드 탭으로 진입하면 해당 슬롯만 표시(탭 UI 없음).
   // 파라미터 없이 진입(생성 완료 직후)하면 characterKind 기준.
   const slotParam: 'real' | 'virtual' | undefined = route?.params?.slot;
@@ -589,6 +592,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       navigation.replace('ArtistCody');
       return;
     }
+    if (isChild) {
+      // v3.232 K12: 실사 꾸미기 = 원본 얼굴 사진으로 다시 그림 — 어린이 불가(요청 전 안내)
+      console.info('[KidsGate] artist virtual-only — 실사 꾸미기 차단');
+      showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정에서는 실사 아티스트의 옷을 바꿀 수 없어요.');
+      return;
+    }
     if (!apiResult) return;
     // 실사 꾸미기: 가상 생성 잔존값(characterKind='virtual')이 outfit 분기를 오염시키지 않도록 정규화
     useCharacterTaskStore.getState().setInput({ characterKind: 'real' });
@@ -652,6 +661,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // v3.105: 진입 전 ⭐ 소모 confirm (재생성도 generate-sheet 과금 대상 — 대표 지적)
   const handleRegenerateServerArtist = () => {
     if (!serverArtist) return;
+    if (isChild && serverArtist.kind === 'real') {
+      // v3.232 K12: 실사 재생성 = 실사(사진) 경로 — 어린이 불가(⭐ 확인 전 안내)
+      console.info('[KidsGate] artist virtual-only — 실사 재생성 차단');
+      showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정에서는 실사 아티스트를 다시 만들 수 없어요. 캐릭터 아티스트로 새로 만들어주세요.');
+      return;
+    }
     setRegenConfirmVisible(true);
   };
 
@@ -689,6 +704,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // 서버가 persona_name/persona_voice_id를 조립하며, 곡 생성 주입은 persona_voice_id(기존 방식 유지).
   const applyPersonaPatch = async (personaId: string, label: string) => {
     if (!serverArtist || voiceSaving) return;
+    if (isChild && personaId) return; // v3.232 K14: 어린이는 내 목소리 연결 없음(해제는 허용) — 방어
     setVoiceSaving(true);
     if (__DEV__) console.info('[ArtistResult] 목소리 PATCH', { characterId: serverArtist.character_id, personaId: personaId || '(해제)' });
     try {
@@ -1022,7 +1038,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                     </AppText>
                     {optStr ? <AppText style={styles.outfitRowOpt}>{optStr}</AppText> : null}
                   </View>
-                  {it.productUrl ? (
+                  {/* v3.232 K17: 어린이는 판매처(구매 링크) 없음 — 착용 목록은 유지 */}
+                  {it.productUrl && !isChild ? (
                     <TouchableOpacity
                       style={styles.outfitLinkBtn}
                       onPress={() => openWornLink(it)}
@@ -1086,7 +1103,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
                 : artistVoice?.type === 'clone'
                   ? `"${artistVoice.name}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
-                  : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
+                  : isChild
+                    ? '간편 목소리(스타일 프리셋)를 골라 아티스트에 연결해보세요.' // v3.232 K14
+                    : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
             </AppText>
             <TouchableOpacity
               style={styles.voiceBtn}
@@ -1304,6 +1323,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                     </AppText>
                   )}
                 </TouchableOpacity>
+                {/* v3.232 K14: 어린이는 내 목소리(클론) 연결 선택지 없음 — 간편 목소리만 */}
+                {!isChild && (
                 <TouchableOpacity
                   style={styles.voiceChoiceBtn}
                   onPress={() => setPickerStage('clone')}
@@ -1319,6 +1340,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                     </AppText>
                   )}
                 </TouchableOpacity>
+                )}
               </View>
             )}
             {pickerStage === 'preset' && (

@@ -28,6 +28,7 @@ import {
   FACE_UNAVAILABLE_MESSAGE, FACE_UNAVAILABLE_TITLE, faceIdentityRoute, isIdentityRequiredError, sanitizeServerText,
 } from '../utils/identityGate';
 import { FACE_CONSENT_VERSION, FACE_CONSENT_LABEL, FACE_CONSENT_BODY, FACE_GUARDIAN_NOTICE } from '../constants/faceConsent';
+import { isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 
 type Step =
   | 'loading' | 'unavailable' | 'consent' | 'guardian' | 'guardian_waiting'
@@ -161,6 +162,14 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     aliveRef.current = true;
+    // v3.232 K13 [KidsGate]: 어린이 계정은 얼굴 인증 진입 불가(사진 경로가 없어 정상 흐름에선 도달 불가 — 방어).
+    // 상태 조회·동의·보호자 요청을 보내지 않고 닫는다. 성인은 조건 false 로 기존 흐름 그대로.
+    if (isChildNow()) {
+      console.info('[KidsGate] face-verify blocked', { consentOnly });
+      showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.photoBlocked);
+      navigation.goBack();
+      return () => { aliveRef.current = false; clearPoll(); };
+    }
     (async () => {
       try {
         console.info('[FaceVerify] calling getFaceVerifyStatus');
