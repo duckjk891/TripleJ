@@ -3277,3 +3277,6 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 미검증: 폰 웹 E2E(답변 편집 여정·검색 탭), 배포 후 스모크.
 
 **특이**: 관리자 visibility 토글(admin.py:540) ES 미갱신은 범위 밖(다른 세션 소유 파일) — 기동 self-heal 로 보정. 곡 수정 시 벡터 임베딩 재생성·차트 캐시 무효화 없음(기존 공백).
+- **서버 배포(06:25:57Z 재생성)**: 사용자 scp 2 OK(`.bak_pre_v3231`) → 롤백 태그 `maidol-app:pre-v3231-live`·로그 `maidol-app_pre_v3231_*.log` → 빌드(이미지 md5 = 패치본, main.py·auth.py 유지) → 진행 중 0 → 재생성(로그 볼륨 유지).
+- 기동 self-heal: `public drift es_public=21 mongo_public=27 stale=6 reverse=0` → `reindexed=27 errors=0`. 이후 probe es_public=27/27, categories 27/27, 매핑 categories=True. 재기동 1회 추가 → `reindexed=0 (in sync, skip)`(루프 없음), Traceback/ERROR 0.
+- 무쓰기 검색 스모크(`_hybrid_search_core`): 로맨스 10/10(2~12위, 배포 전 0건), 재즈 1/1(1위, 배포 전 0건), 힙합 4/4, 알앤비 3/3, 케이팝 3/3, 트로트·시티팝·댄스·하우스·인디 전부 매치, "로맨스 노래" 12/12(1~12위), "ㅁㄴㅇㄹ" gibberish 0, "로맨스ㅁㄴ" 별칭 미적용(매치 0, 벡터 결과만). 아티스트·가사 회귀 검색 정상. "발라드" 0건은 공개 발라드 곡 부재.
