@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getUsers, updateUserRole, banUser } from '../api';
 import { formatDate } from './Dashboard';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 
 export default function UsersPage() {
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -104,6 +106,7 @@ export default function UsersPage() {
                     <td className="nowrap">{formatDate(u.created_at)}</td>
                     <td>
                       <div className="actions">
+                        <button className="btn btn--sm" onClick={() => navigate(`/stars?uid=${u.id}`)}>⭐ 별</button>
                         <button className="btn btn--sm" onClick={() => handleRole(u)}>
                           {u.role === 'admin' ? '관리자 해제' : '관리자로'}
                         </button>
