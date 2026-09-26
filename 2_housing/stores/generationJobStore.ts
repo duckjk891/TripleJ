@@ -48,6 +48,18 @@ export interface TrackedUsedItem {
   category?: string;
 }
 
+// ── v3.235 [CoverWardrobe]: 커버 대화 '의상 바꾸러 가기'로 시작한 옷 입히기 — 완성 저장 후 복귀할 곳 ──
+/** 'cover' = 작업실 이미지 디렉터(Studio CoverGeneration) · 'albumCover' = 앨범 AI 커버(RootStack AlbumCoverGeneration) */
+export type CoverReturnTo = 'cover' | 'albumCover';
+export interface CoverReturnMeta {
+  /** 옷을 입힌 커버 아티스트 cid(레거시 계정 = null) */
+  characterId: string | null;
+  /** 곡 커버 대화의 곡 id — 복귀 시 같은 곡 대화가 남아 있을 때만 커버로 돌아간다 */
+  trackId?: string | null;
+  /** 앨범 모드 복귀 파라미터(AlbumCoverGeneration albumMode) */
+  albumMode?: { albumId: string; albumTitle: string; trackTitles?: string[] } | null;
+}
+
 export interface TrackedJob {
   jobId: string;
   kind: TrackedJobKind;
@@ -91,6 +103,10 @@ export interface TrackedJob {
   ackedAt?: number | null;
   /** 작업실 디렉터(말풍선 슬롯) */
   director?: GenJobDirector | null;
+  // ── v3.235 [CoverWardrobe](선택 필드 — 구 영속본·회수·일반 꾸미기 job 엔 없음 = 현행 ArtistResult 착지) ──
+  /** 옷 입히기 완성 저장 후 복귀할 커버 화면 */
+  returnTo?: CoverReturnTo | null;
+  returnMeta?: CoverReturnMeta | null;
 }
 
 /**
@@ -215,6 +231,27 @@ export function useActiveArtistJob(): TrackedJob | null {
  */
 export function useHasActiveArtistJob(): boolean {
   return useActiveArtistJob() !== null;
+}
+
+/**
+ * v3.235 [CoverWardrobe]: 이 아티스트(cid)에게 옷을 입히는 중인 job — processing 우선, 없으면 done-unsaved.
+ * 커버 대화 1.7(의상 확인)에서 "아직 옷을 입히는 중" 안내·'이 의상 그대로' 확인 팝업 판정에 쓴다.
+ * cid 없음(레거시)·다른 아티스트·신규 생성(sheet) job 은 대상 아님.
+ */
+export function pickDressingArtistJob(list: TrackedJob[], cid: string | null | undefined): TrackedJob | null {
+  if (!cid) return null;
+  const mine = list.filter((j) => j.kind === 'artist' && j.mode === 'outfit' && j.targetCharacterId === cid);
+  return mine.find((j) => j.lastStatus === 'processing') ?? mine.find((j) => j.lastStatus === 'done') ?? null;
+}
+
+/** 비반응형: pickDressingArtistJob(현재 사용자) */
+export function getDressingArtistJob(cid: string | null | undefined): TrackedJob | null {
+  return pickDressingArtistJob(listUserArtistJobs(), cid);
+}
+
+/** 반응형: pickDressingArtistJob(현재 사용자) */
+export function useDressingArtistJob(cid: string | null | undefined): TrackedJob | null {
+  return pickDressingArtistJob(useUserArtistJobs(), cid);
 }
 
 // ── v3.228 비아티스트 선택자 ─────────────────────────────────────────────

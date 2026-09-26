@@ -15,7 +15,7 @@ import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { spendExtraSlot, parseGenerationInProgress } from '../services/characterService';
-import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, takeCoverWardrobeReturn, type CharacterTaskMode } from '../stores/characterTaskStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -486,6 +486,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
             usedItems: toUsedItems(items),
             artStyleHint: null,
             photo: null,
+            // v3.235 [CoverWardrobe]: 커버 대화 '의상 바꾸러 가기' 표식(같은 cid·유효) → 완성 저장 후 커버 대화로 복귀
+            ...takeCoverWardrobeReturn(outfitCid),
           });
           usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
           if (cancelled) return;

@@ -29,6 +29,13 @@ import { Feather } from '@expo/vector-icons';
 import { NavigationContainer, LinkingOptions } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { navigationRef, resetToChartTab } from './services/navigationRef';
+// v3.235 B5: 공유 링크 진입(`?track=`·`aidol://track/{id}`) → 곡 즉시 재생
+import {
+  captureNativeTrackLink,
+  captureWebTrackLink,
+  consumePendingTrackLink,
+  peekPendingTrackLink,
+} from './utils/trackLink';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -515,6 +522,53 @@ function GlobalModals() {
   );
 }
 
+// v3.235 B5 [TrackLink] 웹 `?track=` 캡처 — 모듈 로드 시 1회(React Navigation 이 주소를 바꾸기 전).
+// `?ref=` 추천코드 캡처(AuthPanel 모듈 로드)와 독립 — 서로의 파라미터를 건드리지 않는다.
+captureWebTrackLink();
+
+// v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
+//  로그인 복원(restoreQueueFor)이 재생목록을 계정 보관함으로 교체하므로 그 뒤에 붙여야 링크 곡이 남고,
+//  OAuth 콜백과 동시 진입이면 로그인 처리(토큰 저장·세션 복원)를 먼저 끝낸 뒤 재생한다(오케스트레이터 결정 ②).
+//  정착 신호가 오지 않는 이상 상황(네트워크 정지 등) 대비 상한 대기 후에는 그대로 소비.
+const TRACK_LINK_AUTH_WAIT_MAX_MS = 10000;
+const appBootAt = Date.now();
+let bootAuthSettled = false;
+function markBootAuthSettled(reason: string) {
+  if (bootAuthSettled) return;
+  bootAuthSettled = true;
+  if (peekPendingTrackLink()) console.info('[TrackLink] auth-settled', { reason });
+  tryConsumeTrackLink();
+}
+function tryConsumeTrackLink() {
+  if (!peekPendingTrackLink()) return;
+  consumePendingTrackLink({
+    isReady: () => navigationRef.isReady(),
+    currentRoute: () => navigationRef.getCurrentRoute()?.name,
+    navigate: (name, params) => (navigationRef.navigate as any)(name, params),
+    blockedReason: () => {
+      if (!usePlayerStore.persist.hasHydrated()) return 'hydration';
+      if (!bootAuthSettled && Date.now() - appBootAt < TRACK_LINK_AUTH_WAIT_MAX_MS) return 'auth';
+      return null;
+    },
+  }).catch((err: any) => console.error('[TrackLink] 소비 실패', { message: err?.message }));
+}
+
+// v3.235 B5: 네이티브 트랙 딥링크(`aidol://track/{id}`) — 콜드 스타트 + 실행 중. OAuth 딥링크는 파서가 제외(기존 핸들러 몫).
+function useTrackLinkCapture() {
+  useEffect(() => {
+    // 정착 신호 유실 대비 — 상한 대기 뒤 1회 재시도(웹·네이티브 공통)
+    const t = setTimeout(tryConsumeTrackLink, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
+    if (Platform.OS === 'web') return () => clearTimeout(t); // 웹은 모듈 로드 시 캡처
+    const onUrl = (url: string | null) => {
+      if (captureNativeTrackLink(url)) tryConsumeTrackLink();
+    };
+    Linking.getInitialURL().then(onUrl).catch((err: any) =>
+      console.error('[TrackLink] 초기 딥링크 조회 실패', { message: err?.message }));
+    const sub = Linking.addEventListener('url', ({ url }) => onUrl(url));
+    return () => { sub.remove(); clearTimeout(t); };
+  }, []);
+}
+
 // [App] 소셜 로그인 콜백 수신 (v3.194: 웹 전용 → 네이티브 포함으로 확장)
 //   웹: 백엔드가 `{frontend_url}/oauth/callback#token=JWT`로 리다이렉트하면 해시에서 토큰을
 //       꺼내 세션을 연다(해시라 서버로그/Referer에 남지 않음).
@@ -549,11 +603,14 @@ function useOAuthCallback() {
           if (!ok) {
             // 콜백 토큰이 무효(만료 등)일 때만 저장 토큰 복원으로 후퇴
             console.error('[SocialLogin] OAuth 콜백 토큰 세션 실패 — 저장 세션 복원 시도');
-            restoreSession();
+            // v3.235 B5: 후행 복원까지 끝나야 링크 재생 소비(정착)
+            restoreSession().finally(() => markBootAuthSettled('oauth-fallback'));
             return;
           }
           // v3.216b F1: 로그인 성공 = 항상 차트 탭 착지 (Splash 중이면 내부 no-op — 자동 착지)
           resetToChartTab();
+          // v3.235 B5: 로그인 완료 → 링크 재생(차트 착지 위에 Player)
+          markBootAuthSettled('oauth');
         });
       } catch (err: any) {
         console.error('[SocialLogin] OAuth 콜백 처리 실패(웹)', { message: err?.message });
@@ -617,8 +674,12 @@ const linking: LinkingOptions<RootStackParamList> = {
 // 오염시킬 수 있다(A3 경합 방어). hasHydrated=true면 현행과 동일한 즉시 실행 경로,
 // 미완이면 onFinishHydration 1회 대기 + 2s 타임아웃 폴백(부팅 로그인 지연 상한).
 function restoreSessionAfterHydration() {
+  // v3.235 B5: 복원 종료(성공·실패·토큰 없음) = 부팅 세션 정착 → 대기 중인 링크 재생 소비
+  const restoreAndSettle = () => {
+    restoreSession().finally(() => markBootAuthSettled('restore'));
+  };
   if (usePlayerStore.persist.hasHydrated()) {
-    restoreSession();
+    restoreAndSettle();
     return;
   }
   if (__DEV__) console.info('[playerStore] hydration-wait — restoreSession 하이드레이션 대기');
@@ -628,7 +689,7 @@ function restoreSessionAfterHydration() {
     if (done) return;
     done = true;
     unsub?.();
-    restoreSession();
+    restoreAndSettle();
   };
   unsub = usePlayerStore.persist.onFinishHydration(() => run());
   setTimeout(run, 2000); // 폴백: 하이드레이션 이벤트 유실 시 기존 즉시 실행 경로 유지
@@ -636,6 +697,7 @@ function restoreSessionAfterHydration() {
 
 export default function App() {
   useOAuthCallback();
+  useTrackLinkCapture(); // v3.235 B5
   // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   // v3.207 ⑪: 튜토리얼 first-run 게이트를 restoreSession보다 먼저 — 완전 신규 설치(스토리지 empty)
@@ -667,6 +729,8 @@ export default function App() {
     const name = navigationRef.getCurrentRoute()?.name;
     setCurrentRoute(name);
     trackScreen(name);
+    // v3.235 B5: Splash 이탈 첫 시점(컨테이너 ready + 라우트 ≠ Splash)에 대기 중인 링크 재생 소비
+    tryConsumeTrackLink();
   };
   return (
     <SafeAreaProvider>

@@ -4730,3 +4730,222 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **최상위 FAIL(배포·ON 중단)**: OFF 에서 비어린이 응답·부작용 차이(RG-S1·RG-A1·S-P3) · ON 에서 비어린이 차이(D6 잠금 외)(RG-S2·RG-A2) · OFF 에서 DB 조회·제한 발생(KP-S2) · 나이 모름·청소년 어린이 판정(KP-S1·KM-U1·RG-O1) · C 외 사용자 child_restricted 발생(RG-O2) · 성인 렌더·요청 변화(AR-U1) · 구서버에서 기능 숨김(AR-U2) · 성인 광고 요청 변화(KM-U6) · 성인 아티스트 흐름 회귀(CA-U1) · 성인 여정 회귀(KE-E1·KE-E2) · 팀 유료 생성·prod 계정 생성·실사용자 데이터 변경·비밀값 기재.
 - **FAIL 게이트**: DAU 변화·무인증 401(KP-S3) · 차감 뒤 403·v3.228 순서(RG-S3·CR-S1·CR-S2) · 비대상 변경(RG-S4·AR-U4) · 다른 버전 서버 회귀(RG-S5) · 생년월일 잠금이 현 앱 저장을 깸(AU-S2) · 완성 ⭐ 이중 지급(AU-S4) · 성인 DM 게이트 변화·공식 CS 차단(DM-S1·DM-S2) · 캐시 혼입(AD-S1) · 금칙어 성인 적용·차감 뒤 검사·닉네임 순서(WF-S3) · comment_count 음수·기존 신고 조치 변화(RP-S2) · 차단 우회(KC-A2) · 원복 실패(KC-A4) · 이전 계정 어린이 상태 잔존(KM-U2) · 인터셉터가 기존 오류 처리 변경·오류 삼킴(KM-U3) · 성인 설정 저장 회귀(KM-U4) · 곡 댓글 화면 회귀(SO-U6) · 재생 1회·큐 회귀(SO-U7) · 성인 요청 본문 변화(CA-U2) · 성인 작곡 자동 적용·⭐ 확인 회귀(CA-U4) · 어린이 의상 선택 불가·가격 null 크래시(CA-U6) · v3.227~v3.231 하니스(AR-U3) · 배포 재대조·진행 중 재생성·롤백 경로(S-P1·S-P2·S-P4) · 정책 문구·로그 개인정보(X-T1·X-L1).
 - **판정 회부(결함이면 FAIL)**: KP-S1 2/29 규칙이 기존 age_years 와 다름 · KP-S2 DB 예외 시 fail-open/closed · AU-S2 다른 표기 같은 값·잠금 400 시 부분 저장 · WF-S2 창작 핵심 표현 오탐 · KM-U5 다른 팝업과 겹침. **기록·보고만**: KP-S1 KST/UTC 기준 공존 · KP-S2 강제 목록 대소문자 · AU-S1 성인 `kids_permissions` 값·인증 계정 `birth_date_locked` · AU-S2 기존 None 계정 첫 입력으로 어린이가 되는 경로(E3·2차) · AU-S3 region 응답값 · FD-S1 어린이 본인 댓글 삭제 가능 여부 · AD-S1 키 null vs 삭제 · RP-S2 관리자 웹 라벨(2차) · KM-U6 ④ 전환 후 성인 requestOptions · RG-S2 지연 · RG-O1 unknown 수 증감.
+
+## v3.235 (2026-09-26) — 착장 반영·공유·링크 재생(v3.234 병합)
+
+> 대상: PLAN.md v3.234(:7171~7280, 서버 미배포 — 이번에 병합) + v3.235(:7282~7430). v3.234 test-designer 항목 T1~T11 과 v3.235 T1~T14 를 모두 시나리오로 옮긴다. 표기: v3.234 항목은 `v34-T#`, v3.235 항목은 `T#`.
+> **확정 결정(PLAN D1~D14 기본값)**: D1 스타일링 = 곡 커버에 쓰인 착장, 커버 없으면 발매 시점 착장 + 발매 시점에 진행 중이던 같은 아티스트 옷 입히기는 저장 시 반영(24h) · D2 발매 후 아티스트 페이지에서만 바꾼 과거 곡 = 동결(가을산 밤바람 보호) · D3 커버 인물 = 곡 아티스트 고정 · D4 옷 입히기 완료 후 커버 대화로 자동 복귀 · D5 옷 입히는 중 '이 의상 그대로' = 확인 팝업 후 진행 가능 · D6 '공유하기' = 공용 ⋯ 시트 기본 항목(차트·마이페이지·검색·플레이리스트·피드) · D7 비공개 내 곡 = "차트에 공개하고 공유" 확인 후 공개 전환 · D8 링크 = `https://api.maidol.ai.kr/track/{id}` · D9 자동재생 차단 시 '탭해서 듣기' 오버레이 + 링크 진입 첫 화면 튜토리얼 생략 · D10 비로그인·어린이 허용, OG 에 업로더 닉네임 미노출 · D11 링크 진입 재생 = 일반 재생과 같은 기록 규칙(70% 1회)·큐 append · D12 결과 화면(MusicResult)·플레이어 공유 버튼 = 범위 제외 · D13 App Links 보류(랜딩 '앱에서 열기' = `aidol://`만) · D14 "집으로" 소급 = 대표 승인 후 apply.
+> **역할**: 서버 1명 = S1~S8(스테이징 `/private/tmp/server_staging_v3235/` — v3.234 deploy 3파일을 base 로 복사 후 S5~S8 추가, `tests/` 로컬 fake) / 앱 1조(커버 착장) = A1~A4(`CoverGenerationScreen.tsx`·`generationTracker.ts`·`generationJobStore.ts`·`ArtistLoadingScreen.tsx`·`characterTaskStore.ts`) / 앱 2조(공유·링크 재생) = B1~B6(`utils/trackShare.ts`(신규)·`utils/trackLink.ts`(신규)·`TrackActionSheet.tsx`·`MyMusicScreen.tsx`·`TrackShareDownloadSheet.tsx`·`App.tsx`·`PlayerScreen.tsx`·`webAudioElement.ts`). 두 조 파일 교집합 0.
+> **테스트 환경 제약(필수 전제)**: iOS 시뮬레이터 없음 · 로컬 웹 빌드 불가(Worklets 크래시) → 앱 순수 로직은 **Node 하네스**(RN mock: react-native `Share`·`Platform`·`Linking`(getInitialURL/이벤트 주입)·expo-clipboard 스텁·`navigator.share` 유무/거부 주입·`window.location`/`history.replaceState` 캡처·navigation(`navigate`/`reset`/`replace` 캡처)·showAlert 스텁(버튼 콜백 직접 호출)·api 스텁(응답 주입·요청 캡처)·HTMLAudioElement 스텁(`play()` resolve/reject 주입)) · 화면은 **코드 리뷰 + 배포 후 폰 웹/실기기** · 서버는 **스테이징 fake(mongomock/fakeredis/MinIO 스텁) + 배포 후 무쓰기 스모크** · 카카오톡 미리보기는 **카카오 공유 디버거(대표 수행)**.
+> **데이터 안전**: prod **계정 생성 0 · 팀 유료 생성 0**(작곡·옷 입히기·커버 생성 성공 판정은 스테이징 fake 로만, prod 는 ⭐ 확인 다이얼로그 **[취소]**까지) · **실사용자 데이터 변경 0**(prod 공개 전환 PUT 은 팀 테스트 계정 소유 비공개 곡이 있을 때만, 없으면 하네스로 대체 · 실사용자 곡 70% 재생(=record-play 1건)은 대표 승인 시 1회만) · 허용 prod 쓰기 = OG 썸네일 캐시(`og/tracks/…`, 시스템 캐시) · 테스트 계정 로그인 세션 · 대표 승인 후 "집으로" 1곡 S4 apply. 비밀값(토큰·키·.env 값)은 문서·로그 캡처에 남기지 않는다(필요 시 앞 8자).
+> **보안 최우선**: 공유 랜딩(S7)·OG(S8)는 **무인증 공개 표면**이다. ① 제목·아티스트명 XSS escape ② 비공개·블라인드·삭제 곡의 제목/커버/존재 여부 노출 0 ③ 업로더 닉네임·user_id·이메일 노출 0 ④ faces/·evidence/·원본 사진 경로 노출 0 — 하나라도 어기면 배포 중단.
+
+### 항목 매핑 (PLAN test-designer 항목 → 시나리오)
+| # | PLAN 항목 | 시나리오 |
+|---|---|---|
+| v34-T1 | generate-cover → cover_sessions.character_snapshot | M-S1 |
+| v34-T2 | update_track 같은 cid → 스냅샷 교체·Redis v4 삭제 | M-S2 |
+| v34-T3 | 다른 cid·미포함·revert·file → 불변 | M-S3 |
+| v34-T4 | 구세션 lm 조건(가을산 밤바람 재현) | M-S4 |
+| v34-T5 | refine 버전 확정 | M-S5 |
+| v34-T6 | upload-from-generation + 보관함 커버 | M-S6 |
+| v34-T7 | 개명 후 커버 교체 name | M-S7 |
+| v34-T8 | S2 예외 주입 | M-S8 |
+| v34-T9 | S4 dry-run 1건·멱등·캐시 | M-S9·P-3·P-4 |
+| v34-T10 | 커버 의상 E2E | E-2 |
+| v34-T11 | 대상 외 곡 동일성 | M-A1 |
+| T1 | S5 outfit_follow 기록 조건 | OF-S1 |
+| T2 | S6 저장 시 반영·skip·예외 | OF-S2·OF-S3·OF-S4 |
+| T3 | S7 랜딩 200/404·XSS·닉네임 | SH-S1·SH-S2·SH-S3·SH-S6·SH-A1 |
+| T4 | S8 og.jpg | SH-S4·SH-S5·SH-A1 |
+| T5 | v3.234 재실행 + 17곡 동일 | M-S1~S9·M-A1 |
+| T6 | A1 곡 아티스트 커버 | CV-U1·CV-U2·E-2 |
+| T7 | A2·A3 대상 고정·자동 복귀 | CV-U3·CV-U4·E-2 |
+| T8 | A4 옷 입히는 중 확인 팝업 | CV-U5 |
+| T9 | ② 작곡 중 옷 변경 | OF-S6·E-3 |
+| T10 | 차트·마이페이지 ⋯ 공유 | SR-U2·SR-U3·SR-U4·SR-U5·E-1 |
+| T11 | 웹 링크 진입·자동재생 | LK-U2·LK-U4·LK-U5·LK-U6·E-1 |
+| T12 | 네이티브 aidol://track | LK-U3·E-5 |
+| T13 | 재생 기록 1회·큐 append | LK-U7·E-1 |
+| T14 | Node 하네스(파서·문구·아티스트 결정) | LK-U1·SR-U1·CV-U1 |
+| 회귀 | v3.227~v3.234 전 기능(커버 적용·발매 응답·가을산 밤바람·재생 1회·어린이·로그인 콜백) | RG-S1·RG-U1·RG-A1·E-4 |
+| 보안 | XSS·비공개/삭제 노출·닉네임 | SH-S2·SH-S3·SH-S5·LK-U1·X-L1 |
+
+### M — v3.234 병합 회귀 (서버 S1~S4, 스테이징 fake) — v3.234 tests(harness_v3234·regress_*) 를 v3.235 스테이징본에서 **그대로 재실행**
+
+**M-S1. 커버 생성 시 착장 기록 [unit/서버] (v34-T1)**
+- Given: 사용자 U, 실사 아티스트 cid=C(`characters/{U}/{C}/sheet.png`, used_items 4개), 가상 슬롯, MinIO 스텁.
+- When: `POST generate-cover` × character_object_name {C permanent 시트, 가상 legacy 경로, `character_snapshots/…` 경로, 없음(인물 없는 커버)} + `_build_character_snapshot` 예외 주입 1회.
+- Then: permanent 시트 → `cover_sessions.character_snapshot` = {character_id:C, used_items(현재 4개), sheet = `character_snapshots/` 불변 복사본(원 sheet.png 와 다른 키)} · 나머지 경우·예외 → 필드 없음 · **모든 경우 커버 응답 200·응답 본문 키 orig 동일** · 로그 `[CoverOutfitSnap] session=… cid=… items=n`. refine-cover 는 세션 스냅샷 변경 0.
+
+**M-S2. 커버 확정 시 스냅샷 교체 [unit/서버] (v34-T2)**
+- Given: 곡 T(character_id=C, 스냅샷=옛 착장 니트 3개), M-S1 의 세션(새 착장 후디 4개), Redis `cache:track:v4:{T}`·`cache:track:{T}` 존재.
+- When: `PUT /tracks/{T} {cover_image_url: <세션 버전 URL>}`(src=session).
+- Then: `tracks.user_character_snapshot` = 세션 스냅샷(name = 현재 characters.name) · cover_image_url 갱신 · Redis 두 키 삭제 · 이어서 `GET /tracks/{T}` → `cover_character.used_items` = 후디 4개 · PUT 응답 본문 키 orig 동일 · 로그 `decision=apply items 3→4`.
+
+**M-S3. 교체하면 안 되는 커버 [unit/서버] (v34-T3, D2 v3.234)**
+- When: ① 다른 cid 세션 커버 ② 인물 없는 커버 세션 ③ revert ④ file(직접 업로드) 커버 ⑤ 다른 사용자의 세션 URL.
+- Then: 전부 스냅샷 바이트 동일(sheet 경로·used_items·name) · 커버 갱신 자체는 orig 와 같은 결과(⑤ 는 orig 와 같은 거절) · 로그 `decision=skip reason=…` 사유 기록.
+
+**M-S4. 구세션 추정 — 가을산 밤바람 보호 [unit/서버] (v34-T4) — FAIL 게이트(과거 곡 오변경)**
+- Given: character_snapshot 없는 구세션 2종 — (a) 시트 MinIO last_modified ≤ 세션 버전 created_at("집으로" 재현: 시트 09:36, 커버 09:39) (b) 시트 lm > 세션 created_at("가을산 밤바람" 재현: 커버 09-25 09:30, 시트 09-26).
+- Then: (a) 현재 characters 로 재구성 적용 · (b) **스냅샷 무변경**(바이트 동일) · MinIO stat 실패 → 무변경(fail-safe).
+
+**M-S5. 다듬기 버전 확정 [unit/서버] (v34-T5)** — 같은 세션 v1(refine) URL 로 확정 → M-S2 와 같은 스냅샷 적용 · v0/v1 어느 쪽이든 결과 동일.
+
+**M-S6. 발매 시 보관함 커버 [unit/서버] (v34-T6)** — `upload-from-generation` + body.cover_object_name(같은 cid 세션 스냅샷 있음) → 세션 스냅샷 채택 · 다른 cid 세션·세션 없음·cover 없음 → v236 현행(`_build_character_snapshot` 현재 착장) · 발매 응답 키·status orig 동일(v3.227 `[SnapFix]`·`[SongSource]` 로그 유지).
+
+**M-S7. 개명 정합 [unit/서버] (v34-T7)** — 아티스트 개명(artist_name_sync 실행) → 옛 이름 세션으로 커버 교체 → snapshot.name = **현재 이름** · 이후 재개명 → artist_name_sync 가 이 곡도 갱신(필터 `$type object` + name≠새 이름 매칭).
+
+**M-S8. 예외 격리 [unit/서버] (v34-T8)** — `_cover_outfit_snapshot` 내부 예외(세션 조회·MinIO·characters 조회 각각) 주입 → PUT 200·cover_image_url 갱신·스냅샷 무변경·경고 로그 1줄·Traceback 이 응답에 섞이지 않음.
+
+**M-S9. 소급 스크립트 [unit/서버] (v34-T9)** — prod 스냅샷 사본(fake, tracks 40·스냅샷 17) 대상: dry-run(기본) = **정확히 1건 `6ab790d5…` 집으로**, 가을산 밤바람 미포함, DB 쓰기 0 · `--apply --track 6ab790d5…` → 스냅샷 = 후디 4개·시트 불변 복사·`cache:track`/`cache:track:v4` 삭제 · 2회차 dry-run 0건·apply 무변경(멱등) · `--track` 없이 `--apply` → 거절(전체 일괄 적용 불가 확인).
+
+**M-A1. 스냅샷 보유 곡 동일성 [api — prod 무쓰기] (v34-T11·T5) — FAIL 게이트** — 배포 전 기준값: 스냅샷 보유 17곡 `GET /tracks/{id}` 의 `cover_character`(name·used_items·sheet 경로) JSON 저장 → 배포 후 같은 호출(캐시 우회 위해 10분 경과 또는 Redis 키 확인) → **17곡 전부 동일**("집으로" 소급 전) · 응답에 `outfit_follow` 키 없음.
+
+### OF — 작곡 중 옷 변경 따라가기 (서버 S5·S6, 스테이징 fake)
+
+**OF-S1. 발매 시 추적 표시 조건 [unit/서버] (T1)**
+- Given: 가짜 시계 now, 곡 아티스트 cid=C.
+- When: `character_jobs` 픽스처 × 발매: ① C 의 processing job(created now-10분) ② C 의 done·consumed 없음 ③ 다른 cid job ④ created now-2h-1초 ⑤ refunded=True ⑥ consumed_at 있음 ⑦ 다른 사용자 job ⑧ C job 2건(최신 1건 선택) ⑨ 스냅샷 출처가 커버 세션(M-S6 경로) ⑩ character_jobs 조회 예외 주입.
+- Then: ①②⑧ → `tracks.outfit_follow = {job_id(최신), until: now+24h}` · ③~⑦⑨ → 필드 없음 · ⑩ → 필드 없음 + **발매 200·응답 키 orig 동일** · 로그 `[OutfitFollow] armed track=… cid=… job=…`(①②⑧만).
+
+**OF-S2. 옷 저장 시 곡 스타일링 반영 [unit/서버] (T2 핵심)**
+- Given: OF-S1 ① 로 표시된 곡 T(커버 없음, 스냅샷=옛 착장), Redis v4 키.
+- When: 해당 job 으로 `POST /character/save` 경로①(update, character_id=C).
+- Then: T 스냅샷 = 새 착장(used_items·시트 불변 복사·name=현재 이름) · `outfit_follow` `$unset` · Redis `cache:track:{T}`·`cache:track:v4:{T}` 삭제 · `GET /tracks/{T}` cover_character.used_items = 새 착장 · **save 응답 본문·⭐ 과금·`consumed_via=save:update` 표시 orig 동일** · 로그 `[OutfitFollow] apply track=… items old→new`.
+
+**OF-S3. 반영 여부 판정 매트릭스 [unit/서버] (T2) — FAIL 게이트(커버=착장 원칙 위반)**
+- When(같은 job save① 후): ① 곡에 **같은 cid 인물 커버**(세션 character_snapshot cid=C) ② 인물 없는 커버(no_person) ③ 다른 아티스트 인물 커버 ④ `until` 경과(now+24h+1초) ⑤ 다른 job_id 로 저장 ⑥ 다른 사용자의 같은 cid 값 곡 ⑦ outfit_follow 없는 C 의 과거 곡(D2 동결) ⑧ 같은 job 에 곡 2개 표시(작곡 2곡 발매).
+- Then: ① skip(스냅샷 바이트 동일, reason=cover_owns) · ② ③ apply · ④⑤⑥⑦ 무변경(조회 대상 아님) · ⑧ 두 곡 모두 apply · 두 번째 저장(같은 job 재save) → 이미 unset 이라 추가 변경 0.
+
+**OF-S4. legacy 경로·예외·시그니처 호환 [unit/서버] (T2)** — ① legacy→cid 경로③(`save:legacy`) 저장도 OF-S2 와 같은 결과 ② `_mark_job_consumed` 반환값 추가 후 **기존 호출부 전수**(grep) 동작 동일(반환값 무시 호출 포함) ③ 곡 조회·스냅샷 빌드·Redis 삭제 각각 예외 주입 → save 200·응답 동일·경고 로그 · ④ consume 대상 job 없음(sync 생성 저장) → 곡 조회 0회.
+
+**OF-S5. outfit_follow 응답 비노출 [unit/서버]** — 표시된 곡으로 `GET /tracks/{id}`·`/tracks/my`·차트·검색·피드 트랙 카드·관리자 웹 트랙 조회 → `outfit_follow` 키 0(직렬화 pop) · 나머지 키 orig 동일 · artist_name_sync·v3.230 닉네임 동기화가 이 필드를 건드리지 않음.
+
+**OF-S6. 작곡 중 옷 변경 시퀀스 [unit/서버] (T9 서버측)** — fake 시계로 순서 재현: 작곡 시작 → C 옷 입히기 job processing → 발매(커버 없이) → job done → save① → **곡 스타일링 = 새 옷** / 대조군: 발매 → 그 뒤 새로 시작한 C 옷 입히기 → save① → **과거 곡 동결**(D2) / 발매 후 인물 커버(같은 cid)를 먼저 확정 → 이후 save① → skip(커버가 착장 결정).
+
+### SH — 공유 랜딩·OG (서버 S7·S8, 스테이징 fake) — 무인증 공개 표면
+
+**SH-S1. 공개 곡 랜딩 [unit/서버] (T3)**
+- Given: 공개·비블라인드 곡 P(title "첫눈", 아티스트 "충이", 커버 있음).
+- When: `GET /track/{P}` · `HEAD /track/{P}`.
+- Then: 200 `text/html; charset=utf-8` · `og:type=music.song` · `og:title` = `「첫눈」 충이` · `og:description` = "MAIDOL에서 AI로 만든 곡 — 탭하면 바로 재생돼요" · `og:image` = `https://api.maidol.ai.kr/track/{P}/og.jpg`(절대 URL) · `og:url` = `https://api.maidol.ai.kr/track/{P}` · [바로 듣기] = `https://app.maidol.ai.kr/?track={P}` · `location.replace` 대상 URL 동일 · [앱에서 열기] = `aidol://track/{P}` · HEAD = 본문 0·헤더 동일 · 커버 없는 곡 → og:image = 기본 `invite_og_v2.png` · 명칭 "MAIDOL"(AIDOL 단독 노출 0).
+
+**SH-S2. 노출 금지 곡 [unit/서버] (T3) — 최상위 FAIL 게이트(비공개·삭제 곡 노출)**
+- When: 비공개 곡 · 블라인드 곡 · 삭제(문서 없음) · 존재하지 않는 24hex · 형식 오류(23자·25자·비hex `zzzz…`·대문자 hex·`../`·`%2e%2e%2f`·빈 값·쿼리 주입 `{id}?x=<script>`) — 각각 GET·HEAD, 비로그인 / **소유자 토큰 동반**.
+- Then: 전부 404 HTML("비공개로 바뀌었거나 삭제된 곡이에요" + 웹앱 CTA) · **본문·헤더·og 태그에 제목·아티스트명·커버 URL·곡 id 존재 여부 차이 0**(비공개와 없는 id 의 응답 본문 바이트 동일) · 소유자 토큰이 있어도 랜딩은 404(무인증 표면) · 형식 오류는 DB 조회 0 · 5xx 0.
+
+**SH-S3. XSS·개인정보 [unit/서버] (T3) — 최상위 FAIL 게이트**
+- Given: 공개 곡 제목·아티스트명 픽스처 = `"><script>alert(1)</script>` · `</title><img src=x onerror=alert(1)>` · `' onmouseover='x` · `javascript:alert(1)` · `&lt;` 이미 인코딩된 값 · 이모지·한글·2000자 제목 · 줄바꿈/NULL 문자.
+- Then: 모든 출력 위치(title·og:* content 속성·본문 텍스트·JS 문자열)에서 `html.escape(quote=True)` 적용 — 결과 HTML 파서로 `<script>` 노드가 고정 인라인 스크립트 외 0개 · 속성 탈출 0 · JS 리다이렉트 URL 은 **서버가 검증한 24hex id 로만 구성**(제목·쿼리값 혼입 0) · 이중 인코딩 오표시 기록 · **업로더 닉네임·uploader_id·이메일·user_character_snapshot·가사·is_public 등 내부 필드 문자열 0**(어린이 업로더 곡 포함 동일, D10) · 응답 헤더 `X-Content-Type-Options: nosniff` 유무 기록.
+
+**SH-S4. OG 썸네일 [unit/서버] (T4)**
+- Given: 공개 곡 커버 PNG 5.8MB(중앙값)·7.5MB(최대)·세로형·정사각형, MinIO 스텁.
+- When: `GET /track/{P}/og.jpg` 2회 · 커버 교체(해시 변경) 후 1회 · HEAD 1회.
+- Then: 1회차 miss → `image/jpeg` 1200×630(레터박스, 왜곡 0)·**300KB 미만**·MinIO `og/tracks/{P}_{해시8}.jpg` 1개 생성 · 2회차 hit(변환 0·MinIO put 0) · 커버 교체 후 새 해시 키로 miss(옛 이미지 재사용 0) · `Cache-Control` 1일 · 로그 `[ShareLanding] og track=… cache=hit|miss`.
+
+**SH-S5. OG 방어 [unit/서버] (T4) — 최상위 FAIL 게이트(비공개 커버·얼굴 원본 노출)** — ① 비공개·블라인드·없음·형식 오류 → 302 기본 OG(이미지 바이트 0) ② **공개 시 캐시된 뒤 비공개 전환** → 302(캐시 객체가 있어도 제공 0) ③ 커버 값이 `faces/`·`evidence/`·원본 사진·`characters/…/original` 경로 → 302, MinIO get 0(cover-preview 가드 재사용) ④ 손상 PNG·0바이트·거대 해상도(디컴프레션 폭탄) → 302·워커 크래시 0 ⑤ 동시 10요청 miss → 5xx 0(중복 put 허용 여부 기록).
+
+**SH-S6. 라우트 등록·기존 공개 라우트 [unit/서버]** — `main.py` md5 = `78ab7074…` 불변 · referral.py diff = include 2줄만 · 라우트 목록 diff = `/track/{track_id}`·`/track/{track_id}/og.jpg`(GET·HEAD) 추가 외 0 · `/invite/{code}`·guardian_manage 라우트 응답 orig 동일 · 새 라우트에 인증 의존성 0 · `/tracks/…` 기존 API 와 경로 충돌 0(`/track/` 단수) · 로그 `[ShareLanding] … ua=…` 에 IP 외 개인정보 0, UA 길이 절단 기록.
+
+**SH-A1. 배포 후 랜딩 스모크 [api — prod, 무쓰기(OG 캐시 제외)] (T3·T4)** — 공개 곡 1개(팀 테스트 계정 곡 우선): `curl -s`/`curl -I` → 200·og 태그 5종·바로 듣기 URL · og.jpg 200 JPEG·크기·2회차 hit 로그 · 비공개 곡 id 1개(관리자 조회로 id 만 확보) → 404 본문에 제목 0 · 형식 오류 404 · 과거 공유 링크 형식(`/track/{id}`) 살아남 확인 · `/invite/{code}` HEAD 200 불변.
+
+### CV — 앱 1조 커버 착장 (A1~A4, Node 하네스 + 코드 리뷰)
+
+**CV-U1. 커버 아티스트 결정 함수 [unit/앱] (T6·T14)**
+- When: 입력 조합 × {곡 모드, 앨범 모드}: selectedTrack.character_id {C, 없음} × musicStore.artistCharacterId {D, 없음} × getArtist {성공, 404, 네트워크 오류} × /me {실사만, 가상만, 둘 다, 없음}.
+- Then: 우선순위 **track cid > compose cid > /me** · 곡 cid 있으면 그 1명만 반환(1.5 두 명 선택 생략) · getArtist 실패 → /me 폴백 · 앨범 모드 → 항상 /me(현행) · 아티스트 없음 → 가사 질문 직행 신호(:1078-1080 현행) · 로그 `[CoverArtist] source=track|compose|me cid=…` 1줄.
+
+**CV-U2. 커버 화면 연결 [unit/앱 + 코드 리뷰] (T6)** — 실사 4명 계정 픽스처(대표=가상), 아티스트 C 곡: 1.7 에 C 시트 표시 · generate-cover 요청 `character_object_name` = C permanent 시트 · focus 최신화(:1641-1665)·복원(:544-551)도 같은 cid 사용 · 영속 대화 복원(v3.202 H-⑤)·되감기(H-④ commitRewindAnswer) 동작 동일 · MyTrack 타입에 `character_id` 추가 + `/tracks/my` 응답에 해당 필드가 **실제로 존재**하는지 스테이징/원격 openapi 로 확인(없으면 compose/me 폴백만 동작 — 판정 회부).
+
+**CV-U3. 의상 바꾸러 가기 대상 고정 [unit/앱] (T7)**
+- Given: characterTaskStore 잔존값 = 다른 아티스트 X(마지막으로 연 ArtistResult 의 targetCharacterId·originalPhotoObjectName).
+- When: 커버 아티스트 C 대화에서 handleWardrobeChange.
+- Then: 이동 전 taskStore = {targetCharacterId:C, characterKind:C.kind, legacyContract:false, originalPhotoObjectName:C 원본 또는 null} · completeApi = C 시트 · outfitStore = C used_items · returnToCover 플래그 set · 이어진 ArtistLoading 요청 캡처의 `character_id`=C·원본 사진=C 것(**X 값 혼입 0**) · /me 폴백일 때 /me 의 character_id/virtual_character_id 사용 · **어린이+실사** → K12 안내 문구 표시 후 navigate 0(v3.232 유지) · 로그 `[CoverWardrobe] target cid=… kind=…`.
+
+**CV-U4. 완성 후 커버 대화 복귀 [unit/앱] (T7, D4)** — ① returnTo='cover' job finalize 성공 → `CoverGeneration`(Studio) 이동, ArtistResult 이동 0 · 디렉터 1줄 "새 옷으로 갈아입었어요! 이 의상으로 커버를 만들까요?" 1회(재진입 시 중복 0) ② 앨범 모드 → RootStack `AlbumCoverGeneration` ③ **returnTo 없는 일반 꾸미기 → ArtistResult 착지(현행 불변)** ④ recovered job(서버 회수) → returnTo 없음 → 현행 ⑤ finalize 실패·save 실패 → 커버 이동 0·기존 오류 처리 ⑥ 작업 카드 '확인하기'·맵 말풍선·알림 '지금 보기' 각 진입 경로에서 ①과 같은 착지 ⑦ generationJobStore 영속본에 returnTo 없는 구 데이터 로드 → 예외 0 · 로그 `[CoverWardrobe] return-to-cover job=…`.
+
+**CV-U5. 옷 입히는 중 '이 의상 그대로' [unit/앱] (T8, D5)** — 커버 cid 의 job {processing, done-unsaved, 없음, 다른 cid processing}: processing·done-unsaved → 1.7 안내 "아직 옷을 입히는 중이에요 — 완성되면 바뀐 옷으로 이어서 할게요" + 탭 시 **앱 내 다이얼로그(showAlert)** "지금 만들면 이전 의상으로 커버가 만들어져요" [이전 의상으로 진행][기다리기] — 시스템 Alert 호출 0 · [기다리기] → generate-cover 요청 **0** · [이전 의상으로 진행] → 현행 진행 · 없음/다른 cid → 팝업 0(현행) · 로그 `[CoverWardrobe] keep-while-dressing`.
+
+**CV-U6. 1조 정적 범위 [unit — 정적]** — diff 파일 = PLAN 변경 매트릭스 1조 5개 외 hunk 0 · ArtistCodyScreen 무변경 · TrackedJob `returnTo` 는 optional additive · ⭐ 확인 다이얼로그(v3.230 SC)·중복 409(v3.228)·이탈 가드(v3.230 L) 코드 경로 무변경.
+
+### SR — 앱 2조 공유 (B1~B4, Node 하네스 + 코드 리뷰)
+
+**SR-U1. 공유 URL·문구 [unit/앱] (T14)** — `trackShareUrl(id)` = `${BACKEND_BASE_URL}/track/${id}`(= `https://api.maidol.ai.kr/track/{id}`, 끝 슬래시·이중 슬래시 0) · 남의 곡 문구 = `「{title}」 - {artist}\nMAIDOL에서 들어보세요\n{url}` · 내 곡(`isOwn`) = 기존 베타 ⭐50 문구 유지 · 제목·아티스트 없음/공백/이모지/줄바꿈 포함 → 문구 깨짐 0(폴백 규칙 기록) · id 가 24hex 아니면 공유 중단(fail 로그).
+
+**SR-U2. 플랫폼 분기 [unit/앱] (T10)** — ① 네이티브 → `Share.share` 1회(message·url) ② 웹 `navigator.share` 있음 → 사용 ③ 웹 `navigator.share` 없음 → `Clipboard.setStringAsync(url 포함 문구)` + showAlert "링크를 복사했어요" ④ `navigator.share` AbortError(사용자 취소) → 조용히 종료(클립보드·알림 0) ⑤ 기타 거부 → 클립보드 폴백 ⑥ 클립보드 실패 → 오류 안내 1회 · 로그 `[TrackShare] open|shared|copied|fail`.
+
+**SR-U3. 비공개 곡 공개 후 공유 [unit/앱] (T10, D7)** — `is_public===false` 내 곡: showAlert "비공개 곡은 링크를 받은 사람이 들을 수 없어요. 차트에 공개하고 공유할까요?" [취소][공개하고 공유] · [취소] → **PUT 0·공유 0** · [공개하고 공유] → `PUT /tracks/{id} {is_public:true}` 1회 → 200 이면 공유 진행 + onShared 콜백(마이페이지 `fetchTracks(true)` → '차트 스트리밍 중') · 400(블라인드 등) → 서버 메시지 그대로 표시·공유 0 · 네트워크 오류 → 공유 0 · 연타 → PUT 1회 · `is_public` 미정(undefined, 남의 곡) → 팝업 0 · 로그 `[TrackShare] publish-then-share`.
+
+**SR-U4. 공용 ⋯ 시트 '공유하기' [unit/앱 + 코드 리뷰] (T10, D6)** — TrackActionSheet 기본 항목 순서 = 재생·좋아요·재생목록·플레이리스트·**공유하기(share-2)**·extraItems — 기존 항목 순서·로그인 게이트(좋아요·플레이리스트) 불변 · **비로그인·어린이에도 '공유하기' 노출**(D10) · `shareable={false}` → 숨김 · 사용처 6곳(Chart·MyMusic·Search·Playlist·Feed·FeedDetail) 전부 노출·ChartScreen diff 0 · 시트 높이(v3.218 ScrollView) 항목 +1 에서 잘림 0(작은 화면 코드 리뷰 + 폰 웹 확인은 E-1).
+
+**SR-U5. 마이페이지·다운로드 시트·범위 제외 [unit — 정적] (T10, D12)** — MyMusic: 죽은 `handleShareTrack` 제거·v3.221 숨김 주석 정리·B1 경유(`isOwn:true`) · extraItems(다운로드 2택·Inst.·차트 업로드/숨기기·삭제) 불변 · TrackShareDownloadSheet '링크 복사' = `trackShareUrl`(옛 `/player?track=` 문자열 grep 0) · **MusicResultScreen·PlayerScreen 에 공유 버튼 신규 0**(D12, PlayerScreen.tsx:1189 주석은 D6 로 갱신만).
+
+### LK — 링크 진입·즉시 재생 (B5·B6, Node 하네스 + 코드 리뷰)
+
+**LK-U1. 링크 파서 [unit/앱] (T14) — FAIL 게이트(임의 값으로 API 호출)** — 웹 `?track=` × {정상 24hex, 대문자 hex, 23/25자, 비hex, 빈 값, `track=a&track=b` 중복(첫 값 규칙 기록), URL 인코딩, `<script>`, `track` 과 `ref` 동반, 해시 `#token=` 동반} · 네이티브 {`aidol://track/{id}`, `aidol://track/{id}/`, `aidol://track/{id}?x=1`, `aidol://oauth/callback…`, `aidol://feed/{id}`, `https://…`} → 유효 24hex 만 pending, 나머지 null · oauth/feed URL 은 trackLink 가 소비 0(기존 핸들러 몫).
+
+**LK-U2. 소비 시점·착지 [unit/앱] (T11)** — ① pending 있음 + 라우트 Splash → 소비 0, Splash 이탈 첫 syncRoute 에서 1회 소비 ② `GET /tracks/{id}` 200 → `navigate('Player', {track: data, via:'share'})` 1회 ③ 404 → showAlert "비공개로 바뀌었거나 삭제된 곡이에요" + 차트 유지(Player 이동 0) ④ 네트워크 오류 → 안내·크래시 0 ⑤ 소비 즉시 `history.replaceState` — `track` 만 제거, `ref`·기타 파라미터·해시 보존 ⑥ 새로고침·뒤로가기 후 재소비 0 ⑦ webOAuthTokenPending(웹 `#token=`) 부팅과 동시 → OAuth 처리 먼저·로그인 완료 후 Player 착지(둘 다 성공, 순서 기록) ⑧ v3.223 restoreSession 하이드레이션 완료 전 소비 0(큐 덮어쓰기 방지) · 로그 `[TrackLink] captured|consumed|not-found src=web`.
+
+**LK-U3. 네이티브 딥링크 [unit/앱] (T12)** — `Linking.getInitialURL` = `aidol://track/{id}`(콜드 스타트) → LK-U2 와 같은 착지 · 실행 중 `url` 이벤트 → Player · 같은 URL 이벤트 2회 연속 → 1회 · **OAuth 콜백 `aidol://oauth/callback` 처리(App.tsx:564-591) 결과 orig 동일** · React Navigation linking config diff 0(`feed/:feedId` 유지) · 로그 `src=native`.
+
+**LK-U4. 추천코드·기존 진입 공존 [unit/앱] (T11 회귀)** — `?track=…&ref=CODE` → pendingReferral 프리필(`utils/pendingReferral.ts:82-86`) 유지 + Player 착지 · `?ref=` 단독 → 현행 · 파라미터 없음 → 현행 Splash→차트(resetToChartTab) · 래퍼(app-shell) diff 0.
+
+**LK-U5. 자동재생 차단 오버레이 [unit/앱 + 코드 리뷰] (T11, D9)** — HTMLAudioElement 스텁: ① `play()` resolve → `autoplayBlocked=false`, 오버레이 0 ② reject(NotAllowedError) → `autoplayBlocked=true` 구독 통지 → via='share' 이면 "▶ 탭해서 듣기" 오버레이(커버·곡명) ③ 오버레이 탭 → `resumeFromGesture()` 가 **탭 핸들러 안에서 동기로 `el.play()`** 호출(await·setTimeout 뒤 호출이면 FAIL — iOS 제스처 요건, 코드 리뷰) → 재생·오버레이 해제 ④ via≠'share' 에서 차단 → 오버레이 0(현행 일시정지 표시) ⑤ v3.217 웹 단일 audio element 유지(새 element 생성 0) ⑥ 네이티브 → 오버레이 로직 미실행 · 로그 `[TrackLink] autoplay-blocked|gesture-play`.
+
+**LK-U6. 튜토리얼 생략 [unit/앱] (T11, D9)** — first-run fresh + via='share' → `TutorialOverlay enabled=false`·튜토리얼 완료 플래그 기록 0 → 다음 일반 Player 진입 시 튜토리얼 노출 · via 없음 → 현행.
+
+**LK-U7. 재생 기록·큐 [unit/앱] (T13, D11) — FAIL 게이트(중복 기록)** — playRecord 세션 규칙(v3.229) 하네스: ① 링크 진입 → 70% 도달 → `POST /charts/record-play` **정확히 1회**(비로그인·로그인 각각) ② 오버레이 대기 중(재생 0초) → 0회 ③ 70% 전 이탈 → 0회 ④ 같은 곡 재진입 → 규칙대로(세션 1회) ⑤ 큐: 기존 재생목록 [a,b] 보존 + 링크 곡 append 후 해당 인덱스 재생(v3.223 곡 단위 관행) · 이미 큐에 있는 곡 → 중복 추가 규칙이 일반 재생과 동일 · 비회원 재생목록(v3.36) 동일 · v3.225 자동 진행·미니플레이어 동작 불변.
+
+### RG — 기존 기능 회귀
+
+**RG-S1. 서버 회귀 하니스 [unit/서버] — FAIL 게이트** — 스테이징 `orig/` vs 새 코드, 같은 fake DB: ① v3.227 발매 응답(`upload-from-generation` status·키, `[SnapFix]`) ② 커버 적용 `PUT /tracks/{id}` 응답·`_validate_cover_image_url` 거절 규칙 ③ v3.228 genJobs 순서·409 ④ v3.229 record-play·artist_name_sync ⑤ v3.230 닉네임 사본 소급 ⑥ v3.232 어린이 `child_restricted`(킬 스위치 현 상태 그대로)·v3.233 보호자 관리 라우트 ⑦ `/invite/{code}` ⑧ `/character/save` 경로①②③ 응답·과금·consume — 차이 = PLAN 이 명시한 추가 동작(스냅샷 교체·outfit_follow)뿐 · 컨테이너 Python 3.11 compile·import 성공.
+
+**RG-U1. 앱 회귀 하니스·정적 [unit/앱] — FAIL 게이트** — v3.227~v3.234 Node 하네스 전수 재실행(v3.229 R-U·playRecord 재생 1회 · v3.230 SC·L·NK·RF · v3.231 답변 편집 · v3.232 KM/SO/CA · v3.233 보호자 허용·권한 갱신 · v3.234 '이어서 하기' 정리) PASS · `npx tsc --noEmit` 0 · 2조 diff = PLAN 매트릭스 8개 외 hunk 0 · AuthPanel·SocialLoginButtons·OAuth 핸들러 diff 0.
+
+**RG-A1. prod 무쓰기 전후 비교 [api]** — 배포 전·후 동일 호출 결과 비교(팀 테스트 계정·비로그인): `/api/health` · 공개 곡 32개 `GET /tracks/{id}`(cover_character·주요 키) · `/tracks/my`(키 목록 — outfit_follow 0) · 차트 TOP100 · 검색 1건 · `/points/costs` · `/invite/{code}` HEAD · 로그인 콜백 엔드포인트 도달(302/200 코드) — 차이 0(단 "집으로" 소급 후에는 그 1곡만 차이 허용).
+
+### E — E2E (핵심 여정·회귀만, 배포 후 폰 웹/실기기)
+
+**E-1. 공유 → 링크 → 즉시 재생 [e2e] (T10·T11·T13) — 팀 과금 0** — 서버·웹 배포 후: ① 비로그인 폰 웹 차트 → 곡 ⋯ → '공유하기' → (Android Chrome) 공유 시트 문구·URL / (navigator.share 없는 브라우저) 클립보드 + "링크를 복사했어요" ② 복사한 `https://api.maidol.ai.kr/track/{id}` 를 새 탭(iOS Safari·Android Chrome·PC Chrome) 으로 열기 → 랜딩 → 즉시 `app.maidol.ai.kr/?track=` → 모바일 `/app?track=`·PC iframe → Splash 후 Player 착지·주소창 `track` 제거 → 자동재생 허용 시 즉시 재생 / 차단 시 '탭해서 듣기' 1탭 재생 · 튜토리얼 미노출 → 다시 Player 를 열면 노출 ③ 카카오톡 인앱 브라우저로 링크 열기 → 재생 또는 오버레이 1탭(외부 브라우저 탈출 필요 여부 기록) ④ 로그인 계정·어린이 QA 계정(C)으로 ①② 반복 — 어린이도 공유·재생 가능 ⑤ 비공개 곡 id 링크 → 랜딩 404 문구 · `app.maidol.ai.kr/?track=<비공개 id>` 직접 → 앱 안내 후 차트 ⑥ `?track=…&ref=CODE` → 가입 화면 추천코드 프리필 ⑦ 마이페이지 ⋯ '공유하기': 팀 테스트 계정에 비공개 곡이 있으면 공개 전환 확인 → [취소](PUT 0) 먼저, 이어 [공개하고 공유] → '차트 스트리밍 중' — 없으면 [취소]까지만 ⑧ 재생 70% 도달 → record-play 1건(팀 테스트 계정 곡 대상, 실사용자 곡은 대표 승인 시 1회) · 기존 재생목록 보존 · ⋯ 시트 기존 항목(좋아요·재생목록·플레이리스트) 동작.
+
+**E-2. 커버 대화 의상 교체 여정 [e2e] (T6·T7·v34-T10) — 팀 과금 0, 과금 구간은 대표 실사용 관찰** — 팀(무과금 구간): 다중 아티스트 계정이 아닌 경우 팀 테스트 계정으로 마이페이지 곡 → 커버 만들기 → 1.7 에 **곡 아티스트** 시트 표시 → 다른 아티스트 ArtistResult 를 먼저 열어 둔 상태에서 '의상 바꾸러 가기' → Cody → 적용 → ⭐ 확인 다이얼로그 **[취소]**(요청 캡처 불가 시 여기까지 화면만) · 옷 입히기 job 이 있는 상태 시뮬레이션 불가 시 CV-U5 로 갈음. 대표 실사용 관찰(대표가 실제로 커버를 만들 때, 로그만 읽음): `[CoverArtist] source=track` → `[CoverWardrobe] target cid=<곡 아티스트>` → `[CharJob] consumed via=save:update` → `[CoverWardrobe] return-to-cover` → `[CoverOutfitSnap] session=… items=n` → `decision=apply` → 플레이어 스타일링 탭·피드 글쓰기 착장 첨부 = 새 옷 · 어린이 계정은 스타일링 '자세히 보기' 숨김 유지(v3.232).
+
+**E-3. 작곡 중 옷 변경 여정 [e2e — 조건부: 대표 실사용 관찰] (T9)** — 대표가 작곡 중 아티스트 꾸미기를 할 때 서버 로그 관찰: `[OutfitFollow] armed track=…` → 옷 입히기 '확인하기' → `[OutfitFollow] apply … items old→new` → 플레이어 스타일링 = 새 옷 · 관찰 기회 없으면 OF-S6(스테이징) 결과로 판정하고 "실사용 미관찰"로 보고.
+
+**E-4. 기존 기능 핵심 회귀 여정 [e2e] — 팀 과금 0 — 최상위 FAIL 게이트** — 새 웹에서: 카카오/구글 로그인 콜백(웹 `#token=`) → 세션 복원·새로고침 → 차트 재생·미니플레이어·자동 진행 → 곡 재생 70% 1회 기록(팀 계정 곡) → 마이페이지 곡 목록·⋯ 다운로드/Inst./차트 토글 **화면 진입만** → "가을산 밤바람" 플레이어 스타일링 = 니트 3개 유지(D2) → 작곡·커버·아티스트 꾸미기 ⭐ 확인 [취소] → 어린이 QA 계정: 안전 안내·제한 UI(v3.232)·보호자 허용 반영(v3.233) 동일 · 콘솔 오류·Worklets 경고 신규 0.
+
+**E-5. 네이티브 딥링크 [e2e — 조건부: 새 APK 설치 기기(v1.3.1 후보) 있을 때] (T12)** — `adb shell am start -d "aidol://track/{id}"` 콜드·실행 중 → Player 재생 · 랜딩 [앱에서 열기] 탭 → 앱 열림 · 앱 ⋯ '공유하기' → 네이티브 공유 시트 · 소셜 로그인 OAuth 딥링크 정상 · 빌드 없으면 "APK 대기" 보고(웹만으로 D8 완결).
+
+### P — 배포·운영 게이트 [ops]
+
+**P-1. 재대조·범위 [ops] — FAIL 게이트(다른 세션 변경 덮어쓰기)** — 배포 직전 라이브 md5 = PLAN 기준값 5종(tracks `9842e644…`·upload `6e6b66ff…`·character `87273de1…`·referral `42b7613b…`·main `78ab7074…`) 일치 · 불일치 시 중단·재병합 · 반영 파일 = tracks·upload·character·referral·share_landing(신규)·scripts/backfill_cover_outfit_snapshot.py(신규) 6개 외 0 · 9005 미러링 0.
+
+**P-2. 사전 점검·백업 [ops] — FAIL 게이트** — 진행 중 gen_jobs·generations·inst_jobs·character_jobs·영상 인코딩·voice clone = 0 확인(아니면 대기 — boot_id sweep 환불 방지) → `.bak_pre_v3235` 백업·docker tag `pre-v3235-live` → **대표 승인** → build·재생성(-v logs 볼륨·S3_REGION, v3.234 DEPLOY §3-2).
+
+**P-3. 배포 스모크 [ops] — 최상위 FAIL 게이트** — health 200 · 기동 로그 Traceback 0 · 라우트 +2 · SH-A1 · RG-A1 · M-A1(17곡 동일) · S4 **dry-run(prod) = 1건 집으로·가을산 밤바람 미포함** · 이상 시 롤백(태그 `pre-v3235-live` 재기동 + 백업 파일 원복) 절차 리허설 문서 확인.
+
+**P-4. "집으로" 소급 [ops — 대표 승인 후] (D14, v34-T9)** — 승인 → `--apply --track 6ab790d5…` → `GET /tracks/6ab790d5…` cover_character.used_items = 후디 4개(라이크모스트 후디 멜란지·핀턱 와이드 팬츠 블랙·나이키 AF1 화이트·드로스트링 백 블랙) · 스냅샷 시트 = `character_snapshots/` 새 복사본 · 가을산 밤바람·나머지 15곡 GET 불변 · 2회차 dry-run 0건.
+
+**P-5. 웹앱 배포 순서 [ops]** — 서버 P-3 통과 **후** `/Users/pearl/homepage/maidol/deploy.sh app` · 래퍼 무변경 확인 · 배포 후 번들에 `trackShareUrl`·`[TrackLink]` 포함 확인 → E-1·E-4.
+
+**P-6. 카카오 미리보기 [ops — 대표 수행]** — 최초 공유 전 카카오 공유 디버거로 `https://api.maidol.ai.kr/track/{id}` 스크랩 → 제목 `「곡명」 아티스트`·설명·og.jpg 썸네일 표시 · 카카오톡 대화방 실제 공유 미리보기 1회 · 커버 교체 후 캐시 초기화 절차 기록 · 페이스북/X 등 다른 스크래퍼는 기록만.
+
+**P-7. 24시간 관찰 [ops]** — 로그 `[OutfitFollow] armed/apply/skip`·`[CoverOutfitSnap]`·`[ShareLanding]`(404 비율·UA 분포)·`[TrackLink]` 오류 · Traceback 0 · MinIO `og/tracks/` 객체 수·용량 증가 기록 · outfit_follow 가 남아 있는 곡 수(24h 후 무의미 — 기록만) · 사용자 문의/오작동 0.
+
+### X — 공통 정책
+
+**X-T1. 문구·팝업 정책 [unit — 정적] — FAIL 게이트** — 이번 diff 신규 문자열 전수(랜딩 HTML·404 문구·공유 문구·"링크를 복사했어요"·공개 확인·"탭해서 듣기"·디렉터 복귀 1줄·옷 입히는 중 안내/확인): 이모지 0(⭐·▶ 기호 허용 여부는 기존 관행 기준 기록) · "AIDOL" 단독 노출 0(MAIDOL) · 시스템 `Alert.alert` 신규 0(showAlert 만) · 영문 코드·에러 원문 노출 0.
+
+**X-L1. 로그·비밀값·개인정보 [unit — 정적] — FAIL 게이트** — 신규 로그 prefix(`[CoverOutfitSnap]`·`[CoverOutfitBackfill]`·`[OutfitFollow]`·`[ShareLanding]`·`[CoverArtist]`·`[CoverWardrobe]`·`[TrackShare]`·`[TrackLink]`)에 닉네임·이메일·토큰·전체 URL 의 `#token=`/`ref` 값 0 · 랜딩 HTML·og 응답에 내부 필드 0(SH-S3 재확인) · 커밋·문서에 비밀값 0.
+
+### 게이트 요약
+
+- **트랙 구조**: 서버 = M-S1~S9(v3.234 재실행) → OF-S1~S6 → SH-S1~S6 → RG-S1 → M-A1·RG-A1 배포 전 기준값 → P-1·P-2 → 대표 승인·배포 → P-3(SH-A1·M-A1·RG-A1·dry-run) → 대표 승인 시 P-4 → P-7. 앱 = 1조 CV-U1~U6 / 2조 SR-U1~U5·LK-U1~U7 / 공통 RG-U1·X-T1·X-L1 → P-5 웹 배포(서버 뒤) → E-1·E-2·E-4 → P-6(대표) → 조건부 E-3·E-5.
+- **태그별 수(총 58)**: [unit] 43(서버 = M-S1~S9 9 · OF-S1~S6 6 · SH-S1~S6 6 · RG-S1 1 = 22 / 앱 = CV-U1~U6 6 · SR-U1~U5 5 · LK-U1~U7 7 · RG-U1 1 = 19 / 정적 공통 = X-T1·X-L1 2) · [api] 3(M-A1·SH-A1·RG-A1) · [e2e] 5(E-1~E-5, E-3 대표 실사용 관찰 조건부·E-5 APK 조건부) · [ops] 7(P-1~P-7, P-4 대표 승인·P-6 대표 수행).
+- **E2E 목록**: E-1 공유 → 링크 → 즉시 재생(차트·마이페이지 ⋯, iOS Safari·Android Chrome·PC·카카오 인앱, 비로그인·로그인·어린이) · E-2 커버 대화 의상 교체(팀 무과금 구간 + 대표 실사용 로그 관찰) · E-3 작곡 중 옷 변경(대표 실사용 관찰 조건부) · E-4 기존 기능 핵심 회귀(로그인 콜백·재생 1회·가을산 밤바람·어린이) · E-5 네이티브 aidol://track(APK 조건부).
+- **비용 상한**: 팀 과금 0(⭐ 확인은 전부 [취소], 생성 성공 판정은 스테이징 fake). prod 쓰기 = OG 캐시 객체 · 테스트 계정 세션 · (있을 때) 테스트 계정 곡 공개 전환·record-play · 대표 승인 시 "집으로" 1곡 apply. prod 계정 생성 0 · 실사용자 데이터 변경 0.
+- **최상위 FAIL(배포 중단·롤백)**: 비공개·블라인드·삭제 곡 정보 노출(SH-S2·SH-S5) · 랜딩 XSS·닉네임/내부 필드 노출(SH-S3) · 대상 외 곡 스타일링 변화(M-A1·M-S4 가을산 밤바람) · 기존 핵심 여정 회귀(E-4·P-3).
+- **FAIL 게이트**: 인물 커버 곡에 옷 저장이 덮어씀(OF-S3) · 발매/저장/커버 응답·과금 변화(OF-S1·OF-S4·RG-S1) · 링크 파서가 비hex 로 API 호출(LK-U1) · 재생 기록 중복(LK-U7) · 다른 아티스트 얼굴·착장으로 옷 입히기(CV-U3) · 일반 꾸미기 착지 변화(CV-U4 ③) · diff 범위 밖 변경(CV-U6·RG-U1·SH-S6·P-1) · 시스템 Alert·AIDOL·비밀값(X-T1·X-L1).
+- **판정 회부(결함이면 FAIL)**: CV-U2 `/tracks/my` 에 character_id 가 없을 때의 동작 · LK-U1 중복 `track` 파라미터 규칙 · LK-U2 ⑦ OAuth 와 동시 진입 순서 · SH-S5 ⑤ 동시 miss 중복 put · E-1 ③ 카카오 인앱 자동재생/외부 브라우저 탈출. **기록·보고만**: SH-S3 nosniff 헤더 · SH-S6 UA 절단 · P-6 다른 스크래퍼 · P-7 og 캐시 용량·outfit_follow 잔존 수.

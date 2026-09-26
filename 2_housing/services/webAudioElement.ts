@@ -18,6 +18,68 @@ let statusCbOwner: WebStatusCbOwner = 'playback';
 /** ended 시 동기 이어재생 훅(playback.ts가 등록) — true 반환 = 처리됨(didJustFinish 미전파) */
 let endedHandler: (() => boolean) | null = null;
 
+// ── v3.235 B6: 자동재생 차단 상태 — 링크 진입(사용자 활성화 없음) 초기 play() 가 NotAllowedError 로
+// 거부되면 true. 구독자(PlayerScreen)가 '탭해서 듣기' 오버레이를 띄우고, 탭 핸들러 안에서
+// resumeWebPlaybackFromGesture() 로 **동기** el.play() 를 호출한다(iOS 제스처 요건 — await/setTimeout 금지).
+// 'play' 이벤트(어떤 경로든 재생 시작)·새 로드·unload 시 false 로 해제.
+let autoplayBlocked = false;
+const autoplayListeners = new Set<(blocked: boolean) => void>();
+
+function setAutoplayBlocked(v: boolean): void {
+  if (autoplayBlocked === v) return;
+  autoplayBlocked = v;
+  for (const fn of Array.from(autoplayListeners)) {
+    try {
+      fn(v);
+    } catch (err: any) {
+      console.error('[WebAudio] autoplay 구독 콜백 오류', { message: err?.message });
+    }
+  }
+}
+
+/** 초기 play() 거부가 자동재생 정책(사용자 활성화 없음) 때문인지 — 순수 */
+export function isAutoplayPolicyError(err: any): boolean {
+  return String(err?.name || '') === 'NotAllowedError';
+}
+
+export function isWebAutoplayBlocked(): boolean {
+  return autoplayBlocked;
+}
+
+/** 구독 — 해제 함수 반환(useEffect cleanup 용) */
+export function subscribeWebAutoplayBlocked(fn: (blocked: boolean) => void): () => void {
+  autoplayListeners.add(fn);
+  return () => {
+    autoplayListeners.delete(fn);
+  };
+}
+
+/**
+ * 사용자 탭 핸들러 안에서 호출 — 단일 element 에 동기 play()(v3.217 단일 element 유지, 새 element 생성 0).
+ * 반환 = play() 호출 여부(element 없음·src 없음이면 false). 거부되면 차단 상태 유지(오버레이 잔존).
+ */
+export function resumeWebPlaybackFromGesture(): boolean {
+  if (Platform.OS !== 'web' || !el || !el.getAttribute('src')) return false;
+  try {
+    const p = el.play(); // ← 동기 호출(제스처 안). 이 앞에 await 를 두지 말 것
+    if (p && typeof (p as any).then === 'function') {
+      (p as any).then(
+        () => setAutoplayBlocked(false),
+        (err: any) => {
+          console.warn('[WebAudio] 제스처 play 거부', { name: err?.name, message: err?.message });
+          dispatch();
+        }
+      );
+    } else {
+      setAutoplayBlocked(false);
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('[WebAudio] 제스처 play 실패', { message: err?.message });
+    return false;
+  }
+}
+
 export function setWebEndedHandler(fn: () => boolean): void {
   endedHandler = fn;
 }
@@ -63,7 +125,10 @@ function ensureElement(): HTMLAudioElement {
   audio.setAttribute('playsinline', 'true');
   audio.addEventListener('timeupdate', () => dispatch());
   audio.addEventListener('durationchange', () => dispatch());
-  audio.addEventListener('play', () => dispatch());
+  audio.addEventListener('play', () => {
+    setAutoplayBlocked(false); // v3.235 B6: 어떤 경로로든 재생 시작 = 차단 해제(오버레이 닫힘)
+    dispatch();
+  });
   audio.addEventListener('pause', () => {
     // ended 직전의 pause는 ended 리스너가 didJustFinish로 처리 — 여기서 중복 전파 금지
     if (!audio.ended) dispatch();
@@ -170,6 +235,7 @@ export class WebTrackSound {
   async unloadAsync(): Promise<any> {
     if (!this.current || !el) return { isLoaded: false };
     gen++; // 이 래퍼 포함 전 래퍼 무효화 — 다음 로드가 새 세대를 연다
+    setAutoplayBlocked(false); // v3.235 B6: 곡 해제 — 이전 곡 차단 표시 잔존 방지
     try {
       el.pause();
     } catch {}
@@ -194,13 +260,17 @@ export function createWebTrackSound(
   }
   const audio = ensureElement();
   gen++;
+  const loadGen = gen;
   setWebStatusCb(cb ?? null, owner);
+  setAutoplayBlocked(false); // v3.235 B6: 새 로드 — 판정 초기화
   audio.src = uri;
   if (shouldPlay) {
     const p = audio.play();
     if (p && typeof (p as any).catch === 'function') {
       (p as any).catch((err: any) => {
-        console.warn('[WebAudio] 초기 play 거부(autoplay 정책 가능)', { message: err?.message });
+        console.warn('[WebAudio] 초기 play 거부(autoplay 정책 가능)', { name: err?.name, message: err?.message });
+        // v3.235 B6: 자동재생 정책 거부만 차단 상태로(곡 전환으로 인한 AbortError 등 제외·구세대 무시)
+        if (loadGen === gen && isAutoplayPolicyError(err)) setAutoplayBlocked(true);
         dispatch();
       });
     }

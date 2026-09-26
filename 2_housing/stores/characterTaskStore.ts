@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { CoverReturnTo, CoverReturnMeta } from './generationJobStore';
 
 export type CharacterTaskMode = 'sheet' | 'refine' | 'outfit';
 
@@ -44,6 +45,13 @@ export interface ArtistDraft {
    *  대화를 다시 이어가면(ArtistInput 미러링) 새 객체로 덮여 연결이 풀린다(= 재시도 대화) */
   submittedJobId?: string | null;
   submittedAt?: number | null;
+}
+
+/** v3.235 [CoverWardrobe]: 커버 대화 '의상 바꾸러 가기' 표식(메모리 전용) — ArtistLoading 옷 입히기 접수 시 job 으로 옮겨진다 */
+export interface CoverWardrobeArm {
+  to: CoverReturnTo;
+  meta: CoverReturnMeta;
+  armedAt: number;
 }
 
 export interface CharacterTaskResult {
@@ -101,6 +109,9 @@ interface CharacterTaskState {
   /** v3.234 [ArtistDraft]: 최근 성공 저장된 아티스트 생성(sheet) job id(최신순, 최대 10) — 영속.
    *  draft.submittedJobId가 여기 있으면 "이미 완료된 대화"로 보고 이어가기 대상에서 제외(방어) */
   completedArtistJobIds: string[];
+  /** v3.235 [CoverWardrobe]: 커버 대화에서 꾸미기로 보낸 표식(null=없음). 다른 흐름이 대상 아티스트를
+   *  다시 지정하면(setInput targetCharacterId — ArtistResult·ArtistInput) 자동 해제 → 일반 꾸미기 착지 불변 */
+  returnToCover: CoverWardrobeArm | null;
 
   startTask: (mode: CharacterTaskMode) => void;
   setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'photoIntent' | 'reuseOriginalObjectName' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
@@ -115,6 +126,10 @@ interface CharacterTaskState {
   clearDraft: () => void;
   /** v3.234 [ArtistDraft]: 생성 접수(job_id 수신) 시 현재 draft를 그 job에 연결 */
   markDraftSubmitted: (jobId: string) => void;
+  /** v3.235 [CoverWardrobe]: 커버 아티스트로 꾸미기 대상 고정 + 복귀 표식(원자적 — setInput 의 표식 해제와 무관) */
+  armCoverWardrobe: (input: ArmCoverWardrobeInput) => void;
+  /** v3.235 [CoverWardrobe]: 표식 해제(커버 화면 복귀 등) */
+  clearCoverWardrobe: (reason: string) => void;
   /** 모든 상태 초기화 */
   reset: () => void;
 }
@@ -148,6 +163,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
   legacyContract: false,
   draft: null,
   completedArtistJobIds: [],
+  returnToCover: null,
 
   startTask: (mode) =>
     set({
@@ -157,7 +173,17 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       // sheet 모드는 completeApi가 곧 덮어씀
     }),
 
-  setInput: (data) => set((state) => ({ ...state, ...data })),
+  // v3.235 [CoverWardrobe]: 대상 아티스트 재지정(targetCharacterId 키 포함) = 커버 흐름 밖 → 복귀 표식 해제
+  setInput: (data) =>
+    set((state) => {
+      if (state.returnToCover && 'targetCharacterId' in data) {
+        console.info('[CoverWardrobe] 복귀 표식 해제 — 다른 흐름이 대상 지정', {
+          armed: state.returnToCover.meta.characterId, next: data.targetCharacterId ?? null,
+        });
+        return { ...state, ...data, returnToCover: null };
+      }
+      return { ...state, ...data };
+    }),
 
   completeApi: (result) => set({ apiResult: result, apiError: null }),
 
@@ -179,8 +205,31 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       return { draft: { ...d, submittedJobId: jobId, submittedAt: Date.now() } };
     }),
 
+  armCoverWardrobe: (input) =>
+    set((state) => {
+      const cid = input.characterId || null;
+      return {
+        targetCharacterId: cid,
+        characterKind: input.characterKind,
+        // cid 를 모르면(레거시 단일 문서 계정) 구 계약(me/save) — 현행 ArtistResult 레거시 경로와 동일
+        legacyContract: !cid,
+        originalPhotoObjectName: input.originalPhotoObjectName || null,
+        apiResult: input.sheet ?? state.apiResult,
+        apiError: null,
+        returnToCover: { to: input.to, meta: { ...input.meta, characterId: cid }, armedAt: Date.now() },
+      };
+    }),
+
+  clearCoverWardrobe: (reason) =>
+    set((state) => {
+      if (!state.returnToCover) return {};
+      console.info('[CoverWardrobe] 복귀 표식 해제', { reason, cid: state.returnToCover.meta.characterId });
+      return { returnToCover: null };
+    }),
+
   reset: () =>
     set({
+      returnToCover: null,
       mode: null,
       apiResult: null,
       apiError: null,
@@ -286,4 +335,82 @@ export function settleArtistDraftOnSuccess(info: ArtistJobSuccessInfo): boolean 
     console.error('[ArtistDraft] 생성 완료 draft 정리 실패', err);
     return false;
   }
+}
+
+// ── v3.235 [CoverWardrobe]: 커버 인물 = 곡 아티스트 고정(D3) · 의상 바꾸러 가기 대상 고정(③-b) · 완료 후 커버 복귀(D4) ──
+
+export interface ArmCoverWardrobeInput {
+  characterId: string | null;
+  characterKind: 'real' | 'virtual';
+  originalPhotoObjectName: string | null;
+  /** 꾸미기 기준 시트(ArtistCody 미리보기·refine 베이스) — 없으면 기존 값 유지 */
+  sheet: CharacterTaskResult | null;
+  to: CoverReturnTo;
+  meta: Omit<CoverReturnMeta, 'characterId'>;
+}
+
+/** 표식 유효 시간 — 꾸미기 화면에서 고르다 떠난 뒤 한참 지나 다른 경로로 옷을 입히면 커버로 끌려가지 않게 */
+export const COVER_WARDROBE_ARM_TTL_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * ArtistLoading 옷 입히기 접수(registerArtistJob) 시 1회 호출 — 유효한 커버 표식을 job 필드로 돌려주고 표식은 소비.
+ * 대상 cid 가 표식과 다르거나(다른 아티스트 꾸미기) 만료면 {} (= returnTo 없음 → 현행 ArtistResult 착지).
+ */
+export function takeCoverWardrobeReturn(
+  targetCid: string | null | undefined
+): { returnTo?: CoverReturnTo; returnMeta?: CoverReturnMeta } {
+  try {
+    const arm = useCharacterTaskStore.getState().returnToCover;
+    if (!arm) return {};
+    useCharacterTaskStore.setState({ returnToCover: null });
+    const fresh = Date.now() - arm.armedAt <= COVER_WARDROBE_ARM_TTL_MS;
+    const same = (arm.meta.characterId ?? null) === (targetCid ?? null);
+    if (!fresh || !same) {
+      console.info('[CoverWardrobe] 복귀 표식 폐기', { fresh, same, armed: arm.meta.characterId, target: targetCid ?? null });
+      return {};
+    }
+    console.info('[CoverWardrobe] 복귀 표식 → 옷 입히기 job', { to: arm.to, cid: arm.meta.characterId });
+    return { returnTo: arm.to, returnMeta: arm.meta };
+  } catch (err) {
+    console.error('[CoverWardrobe] 복귀 표식 소비 실패', err);
+    return {};
+  }
+}
+
+export type CoverArtistSource = 'track' | 'compose' | 'me';
+
+export interface CoverArtistTrackLike {
+  id?: string | null;
+  character_id?: string | null;
+  user_character_snapshot?: { character_id?: string | null } | null;
+}
+
+/**
+ * v3.235 A1 [CoverArtist]: 커버에 넣을 아티스트 결정 — 곡 아티스트 cid > 작곡 직후 cid > /character/me(현행).
+ * - track: 곡 문서의 character_id(발매 시 선택 아티스트). 응답에 없으면 곡 스타일링 스냅샷의 character_id.
+ * - compose: 곡에 아티스트 정보가 전혀 없고, 그 곡이 방금 발매한 곡(musicStore.savedTrackId)일 때만
+ *   작곡 대화에서 고른 아티스트(musicStore.artistCharacterId) — 오래된 작곡 선택이 다른 곡에 새지 않게.
+ * - me: 앨범 모드·아티스트 없는 곡·정보 없음 → 현행 대표 아티스트(/character/me) 흐름.
+ * 조회 실패 시 me 폴백은 호출부(화면) 몫.
+ */
+export function pickCoverArtistCid(input: {
+  albumMode: boolean;
+  track?: CoverArtistTrackLike | null;
+  composeCid?: string | null;
+  savedTrackId?: string | null;
+}): { cid: string | null; source: CoverArtistSource; via: string } {
+  if (input.albumMode) return { cid: null, source: 'me', via: 'album' };
+  const t = input.track;
+  if (!t) return { cid: null, source: 'me', via: 'no-track' };
+  const direct = typeof t.character_id === 'string' ? t.character_id.trim() : '';
+  if (direct) return { cid: direct, source: 'track', via: 'character_id' };
+  const snap = typeof t.user_character_snapshot?.character_id === 'string' ? t.user_character_snapshot.character_id.trim() : '';
+  if (snap) return { cid: snap, source: 'track', via: 'snapshot' };
+  // 곡 문서가 "아티스트 없음"을 명시(character_id: null)했으면 작곡 선택으로 덮지 않는다
+  const explicitNone = t.character_id === null;
+  const compose = (input.composeCid || '').trim();
+  if (!explicitNone && compose && t.id && input.savedTrackId && t.id === input.savedTrackId) {
+    return { cid: compose, source: 'compose', via: 'saved-track' };
+  }
+  return { cid: null, source: 'me', via: explicitNone ? 'track-no-artist' : 'no-cid' };
 }

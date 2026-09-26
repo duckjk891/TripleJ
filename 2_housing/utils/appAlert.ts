@@ -1,4 +1,10 @@
-import { useDialogStore, type DialogButton, type DialogOptions } from '../stores/dialogStore';
+import {
+  useDialogStore,
+  type DialogButton,
+  type DialogOptions,
+  type DialogCustomContext,
+} from '../stores/dialogStore';
+import type { ReactNode } from 'react';
 
 export type AppAlertButton = DialogButton;
 
@@ -13,4 +19,23 @@ export function showAlert(title: string, message?: string, buttons?: AppAlertBut
     console.info('[appAlert] show', { title, buttons: buttons?.length ?? 0, lockMs: options?.lockMs ?? 0 });
   }
   useDialogStore.getState().show(title, message, buttons, options);
+}
+
+/**
+ * v3.236 A1: 앱 내 다이얼로그 카드 안에 커스텀 본문을 렌더(제목 + render 결과).
+ * 버튼·잠금·닫기 처리는 콘텐츠가 직접 한다(ctx.close). 백드롭·뒤로가기 = onRequestClose(미지정 시 닫힘).
+ * 기존 showAlert 경로와 같은 큐(AppDialogHost)를 쓰므로 App.tsx 에 별도 마운트가 필요 없다.
+ * 반환값 = 다이얼로그 id.
+ */
+export function showCustomDialog(
+  title: string,
+  render: (ctx: DialogCustomContext) => ReactNode,
+  options?: { lockMs?: number; onRequestClose?: () => void }
+): number {
+  if (__DEV__) {
+    console.info('[appAlert] show custom', { title, lockMs: options?.lockMs ?? 0 });
+  }
+  return useDialogStore
+    .getState()
+    .showCustom(title, { render, onRequestClose: options?.onRequestClose }, { lockMs: options?.lockMs });
 }

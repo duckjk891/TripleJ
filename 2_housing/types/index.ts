@@ -149,6 +149,12 @@ export interface FatigueStatus {
   skip_minutes: number; // 30
   ladder: Record<string, number>;
   skip_wait_count: number;
+  /** v3.236 S1 additive(구 서버 없음): 전부 줄이는 데 필요한 칸 = ceil(잔여/1800) */
+  skip_units_needed?: number;
+  /** v3.236 S1 additive: 칸 × 단가 */
+  skip_total_cost?: number;
+  /** v3.236 S1 additive: 일괄 단축 최대 칸(24 = 12h/30m) */
+  skip_max_units?: number;
 }
 
 /** v3.118: GET /api/fatigue/status?all=1 — 4 디렉터 일괄 (Map 휴식 티켓용 1회 조회) */
@@ -160,4 +166,23 @@ export interface FatigueStatusAll {
 /** v3.94: POST /api/fatigue/skip 성공 응답 = status payload + skipped_minutes (fatigue.py:123-125) */
 export interface FatigueSkipResult extends FatigueStatus {
   skipped_minutes: number;
+}
+
+/** v3.236 A5: POST /api/fatigue/skip-bulk 성공 응답 = status payload + 일괄 단축 결과 */
+export interface FatigueBulkSkipResult extends FatigueSkipResult {
+  /** 요청 칸(클라이언트 units 그대로) */
+  units_requested?: number;
+  /** 실제 적용 칸(서버 clamp·경합 후) */
+  units_applied: number;
+  /** 서버 30분 단가 */
+  unit_cost?: number;
+  /** 경합으로 남은 칸 환불 ⭐(보통 0) */
+  points_refunded?: number;
+  /** 실제 차감 ⭐(경합 환불 반영 후) */
+  points_spent: number;
+  /** 요청 후 잔액(없으면 앱이 /points/balance 재조회) */
+  balance?: number;
+  request_id: string;
+  /** 같은 request_id 재요청 → 저장된 응답 재생(추가 차감 없음) */
+  replayed: boolean;
 }

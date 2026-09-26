@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText } from './ui';
+import { trackShareUrl } from '../utils/trackShare';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -128,7 +129,8 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
 
   const handleCopyLink = async () => {
     if (!track) return;
-    const link = `${BACKEND_BASE_URL}/player?track=${trackId}`;
+    // v3.235 B4: 공유 링크 통일 — 서버 공유 랜딩(`/track/{id}`, utils/trackShare). 예전 player 쿼리 링크는 서버 라우트가 없어 404 였음.
+    const link = trackShareUrl(trackId);
     try {
       await Clipboard.setStringAsync(link);
       onClose();

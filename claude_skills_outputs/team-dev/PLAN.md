@@ -7278,3 +7278,287 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 ## 배포
 - 서버 필요(backend 만): md5 재대조 → tracks.py·upload.py 반영 + scripts/backfill_cover_outfit_snapshot.py 추가 → EC2 관행대로 이미지 빌드·재기동(prod 변경 = 대표 승인) → 스모크(T2·T3·T9 dry-run) → 대표 승인 후 "집으로" 소급 apply.
 - 앱 빌드 불필요(코드 무변경).
+
+# v3.235 (2026-09-26) — 옷 바꾸는 모든 경로의 착장 반영 + 차트·마이페이지 ⋯ '공유하기' + 공유 링크 즉시 재생
+
+**요청 원문**: "아티스트 페이지에서 아티스트 꾸미기로 옷을 바꾸든, 작곡하는 과정에서 옷을 바꿔서 만들던 커버 이미지 만들때 이미지 디렉터와의 대화에서 옷을 갈아입던 아티스트 착장에 반영을 해줘야하는거야. 만든 곡을 바로 공유할 수 있도록 하는 공유 버튼도 있어야할 것 같고. 공유한 링크로 들어오면 해당 곡이 바로 재생될 수 있도록 해줘."
+**대표 정정(공유 진입점)**: "이렇게 하면 안되고. 차트나 마이페이지에서 공유하기 기능이 있으면 좋겠는데. 점 세개 눌러서" → 결과 화면(MusicResult) 공유 버튼은 **범위 제외**, 차트·마이페이지 곡 행 ⋯ 메뉴의 '공유하기'로 공유.
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 1638d9b, v1.3.0 — v3.234 앱 수정 커밋됨·웹 미배포). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004/app`(읽기 전용). 분석 원본 = `/private/tmp/server_staging_v3235/orig/app/`(.bak·static·__pycache__ 제외 tar). 실측 스크립트 = `/private/tmp/server_staging_v3235/q/q1~q3.py`(Mongo find·MinIO stat 만). **v3.234 는 서버 미배포**(스테이징 `/private/tmp/server_staging_v3234/deploy/` — tracks.py `28148746…`·upload.py `01ca815d…`·scripts/backfill_cover_outfit_snapshot.py). 출처 [P]=planner 실측·코드 확인.
+
+서버 md5 기준값([P] 2026-09-26 재실측 — v3.234 PLAN 기준값과 **동일**, 다른 세션 변경 없음): routes/tracks.py `9842e6448d0a453e99c479312f92e26f`(09-25 13:14:56Z) · routes/upload.py `6e6b66ff05b20c36e109683d8777da74` · routes/character.py `87273de1a2419929b5bb106068b2e54c`(09-25 09:10Z) · routes/referral.py `42b7613badbd109fc3c35620adaa24bf`(09-25 13:18Z) · main.py `78ab70741f8dc476e879c330608e0bc7`(비대상).
+
+## 0단계 Plan verification findings
+
+### 1. 데이터 실측 [P q2·q3]
+- tracks 40(공개 32·비공개 8·블라인드 0), 스냅샷 보유 17(v3.234 이후 신규 "첫눈"·"대안이 읍었습니다" 2곡 — 둘 다 스냅샷 = 현재 착장 = 커버 착장, 정합).
+- 곡별 타임라인(작곡 시작→발매→커버, 같은 아티스트 착장 저장 시각 character_jobs consumed save:update/legacy) 전수: **작곡 중(작곡 시작~발매) 옷 변경 0건 · 발매~커버 사이 옷 변경 1건(=집으로, v3.234 대상) · 커버 이후 옷 변경 1건(가을산 밤바람 — 동결이 정답)**. 스냅샷≠현재 착장 = 이 2곡뿐. → **현재 데이터상 불일치는 여전히 "집으로" 1곡**. 이번 요청 1)은 재발 방지(경로 일반화) 성격.
+- 다중 아티스트 계정 2명: c19acda4(실사 4·가상 1, 대표=가상) · 2f85f76c(장충순, 실사 1·가상 1). 커버 세션 51 중 아티스트 시트 사용 14(permanent 14·기타 1). 현재 "커버 인물 ≠ 곡 아티스트" 0건(우연 — 아래 ③-a 위험).
+- 공개 곡 커버 PNG 크기: 중앙값 5.8MB·최대 7.5MB(n=31) → OG 이미지로 원본 직접 사용 부적합(썸네일 필요).
+- 기존 공유 링크 실측(GET): `https://api.maidol.ai.kr/track/{id}` **404** · `https://api.maidol.ai.kr/player?track={id}` **404** · `https://api.maidol.ai.kr/feed/{id}` 404 · `https://app.maidol.ai.kr/?track={id}` 200(SPA 셸 — 앱이 `?track=` 를 읽지 않아 차트로 착지).
+
+### 2. 옷을 바꾸는 경로별 갱신 지점 [P 코드]
+공통 저장점: 옷 입히기 job 완료 → `finalizeArtistJob`(services/generationTracker.ts:515-610, body :554-576 `{sheet_object_name, used_items, character_id}`) → 서버 `POST /character/save` 경로①(routes/character.py:2560-2627: `characters/{uid}/{cid}/sheet.png` 덮어쓰기 :2567 + `used_items` 교체 :2572-2573) → `_mark_job_consumed`(:1466-1486, `save:update`). finalize 는 사용자가 결과를 열 때만 실행(ArtistLoading 대기 :213 · 작업 카드 '확인하기' GenerationJobCard.tsx:57 · 맵 말풍선 MapScreen.tsx:815 · 알림 '지금 보기' generationTracker.ts:693) — 완성됐지만 안 연 job 은 아티스트 착장 미반영(done-unsaved, 의도된 동작).
+곡 스타일링 = `tracks.user_character_snapshot`(PlayerScreen 스타일링 탭·피드 착장 첨부) — 발매 순간 1회(routes/tracks.py:2346-2353 `_build_character_snapshot` 선택 아티스트 현재 착장) + v3.234 S2(커버 적용 시 커버 착장으로 교체, 미배포).
+
+| 경로 | 진입·호출 (file:line) | 아티스트 착장(characters) | 이미 만든/만드는 곡의 스타일링 | 갭 |
+|---|---|---|---|---|
+| ① 아티스트 페이지 '아티스트 꾸미기' | ArtistResultScreen.tsx:1211-1226 버튼 → handleGoCody :571-605(대상 cid 는 진입 시 :240-244 `targetCharacterId` 고정·원본 사진 :301-311) → ArtistCodyScreen.tsx:759-769 → ArtistLoadingScreen.tsx:401-490(`character_id`=targetCharacterId :408·:463) → finalize → save① | **갱신 O** | 이후 발매곡 = 새 옷 O(발매 시점 스냅샷). 이미 발매된 곡 = 동결(v3.234 D4) | 없음(정책 확인만 — D2) |
+| ② 작곡 과정 중 옷 변경 (작곡 흐름엔 옷 단계 없음 — MusicGeneration 아티스트 선택 :1057-1059 후 ①로 다녀옴) | 작곡(Suno 1~2분) 중 ① 실행 → 옷 입히기 job(4~7분, timerStore.ts:174) | 저장되면 O | **job 이 발매(MusicResult handleSave :452 / handleGenerateCover :548→:583) 시점에 아직 진행 중이거나 완성·미확인이면 곡 = 옛 옷**. 이후 아티스트 커버를 만들면 v3.234 S2 가 새 옷으로 교체하지만, **커버 없이(또는 인물 없는 커버로) 끝나면 영구히 옛 옷** | **②-a 발매 후 저장된 '작곡 중 옷 변경'이 곡에 안 붙음** (서버) |
+| ③ 커버 디렉터 '의상 바꾸러 가기' | CoverGenerationScreen.tsx:1467·:2429 버튼 → handleWardrobeChange :1142-1162(`ArtistCody {returnToCover:true}` 만 전달) → Cody → Loading → finalize → save① | 갱신 O(단 대상 아티스트 오류 가능 — ③-b) | 커버 적용 시 v3.234 S1~S3 로 곡 = 커버 착장(**미배포**) | **③-0 v3.234 미배포** · **③-a** 커버 인물 = `/character/me` 대표 실사/가상(:1063·:544·:1647, 서버 character.py:2925-2990 `resolve_representative_artists` :426-450) — **곡 아티스트(track.character_id) 아님**. 실사 4명 계정은 다른 아티스트로 커버 → S2 D2(cid 불일치)로 스타일링 무변경 = 커버 인물과 불일치. **③-b** Cody 대상 = characterTaskStore 잔존값(마지막으로 연 ArtistResult 의 targetCharacterId·characterKind·originalPhotoObjectName — ArtistLoading.tsx:407-437) → **커버 아티스트가 아닌 다른 아티스트에 옷을 입히거나, 다른 아티스트 얼굴 원본으로 재생성될 수 있음**(targetCharacterId null 이면 cid 없이 저장 → 서버 legacy 경로③ = 대표 아티스트 갱신). **③-c** Cody 적용 시 `navigation.reset([Map, ArtistLoading])`(ArtistCodyScreen.tsx:769)로 커버 화면이 스택에서 사라지고 finalize 는 ArtistResult 로 이동(generationTracker.ts:454-459·:595) — "돌아오면 이어서 진행"(:1148) 약속과 달리 수동 재진입 필요. 재진입 시 영속 대화 복원(:535-551)·focus 최신화(:1641-1665)는 동작. **③-d** 옷 입히기가 끝나기 전에 커버로 돌아와 '이 의상 그대로'를 누르면 옛 옷으로 커버 생성(안내 없음) |
+
+### 3. 공유 현황 [P]
+- 공용 ⋯ 시트 `components/TrackActionSheet.tsx`(재생·좋아요·재생목록·플레이리스트 :107-122 + `extraItems` :124-132) — 사용처: ChartScreen.tsx:277(onMore)·:449-456(extraItems 없음) · MyMusicScreen.tsx:596·:1024-1045(다운로드·Inst.·차트 업로드/숨기기·삭제) · SearchScreen :326 · PlaylistScreen :299 · FeedScreen :381 · FeedDetailScreen :222.
+- 마이페이지 ⋯ 공유: `handleShareTrack`(MyMusicScreen.tsx:541-550, `Share.share` + `${BACKEND_BASE_URL}/track/{id}`) — **v3.221 에서 항목 임시 숨김**(:1031, REPORT v3.221 "공유 항목 임시 숨김 — 기능 보존, 복원=1줄"). 링크 자체도 404(§1).
+- `TrackShareDownloadSheet`(MyMusicScreen.tsx:1015-1020 렌더, 공유 모드 미노출) '링크 복사' = `${BACKEND_BASE_URL}/player?track={id}`(TrackShareDownloadSheet.tsx:131) — 404.
+- 플레이어 공유 버튼은 v3.55 에서 제거(PlayerScreen.tsx:1189 "공유는 마이뮤직에서만" 정책) — 이번 정정으로 차트(남의 곡)까지 확장되므로 해당 정책 갱신 필요(D6).
+- 가사 공유 폴백 관행: PlayerScreen.tsx:950-965(네이티브 Share 우선, 웹 미지원 시 클립보드 복사 + 안내).
+- 서버 랜딩 선례: routes/referral.py `public_router`(:94, main.py:770 include) `GET/HEAD /invite/{code}` → `_render_invite_html`(:107-316, OG 카드·웹앱 CTA `https://app.maidol.ai.kr?ref=`·`aidol://` 앱 열기). v3.233 guardian_manage 가 **main.py 무변경으로 public_router 에 합류**(:355-361) — 같은 방식 재사용 가능.
+- 커버 무인증 프록시 `GET /api/upload/cover-preview/{object_name}`(upload.py:922-) — OG 이미지 원천(원본 5~7MB → 썸네일 필요).
+
+### 4. 링크 진입·재생 현황 [P]
+- 네이티브: scheme `aidol`(app.json:5), App Links/Universal Links **없음**(intentFilters·associatedDomains 없음) → https 링크는 항상 브라우저로 열림. 딥링크 처리 = OAuth 콜백만(App.tsx:564-591 handleUrl) + React Navigation linking `feed/:feedId` 만(:604-613). 트랙 딥링크 없음.
+- 웹: app.maidol.ai.kr 루트 = 래퍼(/Users/pearl/homepage/maidol/app-shell/index.html — 모바일 `location.replace('/app'+search+hash)` :9, PC iframe `src='/app'+search+hash` :102, `allow="autoplay; clipboard-write"` :98) → **쿼리 보존됨 — 래퍼 수정 불필요**. 앱은 `?ref=` 만 읽음(utils/pendingReferral.ts:82-86), `?track=` 미처리.
+- 재생: Player 라우트(RootStack modal, App.tsx:694-697)는 `{track:{id}}` 스텁으로 열어도 마운트 시 즉시 로드·재생(PlayerScreen.tsx:756-780 → loadAndPlay :589-612, 웹은 `/tracks/stream/{id}` presigned :571-584) + 풀 트랙 조회(:620-660) — 선례 NotificationsScreen.tsx:116. 
+- 서버 접근: `GET /tracks/{id}`(:1703-, optional auth)·`/tracks/stream/{id}`(:2501-2518)·`/tracks/stream-proxy/{id}`(:1457-1491) 모두 **비공개·블라인드 곡은 소유자 외 404**(`_is_hidden_track` :144-159). 공개 곡은 비로그인 200. 재생 기록 `POST /charts/record-play` optional user(charts.py:229-) — v3.229 세션 규칙(services/playRecord.ts, 70% 1회)은 진입 경로 무관 동작.
+- 웹 자동재생: `webAudioElement.ts:196-207` 초기 `play()` 거부 시 경고 로그 + 상태 dispatch 만(일시정지로 보임) → 링크 클릭으로 새 페이지 진입 시 브라우저 사용자 활성화가 없어 **대부분 차단** 예상(특히 iOS Safari·카카오 인앱). 사용자 탭 1회 필요.
+- 신규 방문자: 플레이어 튜토리얼 오버레이(PlayerScreen.tsx:1509 `screenKey="player"`, first-run fresh 에서 자동 노출 — utils/tutorialGate.ts:39)가 공유 진입 첫 화면을 가림.
+- 비회원 재생목록 정책(메모리 aidol-queue-playlist-policy v3.36): 곡 단위 재생 = append(v3.223, playback.ts:873-905) — 공유 진입도 동일 적용.
+- 어린이 모드(v3.232): 공유는 제한 대상 아님(PLAN v3.232 회귀 A-6 "공유" 유지 항목). 차트 공개·재생 동일.
+
+## 원인
+- ① 정상(발매 이후 곡에 반영, 과거 곡 동결 = 정책).
+- ② **발매 시점에 진행 중이던 옷 입히기**가 발매 뒤 저장돼도 그 곡 스냅샷을 갱신하는 연결이 없다(스냅샷은 발매 1회, tracks.py:2346-2353).
+- ③ v3.234 수정 미배포 + 커버 인물이 곡 아티스트가 아닌 '대표 아티스트'로 정해지고(③-a), 의상 바꾸러 가기가 대상 아티스트를 넘기지 않으며(③-b), 옷 입히기 후 커버 대화로 돌아오지 않는다(③-c·③-d).
+- 공유: 링크 형식 2종 모두 서버 라우트가 없어 404, 마이페이지 항목은 숨김, 차트엔 항목 없음.
+- 즉시 재생: 앱이 `?track=`/`aidol://track/` 을 처리하지 않음 + 웹 자동재생 차단 대비 없음.
+
+## 수정안
+원칙(D1): **곡 스타일링 = 곡 커버에 쓰인 착장. 아티스트 커버가 없으면 발매 시점 착장이되, 발매 시점에 진행 중이던 같은 아티스트 옷 입히기(작곡 중 옷 변경)는 저장되는 순간 그 곡에 반영.** 발매 후 아티스트 페이지에서만 옷을 바꾼 과거 곡은 동결(D2).
+
+### 서버(backend) — v3.234 스테이징 위에 누적(**v3.234+v3.235 단일 배포**)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1~S4 | tracks.py·upload.py·scripts/backfill_cover_outfit_snapshot.py | **v3.234 그대로 편입**(`/private/tmp/server_staging_v3234/deploy/` 를 v3.235 스테이징 base 로 복사, diffs·tests 재사용·재실행) | `[CoverOutfitSnap]`·`[CoverOutfitBackfill]` |
+| S5 | routes/tracks.py upload-from-generation(스테이징본 :2474-2498 스냅샷 결정 직후, insert :2542 전) | 곡 아티스트 cid 확정 + 스냅샷 출처가 커버 세션이 아닐 때, `character_jobs` 에서 `{user_id, character_id: cid, status∈{processing,done}, consumed_at 없음, refunded≠True, created_at ≥ now-2h}` 최신 1건이 있으면 곡 문서에 additive `outfit_follow: {job_id, until: now+24h}` 기록. 조회 실패 = 필드 생략(발매는 절대 막지 않음) | `[OutfitFollow] armed track=… cid=… job=…` |
+| S6 | routes/character.py save 경로①(:2610-2618 `_mark_job_consumed` 직후)·legacy→cid 경로③(:2815 부근 `save:legacy`) | `_mark_job_consumed` 가 소비한 job `_id` 를 반환(시그니처 호환: 반환값 추가만) → `tracks.find({uploader_id, character_id: cid, "outfit_follow.job_id": job_id, "outfit_follow.until" ≥ now})` 각 곡: 커버가 **같은 아티스트 인물 커버**면(v3.234 `_cover_outfit_snapshot` 판정 재사용 — 세션 character_snapshot/legacy 추정이 같은 cid) skip(커버가 착장을 정함), 아니면 `_build_character_snapshot`(지연 import, 시트 불변 복사)로 스냅샷 교체 + `$unset outfit_follow` + Redis `cache:track:{id}`·`cache:track:v4:{id}` 삭제. 전 과정 best-effort(저장 응답 불변, 예외 경고 로그) | `[OutfitFollow] apply|skip track=… reason=… items old→new` |
+| S7 | routes/share_landing.py(신규) + routes/referral.py 끝에 include 2줄(guardian 합류 관행 :355-361, **main.py 무변경**) | `GET/HEAD /track/{track_id}`(무인증, 24hex 가드): 공개·비블라인드 → OG HTML(`og:type=music.song`, title `「{title}」 {artist_name}`, desc "MAIDOL에서 AI로 만든 곡 — 탭하면 바로 재생돼요", `og:image`=S8 썸네일(커버 없으면 invite_og_v2.png), `og:url`) + 본문(커버·제목·아티스트·[바로 듣기]=`https://app.maidol.ai.kr/?track={id}` + 브라우저 즉시 `location.replace` 동일 URL, [앱에서 열기]=`aidol://track/{id}`) · 비공개/블라인드/없음 → 404 HTML("비공개로 바뀌었거나 삭제된 곡이에요" + 웹앱 CTA). **업로더 닉네임 비노출**(어린이 보호 — 아티스트명·곡명만). html.escape 일괄(invite 관행). 기존 dead 링크 `/track/{id}` 형식과 같아 과거 공유 링크도 살아남 | `[ShareLanding] track=… ok=… ua=…` |
+| S8 | share_landing.py | `GET/HEAD /track/{track_id}/og.jpg`: 공개 곡 커버를 Pillow 로 1200×630 JPEG(q≈82, 레터박스) 변환 — MinIO `og/tracks/{id}_{cover해시8}.jpg` 캐시(없을 때만 생성) · Cache-Control 1일 · 비공개/실패 → 302 기본 OG. faces/·evidence/·원본 사진 경로 차단(cover-preview 가드 재사용) | `[ShareLanding] og track=… cache=hit|miss` |
+
+- S5/S6 소급: 과거 발매 시점 진행 중 job 사례 0건(§1) → 소급 없음. "집으로"는 v3.234 S4 로 처리(D14).
+- 스키마: tracks.`outfit_follow`(additive, 24h 뒤 무의미 — 정리 스크립트 불요). 기존 응답 직렬화에 새 필드가 섞이는지 확인(GET /tracks/{id} 는 문서 직렬화 — `outfit_follow` 응답 제외 처리 권장: 직렬화 pop 1줄).
+
+### 앱 1조(착장 — 커버 경로)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| A1 (③-a) | screens/CoverGenerationScreen.tsx checkCharacterAndProceed(:1061-1086)·복원(:544-551)·focus 최신화(:1641-1665)·MyTrack 타입(:369) | 곡 모드에서 곡 아티스트 cid = `selectedTrack.character_id`(MyTrack 에 필드 추가 — /tracks/my 응답 필드 확인) → 없으면 `musicStore.artistCharacterId`(작곡 직후 진입) → `getArtist(cid)`(characterService) 로 sheet_object_name·kind·art_style 확보, 그 1명만 제시(1.5 두 명 선택 생략). cid 없음/조회 실패/앨범 모드 = 현행 `/character/me` 폴백. focus 최신화도 같은 cid 로 | `[CoverArtist] source=track|compose|me cid=…` |
+| A2 (③-b) | CoverGenerationScreen.tsx handleWardrobeChange(:1142-1162) | 이동 전 characterTaskStore 에 커버 아티스트 고정: `setInput({targetCharacterId: cid, characterKind: kind, legacyContract:false, originalPhotoObjectName: artist.original_photo_object_name||null})` + `completeApi({preview_url, object_name: sheet})` + outfitStore 를 해당 아티스트 used_items 로 동기(ArtistResult :240-262 관행). cid 모를 때(=/me 폴백)는 /me 의 character_id/virtual_character_id 사용. 어린이+실사 = 기존 K12 안내(ArtistResult :595-600 문구) 후 이동 안 함 | `[CoverWardrobe] target cid=… kind=…` |
+| A3 (③-c) | services/generationTracker.ts(registerArtistJob :122·finalize :595)·stores/generationJobStore.ts(TrackedJob :74 부근 additive `returnTo?: 'cover'|'albumCover'|null`)·ArtistLoadingScreen.tsx(:476-490 registerArtistJob 호출에 returnTo 전달 — taskStore 에 `returnToCover` 플래그를 A2 가 set)·ArtistCodyScreen.tsx 무변경 | finalize 성공 시 `returnTo==='cover'` 면 ArtistResult 대신 Studio `CoverGeneration`(앨범 모드는 RootStack `AlbumCoverGeneration`)으로 이동 → 영속 대화가 1.7 로 복원되고 focus 최신화가 새 시트를 반영(현행 로직). 디렉터 안내 1줄 "새 옷으로 갈아입었어요! 이 의상으로 커버를 만들까요?" 추가 | `[CoverWardrobe] return-to-cover job=…` |
+| A4 (③-d) | CoverGenerationScreen.tsx handleWardrobeKeep(:1119-1123)·1.7 렌더(:2414-2430) | 커버 아티스트 cid 로 추적 중(processing/done-unsaved) 옷 입히기 job 이 있으면 1.7 에 "아직 옷을 입히는 중이에요 — 완성되면 바뀐 옷으로 이어서 할게요" 표시, '이 의상 그대로' 탭 시 showAlert 확인("지금 만들면 이전 의상으로 커버가 만들어져요" [이전 의상으로 진행][기다리기]) | `[CoverWardrobe] keep-while-dressing` |
+
+### 앱 2조(공유·링크 재생)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| B1 | utils/trackShare.ts(신규) | `trackShareUrl(id)` = `${BACKEND_BASE_URL}/track/${id}` · `shareTrack(track, {isOwn})`: 문구 `「{title}」 - {artist}\nMAIDOL에서 들어보세요\n{url}`(내 곡이면 기존 베타 ⭐50 문구 유지 — MyMusic :545). 네이티브 `Share.share`, 웹 `navigator.share` 가능 시 사용·불가/거부 시 `Clipboard.setStringAsync` + showAlert "링크를 복사했어요"(PlayerScreen :950-965 관행). 비공개(`is_public===false`) → showAlert "비공개 곡은 링크를 받은 사람이 들을 수 없어요. 차트에 공개하고 공유할까요?" [취소][공개하고 공유] → `PUT /tracks/{id} {is_public:true}`(400 블라인드 등 서버 메시지 표출) 성공 시 공유 + 콜백(목록 갱신) | `[TrackShare] open|shared|copied|publish-then-share|fail` |
+| B2 | components/TrackActionSheet.tsx(:124 앞) | 공용 기본 항목 **'공유하기'**(Feather share-2) 추가 — 비로그인 포함 노출, 새 prop `onShared?`·`shareable?`(기본 true) — 차트·마이페이지 + 검색·플레이리스트·피드 ⋯ 동일 적용(D6) | 〃 |
+| B3 | screens/MyMusicScreen.tsx | 죽은 `handleShareTrack`(:541-550) 제거 → B1 경유(`isOwn:true`, 공개 전환 시 `fetchTracks(true)`), v3.221 숨김 주석 정리(:1031). ChartScreen.tsx 는 **무변경**(B2 로 자동 노출) | 〃 |
+| B4 | components/TrackShareDownloadSheet.tsx:131 | '링크 복사' URL 을 `trackShareUrl` 로 통일(시트 공유 모드는 계속 미노출) | 〃 |
+| B5 | utils/trackLink.ts(신규) + App.tsx(boot :645·handleUrl :564-591 옆 신규 effect·syncRoute :667) | 진입 캡처: 웹 `URLSearchParams(location.search).get('track')`(24hex 검증) · 네이티브 `Linking.getInitialURL`/`url` 이벤트 `aidol://track/{id}`. pending 1건 보관 → 컨테이너 ready + 현재 라우트 ≠ Splash 가 되는 첫 시점(syncRoute)에 소비: `GET /tracks/{id}` 선조회 → 200 = `navigate('Player', {track: data, via:'share'})` / 404 = showAlert "비공개로 바뀌었거나 삭제된 곡이에요" 후 차트 유지. 웹은 소비 즉시 `history.replaceState` 로 `track` 파라미터만 제거(`ref` 등 보존). OAuth 콜백 부팅(webOAuthTokenPending)과 독립. React Navigation linking config 는 무변경(Player 파라미터 형식 불일치 회피) | `[TrackLink] captured|consumed|not-found src=web|native` |
+| B6 | screens/PlayerScreen.tsx(마운트 :756-780·튜토리얼 :1509) + services/webAudioElement.ts(:196-207) | webAudioElement 에 `autoplayBlocked` 상태 + 구독 + `resumeFromGesture()`(탭 핸들러 안에서 **동기** `el.play()` — iOS 제스처 요건) 추가. Player 가 `route.params.via==='share'` 이고 웹에서 차단되면 전면 반투명 오버레이 "▶ 탭해서 듣기"(커버·곡명 표시) → 탭 1회 재생·오버레이 해제. 공유 진입 첫 화면은 `TutorialOverlay enabled={via!=='share'}`(다음 진입부터 정상 노출). 공유 진입 재생도 큐 append(v3.223 곡 단위 관행 — Player 마운트 전 `addToQueue` 후 인덱스 재생, 기존 재생목록 보존) | `[TrackLink] autoplay-blocked|gesture-play` |
+
+## 변경 매트릭스
+| 영역 | 파일 | 담당 |
+|---|---|---|
+| 서버 | app/routes/tracks.py(S2·S3·S5 + outfit_follow 직렬화 제외) · app/routes/upload.py(S1) · app/routes/character.py(S6) · app/routes/share_landing.py(S7·S8 신규) · app/routes/referral.py(include 2줄) · scripts/backfill_cover_outfit_snapshot.py(S4) | backend |
+| 앱 1조 | screens/CoverGenerationScreen.tsx · services/generationTracker.ts · stores/generationJobStore.ts · screens/ArtistLoadingScreen.tsx(registerArtistJob 인자 1곳) · stores/characterTaskStore.ts(returnToCover 필드) | app-1 |
+| 앱 2조 | utils/trackShare.ts(신규) · utils/trackLink.ts(신규) · components/TrackActionSheet.tsx · screens/MyMusicScreen.tsx · components/TrackShareDownloadSheet.tsx · App.tsx · screens/PlayerScreen.tsx · services/webAudioElement.ts | app-2 |
+- 두 조 파일 교집합 0. 홈페이지 래퍼(app-shell) 무변경. main.py 무변경. 9005 미러링 없음.
+
+## 역할
+- backend: `/private/tmp/server_staging_v3235/` 에 v3.234 deploy 3파일을 base 로 복사 → S5~S8 추가 → v3.234 tests(harness_v3234·regress_*) 재실행 + 신규 테스트 → 컨테이너 Python 3.11 compile·메모리 오버레이 import(라우트 수: /track/{id}·/track/{id}/og.jpg 2개 증가 외 동일) → DEPLOY.md(v3.234 절차 통합, 태그 `pre-v3235-live`, 백업 `.bak_pre_v3235`) 작성. 서버 쓰기는 대표 1줄 명령만.
+- app-1: A1~A4. app-2: B1~B6. 각 조 `tsc --noEmit` 0 + 순수 함수(trackLink 파서·trackShare URL/문구·outfit 대상 결정) Node 하네스(메모리 app-runtime-testing-limits — 시뮬레이터 없음).
+- test-designer: 아래 T 항목.
+
+## 회귀 위험
+- v3.234 S1~S4 전부(가을산 밤바람 동결·집으로 소급 1건·다른 아티스트 커버 무변경) — v3.234 T1~T11 그대로 재실행.
+- S6 오적용: 커버가 인물 커버인 곡은 skip 이어야 함(커버=착장 원칙). outfit_follow 없는 곡·24h 경과·다른 job 저장 = 무변경. save 응답·과금·consume 표시 불변.
+- v3.229 artist_name_sync·v3.230 닉네임 동기화: 스냅샷 교체 시 name = 현재 이름(v3.234 규칙 공유).
+- 커버 A1: 곡 아티스트가 가상인데 대표 실사만 있던 기존 흐름·앨범 모드·아티스트 없는 사용자(가사 질문 직행 :1078-1080)·되감기(v3.202 H-④ commitRewindAnswer) 동작 유지. 영속 대화 복원(v3.202 H-⑤) 호환.
+- A3: 일반 아티스트 꾸미기(returnTo 없음)는 현행 ArtistResult 착지 불변. 복구(recovered) job 은 returnTo 없음 → 현행.
+- 공유: 좋아요·재생목록/플레이리스트 기존 항목 순서·로그인 게이트 불변. MyMusic extraItems(다운로드 2택·Inst.·차트 토글·삭제) 불변. 시트 높이(v3.218 ScrollView) 항목 +1 수용.
+- 링크: OAuth 콜백(웹 `#token=`·네이티브 `oauth/callback`)·`?ref=` 추천코드 프리필(pendingReferral)·Splash 착지·resetToChartTab·v3.223 restoreSession 하이드레이션 순서 불변. `?track=` 과 `?ref=` 동시 존재 시 둘 다 처리.
+- 재생: v3.229 재생 기록 1회 규칙(공유 진입 1재생 = 최대 1기록)·v3.217 웹 단일 audio element·v3.225 자동 진행·미니플레이어·v3.36 플레이리스트=큐 교체 정책 불변.
+- 어린이(v3.232): 공유·링크 재생 허용, OG 에 닉네임 미노출, K12(실사 꾸미기 차단)는 A2 에서도 유지.
+- 비용·부하: OG 썸네일 최초 1회 변환(곡당, MinIO 캐시) — 스크래퍼 반복 요청은 캐시 hit.
+
+## test-designer 항목
+- T1 (S5) 발매 시 같은 cid 옷 입히기 job processing → tracks.outfit_follow 기록 / job 없음·다른 cid·2h 초과·refunded → 필드 없음 / 조회 예외 주입 → 발매 200.
+- T2 (S6) outfit_follow 곡 + 해당 job save① → 커버 없음 곡 스냅샷 = 새 착장·marker 삭제·Redis v4 키 삭제·GET cover_character.used_items 새 착장 / 같은 cid 인물 커버 곡 → skip / 인물 없는 커버(no_person)·다른 아티스트 커버 → 적용 / until 경과 → 무변경 / legacy 경로③ 저장도 동일 / 예외 주입 → save 200.
+- T3 (S7) 공개 곡 GET/HEAD 200 + og:title·og:image·og:url·바로 듣기 URL `https://app.maidol.ai.kr/?track={id}`·`aidol://track/{id}` / 비공개·블라인드·없는 id·형식 오류 → 404 HTML / 제목·아티스트명 XSS 문자열 escape / 업로더 닉네임 미포함.
+- T4 (S8) og.jpg 최초 miss → 1200×630 JPEG(<300KB) + MinIO 캐시 → 2회차 hit / 커버 없음·비공개 → 302 기본 OG / faces/·원본 경로 커버값 방어.
+- T5 v3.234 T1~T11 재실행(병합 회귀) + 스냅샷 보유 17곡 GET cover_character 배포 전후 동일(집으로 소급 전).
+- T6 (A1) 실사 4명 계정: 아티스트 C 로 만든 곡의 커버 대화 → C 시트로 1.7 표시·generate-cover character_object_name = C 시트 → 확정 후 스타일링 = C 착장 / 곡에 character_id 없음·앨범 모드 → /me 폴백 현행.
+- T7 (A2·A3) 다른 아티스트 ArtistResult 를 마지막으로 연 뒤 커버 → 의상 바꾸러 가기 → 옷 입히기 요청 character_id·원본 사진 = 커버 아티스트 → 완성 후 커버 대화로 자동 복귀·1.7 새 시트 → 커버 생성·확정 → 스타일링 = 새 옷(E2E, v3.234 T10 확장).
+- T8 (A4) 옷 입히는 중 '이 의상 그대로' → 확인 팝업(앱 내 다이얼로그 — 메모리 app-popup-design-rule) / 기다리기 선택 시 생성 요청 0.
+- T9 (②) 작곡 시작 → 아티스트 페이지 꾸미기 요청(진행 중) → 발매(커버 없이) → 옷 입히기 완성·확인 → 플레이어 스타일링 = 새 옷 / 발매 후 새로 시작한 옷 입히기 → 과거 곡 동결.
+- T10 (B2·B3) 차트 ⋯ '공유하기'(비로그인·로그인·어린이) → 네이티브 공유 시트 문구·URL / 웹(navigator.share 없음) → 클립보드 + 안내 / 마이페이지 비공개 곡 → 공개 확인 → PUT 200 → 공유·목록 '차트 스트리밍 중' 표시 / 취소 → 공유 0·PUT 0 / 블라인드 400 메시지 / 기존 ⋯ 항목 회귀.
+- T11 (B5·B6 웹) `https://api.maidol.ai.kr/track/{id}` → app.maidol.ai.kr/?track= → (모바일 /app?track= · PC iframe) → Splash 후 Player 착지·주소창 track 제거 → 자동재생 허용 시 즉시 재생 / 차단 시 '탭해서 듣기' 1탭 재생(iOS Safari·Android Chrome·카카오 인앱→외부 브라우저 탈출 후) / 비로그인·로그인 / 비공개 id → 안내 후 차트 / `?ref=` 동반 시 추천코드 프리필 유지 / 튜토리얼 미노출(다음 진입 노출).
+- T12 (B5 네이티브) `aidol://track/{id}` 콜드 스타트·실행 중 → Player 재생 / OAuth 딥링크 회귀.
+- T13 재생 기록: 공유 진입 1회 재생 70% → record-play 정확히 1회(비로그인 포함), 탭 오버레이 대기 중 0회 / 큐 append·기존 재생목록 보존.
+- T14 Node 하네스: trackLink 파서(24hex·잘못된 값·중복 파라미터) · trackShare 문구/URL · A1 아티스트 결정 함수(track cid > compose cid > /me).
+
+## 대표 결정 (기본값으로 진행)
+- D1 스타일링 = 곡 커버 착장, 커버 없으면 발매 시점 착장 + **발매 시점 진행 중이던 옷 입히기는 저장 시 반영(24h 이내)**(기본).
+- D2 발매 후 아티스트 페이지에서만 옷을 바꾼 과거 곡 = **동결**(기본 — 가을산 밤바람 보호·광고 착용곡 집계 정합). 대안 "커버 없는 곡은 현재 착장 자동 추종"은 요청 시 S6 확장으로 가능.
+- D3 커버 인물 = **곡 아티스트 고정**(곡에 아티스트가 있으면 그 1명; 다른 아티스트를 커버에 넣는 선택지는 이번 범위 밖)(기본).
+- D4 의상 바꾸러 가기 → 옷 입히기 완료 후 **커버 대화로 자동 복귀**(기본).
+- D5 옷 입히는 중 '이 의상 그대로' = 확인 팝업 후 진행 가능(기본).
+- D6 '공유하기' = **공용 ⋯ 시트 기본 항목**(차트·마이페이지 + 검색·플레이리스트·피드 동시)(기본). v3.55 "공유는 마이뮤직에서만" 정책 폐기. 대안: 차트·마이페이지만(extraItems).
+- D7 비공개 내 곡 공유 = "차트에 공개하고 공유" 확인 후 공개 전환(기본). 비공개 전용 토큰 링크는 기각(범위·보안).
+- D8 링크 = `https://api.maidol.ai.kr/track/{id}`(OG 카드 랜딩 → 웹앱 즉시 이동)(기본 — invite 선례). 대안 app.maidol.ai.kr 직링크는 카톡 미리보기 없음.
+- D9 웹 자동재생 차단 시 '탭해서 듣기' 오버레이 + 공유 진입 첫 화면 튜토리얼 생략(기본).
+- D10 비로그인·어린이도 공유·링크 재생 가능(공개 곡), OG 에 업로더 닉네임 미노출(기본).
+- D11 공유 진입 재생 = 일반 재생과 동일 기록(70% 1회)·큐 append(기본).
+- D12 결과 화면(MusicResult)·플레이어 공유 버튼 = 범위 제외(대표 정정).
+- D13 네이티브 앱 링크(App Links — 링크 탭 시 설치 앱으로 바로 열기)는 스토어 등록 후 과제로 이월(기본). 이번엔 랜딩의 '앱에서 열기'(aidol://)만.
+- D14 소급: "집으로" 1곡 v3.234 S4 apply 는 대표 승인 시(기존 D3 그대로). S5/S6 소급 대상 0.
+
+## 배포
+1. 서버(v3.234+v3.235 단일): 배포 직전 md5 재대조(위 기준값 — tracks·upload·character·referral·main) → `.bak_pre_v3235` 백업 + tar 반영(tracks.py·upload.py·character.py·referral.py·share_landing.py·scripts/backfill) → docker tag `pre-v3235-live` → build → 진행 중 job 0 확인 후 재생성(-v logs 볼륨·S3_REGION, v3.234 DEPLOY §3-2 절차) → 스모크: `/api/health`, T3 curl(공개·비공개·HEAD), T4 og.jpg, v3.234 T2·T3·T9 dry-run → 대표 승인 후 "집으로" apply. prod 변경 = 대표 승인(메모리 maidol-admin-web).
+2. 웹앱: 서버 배포 **후**(공유 링크가 랜딩을 가리키므로 순서 고정) `/Users/pearl/homepage/maidol/deploy.sh app`(expo export → Cloudflare Pages maidol-app). 래퍼 무변경. v3.234 앱 수정도 함께 배포됨.
+3. 네이티브: 공유 항목·aidol://track 딥링크·커버 수정 포함 → 다음 빌드(v1.3.1 후보) 시 반영(대표 판단). 웹만으로 링크 즉시 재생은 완결.
+4. 카카오 OG 캐시: 최초 공유 전 카카오 공유 디버거로 `/track/{id}` 스크랩 확인(대표/운영).
+
+# v3.236 (2026-09-26) — 휴식 디렉터 ⭐ 단축: 원하는 만큼 한 번에 줄이기 + 팝업 간결화
+
+## 요청 원문
+"휴식 디렉터 별 차감할때 2 스타로 30분 줄이기를 계속 할려니까 버튼을 계속 눌러야해서. 이 팝업 안에 내용이 너무 많은 것도 줄여야할 것 같아. 내가 스타가 총 얼마 필요한지가 나오고 내가 얼마만큼 스타를 써서 시간을 줄일껀지 정해서 쓰게 하면 좋을 것 같은데"
+
+- v3.230 D7("남은 휴식 한 번에 단축 버튼은 도입하지 않음")을 대표가 **번복**. 0.8초 잠금·연쇄 차단 원칙(A5-4)은 유지.
+- 서버 md5 기준값([P] 2026-09-26 실측, 호스트=컨테이너 `/srv/app/app` 동일): routes/fatigue.py `1c3b9f97d60a3c1ead2f7bc22279d2c5` · services/fatigue_service.py `020111379afc6170bbf2ce66bbd37700` · services/points_service.py `3ad6a322b0b316b92145bc0b0afd9b93` · main.py `78ab70741f8dc476e879c330608e0bc7`(비대상). 분석 원본 `/private/tmp/server_staging_v3236/orig/{routes,services}/`.
+
+## 0단계 Plan verification findings
+### 1. 앱 — 현재 휴식 팝업
+- utils/fatigueGate.ts:39-209 `showFatigueCooldownDialog` = showAlert(텍스트+버튼) 기반. 호출부 **12화면 16곳**(MusicGeneration :1497·:2229, MusicLoading :440, LyricsLoading :259, LyricsPromptReview :105, LyricsResult :150, CoverGeneration :738·:1705, ArtistLoading :591, ArtistResult :683, ArtistCody :508, MyMusic :454·:510, Map :751, VideoDirector :693·:943) — 모두 옵션 객체(status·remainingSec·director·onCleared·onCancel·onStatusUpdate·cancelText)만 넘김.
+- :177 ⭐버튼 = `⭐{cost}로 {minutes}분 단축` 1회=30분. :76-97 doSkip 성공 → 잔여>0 이면 :96 **다이얼로그를 새로 띄움**(0.8초 잠금 :37·:207, 누적 ⭐ :57·:83) → 2시간 휴식이면 4번 탭+4번 잠금 대기(요청 불만의 원인). 잔여 0 → :87-93 "휴식 종료" 알림 → onCleared.
+- :62 폴백 단가 composer 5·lyricist 2·image 2·artist 3·video 2 (서버 SKIP_POINT_COSTS 동일). 사용자가 말한 "2스타"=작사·커버·영상. :64 skip_minutes=30.
+- 현재 본문(:202-206) = 제목 "디렉터 휴식 중" + 「{작사} 디렉터」가 쉬는 중이에요 — 남은 시간 h:mm:ss / ⭐2로 30분 단축할 수 있어요 / (이번에 단축에 ⭐N 사용) / 오늘 완성 N개 — 완성할 때마다 휴식이 길어져요 (1개 2시간 · 2개 4시간 · 3개 8시간 · 4+개 12시간 · 매일 자정 리셋). 버튼 최대 4개 세로 스택: [취소] [⭐2로 30분 단축] [광고권으로 30분 단축 (보유 N장)](:179-184, 보유 시) [광고 보고 30분 단축 | 광고 준비 중…](:187-194, 네이티브만).
+- :101-116 오류: 409=onCleared(무과금), 402=부족/광고권 없음 → "단축 실패" 알림 → [확인] 시 재표시.
+- :124-173 광고: 시청 → SSV 적립 폴링 2s×15 → `doSkip('ad')`. hooks/useRewardedSkipAd.ts:119-174 어린이는 아동 광고 설정(K5) 후 로드 — **이번 변경 무관(재사용만)**. 웹은 isRewardedAdSupported()=false → 광고 버튼 미노출.
+- ⭐ 확인: utils/starSpendConfirm.ts:46-48 `markStarSpendChain` — fatigueGate :82 가 단축 성공 직후 호출, 이후 5초 안의 생성 ⭐ 확인은 0.8초 잠금(:39-43, :103-104). 휴식 단축 ⭐ 자체는 confirmStarSpend 를 거치지 않고 **버튼 문구(⭐2로 30분 단축)가 확인 역할**(v3.230 D6 해석 그대로).
+- components/AppDialogHost.tsx:9-89 = 제목·본문·버튼만 렌더(커스텀 콘텐츠 불가), stores/dialogStore.ts:11-18 DialogItem 에 lockMs 만. → 스테퍼 UI 는 **다이얼로그 큐에 커스텀 렌더 슬롯 추가**가 필요(App.tsx 에 새 호스트 마운트하면 v3.235 2조 App.tsx 와 충돌 → 회피).
+- services/fatigueService.ts:66-80 `skipFatigue(method, director)` 단건만. types/index.ts:147-167 FatigueStatus/FatigueSkipResult.
+- 요청 ID 선례: services/genJobs/index.ts:98 `newRequestId()`(32hex) — 재사용.
+- 슬라이더: package.json `@react-native-community/slider 5.0.1` 존재하나 웹 동작·30분 스냅 정밀도 불확실 → 스테퍼 채택(D2).
+- utils/starHistory.ts:35 `fatigue_skip: '휴식 단축'`, :54-56 `refund:` 접두 = "휴식 단축 환불" 표기 — 일괄도 같은 action 쓰면 내역 1줄로 자연 표기.
+
+### 2. 서버 — 단축 API·단가
+- routes/fatigue.py:128-208 `POST /api/fatigue/skip {method:'points'|'ad', director}` — 요청 1회=30분. :156 활성 쿨다운 없으면 409(무과금). :163 `skip_point_cost(director)` · :164 매 요청 새 uuid ref(**멱등성 없음** — 탭마다 차감이 의도) · :165 spend → :174 reduce → :175-181 쿨다운 소멸 시 전액 환불. ad :187-202 광고권 원자 차감/원복.
+- services/fatigue_service.py:50 `SKIP_MINUTES=30`, :66-72 `SKIP_POINT_COSTS` composer 5/lyricist 2/image 2/artist 3/video 2, :85-98 사다리 2/4/8/12h(최대 12h=24칸), :242-262 check_gate(조회 실패=0 게이트 오픈), :275-289 status payload(`cooldown_remaining_sec` 상대 초 — 기기 시계 무관), :301-340 **reduce_cooldown(minutes=…) 이미 임의 분 단축을 1회 원자 업데이트로 지원**(`$max[now, until-minutes]` — 바닥 now, 음수 없음).
+- services/points_service.py:179-236 spend_points = `balance>=amount` 조건부 `$inc` 1회(원자, 금액 임의), :239-287 refund_points(never raise). point_events 유니크 인덱스(user,action,track_id,day :54-57)는 **차감 후** 기록이라 중복 차감 방어 아님 → 멱등은 별도 요청 문서로 해야 함.
+- 서버 쪽 일괄이 가능한 근거: spend(n×단가) 1회 + reduce(n×30분) 1회 = 기존 단건과 **같은 2단계 구조**로 원자성 수준 동일. 클라이언트 반복 호출(n회 /skip)은 중간 실패 시 일부만 차감·단축되는 부분 실패 + 응답 유실 재시도 시 이중 차감 위험 → **서버 일괄 API 신설**.
+- 마지막 칸 과금: 잔여 10분이어도 30분 1칸 전액(현행 정책 그대로 — reduce 바닥 now). 전부 줄이기 필요 칸 = ceil(잔여초/1800).
+- kids_policy.py 에 ⭐ 사용·휴식 관련 제한 없음 → 어린이도 동일 UI(광고만 아동 설정 — 기존 K5 경로).
+
+### 3. v3.235 동시 진행 충돌 검사
+- v3.235(미배포 — 라이브 tracks.py·referral.py md5 = v3.235 기준값, share_landing.py 없음, 최신 태그 pre-v3233-live) 파일: 서버 tracks/upload/character/share_landing/referral · 앱1조 CoverGeneration·generationTracker·generationJobStore·ArtistLoading·characterTaskStore · 앱2조 trackShare·trackLink·TrackActionSheet·MyMusic·TrackShareDownloadSheet·App.tsx·Player·webAudioElement.
+- v3.236 파일: 서버 routes/fatigue.py·services/fatigue_service.py / 앱 utils/fatigueGate.ts·utils/fatigueSkipPlan.ts(신규)·components/FatigueSkipDialog.tsx(신규)·stores/dialogStore.ts·components/AppDialogHost.tsx·utils/appAlert.ts·services/fatigueService.ts·types/index.ts. **교집합 0**.
+- CoverGeneration·ArtistLoading·MyMusic 은 휴식 팝업 호출부지만 `showFatigueCooldownDialog` 시그니처 불변으로 **무수정** → 충돌 없음. App.tsx 새 마운트 없음(AppDialogHost 안에서 렌더).
+
+## 새 UI 와이어(텍스트)
+```
+┌─────────────────────────────────────┐
+│ 「작사 디렉터」 휴식 중               │
+│ 남은 시간  1:47:12                   │  ← 1초마다 감소
+│ 전부 줄이려면 ⭐8 · 보유 ⭐23         │
+│                                     │
+│   [ − ]   1시간 · ⭐4   [ + ]  [전부] │  ← 30분 단위
+│   줄인 뒤 남은 시간 0:47:12          │  ← 선택이 전부면 "바로 끝나요"
+│                                     │
+│ [ ⭐4 사용하고 1시간 줄이기 ]  (주)   │  ← 전부면 "⭐8 사용하고 휴식 끝내기"
+│ [ 광고 보고 30분 줄이기 ]            │  ← 네이티브만 · 미준비 시 "광고 준비 중…"
+│ [ 광고권으로 30분 줄이기 (2장) ]      │  ← 보유 시만
+│ [ 닫기 ]                             │  ← cancelText 전달값 유지(예: 돌아가기)
+└─────────────────────────────────────┘
+```
+- 선택 범위: 최소 1칸(30분) ~ 최대 = min(필요 칸 ceil(잔여/1800), floor(보유/단가), 24). 기본 선택 1칸(D3). [전부] = 최대값(보유 부족이면 "보유 한도"로 표기).
+- 보유 < 단가: 스테퍼·주 버튼 숨김, "⭐이 부족해요 (30분에 ⭐2)" 1줄 + 광고 옵션만. 보유 미확인(null): 로드 중 표시, 최대=필요 칸(서버 402 가 최종).
+- 삭제되는 문구: "…쉬는 중이에요 —", "⭐2로 30분 단축할 수 있어요", 오늘 완성·사다리·자정 리셋 설명(D4).
+- 확정 후: 버튼 전부 비활성+진행 표시(백드롭·뒤로가기 무시) → 성공:
+  - 잔여 0 → 팝업 닫고 기존 "휴식 종료" 알림(⭐N 사용 표기, lock 800) → onCleared(= 생성 화면은 v3.230 A5-4 ⭐ 확인 경유 — 자동 생성 금지 유지).
+  - 잔여 >0 → **같은 팝업 갱신**: 남은 시간 새 값, "방금 ⭐4로 1시간 줄였어요" 1줄(흐름 누적), 선택 1칸으로 리셋, 주 버튼 0.8초 잠금(FATIGUE_RESHOW_LOCK_MS).
+- 팝업 열려 있는 중 로컬 카운트다운이 0 도달 → 무과금 "휴식이 끝났어요" 상태 + [계속] → onCleared. 최대 칸이 줄어들면 선택값 자동 축소.
+- 열 때 `getFatigueStatus(director)` 1회 재조회(오래된 remainingSec·단가·광고권 보정, 실패 시 전달값 유지).
+
+## ⭐ 확인 방식(v3.230 D6 충족 설명)
+- 이 팝업이 "차감 직전 1회 확인" 자체: 확정 버튼에 **정확한 ⭐ 금액과 줄일 시간**, 본문에 보유 ⭐ 표시 → 추가 confirmStarSpend 없음(이중 팝업 금지). 최초 표시 300ms 잠금(DEFAULT_LOCK_MS 동일 — 직전 탭이 확정에 닿지 않게), 단축 직후 800ms 잠금.
+- 성공 시 `markStarSpendChain()` 호출 유지 → 이어지는 생성 ⭐ 확인 잠금. onCleared 이후 흐름 무변경.
+
+## 서버 변경(backend)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1 | services/fatigue_service.py | ① `reduce_cooldown_by(user_id, minutes, director)` 신규 — reduce_cooldown 과 같은 파이프라인이되 `ReturnDocument.BEFORE` 로 **이전 until** 반환(사용 칸 계산용). 기존 reduce_cooldown 무변경. ② `_status_from_doc` 에 additive `skip_units_needed`=ceil(잔여/1800)(0이면 0)·`skip_total_cost`=칸×단가·`skip_max_units`=24 (구 클라 무시). ③ 상수 `MAX_BULK_UNITS = 24`(12h/30m) | `[fatigue:%s] reduce_by user=… -%dmin before=… after=…` |
+| S2 | routes/fatigue.py | `POST /api/fatigue/skip-bulk` 신규(⭐ 전용). body `{director, units:int, request_id:32hex(필수), expected_total?:int}`. 순서: director·units(1..24)·request_id 검증(400) → **멱등 문서** `fatigue_skip_requests` insert `{user_id, request_id, director, units_req, state:'processing', created_at}`(유니크 (user_id,request_id), TTL 7일 — lazy index) · 중복키면 저장된 응답 재생(`replayed:true`)/처리 중이면 409 `skip_in_progress` → check_gate ≤0 이면 409 `no_active_cooldown`(무과금) → needed=ceil(잔여/1800), units_eff=min(units, needed, 24) → total=units_eff×단가 → `expected_total` 있고 total>expected 면 409 `cost_changed`+status(무과금 — 줄어든 경우는 진행) → spend_points(total, ref=`fsb_{request_id}`) 실패 402 `insufficient_points` {need:total}+status → reduce_cooldown_by(units_eff×30) None 이면 전액 환불+409 `no_active_cooldown` → used=min(units_eff, ceil((before−now)/1800)), 남는 칸 환불(경합 시만) → 응답 = status payload + `units_applied`·`points_spent`·`skipped_minutes`(=used×30)·`balance`(get_balance)·`request_id`·`replayed:false`, 요청 문서 state=done(응답 저장). 실패 응답도 state=failed 로 저장(재생 동일). 기존 `/skip`(points·ad) **무변경** — 구 네이티브 앱 호환 | `[fatigue:%s] bulk request|clamp|ok|refund|replay|denied user=… rid=r8 units=req→eff total=…` |
+- 9005 미러링 없음. main.py 무변경(fatigue.router 기존 include :762). ad(광고권) 일괄은 범위 제외(D5).
+
+## 앱 변경(app — 단일 조)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| A1 | stores/dialogStore.ts · components/AppDialogHost.tsx · utils/appAlert.ts | DialogItem additive `custom?: { render: (ctx:{close:()=>void}) => ReactNode; onRequestClose?: () => void }` + `showCustomDialog(title, render, {lockMs?, onRequestClose?})`. Host: custom 이면 카드(box) 안에 제목 + render 결과, 백드롭/뒤로가기 = onRequestClose(바쁜 동안 무시는 콘텐츠가 결정). 기존 showAlert 경로 1픽셀도 불변 | `[appAlert] show custom` |
+| A2 | utils/fatigueSkipPlan.ts(신규, 순수) | `planFatigueSkip({remainingSec, unitCost, unitMinutes=30, balance, maxUnits=24})` → `{neededUnits, totalNeeded, affordableUnits, maxSelectable, canAfford}` · `labelMinutes(m)`(30분/1시간/1시간 30분) · `remainAfter(sec, units)` · `clampSelection(sel, max)`. 서버 S1 공식과 동일(ceil 1800) | — |
+| A3 | components/FatigueSkipDialog.tsx(신규) | 와이어 그대로. 1초 카운트다운(unmount 정리), 스테퍼(−/+ 44pt, accessibilityLabel), [전부] 칩, 주 버튼·광고·광고권·닫기. 확정 탭 시 `newRequestId()` 1회 생성 → 같은 선택의 재시도(네트워크 오류·타임아웃)는 **같은 request_id 재사용**, 선택 변경/성공 후엔 새 ID. busy 동안 전 버튼 비활성. 오류는 팝업 안 1줄(402 → 보유 재조회 후 "⭐이 부족해요", cost_changed → 상태 재조회 후 "가격이 바뀌었어요 — 다시 확인해주세요", 네트워크 → "연결이 불안정해요" + 주 버튼=다시 시도) · 409 no_active_cooldown → 닫고 onCleared(무과금). 성공 시 응답 `balance` 로 pointsStore.setBalance(없으면 fetchBalance), onStatusUpdate(data), markStarSpendChain() | `[FatigueSkip] open|plan|confirm|result|error|cleared director=… units=… total=… rid=r8` |
+| A4 | utils/fatigueGate.ts | `showFatigueCooldownDialog` **시그니처·옵션 불변**, 본문을 showCustomDialog(FatigueSkipDialog)로 교체. 광고 시청→SSV 폴링→`skipFatigue('ad')` 로직(:124-173)·광고권 단건은 그대로 재사용(결과로 팝업 갱신). spentStars/reshownAfterSkip 옵션은 호환 유지(내부 누적으로 대체). D7 주석(:31-32) 갱신. 서버 404(구 서버)면 `[FatigueSkip] fallback-legacy` — 스테퍼 숨기고 기존 단건 `/skip` 1칸 모드(현행 동작)로 강등 → 배포 순서 무관하게 안전 | `[fatigue:*]` 유지 + `[FatigueSkip]` |
+| A5 | services/fatigueService.ts · types/index.ts | `skipFatigueBulk({director, units, requestId, expectedTotal})` → POST `/fatigue/skip-bulk`(composer 도 director 명시 — 신규 API라 구 서버 호환 불요). 타입 `FatigueBulkSkipResult`(units_applied·points_spent·skipped_minutes·balance?·request_id·replayed), FatigueStatus additive optional `skip_units_needed?`·`skip_total_cost?`·`skip_max_units?` | `[fatigue:*] skip-bulk` |
+- 16개 호출부 **무수정**. hooks/useRewardedSkipAd.ts·utils/starSpendConfirm.ts 무수정.
+
+## 변경 매트릭스
+| 영역 | 파일 | 담당 |
+|---|---|---|
+| 서버 | app/services/fatigue_service.py(S1) · app/routes/fatigue.py(S2) | backend |
+| 앱 | stores/dialogStore.ts · components/AppDialogHost.tsx · utils/appAlert.ts · utils/fatigueSkipPlan.ts(신규) · components/FatigueSkipDialog.tsx(신규) · utils/fatigueGate.ts · services/fatigueService.ts · types/index.ts | app |
+- v3.235 와 파일 교집합 0(위 §3). 병합 순서 제약 없음 — 둘 다 frontend 브랜치 커밋, 커밋은 v3.235 앱 커밋과 섞지 않고 v3.236 단독.
+
+## 역할
+- backend: `/private/tmp/server_staging_v3236/`(orig 는 위 md5 기준) 에 S1·S2 → pytest 하네스(mongomock/in-memory 대체 — 기존 v3.23x tests 관행): 단가 5종·칸 계산·clamp·멱등 재생·동시 2요청(같은 rid)·402·409 두 종·경합 환불·기존 /skip 회귀. 컨테이너 Python 3.11 compile + 메모리 오버레이 import(라우트 +1: `/api/fatigue/skip-bulk`). DEPLOY.md(태그 `pre-v3236-live`, 백업 `.bak_pre_v3236`). 서버 쓰기는 대표 1줄 명령.
+- app: A1~A5, `tsc --noEmit` 0, fatigueSkipPlan Node 하네스(메모리 app-runtime-testing-limits — 시뮬레이터 없음, RN 모듈 mock).
+- test-designer: 아래 T.
+
+## 회귀 위험
+- 16개 호출부의 onCleared/onCancel/onStatusUpdate/cancelText 의미 불변: MusicLoading 돌아가기=leaveBack, VideoDirector 취소=rollback+releaseBusy, ArtistLoading 해제 안내 알림, Map 해제 후 proceedDirectorPress, MyMusic Inst 재진입, MusicGeneration 배지 탭.
+- v3.230 A5-4 연쇄: 단축→해제 직후 생성은 반드시 ⭐ 확인(fatigue-chain) 1회, 자동 생성 금지. markStarSpendChain 호출 지점 유지.
+- 광고(v3.208·v3.215·v3.232 K5): 광고 버튼 노출 조건·준비 중 라벨·SSV 폴링 30초·중도 이탈/실패 폴백·어린이 아동 광고 설정 그대로. 웹은 광고 버튼 없음.
+- 일반 showAlert 다이얼로그(버튼 1/2/3개·lockMs·백드롭=cancel) 불변 — AppDialogHost 분기 추가만.
+- 구 네이티브 앱(v1.3.0): 기존 /skip·status 응답 shape 불변(additive 필드만).
+- 서버: /skip 무변경, check_gate·429 게이트·사다리·자정 리셋 불변. 환불 이벤트 ref `fsb_{rid}` 가 point_events 유니크와 충돌하지 않음(spend:/refund: action 분리).
+
+## test-designer 항목
+- T1 (S1·A2) 칸 계산: 잔여 1초→1칸, 1800초→1칸, 1801초→2칸, 12h→24칸 · 단가 composer 5/lyricist 2/image 2/artist 3/video 2 → total. 서버·앱 공식 일치.
+- T2 (S2) 정상: lyricist 잔여 1:47 → units 2 → ⭐4 차감·잔여 0:47·units_applied 2·skipped 60·point_events spend:fatigue_skip −4 1건.
+- T3 (S2) 전부: 잔여 1:47, units 4 → ⭐8·잔여 0 · units 10 요청 → clamp 4(⭐8만 차감).
+- T4 (S2) 멱등: 같은 rid 2회 순차 → 2번째 replayed:true·차감 1회 / 같은 rid 동시 2요청 → 1건 처리 + 1건 409 skip_in_progress 또는 replay, 차감 1회.
+- T5 (S2) 402(보유<total, 무차감·status 동봉) · 409 no_active_cooldown(무과금) · 409 cost_changed(expected_total 보다 비쌈, 무과금) · 400(units 0/25, rid 형식, director 오타).
+- T6 (S2) 경합: spend 후 reduce 전 쿨다운 만료 주입 → 전액 환불 / 잔여가 줄어 사용 칸<요청 칸 주입 → 차액 환불(refund:fatigue_skip).
+- T7 (S2) 회귀: 기존 /skip points·ad 동작·응답 동일, /status additive 필드만 증가, all=1 동일.
+- T8 (A3) UI: 기본 1칸 · +/− 경계(1..max) · [전부] · 보유 부족 시 스테퍼 숨김 · 보유 한도 < 필요 칸이면 max=보유 한도 · 카운트다운으로 max 감소 시 선택 자동 축소 · 0 도달 시 무과금 [계속].
+- T9 (A3) 확정 1탭 = 요청 1회(연타 3회 → 요청 1회) · busy 중 백드롭/뒤로가기 무시 · 부분 단축 후 같은 팝업 갱신 + 주 버튼 0.8초 잠금 · 전부 단축 → "휴식 종료" → onCleared → 생성 ⭐ 확인(fatigue-chain, 잠금) 표시·자동 생성 없음.
+- T10 (A3) 네트워크 오류 후 [다시 시도] = 같은 request_id 헤더/바디 확인 · 선택 변경 후엔 새 ID.
+- T11 (A4) 구 서버(404) → 1칸 레거시 모드로 현행과 동일 동작.
+- T12 광고·광고권: 광고 보고 30분 → 성공 시 팝업 갱신 · 광고권 보유 시 버튼 노출·1장 소비 · 웹 광고 버튼 없음 · 어린이 계정 광고 로드 시 `[KidsAd] child config applied` 선행.
+- T13 16개 호출부 스모크(대표 경로 5: MusicGeneration 배지, LyricsResult 재생성, CoverGeneration, Map 작사 디렉터, VideoDirector 취소 롤백).
+- T14 ⭐ 내역: 일괄 1회 = "휴식 단축 −⭐N" 1줄, 환불 시 "휴식 단축 환불".
+
+## 대표 결정 (기본값으로 진행)
+- D1 v3.230 D7 번복 — 한 번에 원하는 만큼 줄이기 도입(기본). 0.8초 잠금은 "단축 직후 확정 버튼"에만 유지.
+- D2 선택 방식 = **30분 단위 −/+ 스테퍼 + [전부] 칩**(기본). 슬라이더 미사용(웹 동작·30분 스냅 불확실).
+- D3 기본 선택 = **1칸(30분)**(기본 — 큰 금액 오탭 방지, composer 12h 전부=⭐120). 대안: 기본 "전부(보유 한도)".
+- D4 팝업에서 사다리·오늘 완성·자정 리셋 설명 **삭제**(기본). MusicGeneration 배지의 "오늘 완성 N곡"은 유지.
+- D5 광고권(skip_wait_count)은 **1장=30분 단건 유지**(기본 — 보유 드묾). 광고 보고 30분 옵션 유지.
+- D6 마지막 칸은 남은 시간이 30분 미만이어도 **1칸 전액**(현행 정책 유지, 기본). 대안: 분 단위 일할 — 단가 체계 변경이라 비권장.
+- D7 이 팝업 = ⭐ 사용 확정(추가 확인 팝업 없음, 기본). 확정 버튼에 금액·시간, 본문에 보유 ⭐.
+- D8 서버 일괄 API 신설(`/api/fatigue/skip-bulk`, request_id 멱등, 서버 clamp·단가 권위)(기본). 클라이언트 반복 호출 방식 기각(부분 실패·이중 차감).
+- D9 어린이 계정 동일 UI·동일 ⭐ 규칙(서버 제한 없음 확인), 광고는 기존 아동 설정 경로(기본).
+
+## 배포
+1. 서버: v3.234/v3.235 미배포 상태(라이브 md5 = v3.235 기준값). 파일 교집합 0이므로 **기본 = v3.235 서버 배포 직후 별도 빌드**(롤백 단위 분리, 태그 `pre-v3236-live`). v3.235 배포 준비가 v3.236 테스트 완료보다 늦으면 대표 판단으로 **한 빌드에 합류**(v3.235 DEPLOY 절차에 fatigue.py·fatigue_service.py 2파일 추가, 태그는 `pre-v3235-live` 공용). 배포 직전 md5 재대조(위 기준값) → `.bak_pre_v3236` → tar 반영 → build → 진행 중 job 0 확인 후 재생성 → 스모크: `/api/health`, `/api/fatigue/status?director=lyricist` additive 필드, skip-bulk 400/409(쿨다운 없는 테스트 계정 — 무과금) 확인. prod 변경 = 대표 승인.
+2. 웹앱: 앱 코드는 404 레거시 강등이 있어 순서 무관하지만, 기능 노출은 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app` 1회(v3.235 웹과 같은 export 에 묶어도 됨). 래퍼 무변경.
+3. 네이티브: 다음 빌드(v1.3.1 후보)에 포함(대표 판단). 구 네이티브는 기존 팝업·/skip 그대로 동작.

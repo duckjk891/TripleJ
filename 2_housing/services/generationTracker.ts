@@ -17,6 +17,8 @@ import {
   type TrackedJobKind,
   type TrackedJobMode,
   type TrackedUsedItem,
+  type CoverReturnTo,
+  type CoverReturnMeta,
 } from '../stores/generationJobStore';
 import {
   bindGenTrackerHooks,
@@ -29,6 +31,7 @@ import {
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore, settleArtistDraftOnSuccess } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
+import { useMusicStore } from '../stores/musicStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { showAlert } from '../utils/appAlert';
 import { getPointCostSync } from './pointCosts';
@@ -116,6 +119,9 @@ export interface RegisterArtistJobInput {
   artStyleHint: string | null;
   /** 이 세션의 사진 파일(메모리만) — 없으면 finalize가 job.original_object_name을 연결 */
   photo?: { uri: string; name: string; mime: string } | null;
+  /** v3.235 [CoverWardrobe]: 커버 대화에서 시작한 옷 입히기 — 완성 저장 후 커버 대화로 복귀(takeCoverWardrobeReturn) */
+  returnTo?: CoverReturnTo | null;
+  returnMeta?: CoverReturnMeta | null;
 }
 
 /** POST 202 job_id 수신 직후(화면 전환 전) 호출 — 영속 기록 + 폴링 개시 */
@@ -150,6 +156,7 @@ export function registerArtistJob(input: RegisterArtistJobInput): void {
   console.info('[GenJobStore] 접수 기록', {
     jobId: input.jobId, mode: input.mode, kind: input.characterKind,
     target: input.targetCharacterId, photo: input.photoIntent,
+    ...(input.returnTo ? { returnTo: input.returnTo } : {}),
   });
   scheduleTick(POLL_MS);
 }
@@ -460,6 +467,56 @@ function goArtistResult(params: Record<string, any>, navigation?: any, replace?:
   }
 }
 
+// ── v3.235 [CoverWardrobe]: 옷 입히기 완성 → 커버 대화 복귀(D4) ─────────────────────────
+
+export interface CoverReturnTarget {
+  to: CoverReturnTo;
+  meta: CoverReturnMeta;
+}
+
+/**
+ * 복귀할 커버 대화가 아직 살아 있는가 — 곡 커버: 같은 곡의 대화 스냅샷(musicStore) 존재 /
+ * 앨범 커버: albumMode 파라미터 보유. 커버를 이미 끝냈거나 다른 곡 대화로 바뀌었으면 false → 현행 ArtistResult.
+ */
+export function isCoverReturnAlive(target: CoverReturnTarget | null | undefined): boolean {
+  if (!target) return false;
+  if (target.to === 'albumCover') return !!target.meta?.albumMode?.albumId;
+  const s = useMusicStore.getState();
+  if (!(s.coverMessages?.length)) return false;
+  const want = target.meta?.trackId ?? null;
+  return !want || !s.coverTrackId || s.coverTrackId === want;
+}
+
+function goCoverReturn(
+  target: CoverReturnTarget,
+  info: { jobId: string; characterId: string | null },
+  navigation?: any,
+  replace?: boolean
+): boolean {
+  const params = { wardrobeReturn: { jobId: info.jobId, characterId: info.characterId, at: Date.now() } };
+  let via: string;
+  if (target.to === 'albumCover') {
+    // 앨범 커버는 RootStack — 같은 대화 인스턴스가 스택에 남아 있으면 그리로 돌아간다(pop: 로컬 대화 보존), 없으면 새로 연다
+    via = 'root-pop';
+    if (navigationRef.isReady()) {
+      (navigationRef.navigate as any)('AlbumCoverGeneration', { albumMode: target.meta.albumMode, ...params }, { pop: true });
+    } else {
+      console.warn('[CoverWardrobe] 네비게이션 미준비 — 앨범 커버 복귀 불가(ArtistResult 착지)', { jobId: info.jobId });
+      return false;
+    }
+  } else if (navigation && replace && navigation.replace) {
+    // 추적 뷰어(ArtistLoading) — 스택 [Map, ArtistLoading] → [Map, CoverGeneration](대화는 musicStore 영속본으로 복원)
+    via = 'viewer';
+    navigation.replace('CoverGeneration', params);
+  } else {
+    // 작업 카드·맵 말풍선·알림 [지금 보기]·커버 화면 자체 — 전역(커버가 포커스면 같은 화면 params 갱신)
+    via = 'global';
+    navigateGlobal('Studio', { screen: 'CoverGeneration', params });
+  }
+  console.info(`[CoverWardrobe] return-to-cover job=${info.jobId}`, { to: target.to, cid: info.characterId, via });
+  return true;
+}
+
 // ── 완성 처리(단일 경로 + 1회 락) ─────────────────────────────────────────
 
 export type FinalizeOutcome = 'saved' | 'busy' | 'not-ready' | 'failed';
@@ -514,7 +571,12 @@ function showSlotDialog(err: any) {
  */
 export async function finalizeArtistJob(
   jobId: string,
-  opts: { navigation?: any; replace?: boolean } = {}
+  opts: {
+    navigation?: any;
+    replace?: boolean;
+    /** v3.235 [CoverWardrobe]: 커버 화면이 직접 저장할 때 복귀 대상 지정(job 에 returnTo 가 없어도 커버에 남음) */
+    coverReturn?: CoverReturnTarget | null;
+  } = {}
 ): Promise<FinalizeOutcome> {
   if (_finalizing.has(jobId)) {
     console.info('[GenTracker] finalize 진행 중 — 중복 호출 무시', { jobId });
@@ -591,6 +653,19 @@ export async function finalizeArtistJob(
     task.setInput({ characterKind: job.characterKind, ...(originalObjectName ? { originalPhotoObjectName: originalObjectName } : {}) });
     task.clearMode();
     usePointsStore.getState().fetchBalance();
+    // v3.235 [CoverWardrobe]: 커버 대화에서 시작한 옷 입히기 → ArtistResult 대신 커버 대화로 복귀(D4).
+    // 일반 꾸미기(returnTo 없음)·회수 job·생성(sheet)은 현행 ArtistResult 착지.
+    if (job.mode === 'outfit') {
+      const target: CoverReturnTarget | null =
+        opts.coverReturn ?? (job.returnTo && job.returnMeta ? { to: job.returnTo, meta: job.returnMeta } : null);
+      if (target) {
+        if (!isCoverReturnAlive(target)) {
+          console.info('[CoverWardrobe] 커버 대화 없음 — ArtistResult 로 착지', { jobId, to: target.to });
+        } else if (goCoverReturn(target, { jobId, characterId: savedCid }, opts.navigation, opts.replace)) {
+          return 'saved';
+        }
+      }
+    }
     const params: Record<string, any> =
       job.mode === 'sheet'
         ? savedCid ? { characterId: savedCid, justCreated: true } : { justCreated: true }
@@ -688,6 +763,14 @@ const ARTIST_ADAPTER: TrackerKindAdapter = {
   canNotify: (j) => j.lastStatus === 'done',
   notify: (job, route, next) => {
     console.info('[GenTracker] 완성 알림 1회', { jobId: job.jobId, route });
+    if (job.mode === 'outfit' && job.returnTo) {
+      // v3.235 [CoverWardrobe]: 커버 대화에서 보낸 옷 입히기 — 확인하면 저장 후 커버 대화로 복귀
+      showAlert('새 옷이 완성됐어요', '확인하면 바뀐 옷으로 커버 대화를 이어갈게요.', [
+        { text: '나중에', style: 'cancel', onPress: next },
+        { text: '이어서 하기', onPress: () => { void finalizeArtistJob(job.jobId); } },
+      ]);
+      return;
+    }
     showAlert('아티스트가 완성됐어요', '완성된 아티스트를 확인하고 저장해 주세요.', [
       { text: '나중에', style: 'cancel', onPress: next },
       { text: '지금 보기', onPress: () => { void finalizeArtistJob(job.jobId); } },

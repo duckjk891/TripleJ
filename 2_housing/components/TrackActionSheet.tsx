@@ -1,5 +1,6 @@
 // [TrackActionSheet] 곡 더보기(⋮) 액션 시트 — 재생 / 좋아요 / 재생목록에 추가 / 플레이리스트에 담기.
 // 차트·검색 등 곡 목록 화면이 같은 메뉴·동작을 쓰도록 공용화(플레이리스트 담기 시트, 비회원 담기 안내 포함).
+// v3.235 B2(D6): 공용 기본 항목 '공유하기' — 차트·마이페이지·검색·플레이리스트·피드 ⋯ 공통, 비로그인·어린이 포함 노출.
 import { useState } from 'react';
 import { ScrollView, Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { showAlert } from '../utils/appAlert';
@@ -13,6 +14,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { AppText } from './ui';
 import { TrackCover, RowTrack } from './TrackRow';
 import GuestQueueNoticeModal from './GuestQueueNoticeModal';
+import { shareTrack, ShareOutcome } from '../utils/trackShare';
 import PlaylistPickerSheet from './PlaylistPickerSheet';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -31,11 +33,22 @@ interface Props {
   onPlay: (track: RowTrack) => void;
   /** 좋아요 토글 시 화면의 like_count를 낙관적으로 보정하고 싶을 때 */
   onLikeChanged?: (trackId: string, delta: number) => void;
-  /** 기본 4개 항목 아래에 붙는 화면 고유 항목 */
+  /** 기본 항목 아래에 붙는 화면 고유 항목 */
   extraItems?: ExtraAction[];
+  /** v3.235 B2: '공유하기' 노출(기본 true) */
+  shareable?: boolean;
+  /** v3.235 B2: 내 곡 목록(마이페이지) — 비공개 곡 공개 전환 후 공유·내 곡 문구. 생략 시 uploader_id 로 판정 */
+  shareOwn?: boolean;
+  /** v3.235 B2: 공유 흐름 종료(결과 포함) */
+  onShared?: (trackId: string, outcome: ShareOutcome) => void;
+  /** v3.235 B2: 비공개 → 공개 전환 성공 직후(목록 '차트 스트리밍 중' 갱신용) */
+  onSharePublished?: (trackId: string) => void;
 }
 
-export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged, extraItems }: Props) {
+export default function TrackActionSheet({
+  track, onClose, onPlay, onLikeChanged, extraItems,
+  shareable = true, shareOwn, onShared, onSharePublished,
+}: Props) {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
@@ -85,6 +98,14 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
     setPlaylistTarget(t.id);
   };
 
+  // v3.235 B2: 공유 — 로그인 게이트 없음(D10). 웹 사용자 활성화 유지를 위해 탭 핸들러 안에서 동기 호출.
+  const handleShare = (t: RowTrack) => {
+    const anyT = t as any;
+    const isOwn = shareOwn ?? (!!user && anyT?.uploader_id != null && String(anyT.uploader_id) === String(user.id));
+    shareTrack(anyT, { isOwn, src: 'TrackActionSheet', onPublished: onSharePublished, onDone: onShared })
+      .catch((err: any) => console.error('[TrackShare] fail — sheet', { message: err?.message }));
+  };
+
   return (
     <>
       {/* 곡 더보기(⋮) 액션 시트 */}
@@ -120,6 +141,12 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
                   <Feather name="bookmark" size={20} color={colors.text.secondary} />
                   <AppText variant="body">플레이리스트에 담기</AppText>
                 </TouchableOpacity>
+                {shareable ? (
+                  <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = track; onClose(); handleShare(t); }}>
+                    <Feather name="share-2" size={20} color={colors.text.secondary} />
+                    <AppText variant="body">공유하기</AppText>
+                  </TouchableOpacity>
+                ) : null}
                 {/* 화면 고유 항목 (제거·공유·다운로드·삭제 등) */}
                 {(extraItems || []).map((ex) => (
                   <TouchableOpacity

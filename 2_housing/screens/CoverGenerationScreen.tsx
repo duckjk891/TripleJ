@@ -28,7 +28,7 @@ import { updateAlbumCover } from '../services/albumService';
 import * as DocumentPicker from 'expo-document-picker';
 import { uploadCoverBackground } from '../services/trackService';
 import { listLyricsAssets } from '../services/lyricsService';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useCallback } from 'react';
 import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -48,7 +48,12 @@ import {
 } from '../services/genJobsService';
 import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../services/genJobs';
 import { fetchImageJob, COVER_CAP_MS, COVER_TEXT, COVER_REFINE_TEXT } from '../services/genJobs/cover';
-import { useGenerationJobStore, listUserGenJobs } from '../stores/generationJobStore';
+import { useGenerationJobStore, listUserGenJobs, useDressingArtistJob, getDressingArtistJob } from '../stores/generationJobStore';
+// v3.235 [CoverArtist]/[CoverWardrobe]: 커버 인물 = 곡 아티스트 고정 · 꾸미기 대상 고정 · 완성 후 커버 복귀
+import { getArtist, artistSheetUrl, type ServerArtist } from '../services/characterService';
+import { useCharacterTaskStore, pickCoverArtistCid, type CoverArtistSource } from '../stores/characterTaskStore';
+import { useOutfitStore } from '../stores/outfitStore';
+import { finalizeArtistJob, type CoverReturnTarget } from '../services/generationTracker';
 // v3.229 [DirectorResume]: 보존 대화 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { isCoverPendingGeneration, hasCoverDialogueSnapshot, hasCoverUserProgress } from '../utils/directorResume';
 
@@ -68,7 +73,10 @@ const coverExtras: {
   shot: string | null; expression: string | null; palette: string | null;
   bgPrompt: string | null; bgObjectName: string | null; lyricsExcerpt: string | null;
   charKind: 'real' | 'virtual' | null; virtualArtStyle: string | null;
-} = { shot: null, expression: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null };
+  // v3.235 A1 [CoverArtist]: 커버 아티스트 cid·결정 경로 — 복원·focus 최신화·꾸미기 대상 고정의 원천
+  // (musicStore.coverExtrasSnapshot 에 함께 실려 재진입에도 유지. 구 스냅샷엔 없음 = 현행 /me 흐름)
+  charCid?: string | null; charSource?: CoverArtistSource | null;
+} = { shot: null, expression: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null, charCid: null, charSource: null };
 const syncCoverExtrasToStore = () => {
   useMusicStore.getState().setCoverExtrasSnapshot({ ...coverExtras });
 };
@@ -77,6 +85,7 @@ const resetCoverExtras = (syncStore = true) => {
   coverExtras.shot = null; coverExtras.expression = null; coverExtras.palette = null;
   coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; coverExtras.lyricsExcerpt = null;
   coverExtras.charKind = null; coverExtras.virtualArtStyle = null;
+  coverExtras.charCid = null; coverExtras.charSource = null;
   if (syncStore) syncCoverExtrasToStore();
 };
 
@@ -137,6 +146,17 @@ const pollCoverSessionsOnce = async (threshold: number, attempt: number): Promis
 };
 
 const coverSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// ── v3.235 [CoverWardrobe] ──
+/** 옷 입히기 완성 저장 후 커버 대화 복귀 시 디렉터 1줄(D4) */
+export const WARDROBE_RETURN_TEXT = '새 옷으로 갈아입었어요! 이 의상으로 커버를 만들까요?';
+/** 1.7 안내 — 커버 아티스트에게 옷을 입히는 중(processing) / 완성·저장 대기(done-unsaved) */
+export const WARDROBE_DRESSING_TEXT = '아직 옷을 입히는 중이에요 — 완성되면 바뀐 옷으로 이어서 할게요';
+export const WARDROBE_DRESSED_TEXT = '새 옷이 완성됐어요 — 바뀐 옷으로 이어서 할게요';
+/** 복귀 안내를 이미 붙인 옷 입히기 job(재마운트·params 재전달에도 1회) */
+const handledWardrobeReturns = new Set<string>();
+/** 곡 아티스트 고정(track·compose) 여부 — me 폴백은 현행 두 슬롯(1.5) 흐름 */
+const isFixedCoverArtist = (src: CoverArtistSource | null | undefined) => src === 'track' || src === 'compose';
 
 /** v3.228 W2: 결과 표시용 정규화 — POST 응답·cover-sessions 항목·원장 result(cover·cover_refine) 공용 */
 interface CoverSuccessData {
@@ -366,7 +386,13 @@ interface ChatMessage {
    *  암묵 idx+1 가정·문자열 검색 금지). musicStore.CoverChatMessage와 구조 동일(영속 호환). */
   echoOfStep?: number;
 }
-interface MyTrack { id: string; title: string; cover_image?: string; cover_image_url?: string; genre?: string[]; mood?: string[]; }
+interface MyTrack {
+  id: string; title: string; cover_image?: string; cover_image_url?: string; genre?: string[]; mood?: string[];
+  /** v3.235 A1: 발매 시 곡 아티스트(tracks.character_id — /tracks/my 문서 직렬화). null = 아티스트 없는 곡 */
+  character_id?: string | null;
+  /** v3.235 A1: 곡 스타일링 스냅샷 — character_id 가 응답에 없을 때의 폴백 원천 */
+  user_character_snapshot?: { character_id?: string | null } | null;
+}
 
 // v3.89: 커버 미세조정(refine) 버전 히스토리 엔트리 — 백엔드 cover_sessions.cover_refine_history와 동일 구조
 interface CoverHistoryEntry {
@@ -468,6 +494,43 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (!albumMode) syncCoverExtrasToStore();
   };
 
+  // ── v3.235 A1 [CoverArtist]: 커버 인물 = 곡 아티스트 고정 ──
+  // /me 폴백(대표 실사·가상 두 슬롯) 때 각 슬롯의 cid — 슬롯을 고르면 그 cid 가 꾸미기 대상(A2)
+  const meCidsRef = useRef<{ real: string | null; virtual: string | null }>({ real: null, virtual: null });
+  /** me 폴백 흐름에서 슬롯 선택 시 커버 cid 동기(곡 아티스트 고정이면 이미 정해져 있어 변경 없음) */
+  const slotCidPatch = (slot: 'real' | 'virtual'): Partial<typeof coverExtras> =>
+    isFixedCoverArtist(coverExtras.charSource) ? {} : { charCid: meCidsRef.current[slot] || null };
+  /** GET /character/{cid} → 해당 kind 슬롯 시트 반영. 성공 시 artist, 실패·시트 없음 null(호출부가 폴백) */
+  const loadCoverArtist = async (cid: string, why: string): Promise<ServerArtist | null> => {
+    try {
+      const artist = await getArtist(cid);
+      if (!artist.sheet_object_name) {
+        console.warn('[CoverArtist] 아티스트 시트 없음', { cid, why });
+        return null;
+      }
+      return artist;
+    } catch (err: any) {
+      console.error('[CoverArtist] 아티스트 조회 실패', { cid, why, status: err?.response?.status ?? null });
+      return null;
+    }
+  };
+  /** 곡 아티스트 1명만 슬롯에 둔다(다른 kind 슬롯 비움 → 1.5 두 명 선택 생략) */
+  const applyFixedArtistSlots = (artist: ServerArtist) => {
+    const isV = artist.kind === 'virtual';
+    setRealObjName(isV ? null : artist.sheet_object_name);
+    setVirtualObjName(isV ? artist.sheet_object_name : null);
+  };
+  // /me 응답 → 두 슬롯 + 슬롯 cid(현행 흐름)
+  const applyMeSlots = (ch: any) => {
+    setRealObjName(ch?.sheet_object_name || null);
+    setVirtualObjName(ch?.virtual_sheet_object_name || null);
+    meCidsRef.current = {
+      real: ch?.character_id ? String(ch.character_id) : null,
+      virtual: ch?.virtual_character_id ? String(ch.virtual_character_id) : null,
+    };
+  };
+  const wardrobeBusyRef = useRef(false);
+
   // v3.202(H-④): 비파괴 되감기 컨텍스트 — 1조 MusicGeneration commitExchange 패턴 동일.
   // 활성 중에는 답변 핸들러가 대화를 덧붙이는 대신 해당 버블/에코만 치환하고 resumeStep으로 복귀.
   const rewindRef = useRef<{ idx: number; target: number; resumeStep: number } | null>(null);
@@ -536,18 +599,32 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (hasPendingGeneration || hasResumableDialogue) {
       const snap = useMusicStore.getState().coverExtrasSnapshot;
       if (snap) {
-        Object.assign(coverExtras, snap);
+        // v3.235: 구 스냅샷(charCid 없음)이면 모듈 잔존 cid 를 쓰지 않도록 먼저 비운다
+        Object.assign(coverExtras, { charCid: null, charSource: null }, snap);
         if (snap.charKind) setChosenSlot(snap.charKind); // 의상 미리보기 슬롯 복원
       }
       // 아티스트 관련 스텝(1~1.7)에서 복원된 경우 — 슬롯 object_name 재확보(대화 append 없음)
       if (hasResumableDialogue && (initialStore.coverStep ?? 0) >= 1 && (initialStore.coverStep ?? 0) < 1.75) {
-        api.get('/character/me')
-          .then((res) => {
-            const ch = res.data?.character;
-            setRealObjName(ch?.sheet_object_name || null);
-            setVirtualObjName(ch?.virtual_sheet_object_name || null);
-          })
-          .catch((err) => console.warn('[Cover] 복원 시 캐릭터 재조회 실패:', err?.response?.status));
+        // v3.235 A1: 곡 아티스트로 고정된 대화면 같은 cid 로 재확보(대표 아티스트로 바뀌지 않게)
+        const snapA = snap as Partial<typeof coverExtras> | null;
+        const fixedCid = isFixedCoverArtist(snapA?.charSource) ? (snapA?.charCid || null) : null;
+        const restoreFromMe = () =>
+          api.get('/character/me')
+            .then((res) => applyMeSlots(res.data?.character))
+            .catch((err) => console.warn('[Cover] 복원 시 캐릭터 재조회 실패:', err?.response?.status));
+        if (fixedCid) {
+          void (async () => {
+            const artist = await loadCoverArtist(fixedCid, 'restore');
+            if (artist) {
+              applyFixedArtistSlots(artist);
+              console.info(`[CoverArtist] source=${snapA?.charSource} cid=${fixedCid}`, { via: 'restore', kind: artist.kind });
+            } else {
+              void restoreFromMe();
+            }
+          })();
+        } else {
+          void restoreFromMe();
+        }
       }
       return;
     }
@@ -1059,15 +1136,45 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.202(H-①): 방금 고른 track을 인자로 전달 — setSelectedTrack 직후의 stale closure 때문에
   // 아티스트 없는 사용자가 가사 반영 질문(1.75)을 건너뛰던 결함 픽스(state 대신 인자 우선).
   const checkCharacterAndProceed = async (track?: MyTrack | null) => {
+    // v3.235 A1 [CoverArtist]: 곡 아티스트(track cid > 작곡 직후 cid) 우선 — 그 1명만 제시(1.5 생략).
+    // cid 없음·조회 실패·앨범 모드 = 아래 현행 /character/me 흐름.
+    const pick = pickCoverArtistCid({
+      albumMode: !!albumMode,
+      track: track ?? null,
+      composeCid: useMusicStore.getState().artistCharacterId,
+      savedTrackId: useMusicStore.getState().savedTrackId,
+    });
+    if (pick.cid) {
+      const artist = await loadCoverArtist(pick.cid, pick.source);
+      if (artist) {
+        applyFixedArtistSlots(artist);
+        applyExtras({
+          virtualArtStyle: artist.kind === 'virtual' ? (artist.art_style || null) : null,
+          charCid: artist.character_id || pick.cid,
+          charSource: pick.source,
+        });
+        console.info(`[CoverArtist] source=${pick.source} cid=${pick.cid}`, { via: pick.via, kind: artist.kind, trackId: track?.id ?? null });
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?', echoOfStep: 0 },
+        ]);
+        setStep(1);
+        return;
+      }
+      console.info(`[CoverArtist] source=me cid=null`, { via: 'lookup-failed', wanted: pick.cid, from: pick.source });
+    }
     try {
       const res = await api.get('/character/me');
       const ch = res.data?.character;
       const realObj: string | null = ch?.sheet_object_name || null;
       const virtualObj: string | null = ch?.virtual_sheet_object_name || null;
-      setRealObjName(realObj);
-      setVirtualObjName(virtualObj);
+      applyMeSlots(ch);
       // v3.152: 가상 화풍 보관 — 가상 슬롯 선택 시 프롬프트 분기(character_art_style)에 사용
-      applyExtras({ virtualArtStyle: ch?.virtual_art_style || null });
+      // v3.235: 커버 cid 는 슬롯 선택 시 결정(slotCidPatch)
+      applyExtras({ virtualArtStyle: ch?.virtual_art_style || null, charCid: null, charSource: 'me' });
+      if (!pick.cid) {
+        console.info(`[CoverArtist] source=me cid=null`, { via: pick.via, hasReal: !!realObj, hasVirtual: !!virtualObj });
+      }
       if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj, vStyle: ch?.virtual_art_style || null });
       if (realObj || virtualObj) {
         setChatHistory((prev) => [
@@ -1108,7 +1215,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   //    전부 선택사항(건너뛰기 가능). 답변은 coverExtras(모듈 스코프)에 보관돼 재진입에도 유지. ──
   const goWardrobe = (slot: 'real' | 'virtual') => {
     setChosenSlot(slot);
-    applyExtras({ charKind: slot }); // v3.152: 실사/가상 프롬프트 분기용
+    applyExtras({ charKind: slot, ...slotCidPatch(slot) }); // v3.152: 실사/가상 프롬프트 분기용 · v3.235: 커버 cid
     setChatHistory((prev) => [
       ...prev,
       { type: 'director', text: '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!', echoOfStep: step },
@@ -1116,10 +1223,38 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setStep(1.7);
   };
 
-  const handleWardrobeKeep = () => {
+  const proceedWardrobeKeep = () => {
     if (commitRewindAnswer('이 의상 그대로')) return; // v3.202(H-④)
     setChatHistory((prev) => [...prev, { type: 'user', text: '이 의상 그대로', step: 1.7 }]);
     proceedToLyricsQ(undefined, 1.7); // v3.151(대표): 의상 다음은 가사 포함 여부
+  };
+
+  // v3.235 A4 (D5) [CoverWardrobe]: 커버 아티스트에게 옷을 입히는 중(processing·done-unsaved)이면
+  // 지금 만들면 이전 의상(저장 전 시트)으로 커버가 만들어진다 — 앱 내 확인 후 진행/기다리기.
+  const handleWardrobeKeep = () => {
+    const dressing = getDressingArtistJob(coverExtras.charCid || null);
+    if (dressing) {
+      console.info('[CoverWardrobe] keep-while-dressing', { job: dressing.jobId, status: dressing.lastStatus, cid: coverExtras.charCid });
+      showAlert('아직 옷을 입히는 중이에요', '지금 만들면 이전 의상으로 커버가 만들어져요.', [
+        {
+          text: '기다리기',
+          style: 'cancel',
+          onPress: () => {
+            console.info('[CoverWardrobe] keep-while-dressing — 기다리기', { job: dressing.jobId });
+            if (rewindRef.current) handleEditCancel(); // 답변 편집(되감기) 중이었으면 원위치
+          },
+        },
+        {
+          text: '이전 의상으로 진행',
+          onPress: () => {
+            console.info('[CoverWardrobe] keep-while-dressing — 이전 의상으로 진행', { job: dressing.jobId });
+            proceedWardrobeKeep();
+          },
+        },
+      ]);
+      return;
+    }
+    proceedWardrobeKeep();
   };
 
   // v3.151(대표): 가사 포함 질문을 앞으로 — 포함하면 디테일(배경~색감) 질문 생략,
@@ -1139,9 +1274,105 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setStep(1.75);
   };
 
-  const handleWardrobeChange = () => {
+  // v3.235 A2 (③-b) [CoverWardrobe]: 이동 전 꾸미기 대상 = 커버 아티스트로 고정(characterTaskStore 잔존값 —
+  // 마지막으로 연 ArtistResult 의 다른 아티스트 cid·원본 사진 — 혼입 차단) + 완료 후 커버 복귀 표식(A3).
+  // 반환 false = 이동하지 않음(안내 표시됨)
+  const prepareCoverWardrobeTarget = async (): Promise<boolean> => {
+    const kind: 'real' | 'virtual' = chosenSlot || coverExtras.charKind || 'real';
+    const cid: string | null = coverExtras.charCid || meCidsRef.current[kind] || null;
+    if (kind === 'real' && isChildNow()) {
+      // v3.232 K12: 실사 꾸미기 = 원본 얼굴 사진으로 다시 그림 — 어린이 불가(ArtistResult 와 같은 안내, 요청 전 차단)
+      console.info('[KidsGate] cover wardrobe — 실사 꾸미기 차단', { cid });
+      showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정에서는 실사 아티스트의 옷을 바꿀 수 없어요.');
+      return false;
+    }
+    if (kind === 'virtual' && !cid) {
+      // 레거시(cid 없는) 가상 슬롯 — ArtistResult 와 같은 안내(ArtistLoading 가상 꾸미기는 cid 필수)
+      console.info('[CoverWardrobe] 레거시 가상 아티스트 — 꾸미기 미지원 안내');
+      showAlert('준비 중이에요', '이 캐릭터(가상) 아티스트는 예전 방식으로 저장되어 꾸미기를 지원하지 않아요.\n새로 만든 캐릭터 아티스트는 꾸미기를 쓸 수 있어요.');
+      return false;
+    }
+    let sheetObj: string | null = kind === 'virtual' ? virtualObjName : realObjName;
+    let originalPhoto: string | null = null;
+    let usedItems: any[] | null = null;
+    if (cid) {
+      let artist: ServerArtist;
+      try {
+        artist = await getArtist(cid);
+      } catch (err: any) {
+        console.error('[CoverWardrobe] 대상 아티스트 조회 실패', { cid, status: err?.response?.status ?? null });
+        showAlert('안내', '아티스트 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.');
+        return false;
+      }
+      sheetObj = artist.sheet_object_name || sheetObj;
+      originalPhoto = (artist as any).original_photo_object_name ? String((artist as any).original_photo_object_name) : null;
+      usedItems = Array.isArray(artist.used_items) ? artist.used_items : [];
+    }
+    if (kind === 'real' && !originalPhoto) {
+      // 실사 옷 입히기는 그 아티스트의 원본 사진이 필요 — /me 는 같은 cid(또는 레거시 단일 문서)일 때만 사용
+      try {
+        const meRes = await api.get('/character/me');
+        const me = meRes.data?.character;
+        const meCid = me?.character_id ? String(me.character_id) : null;
+        if (me?.original_photo_object_name && (!cid || meCid === cid)) {
+          originalPhoto = String(me.original_photo_object_name);
+          if (!cid) usedItems = Array.isArray(me?.used_items) ? me.used_items : [];
+        }
+      } catch (err: any) {
+        console.error('[CoverWardrobe] 원본 사진 조회 실패', { cid, status: err?.response?.status ?? null });
+      }
+      if (!originalPhoto) {
+        console.warn('[CoverWardrobe] 대상 아티스트 원본 사진 없음 — 이동 안 함', { cid });
+        showAlert('안내', '이 아티스트는 원본 사진이 없어 여기서 옷을 바꿀 수 없어요. 작업실 > 아티스트 디렉터에서 확인해주세요.');
+        return false;
+      }
+    }
+    useCharacterTaskStore.getState().armCoverWardrobe({
+      characterId: cid,
+      characterKind: kind,
+      originalPhotoObjectName: kind === 'real' ? originalPhoto : null,
+      sheet: sheetObj ? { preview_url: artistSheetUrl(sheetObj), object_name: sheetObj } : null,
+      to: albumMode ? 'albumCover' : 'cover',
+      meta: albumMode
+        ? { trackId: null, albumMode }
+        : { trackId: selectedTrack?.id || musicStore.coverTrackId || null, albumMode: null },
+    });
+    // 착용 목록 = 그 아티스트의 서버 used_items(ArtistResult 하이드레이션 관행 — 백엔드가 진실의 원천)
+    if (usedItems) {
+      if (usedItems.length > 0) {
+        useOutfitStore.getState().setItems(usedItems.map((it: any) => ({
+          cat: it.category || '',
+          name: it.name || '',
+          productUrl: it.product_url || undefined,
+          imageObjectName: it.image_object_name || undefined,
+          appliedAt: Date.now(),
+        })));
+      } else {
+        useOutfitStore.getState().clear();
+      }
+    }
+    console.info(`[CoverWardrobe] target cid=${cid} kind=${kind}`, {
+      source: coverExtras.charSource ?? null, hasOriginal: !!originalPhoto, items: usedItems ? usedItems.length : null,
+      to: albumMode ? 'albumCover' : 'cover',
+    });
+    return true;
+  };
+
+  const handleWardrobeChange = async () => {
     console.info('[Cover] 의상 변경 — ArtistCody 연동 이동');
     rewindRef.current = null; // v3.202(H-④): 화면 이동 흐름은 되감기 치환 대상이 아님 — 일반 진행으로 전환
+    if (wardrobeBusyRef.current) return;
+    wardrobeBusyRef.current = true;
+    let ok = false;
+    try {
+      ok = await prepareCoverWardrobeTarget();
+    } catch (err) {
+      console.error('[CoverWardrobe] 대상 준비 실패', err);
+      showAlert('안내', '아티스트 꾸미기를 준비하지 못했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      wardrobeBusyRef.current = false;
+    }
+    if (!ok) return;
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: '의상 바꾸러 가기', step: 1.7 },
@@ -1587,7 +1818,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 자동 선택', { slot: realObjName ? 'real' : 'virtual', obj });
     if (rewindRef.current) {
       // v3.202(H-④): 되감기 중 자동 선택 — 슬롯 종류만 반영하고 원위치 복귀(의상 확인 재진행 없음)
-      applyExtras({ charKind: realObjName ? 'real' : 'virtual' });
+      applyExtras({ charKind: realObjName ? 'real' : 'virtual', ...slotCidPatch(realObjName ? 'real' : 'virtual') });
       setChosenSlot(realObjName ? 'real' : 'virtual');
       commitRewindAnswer('아티스트 포함');
       return;
@@ -1604,7 +1835,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
     if (rewindRef.current) {
       // v3.202(H-④): 되감기 중 슬롯 변경 — 값 반영 + 버블 치환 후 원위치 복귀
-      applyExtras({ charKind: slot });
+      applyExtras({ charKind: slot, ...slotCidPatch(slot) });
       setChosenSlot(slot);
       commitRewindAnswer(slot === 'real' ? '아티스트①로' : '아티스트②로');
       return;
@@ -1639,10 +1870,82 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   );
 
   // v3.150: 꾸미기 다녀온 뒤 focus 복귀 — 의상(시트) 최신화 (step 1.7 대기 중일 때만)
+  // v3.235 A1: 커버 cid 가 정해져 있으면 그 아티스트로 최신화(대표 아티스트로 바뀌지 않게). 없으면 현행 /me.
+  const refreshWardrobeSheet = async (why: string): Promise<'ok' | 'failed' | 'no-cid'> => {
+    const cid = coverExtras.charCid || null;
+    const slot = chosenSlot || coverExtras.charKind || null; // 복원 직후(state 반영 전)엔 스냅샷 kind
+    if (!cid || !slot) return 'no-cid';
+    const artist = await loadCoverArtist(cid, why);
+    if (!artist) return 'failed';
+    if (artist.kind === 'virtual') setVirtualObjName(artist.sheet_object_name);
+    else setRealObjName(artist.sheet_object_name);
+    if (artist.kind === slot && artist.sheet_object_name) {
+      useMusicStore.getState().setCoverCharacterObjectName(artist.sheet_object_name);
+    }
+    if (__DEV__) console.info('[Cover] 의상 확인 — 시트 최신화', { slot, cid, why });
+    return 'ok';
+  };
+
+  // ── v3.235 A3·A4 [CoverWardrobe]: 옷 입히기 완성 → 커버 대화 복귀 안내 / 옷 입히는 중 안내·자동 적용 ──
+  const isFocused = useIsFocused();
+  const dressingJob = useDressingArtistJob(coverExtras.charCid || null);
+  const wardrobeReturn = (route.params as any)?.wardrobeReturn as
+    | { jobId?: string; characterId?: string | null; at?: number }
+    | undefined;
+  useEffect(() => {
+    const jobId = wardrobeReturn?.jobId ? String(wardrobeReturn.jobId) : null;
+    if (!jobId || handledWardrobeReturns.has(jobId)) return;
+    handledWardrobeReturns.add(jobId);
+    if (mode !== 'dialogue' || step !== 1.7) {
+      console.info('[CoverWardrobe] 복귀 — 의상 확인 단계 아님(안내 생략)', { job: jobId, step, mode });
+      return;
+    }
+    void refreshWardrobeSheet('return');
+    setChatHistory((prev) =>
+      prev[prev.length - 1]?.text === WARDROBE_RETURN_TEXT ? prev : [...prev, { type: 'director', text: WARDROBE_RETURN_TEXT }]
+    );
+    console.info(`[CoverWardrobe] return-to-cover job=${jobId}`, {
+      at: albumMode ? 'albumCover' : 'cover', cid: wardrobeReturn?.characterId ?? coverExtras.charCid ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wardrobeReturn?.jobId]);
+
+  const coverReturnTarget = (): CoverReturnTarget => ({
+    to: albumMode ? 'albumCover' : 'cover',
+    meta: {
+      characterId: coverExtras.charCid || null,
+      trackId: albumMode ? null : (selectedTrack?.id || useMusicStore.getState().coverTrackId || null),
+      albumMode: albumMode ?? null,
+    },
+  });
+  const autoDressFinalizeRef = useRef<string | null>(null);
+  const applyDressedJob = (jobId: string, why: string) => {
+    console.info('[CoverWardrobe] 옷 입히기 완성 — 커버 대화에서 저장', { job: jobId, why });
+    void finalizeArtistJob(jobId, { navigation, coverReturn: coverReturnTarget() });
+  };
+  // 커버 대화(1.7)에서 기다리는 중 완성되면 여기서 저장 → 같은 화면으로 복귀 안내(작업실 알림은 이 화면에 뜨지 않음)
+  useEffect(() => {
+    if (!dressingJob || dressingJob.lastStatus !== 'done') return;
+    if (!isFocused || mode !== 'dialogue' || step !== 1.7) return;
+    if (autoDressFinalizeRef.current === dressingJob.jobId) return;
+    autoDressFinalizeRef.current = dressingJob.jobId;
+    applyDressedJob(dressingJob.jobId, 'auto');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dressingJob?.jobId, dressingJob?.lastStatus, isFocused, mode, step]);
   useFocusEffect(
     useCallback(() => {
+      // v3.235 [CoverWardrobe]: 커버 화면으로 돌아옴 = 꾸미기에서 적용 없이 복귀 → 복귀 표식 해제
+      // (적용했다면 표식은 이미 옷 입히기 job 으로 옮겨졌다 — takeCoverWardrobeReturn)
+      useCharacterTaskStore.getState().clearCoverWardrobe('cover-focus');
       if (step !== 1.7 || !chosenSlot) return;
       (async () => {
+        const r = await refreshWardrobeSheet('focus');
+        if (r === 'ok') return;
+        if (r === 'failed' && isFixedCoverArtist(coverExtras.charSource)) {
+          // 곡 아티스트 고정 — 대표 아티스트(/me)로 바꾸지 않고 기존 시트 유지
+          console.warn('[Cover] 의상 최신화 실패(곡 아티스트 기존 시트 유지)', { cid: coverExtras.charCid });
+          return;
+        }
         try {
           const res = await api.get('/character/me');
           const ch = res.data?.character;
@@ -2422,6 +2725,23 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 />
               ) : null;
             })()}
+            {dressingJob ? (
+              // v3.235 A4: 커버 아티스트 옷 입히기 진행 중·완성(저장 대기) 안내
+              <View style={{ marginBottom: 10, alignItems: 'center' }}>
+                <AppText style={[styles.refineHint, { marginTop: 0 }]}>
+                  {dressingJob.lastStatus === 'done' ? WARDROBE_DRESSED_TEXT : WARDROBE_DRESSING_TEXT}
+                </AppText>
+                {dressingJob.lastStatus === 'done' ? (
+                  <TouchableOpacity
+                    onPress={() => applyDressedJob(dressingJob.jobId, 'tap')}
+                    style={{ paddingVertical: 6, paddingHorizontal: 12 }}
+                    accessibilityLabel="바뀐 옷 적용하기"
+                  >
+                    <AppText style={styles.optionBtnOutlineText}>바뀐 옷 적용하기</AppText>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
             <TouchableOpacity style={styles.optionBtn} onPress={handleWardrobeKeep} activeOpacity={0.8}>
               <AppText style={styles.optionBtnText}>이 의상 그대로 갈게요</AppText>
             </TouchableOpacity>

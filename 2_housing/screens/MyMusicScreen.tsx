@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
-  Share,
   Linking,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
@@ -538,15 +537,11 @@ export default function MyMusicScreen({ navigation }: any) {
     }
   };
 
-  // 내 곡 공유 (내가 만든 곡만 노출되는 화면이므로 소유권 체크 불필요)
-  const handleShareTrack = async (track: Track) => {
-    const link = `${BACKEND_BASE_URL}/track/${track.id}`;
-    if (__DEV__) console.info('[MyMusic] share', { id: track.id });
-    try {
-      await Share.share({ message: `MAIDOL에서 내가 만든 곡 "${track.title}" 들어보세요!\n베타 테스트 기간 가입 시 ⭐50 추가 증정!\n${link}` });
-    } catch (err: any) {
-      console.error('[MyMusic] share 실패', { message: err?.message });
-    }
+  // v3.235 B3: 내 곡 공유는 공용 ⋯ 시트 '공유하기'(utils/trackShare, shareOwn) 경유 — 비공개 곡은 공개 확인 후 공유.
+  // 공개 전환 성공 시 즉시 '차트 스트리밍 중' 반영 후 서버 진실로 재동기화(차트 업로드 관행).
+  const handleSharePublished = (trackId: string) => {
+    setTracks((prev) => prev.map((t) => (String(t.id) === trackId ? { ...t, is_public: true } : t)));
+    fetchTracks(true);
   };
 
   // 내 곡 다운로드 — presigned URL 받아 열기(웹=다운로드/새탭, 네이티브=브라우저 저장)
@@ -1020,15 +1015,17 @@ export default function MyMusicScreen({ navigation }: any) {
         onClose={() => setSdTrack(null)}
       />
 
-      {/* 곡 더보기(⋮) — 공용 시트 + 내 곡 고유 기능(공유·다운로드·차트 업로드·삭제) */}
+      {/* 곡 더보기(⋮) — 공용 시트(공유하기 포함) + 내 곡 고유 기능(다운로드·Inst.·차트 업로드/숨기기·삭제) */}
       <TrackActionSheet
         track={actionTrack ? { ...actionTrack, id: String(actionTrack.id) } : null}
         onClose={() => setActionTrack(null)}
         onPlay={(t) => navigation.getParent()?.navigate('Player', { track: t })}
         onLikeChanged={(trackId, delta) => setTracks((prev) => prev.map((t) =>
           String(t.id) === trackId ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) } : t))}
+        shareOwn
+        onSharePublished={handleSharePublished}
         extraItems={actionTrack ? [
-          // v3.221: 공유 항목 임시 숨김(사용자 지시 — 기능·시트는 보존, 항목만 미노출).
+          // v3.235 B3: 공유 = 공용 기본 항목 '공유하기'(시트가 제공) — v3.221 임시 숨김 해제.
           // 다운로드 = [영상, 음원] 2택 다이얼로그 — 영상은 영상 디렉터로 연결(선곡 프리셋).
           { icon: 'download', label: '다운로드', onPress: () => handleDownloadChoice(actionTrack) },
           // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외

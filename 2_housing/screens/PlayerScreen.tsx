@@ -40,6 +40,8 @@ import { useArtistStore } from '../stores/artistStore';
 // v3.197: 프리로드 공용 모듈(consume/trigger/discard) — BT/화면꺼짐 전환 실패 완화
 // v3.217 ①(a): createTrackSound — 웹 단일 audio element 재사용 팩토리(네이티브는 createAsync 그대로).
 //   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
+// v3.235 B6: 공유 링크 진입 웹 자동재생 차단 → '탭해서 듣기' 오버레이(단일 element 동기 play)
+import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture } from '../services/webAudioElement';
 import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
@@ -188,6 +190,15 @@ function RepeatIcon({ mode }: { mode: 'off' | 'all' | 'one' }) {
 
 export default function PlayerScreen({ route, navigation }: any) {
   const routeTrack: TrackData = route.params?.track;
+  // v3.235 B5·B6: 공유 링크 진입(utils/trackLink) — 첫 화면 튜토리얼 생략(D9)·웹 자동재생 차단 시 탭 오버레이
+  const viaShare = route.params?.via === 'share';
+  const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(() => Platform.OS === 'web' && isWebAutoplayBlocked());
+  const [tapOverlayDismissed, setTapOverlayDismissed] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return; // 네이티브 = 오버레이 로직 미실행
+    setAutoplayBlocked(isWebAutoplayBlocked());
+    return subscribeWebAutoplayBlocked(setAutoplayBlocked);
+  }, []);
   // RN 코어 SafeAreaView는 iOS 전용이라 Android(edge-to-edge)에서 인셋 미적용 → insets 패딩으로 대체
   const insets = useSafeAreaInsets();
   useEffect(() => {
@@ -942,6 +953,21 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const coverUri = getCoverUri();
 
+  // v3.235 B6: 링크 진입 + 웹 자동재생 차단 → 전면 '탭해서 듣기'. 탭 1회로 닫힘(재생이 또 거부돼도
+  // 일반 재생 버튼으로 복구 가능 — 오버레이에 갇히지 않게).
+  const showShareTapOverlay = Platform.OS === 'web' && viaShare && autoplayBlocked && !tapOverlayDismissed;
+  useEffect(() => {
+    if (showShareTapOverlay) console.info('[TrackLink] autoplay-blocked', { id: track?.id ? String(track.id) : null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showShareTapOverlay]);
+  const handleShareTapPlay = () => {
+    // 제스처 안 동기 play() — 이 앞에 await 금지(iOS 사파리 사용자 활성화 요건)
+    const called = resumeWebPlaybackFromGesture();
+    setTapOverlayDismissed(true);
+    console.info('[TrackLink] gesture-play', { id: track?.id ? String(track.id) : null, called });
+    if (!called) loadAndPlay(track); // element/src 없음(비정상) — 일반 로드로 복구
+  };
+
   // v3.161b(대표 확정): 커버 = 음악재생바(슬라이더)와 같은 가로폭(winW-48)의 정사각.
   // 세로 여백 압축으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
   const { width: winW, height: winH } = useWindowDimensions();
@@ -1186,7 +1212,8 @@ export default function PlayerScreen({ route, navigation }: any) {
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
 
-        {/* v3.55: 공유 버튼 제거 — 공유는 마이뮤직(내 곡)에서만 제공한다는 정책 */}
+        {/* v3.55: 공유 버튼 제거 → v3.235(D6): 공유는 곡 목록 공용 ⋯ 메뉴 '공유하기'(차트·마이페이지·검색·플레이리스트·피드)로 제공.
+            플레이어 공유 버튼은 범위 제외(D12) — 추가하지 않는다. */}
 
         {/* 신고 — 본인 곡에는 표시하지 않는다 */}
         {!isMyTrack ? (
@@ -1505,8 +1532,35 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      {/* v3.204 ⑥: 첫 방문 튜토리얼 */}
-      <TutorialOverlay screenKey="player" steps={TUTORIAL_STEPS} />
+      {/* v3.235 B6: 공유 링크 진입 — 웹 자동재생 차단 시 탭 1회로 재생 */}
+      {showShareTapOverlay ? (
+        <TouchableOpacity
+          style={styles.shareTapOverlay}
+          activeOpacity={0.9}
+          onPress={handleShareTapPlay}
+          accessibilityRole="button"
+          accessibilityLabel="탭해서 듣기"
+        >
+          {coverUri ? (
+            <Image source={{ uri: coverUri }} style={styles.shareTapCover} />
+          ) : (
+            <View style={[styles.shareTapCover, styles.shareTapCoverEmpty]}>
+              <Feather name="music" size={40} color={colors.text.muted} />
+            </View>
+          )}
+          <AppText variant="title3" center numberOfLines={2} style={styles.shareTapTitle}>{track?.title || ''}</AppText>
+          {track?.artist_name ? (
+            <AppText variant="body" tone="secondary" center numberOfLines={1}>{track.artist_name}</AppText>
+          ) : null}
+          <View style={styles.shareTapButton}>
+            <Feather name="play" size={22} color={colors.text.primary} />
+            <AppText variant="bodyStrong" style={styles.shareTapLabel}>탭해서 듣기</AppText>
+          </View>
+        </TouchableOpacity>
+      ) : null}
+
+      {/* v3.204 ⑥: 첫 방문 튜토리얼 — v3.235 D9: 공유 링크 진입 첫 화면은 생략(seen 미기록 → 다음 진입 시 정상 노출) */}
+      <TutorialOverlay screenKey="player" steps={TUTORIAL_STEPS} enabled={!viaShare} />
     </View>
   );
 }
@@ -1517,6 +1571,29 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.deepest,
     alignItems: 'center',
   },
+  // v3.235 B6: 공유 링크 진입 '탭해서 듣기' 오버레이
+  shareTapOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(13,8,32,0.9)', // bg.deepest(#0d0820) 90%
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    zIndex: 50,
+  },
+  shareTapCover: { width: 180, height: 180, borderRadius: radius.lg, marginBottom: spacing.lg },
+  shareTapCoverEmpty: { backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center' },
+  shareTapTitle: { marginBottom: spacing.xs },
+  shareTapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent.primary,
+  },
+  shareTapLabel: { color: colors.text.primary },
   headerTitleFlex: { flex: 1 },
   trackArtistSpacing: { marginTop: spacing.xs },
   // v3.158: 가수·기획사 한 줄 병기 행

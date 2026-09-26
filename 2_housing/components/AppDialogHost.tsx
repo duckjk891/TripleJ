@@ -25,6 +25,29 @@ export default function AppDialogHost() {
   }, [lockUntil]);
 
   if (!dialog) return null;
+
+  // v3.236 A1: 커스텀 본문 다이얼로그 — 카드 안에 제목 + 콘텐츠. 버튼·잠금·닫기는 콘텐츠가 담당.
+  // 백드롭/뒤로가기 = custom.onRequestClose(바쁜 동안 무시 여부는 콘텐츠가 결정), 없으면 닫기.
+  if (dialog.custom) {
+    const custom = dialog.custom;
+    const closeCustom = () => dismiss(dialog.id);
+    const requestClose = () => {
+      if (custom.onRequestClose) custom.onRequestClose();
+      else closeCustom();
+    };
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={requestClose}>
+        <View style={styles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} />
+          <View style={styles.box} key={dialog.id}>
+            {!!dialog.title && <Text style={styles.title}>{dialog.title}</Text>}
+            {custom.render({ close: closeCustom, lockUntil })}
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   const locked = lockUntil > Date.now();
 
   const cancelBtn = dialog.buttons.find((b) => b.style === 'cancel');

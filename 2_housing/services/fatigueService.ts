@@ -1,5 +1,11 @@
 import api from './api';
-import { FatigueDirector, FatigueStatus, FatigueStatusAll, FatigueSkipResult } from '../types';
+import {
+  FatigueDirector,
+  FatigueStatus,
+  FatigueStatusAll,
+  FatigueSkipResult,
+  FatigueBulkSkipResult,
+} from '../types';
 
 /**
  * v3.94: 디렉터 피로/쿨다운 (MAIDOL StarEcon v158 파리티 — Wave 4 A-3)
@@ -75,6 +81,49 @@ export const skipFatigue = async (
     method,
     skipped_minutes: response.data?.skipped_minutes,
     cooldown_remaining_sec: response.data?.cooldown_remaining_sec,
+  }));
+  return response.data;
+};
+
+/**
+ * v3.236 A5: ⭐ 일괄 단축 — POST /api/fatigue/skip-bulk (서버 v3.236 S2 신규, ⭐ 전용)
+ * body {director, units(1..24), request_id(32hex, 필수), expected_total?, expected_unit_cost?}
+ * - 같은 request_id 재요청 = 저장된 응답 재생(replayed:true, 추가 차감 없음) — 재시도는 같은 ID 로.
+ * - 서버가 units 를 min(units, 필요 칸, 24)로 clamp, 단가는 서버 권위.
+ * - 오류 body = {error:<한글 메시지>, code:<코드>, status?:{…}, request_id}. 코드:
+ *   409 no_active_cooldown(무과금) · 409 skip_in_progress · 409 request_id_conflict ·
+ *   409 cost_changed(단가 불일치 또는 총액 > expected_total, 무과금) · 402 insufficient_points {need, balance} ·
+ *   400 invalid_* · 5xx skip_failed(차감됐으면 환불). 404 = 구 서버(엔드포인트 없음) → 호출부 레거시 강등.
+ * composer 도 director 명시(신규 API — 구 서버 호환 불요).
+ */
+export const skipFatigueBulk = async (args: {
+  director: FatigueDirector;
+  units: number;
+  requestId: string;
+  expectedTotal?: number;
+  /** 확인 화면에 보여준 30분 단가 — 서버 단가와 다르면 409 cost_changed(무과금) */
+  expectedUnitCost?: number;
+}): Promise<FatigueBulkSkipResult> => {
+  const { director, units, requestId, expectedTotal, expectedUnitCost } = args;
+  console.log(
+    `[fatigue:${director}] skip-bulk 요청:`,
+    JSON.stringify({
+      units,
+      expected_total: expectedTotal ?? null,
+      expected_unit_cost: expectedUnitCost ?? null,
+      rid: requestId.slice(0, 8),
+    })
+  );
+  const body: Record<string, unknown> = { director, units, request_id: requestId };
+  if (typeof expectedTotal === 'number') body.expected_total = expectedTotal;
+  if (typeof expectedUnitCost === 'number') body.expected_unit_cost = expectedUnitCost;
+  const response = await api.post('/fatigue/skip-bulk', body);
+  console.log(`[fatigue:${director}] skip-bulk 완료:`, JSON.stringify({
+    units_applied: response.data?.units_applied,
+    points_spent: response.data?.points_spent,
+    skipped_minutes: response.data?.skipped_minutes,
+    cooldown_remaining_sec: response.data?.cooldown_remaining_sec,
+    replayed: response.data?.replayed,
   }));
   return response.data;
 };
