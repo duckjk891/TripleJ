@@ -24,7 +24,7 @@ import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
-import { getGenerationStatus, generationStreamUrl } from '../services/musicService';
+import { getGenerationStatus, generationStreamUrl, savedTrackStreamUrl } from '../services/musicService';
 // v3.200: 창작 기록 계층 — 후보 청취(LISTEN)·선택(CANDIDATE_SELECT) 계측 + 발매 시 flush.
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 기록이 재생·발매를 절대 막지 않는다.
 import {
@@ -132,6 +132,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const lyricsStore = useLyricsStore();
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
+  // v3.239: 현재 로드된 sound 라이브 참조 — 재로드 시 이전 것을 확실히 해제(stale 클로저 unload·유령 sound 방지)
+  const soundRef = useRef<Audio.Sound | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   // v3.93: 생성 이력에서 이미 트랙 확정(발매)된 생성으로 진입 시 재저장(중복 트랙) 방지
   const [isSaved, setIsSaved] = useState(!!route.params?.alreadySaved);
@@ -205,9 +207,18 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
       // 백엔드 프록시 우선 사용 (LTE/cloudflared 환경에서도 동작)
       // 저장된 트랙: stream-proxy / 생성 직후: generate stream / 폴백: 원본 URL
+      // v3.239: 이전 sound 먼저 해제 + 상태 비움 — 새 로드가 실패해도 해제된 sound로 재생을 시도하지 않게
+      // (운영: 발매 직후 stream-proxy 404 → 해제된 이전 sound에 play → "sound is not loaded", 재생바 정지)
+      const prev = soundRef.current;
+      soundRef.current = null;
+      setSound(null);
+      if (prev) prev.unloadAsync().catch(() => {});
+
       let audioUrl: string;
       if (store.savedTrackId) {
-        audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${store.savedTrackId}`;
+        // v3.239: 비공개 발매곡 — 웹은 presigned, 네이티브는 proxy+token (savedTrackStreamUrl)
+        audioUrl = await savedTrackStreamUrl(store.savedTrackId);
+        if (!mounted) return;
       } else if (store.generationId) {
         // v3.93: variant별 스트림(?variant=N) + expo-av 헤더 미지원 대비 ?token= 쿼리 인증
         audioUrl = generationStreamUrl(store.generationId, selectedVariant);
@@ -219,7 +230,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           audioUrl = audioUrl.replace(/minio:\d+/, '192.168.219.106:5000');
         }
       }
-      console.log('[MusicResult] Loading audio from:', audioUrl);
+      // 토큰 쿼리는 로그에 남기지 않음
+      console.log('[MusicResult] Loading audio from:', audioUrl.split('?')[0]);
 
       try {
         await applyPlaybackAudioMode(); // v3.57: 재생 오디오 정책 공통화(타 앱 중단 포함)
@@ -241,11 +253,23 @@ export default function MusicResultScreen({ navigation, route }: Props) {
                 // v3.200: 자연 종료 — LISTEN ended (재청취 구분은 play~ended 구간으로 재구성, §6.4)
                 logListen('ended', selectedVariant, status.positionMillis || status.durationMillis || 0);
               }
+            } else if ((status as any).error) {
+              // v3.239: 웹은 404·만료 등 로드 실패가 createAsync reject가 아니라 status.error로 온다 — 기록·정지
+              console.error('[MusicResult] 오디오 로드 실패(status)', {
+                savedTrackId: store.savedTrackId, variant: selectedVariant, message: (status as any).error,
+              });
+              setIsPlaying(false);
             }
           }
         );
 
-        if (mounted) {
+        if (!mounted) {
+          // v3.239: 로드 도중 소스가 바뀜(선택·저장 연속) — 늦게 도착한 sound는 즉시 해제(누수·이중 재생 방지)
+          newSound.unloadAsync().catch(() => {});
+          return;
+        }
+        {
+          soundRef.current = newSound;
           setSound(newSound);
           // v3.93: variant 전환으로 재로드된 경우 — 전환 직전 재생 중이었다면 이어서 자동 재생
           if (pendingPlayRef.current) {
@@ -260,12 +284,16 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             }
           }
         }
-      } catch {
-        // Audio loading failed
+      } catch (err: any) {
+        // v3.239: 조용한 실패 금지 — 로드 실패 시 soundRef 비어 있음 → 재생 탭은 경고 로그만 남기고 무동작
+        console.error('[MusicResult] 오디오 로드 실패', {
+          savedTrackId: store.savedTrackId, generationId: store.generationId,
+          variant: selectedVariant, message: err?.message,
+        });
       }
     };
 
-    // v3.93: variant 전환 시 이전 재생 정지 상태로 초기화 (이전 sound는 [sound] cleanup이 unload)
+    // v3.93: variant 전환 시 이전 재생 정지 상태로 초기화 (v3.239: 이전 sound는 loadAudio 시작 시 soundRef 기준 해제)
     setIsPlaying(false);
     setPosition(0);
     setDuration(0);
@@ -277,11 +305,17 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
     return () => {
       mounted = false;
-      if (sound) {
-        sound.unloadAsync();
-      }
     };
   }, [store.resultUrl, store.generationId, store.savedTrackId, selectedVariant]);
+
+  // v3.239: 화면 이탈 시 현재 sound 해제(라이브 ref 기준)
+  useEffect(() => {
+    return () => {
+      const cur = soundRef.current;
+      soundRef.current = null;
+      if (cur) cur.unloadAsync().catch(() => {});
+    };
+  }, []);
 
   // v3.93: 완료된 생성의 variants 조회 — 2개 이상이고 아직 트랙 미확정이면 A/B 비교 노출.
   // 계약: GET /generate/{id} → { variants: [{audio_url, suno_audio_id, ...}], result_track_id }
@@ -313,14 +347,6 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     };
   }, [store.generationId]);
 
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
-    };
-  }, [sound]);
 
   // v3.200: 화면 이탈 시 이벤트 큐 flush — 청취·선택 기록 유실 최소화(오프라인 영속 큐는 후속)
   useEffect(() => {
@@ -361,18 +387,26 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   );
 
   const togglePlay = async () => {
-    if (!sound) return;
-
-    if (isPlaying) {
-      await sound.pauseAsync();
+    const cur = soundRef.current;
+    if (!cur) {
+      console.warn('[MusicResult] 재생 요청 — 로드된 sound 없음(로딩 중 또는 로드 실패)', { savedTrackId: store.savedTrackId });
+      return;
+    }
+    try {
+      if (isPlaying) {
+        await cur.pauseAsync();
+        setIsPlaying(false);
+        // v3.200: LISTEN pause — 청취 구간(커버리지) 재구성 근거 (§6.2)
+        logListen('pause', selectedVariant, position);
+      } else {
+        await cur.playAsync();
+        setIsPlaying(true);
+        // v3.200: LISTEN play — 현재 위치부터 재생 시작
+        logListen('play', selectedVariant, position);
+      }
+    } catch (err: any) {
+      console.error('[MusicResult] 재생/일시정지 실패', { savedTrackId: store.savedTrackId, message: err?.message });
       setIsPlaying(false);
-      // v3.200: LISTEN pause — 청취 구간(커버리지) 재구성 근거 (§6.2)
-      logListen('pause', selectedVariant, position);
-    } else {
-      await sound.playAsync();
-      setIsPlaying(true);
-      // v3.200: LISTEN play — 현재 위치부터 재생 시작
-      logListen('play', selectedVariant, position);
     }
   };
 
@@ -431,15 +465,16 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     console.info('[MusicResult] seek', { variant: selectedVariant, from_ms, to_ms });
     logListen('seek', selectedVariant, to_ms, from_ms);
     try {
-      if (sound) await sound.setPositionAsync(value);
+      if (soundRef.current) await soundRef.current.setPositionAsync(value);
     } catch (err: any) {
       console.error('[MusicResult] seek 실패', { message: err?.message });
     }
   };
 
   const handleRegenerate = () => {
-    if (sound) {
-      sound.unloadAsync();
+    if (soundRef.current) {
+      soundRef.current.unloadAsync().catch(() => {});
+      soundRef.current = null;
       setSound(null);
     }
     store.setResultUrl(null);
@@ -605,8 +640,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   };
 
   const handleBackToMap = () => {
-    if (sound) {
-      sound.unloadAsync();
+    if (soundRef.current) {
+      soundRef.current.unloadAsync().catch(() => {});
+      soundRef.current = null;
     }
     navigation.popToTop();
   };

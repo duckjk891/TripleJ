@@ -18,7 +18,8 @@ import AppScreenLayout from '../components/AppScreenLayout';
 import ComposerLoadingView, { ComposerLoadingStep } from '../components/ComposerLoadingView';
 import { getInstrumentalStatus } from '../services/trackService';
 import { applyPlaybackAudioMode } from '../services/audioMode';
-import { BACKEND_BASE_URL } from '../services/api';
+import { savedTrackStreamUrl } from '../services/musicService';
+import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
 // v3.228 W1: Inst. job 전역 추적 — inst 어댑터는 import 시 등록. 완료·실패 카드 표시 = 확인(ack)
 import { findInstJobForTrack } from '../services/genJobs/inst';
@@ -184,16 +185,20 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
   }, [trackId, nonce]);
 
   // 완료 미리듣기 로드 — 소스 /tracks/stream-proxy/{result_track_id}(v193 Range 완비 = 시크 OK)
+  // v3.239: Inst. 트랙은 원곡 공개 여부를 따라 대개 비공개 → 토큰 없는 proxy는 404(웹·네이티브 모두 무음).
+  //         MusicResult와 동일하게 savedTrackStreamUrl(웹 presigned / proxy+token) + 네이티브 헤더.
   useEffect(() => {
     if (phase !== 'done' || !resultTrackId) return undefined;
     let mounted = true;
     const loadAudio = async () => {
-      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${resultTrackId}`;
       if (__DEV__) console.info('[InstLoading] 미리듣기 로드', { resultTrackId });
       try {
+        const audioUrl = await savedTrackStreamUrl(resultTrackId);
+        if (!mounted) return;
+        const token = useAuthStore.getState().token;
         await applyPlaybackAudioMode();
         const { sound: newSound } = await Audio.Sound.createAsync(
-          { uri: audioUrl },
+          { uri: audioUrl, ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) },
           { shouldPlay: false },
           (status: any) => {
             if (!mounted) return;
@@ -202,6 +207,9 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
               if (!isSeekingRef.current) setPosition(status.positionMillis || 0);
               setDuration(status.durationMillis || 0);
               if (status.didJustFinish) setIsPlaying(false);
+            } else if (status?.error) {
+              console.error('[InstLoading] 미리듣기 로드 실패(status)', { resultTrackId, message: status.error });
+              setIsPlaying(false);
             }
           }
         );

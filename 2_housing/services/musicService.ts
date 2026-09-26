@@ -389,6 +389,29 @@ export const generationStreamUrl = (genId: string, variant = 0): string => {
   return parts.length > 0 ? `${base}?${parts.join('&')}` : base;
 };
 
+/**
+ * v3.239: 저장(발매)된 트랙의 재생 URL — 결과 화면 전용.
+ * 발매 직후 트랙은 비공개(is_public=false)라 stream-proxy는 소유자 인증이 필요한데,
+ * 웹 <audio>는 헤더를 못 붙여 404가 났다(재생·재생바 멈춤). 웹은 PlayerScreen과 같은
+ * presigned(/tracks/stream, axios 인증) 우선, 실패 시 ?token= 붙인 proxy로 폴백.
+ * 네이티브는 proxy + ?token= (헤더도 호출부에서 계속 전송).
+ */
+export const savedTrackStreamUrl = async (trackId: string): Promise<string> => {
+  const token = useAuthStore.getState().token;
+  const proxy = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${trackId}`
+    + (token ? `?token=${encodeURIComponent(token)}` : '');
+  if (Platform.OS !== 'web') return proxy;
+  try {
+    const res = await api.get(`/tracks/stream/${trackId}`);
+    const url = res.data?.stream_url;
+    if (__DEV__) console.info('[musicService] saved track web audio = presigned', { trackId, ok: !!url });
+    return url || proxy;
+  } catch (err: any) {
+    console.error('[musicService] saved track presigned 실패 → proxy 폴백', { trackId, status: err?.response?.status });
+    return proxy;
+  }
+};
+
 /** v3.93: 이력 항목 상태 라벨/유형 판별 헬퍼 (화면 공용) */
 export const isGenerationInProgress = (g: Pick<GenerationItem, 'status'>): boolean =>
   g.status === 'pending' || g.status === 'processing';
