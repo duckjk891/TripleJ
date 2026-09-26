@@ -7747,3 +7747,164 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 2. 웹앱: 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app` 1회(앱은 API 실패 시 내장 폴백이라 순서 역전돼도 동작, 측정 이벤트만 드롭). 래퍼 무변경.
 3. 네이티브: 다음 빌드(v1.3.1 후보)에 포함(대표 판단). 구 네이티브는 v3.235 고정 문구로 계속 동작.
 4. 카카오 OG 캐시: 기존에 공유된 URL 은 카카오 캐시로 옛 설명이 보일 수 있음 — 새 공유(`?s=` 새 URL)는 새 설명. 필요 시 카카오 공유 디버거로 대표 곡 캐시 초기화(운영).
+
+# v3.238 (2026-09-27) — ① 스타일링(착장)은 "아티스트가 들어간 커버"일 때만 노출 ② 공유 화면 모든 문구 안 항상 표시
+
+## 요청 원문
+1) "커버 이미지에 해당 착장이 없는데도 착장이 보이는데 이게 곡을 만들때 아티스트를 선택해서 그런건가? 이미지를 만들때 아티스트를 선택해야 착장이 나오도록 해야되."
+2) (직전 대화) 공유 화면에서 "바치는 노래말고 고양이 등 다른 멘트는 다 어디갔어?" → 오케스트레이터 기본안("다른 멘트 보기" 버튼으로 펼침) 제시 후 **대표 결정: "모든 멘트를 항상 보여줘야지"** — 공유 화면에서 모든 테마의 문구 안을 항상 칩으로 표시. 순서 = 곡 테마 A→B → 바치는 노래 → 나머지 안(default 포함) 전부, 중복 없이, 칩 라벨이 겹치면 테마 구분이 보이게.
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD 38ca939 = v3.237 커밋). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004`(읽기 전용, 컨테이너 maidol-app `/srv/app` 과 md5 동일 확인). 분석 원본 = `/private/tmp/server_staging_v3238/orig/`(app·scripts tar, .bak·static·logs·__pycache__ 제외). 실측 스크립트 = `/private/tmp/server_staging_v3238/q/q1~q5.py`(Mongo find·count 만, 쓰기 0). 출처 [P]=planner 실측·코드 확인.
+
+서버 md5 기준값([P] 2026-09-27, 호스트 = 컨테이너): routes/tracks.py `c68a74ac7aa4b327caee0b55d18b074f`(= v3.235 배포본) · routes/business.py `7b3910d2b6b44709fe0bbe0560f2913c` · routes/share_messages.py `bff64acb122b0acebd11bf689a61ac1c` · constants/share_messages_default.json `6269b30f18491a2b619609e26bd6a70b` · routes/upload.py `01ca815d674a91f9c696798508ab5e00`(비대상) · routes/share_landing.py `2640db470978cc69f121b2e7fbbb9edd`(비대상) · main.py `78ab70741f8dc476e879c330608e0bc7`(비대상).
+
+## 0단계 Plan verification findings
+
+### 1. 스타일링이 무엇을 보여주나 — 현행 규칙 [P 코드]
+| 단계 | 위치 | 동작 |
+|---|---|---|
+| 발매 시 스냅샷 | routes/tracks.py upload-from-generation :2544-2675 (`_build_character_snapshot` :98-141) | **곡 만들 때 고른 아티스트**(track.character_id)의 발매 순간 착장을 `tracks.user_character_snapshot` 에 기록. 커버 유무·커버 인물과 무관 |
+| 커버 적용 | tracks.py update_track :1542-1566 → `_cover_outfit_snapshot` :157-232 | 같은 아티스트 인물 커버면 커버 착장으로 교체(v3.234). 인물 없음·다른 아티스트·파일 커버는 **skip = 발매 때 스냅샷 그대로 남음** |
+| 발매 후 옷 입히기 | tracks.py `apply_outfit_follow` :335-414 | 인물 커버가 아니면(없음·인물 없이 포함) 새 착장으로 스냅샷 교체(v3.235 S6) |
+| 상세 응답 | tracks.py get_track :2003-2139, cover_character 조립 :2079-2128 | 1순위 부착 MV(include_my_character) 스냅샷, 2순위 **tracks.user_character_snapshot 무조건 폴백**(:2098-2100) — 커버에 누가 있는지 보지 않음. Redis `cache:track:v4:{id}` 600초(:2015·:2133) |
+| 앱 표시 | 2_housing screens/PlayerScreen.tsx 스타일링 탭 :1422-1516 | `cover_character.used_items` 있으면 표시, 안내문 :1426 "곡 발매 시점에 아티스트가 입었던 의상입니다." |
+
+→ v3.235 대표 결정 D1("커버 없으면 발매 때 옷")이 코드에 그대로 구현돼 있음. 커버 판정 재료는 이미 있음: `_cover_person_cid`(tracks.py:300-332 — 세션 character_snapshot / character_snapshot_state no_person·no_character / gen_params.character_object_name permanent 시트 cid).
+
+### 2. 착장 데이터 소비처 전수 [P grep — 서버 app/ 전체, 앱 screens·components·services·utils·stores·App.tsx]
+| 소비처 | 읽는 필드 | 이번 영향 |
+|---|---|---|
+| PlayerScreen 스타일링 탭(:298 위시 sync·:1422-1516 렌더·:1478 어린이 링크 숨김 v3.232) | GET /tracks/{id} `cover_character.used_items` | 서버가 비우면 자동 미노출 + 안내문 변경 필요 |
+| FeedComposeScreen 착장 첨부(:71-110 착장 보유 곡 필터·:102/:145 조회) | 같은 필드 | 서버 반영만으로 자동 제외(코드 무변경) |
+| 피드 카드 착장 블록(FeedScreen.tsx:75·:467) | 글 작성 시 박힌 사용자 콘텐츠(마커 블록) | 무관 — 기존 글 착장 첨부 0건 [P q3] |
+| AgencyProfileScreen :91 | 검색 목록의 `cover_character.name`(목록 응답엔 없음) | 무관 |
+| 공유 문구 아티스트명(utils/shareMessage.ts:268-280)·playerStore 이름 동기(:67-83)·characterTaskStore cid(:385-407)·TrackActionSheet :120 | 원시 `user_character_snapshot.name/character_id` | **스냅샷을 지우면 깨짐** → 데이터 보존·노출만 제어해야 함 |
+| 광고 착용곡 집계 business.py `_worn_counts_by_item` :839-899(ad_item_stars :940·:1401, admin_ads 경유) | tracks.user_character_snapshot.used_items.id | 노출 규칙과 맞춰야 함(D5) |
+| UserChannel·MyMusic·Chart·Search | 착장 표시 없음 | 무관 |
+| 공유 랜딩 share_landing.py(og) | 스냅샷 미사용 | 무관(회귀 확인만) |
+| mv_pipeline·mv.py·inst_service.py:424(Inst. 복제 시 스냅샷 복사) | MV/Inst. 생성용 | 무관 |
+
+### 3. DB 실측 — 영향 곡 [P q1·q3·q5, 2026-09-27]
+- tracks 54, 착장 스냅샷(아이템≥1) 보유 36, 부착 MV 0, track_outfit_follows 0, feeds 4(착장 첨부 0).
+- cover_sessions 72: 구세션(state 없음) 58 · `no_character` 14 · **saved 0**. 캐릭터 경로 = 없음 53 · permanent 18 · 레거시 가상(`characters/{uid}/sheet_virtual.png`) 1.
+- 새 규칙 판정(착장 보유 36곡):
+
+| 판정 | 곡 수 | 곡 (id8 · 공개) |
+|---|---|---|
+| **노출 유지** — 커버에 곡 아티스트(permanent 시트 cid 일치) | 14 | 더 나오려는 것을 막는 것 6aa11e86·6ab497f5 / 냥냥냥 6aa3ec29 / 냥냥냥 (Inst.) 6ab4885c / 방학 바다 쿵짝 6ab4c6d9 / 밀물 6ab4eafd / 네온 퇴근길 6ab5409d / 혼자 Merry Christmas 6ab552a2 / 운동장 6ab6187f / 가을산 밤바람 6ab63e6f / 집으로 6ab790d5 / 첫눈 6ab7941b / 대안이 읍었습니다 6ab79da6 / 평범한 별빛 6ab7b1f2 |
+| **노출 유지** — 커버 시트 = 곡 스냅샷 원본 시트(레거시 가상 경로, cid 없음) | 1 | 방학하면 바다가자 6ab3ca38(커버 `…/sheet_virtual.png` = snapshot.sheet_object_name_origin) |
+| **미노출 전환** — 커버에 아티스트 없음(구세션 캐릭터 미지정) | 5 | Cherry Blossom 6a127418 · 쉬었음 청년 6a4e145c · Fall in love 6ab1eee8 · U 6ab7c226 · 넌 예뻐 6ab7c87e (전부 공개) |
+| **미노출 전환** — 커버에 아티스트 없음(세션 state=no_character) | 11 | 우린 예뻐2 6ab7cdec · 귀여워 6ab7d067 · you're mine 6ab7d491 · 막좋아 6ab7d580 · 주연럽 6ab7d986 · 내사랑 치포 6ab7dac3 · SURFSIDE 6ab7dd8b · SURFSIDE (Inst.) 6ab7e029 · Emerald Soliloquy 6ab7ebdc · First Snow Vow 6ab7f443 (공개 10) · 귀여워! 6ab7f257(비공개) |
+| **미노출 전환** — 커버 없음 | 5 | 벚꽃 같은 너 6ab7b6af · 괜찮아 오늘도 6ab7bdf0 · 퇴근길 밤하늘 6ab7cc04 · 간이역 드라이브 6ab7d10f · 막 사랑해 6ab7d1cb (전부 비공개) |
+- **영향 = 21곡 미노출 전환(공개 15·비공개 6), 15곡 유지**. 소유자 8명(286436dc 5·a1507e68 5·ea750ef6 4·6d056aad 3·c3202520 2·c19acda4 1·922f379f 1 …). 다른 아티스트 커버 0건.
+- 광고 집계 영향: 아이템 id 가 있는 스냅샷 3곡(Cherry Blossom·쉬었음 청년·방학하면 바다가자, 각 3개) — 앞 2곡이 미노출로 빠지면 착용곡 카운트 6건 감소(ad_items 4,674).
+- **추가 발견 F-1(확인 필요)**: v3.235 배포(09-26 13:41Z) 이후 커버 세션 14건이 **전부 아티스트 미포함**(5명, 서버 로그 `[CoverGenEntry] no character_object_name in request payload`). 배포 전엔 같은 사용자(ea750ef6)도 아티스트 포함 커버를 만들었음. 사용자 선택("아티스트 빼고")인지 v3.235 A1(곡 아티스트 고정, CoverGenerationScreen.tsx:1138-1192·:1773-1818) 회귀인지 서버 로그로는 구분 불가(앱 `[CoverArtist]` 는 console.info — 원격 수집 안 됨). 코드 정독상 결함은 못 찾음 → T 항목으로 웹 E2E 확인(회귀면 별도 수정 — 이번 규칙과 합쳐지면 "아티스트 넣었는데 착장이 안 보임"으로 번짐).
+
+### 4. 공유 화면 안 목록 [P 코드·DB·로그]
+- 서버 `select_templates`(routes/share_messages.py:444-467): 곡 테마 ≠ default → [테마 안] + [바치는 노래] + [default 안], 테마 = default → [default 안] + [바치는 노래]. **다른 테마(냥이·가족·청춘·팀) 안은 응답에 없음**. 실측 로그 `[ShareMsg] track=6ab79da6 theme=default … tpl=3`.
+- 앱 `orderTemplates`(utils/shareMessage.ts:164-176)가 한 번 더 자름: 테마 곡 = 테마 안 + 바치는 노래 + **default 첫 안만**. 로컬 폴백 `buildLocalShareData`(:287-307)는 11안 전부 주지만 역시 orderTemplates 로 잘림.
+- 설정 DB 문서 `share_message_config/active` **없음** → 내장 JSON(constants/share_messages_default.json, 앱 constants/shareMessages.ts 와 동일본) 사용 중. 테마 지정(track_share_themes) 0.
+- 칩 라벨 중복: "짧게" 5개(🎵·😻·💐·🎧·📣 짧게) — 이모지만으로는 🎧=청춘, 📣=팀을 알 수 없음 → 라벨에 테마명 필요. 칩 배치 = 가로 스크롤(ShareComposeScreen.tsx:268-284, styles.chips :363) — 11개면 뒤쪽이 화면 밖이라 "항상 보임"이 안 됨.
+- 구 앱 호환: 구 orderTemplates 는 곡 테마·바치는 노래·default 첫 안만 고르므로 서버가 안을 더 내려도 구 앱 화면 불변.
+
+## 원인
+1) 스타일링 = 곡 만들 때 고른 아티스트의 발매 시점 착장(스냅샷)이고, 상세 응답(tracks.py:2098-2100)이 **커버에 그 아티스트가 있는지 확인하지 않고** 스냅샷을 그대로 노출한다(v3.235 D1 "커버 없으면 발매 때 옷"). 그래서 "아티스트 빼고" 만든 커버·커버 없는 곡도 착장이 보인다. → 대표 추측("곡을 만들 때 아티스트를 선택해서") 맞음.
+2) 공유: 서버가 곡 테마 1종 + 기본 + 바치는 노래만 내려주고, 앱이 기본 안을 1개로 한 번 더 자른다.
+
+## 설계
+원칙(D1 변경): **스타일링은 곡 커버 이미지에 곡 아티스트가 들어간 경우에만 노출.** 착장 데이터(스냅샷)는 지우지 않고 노출만 읽기 시점에 판정(마이그레이션·소급 스크립트 없음, 코드 롤백으로 즉시 원복). 커버를 아티스트와 다시 만들면 기존 update_track 캐시 삭제 경로로 즉시 노출.
+
+### 서버(backend) — 스테이징 `/private/tmp/server_staging_v3238/`
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1 | routes/tracks.py 신규 `_styling_visibility(mongo, track: dict, mv_job) -> (bool, reason)` (`_cover_person_cid` :300 옆) | ① 부착 MV include_my_character + 스냅샷 → True `mv_character`(현행 1순위 유지, 현재 0건) ② 스냅샷 없음/아이템 0 → False `no_snapshot` ③ 대상 cid = track.character_id → 없으면 snapshot.character_id(소문자) ④ cover_image_url 없음 → False `no_cover` ⑤ 세션 없음(파일·직접 업로드 커버) → False `file_cover` ⑥ 세션 character_snapshot.character_id == 대상 → True `cover_artist` / ≠ → False `cover_other_artist` ⑦ state ∈ {no_person, no_character} 또는 character_object_name 빈 값 → False `cover_no_artist` ⑧ permanent 시트(uid 일치) cid == 대상 → True `cover_artist_sheet` / ≠ → False `cover_other_artist` ⑨ 그 밖(레거시 가상·스냅샷 경로·not_permanent·outfit_changed·failed): character_object_name ∈ {snapshot.sheet_object_name_origin, snapshot.sheet_object_name, 대상 아티스트 현재 sheet/virtual_sheet(`_find_artist_by_cid`)} → True `cover_artist_sheet` / 아니면 False `cover_person_unknown`(보수). 세션 조회는 `_cover_person_cid` 와 같은 쿼리(user_id=uploader_id, cover_object_name/refine history). 순수 판정부를 분리해 하네스 테스트 가능하게 | `[StylingVisible] track=… visible=… reason=… items=n` |
+| S2 | tracks.py get_track :2079-2128 | cover_character 조립 뒤 S1 호출: 미노출이면 `cover_character.used_items = []`(이름·시트 등 나머지 키 유지), 응답에 additive `styling_visible: bool`·`styling_reason: str` 추가(스냅샷 없음이어도 False/no_snapshot). S1 예외 → used_items 비움 + reason `error` + **이번 응답은 Redis 저장 생략**(다음 요청 재시도). 캐시 키 v4 유지(스키마 additive — 기존 캐시는 TTL 600초 내 소멸) | 〃 + `[StylingVisible] error track=…` |
+| S3 | routes/business.py `_worn_counts_by_item` :839-899 | 트랙 스냅샷 폴백으로 뽑힌 곡 중 **item_ids 와 교집합이 있는 곡만** S1(지연 import `from .tracks import _styling_visibility`) 판정 → False 면 집계 제외. projection 에 cover_image_url·character_id·user_character_snapshot.character_id/sheet_object_name/sheet_object_name_origin 추가. MV 경로(generation_id 기반 구 로직)는 무변경 | `[AdWorn] styling_hidden track=… reason=…` |
+| S4 | routes/share_messages.py `select_templates` :444-467 (+docstring·모듈 주석 :1-30) | 반환 = [곡 테마 안] + [바치는 노래] + [default 안] + **[나머지 테마 안 — 설정 themes priority 순, 각 order 순]**; 곡 테마 = default 면 [default] + [바치는 노래] + [나머지 테마 전부]. audience=other 의 body_other 없는 안 제외 규칙·disabled 제외 유지. :525 "테마 안 없음 → default" 폴백 로직 그대로 동작 | 기존 `[ShareMsg] … tpl=n`(11로 증가) |
+| S5 | constants/share_messages_default.json | 칩 라벨 테마명 포함(D10) + `version` 1→2. 앱 constants/shareMessages.ts 에서 v3.237 생성기 `/private/tmp/server_staging_v3237/gen/make_default_json.py` 로 재생성 → `tests/compare_app_constants.js` 로 바이트 동일 확인 | — |
+- main.py·upload.py·share_landing.py·character.py 무변경. 9005 미러링 없음. DB 쓰기 0(설정 문서 없음 → 시드 불필요).
+
+### 앱 1조 — 스타일링 표시(PlayerScreen 단독)
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| A1 | screens/PlayerScreen.tsx TrackData(:107-150 부근) | `styling_visible?: boolean; styling_reason?: string` 추가 | — |
+| A2 | PlayerScreen.tsx :1426 | 안내문 → "커버 이미지 속 아티스트가 입은 의상이에요. 옆으로 넘겨보세요." | — |
+| A3 | PlayerScreen.tsx 빈 상태 :1512-1516 | `fullTrack?.styling_visible === false && styling_reason !== 'no_snapshot'` → "커버에 아티스트가 함께 나온 곡만 착장을 보여드려요." + 본인 곡(isMyTrack :293)이면 둘째 줄 "커버를 아티스트와 함께 만들면 여기에 착장이 표시돼요." / 그 외 기존 "이 곡은 착장 정보가 없습니다". 구서버(필드 없음) = 현행 | `[PlayerStyling] hidden reason=… track=…`(__DEV__) |
+- FeedComposeScreen·MusicResult·CoverGeneration 무변경(서버 반영으로 자동).
+
+### 앱 2조 — 공유 안 전부 표시
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| B1 | utils/shareMessage.ts `orderTemplates` :164-176 | 새 순서: [곡 테마 안(order)] → [바치는 노래] → [default 안 전부(order)] → [나머지 테마 안 — **입력 순서의 테마 첫 등장 순** 묶음, 묶음 안 order] (곡 테마 = default 면 [default] → [바치는 노래] → [나머지]). id 중복 제거·disabled 제외 유지 | — |
+| B2 | utils/shareMessage.ts `buildLocalShareData` :287-307 | 폴백 templates 를 default → config.themes priority 순(냥이·가족·팀·청춘)으로 정렬해 넘김(서버 S4 순서와 동일) | — |
+| B3 | constants/shareMessages.ts :55-120 | 라벨(D10)·version 2 — 서버 S5 JSON 과 동일(생성기로 서버 JSON 생성) + 머리 주석(:4-6 "한 화면엔 테마 1종…중복 없음") 갱신 | — |
+| B4 | screens/ShareComposeScreen.tsx :268-284·styles.chips :363 + 머리 주석 :5 | 가로 스크롤 ScrollView → `View`(flexDirection row·flexWrap wrap·gap) — 11개 칩이 여러 줄로 한 번에 보임(D11). 첫 칩(곡 테마 A 또는 기본) 기본 선택·수정 중 전환 확인 팝업(:165-175)·↺ 원래 문구 그대로 | 기존 `[ShareCompose] loaded … templates=n` |
+
+### 칩 라벨(D10) — 테마명 포함
+| id | 현재 | 변경 |
+|---|---|---|
+| default_a / default_b | 🎵 기본 / 🎵 짧게 | 🎵 기본 / 🎵 기본 짧게 |
+| cat_a / cat_b | 🐱 집사 공감 / 😻 짧게 | 🐱 냥이 공감 / 😻 냥이 짧게 |
+| family_a / family_b | 🎉 선물 / 💐 짧게 | 🎉 가족 선물 / 💐 가족 짧게 |
+| team_a / team_b | 🙌 응원가 / 📣 짧게 | 🙌 팀 응원가 / 📣 팀 짧게 |
+| youth_a / youth_b | 😮‍💨 공감 / 🎧 짧게 | 😮‍💨 청춘 공감 / 🎧 청춘 짧게 |
+| dedication | 💌 바치는 노래 | (유지) |
+- 표시 순서 예: 냥이 곡 = 🐱 냥이 공감 · 😻 냥이 짧게 · 💌 바치는 노래 · 🎵 기본 · 🎵 기본 짧게 · 🎉 가족 선물 · 💐 가족 짧게 · 🙌 팀 응원가 · 📣 팀 짧게 · 😮‍💨 청춘 공감 · 🎧 청춘 짧게 / 기본 곡 = 🎵 기본 · 🎵 기본 짧게 · 💌 바치는 노래 · 냥이 2 · 가족 2 · 팀 2 · 청춘 2.
+
+## 변경 매트릭스
+| 영역 | 파일 | 담당 |
+|---|---|---|
+| 서버 | app/routes/tracks.py(S1·S2) · app/routes/business.py(S3) · app/routes/share_messages.py(S4) · app/constants/share_messages_default.json(S5) | backend |
+| 앱 1조 | screens/PlayerScreen.tsx(A1~A3) | app-1 |
+| 앱 2조 | utils/shareMessage.ts(B1·B2) · constants/shareMessages.ts(B3) · screens/ShareComposeScreen.tsx(B4) | app-2 |
+- 교집합 0. 서버 S5 JSON 은 app-2 의 B3 확정본에서 생성(순서: app-2 B3 → backend S5 생성·비교).
+
+## 역할
+- backend: `/private/tmp/server_staging_v3238/orig/` → `new/` 에 S1~S5 → 하네스(`_styling_visibility` 순수 판정·get_track·business·select_templates) + v3.234/v3.235/v3.237 회귀 재실행(`/private/tmp/server_staging_v3235/tests`·`v3237/tests` — 기대값 의도 변경분만 갱신) → 컨테이너 Python 3.11 compile + 메모리 import(라우트 수 불변) → **읽기 전용 dry-run 스크립트**(q1 판정을 S1 함수로 재현: 미노출 21·유지 15 일치) → DEPLOY.md(태그 `pre-v3238-live`, 백업 `.bak_pre_v3238`).
+- app-1: A1~A3 · app-2: B1~B4. 각 `tsc --noEmit` 0 + Node 하네스(orderTemplates·buildLocalShareData 순서, 스타일링 빈 상태 분기 순수화 시 그 함수) — 시뮬레이터 없음(메모리 app-runtime-testing-limits).
+- test-designer: 아래 T.
+
+## 회귀 위험
+- 커버 적용·발매 응답: update_track·upload-from-generation 응답은 `_serialize_track`(cover_character·styling 필드 없음) — 불변. v3.234 S2 스냅샷 교체·v3.235 S5/S6 옷 입히기 추적 로직 무변경(데이터는 계속 갱신, 노출만 판정).
+- v3.229 아티스트 이름 동기화·v3.230 닉네임 동기화: 스냅샷 name·캐시 삭제 경로 불변. cover_character.name 은 미노출 곡에도 유지.
+- v3.232 어린이: 착장 노출 곡에서 '자세히 보기' 숨김(:1478) 그대로.
+- 광고 착용곡 집계(admin ad_item_stars·advertiser): Cherry Blossom·쉬었음 청년 제외로 6건 감소(의도, D5). 집계 시 추가 세션 조회는 아이템 교집합 곡만.
+- 공유 랜딩·og.jpg(share_landing): 스냅샷 미사용 — 200·og 태그 불변 확인.
+- 공유 API: 404(비공개·블라인드·없음)·audience·benefit·link·limits 불변, templates 개수만 3→11(own)/11(other). 구 앱(웹 v3.237 번들·네이티브)은 구 orderTemplates 로 화면 불변. v3.237 하네스의 select_templates 순서 기대값은 의도 변경.
+- 캐시: 배포 직후 최대 10분 옛 응답(cache:track:v4 TTL) — 스모크는 10분 뒤 또는 해당 곡 키 삭제 후.
+- "방학하면 바다가자"(레거시 가상 시트) 노출 유지 — ⑨ 시트 경로 비교가 빠지면 잘못 숨겨짐.
+- v3.234 T11 / v3.235 T5("스냅샷 보유 곡 cover_character 배포 전후 동일") 기대값: 21곡 used_items=[] 로 의도 변경.
+- F-1 미해결 시: 아티스트 포함 커버가 실제로 안 만들어지는 회귀라면 새 규칙과 합쳐 "착장이 전혀 안 보임" 체감 → T11 우선 확인.
+
+## test-designer 항목
+- T1 (S1 순수 판정) MV 포함 → True / 스냅샷 없음 / 커버 없음 / 파일 커버 / 세션 스냅샷 cid 일치·불일치 / state no_person·no_character / permanent cid 일치·불일치·타 uid / 레거시 가상 경로 = 스냅샷 origin → True / 경로 불일치 → False(cover_person_unknown) / track.character_id 없고 snapshot cid 만 / refine 버전 커버값 매칭.
+- T2 (S2) 미노출 곡 GET: cover_character 존재·used_items=[]·name 유지·styling_visible=false·reason / 노출 곡: 현행과 동일 + styling_visible=true / 캐시 hit 경로도 같은 값 / S1 예외 주입 → 200·used_items=[]·Redis setex 호출 0.
+- T3 커버 교체 E2E: 미노출 곡에 같은 아티스트 인물 커버 적용(update_track) → 즉시 GET 노출(캐시 삭제) / 인물 없는 커버로 교체 → 미노출.
+- T4 (S3) item id 스냅샷 곡 3개 픽스처: 미노출 2곡 제외·노출 1곡 포함 / 교집합 없는 곡은 세션 조회 0회 / MV 경로 불변.
+- T5 (dry-run) 실데이터 판정 = 미노출 21(공개 15·비공개 6)·유지 15, 표 §3 과 id 일치.
+- T6 (S4) 냥이 곡 own → 11안, 순서 [cat_a, cat_b, dedication, default_a, default_b, family_a, family_b, team_a, team_b, youth_a, youth_b] / default 곡 → [default_a, default_b, dedication, cat…, family…, team…, youth…] / audience other 11안(body_other) / 한 안 disabled → 제외 / 테마 안 전부 disabled → theme default 폴백 / 404·benefit 회귀.
+- T7 (S5·B3) 서버 JSON ↔ 앱 constants 바이트 비교(compare_app_constants.js) / validate_config 통과 / label ≤24자 / 라벨 중복 0.
+- T8 (B1·B2 하네스) orderTemplates: 위 두 순서 / 입력 순서가 섞여도 테마 묶음 유지 / id 중복 제거 / 구서버 응답(3안)도 정상 / buildLocalShareData 폴백 순서 = 서버와 동일.
+- T9 (B4 화면) 11칩 여러 줄 wrap·가로 스크롤 없음(375px 폭) / 첫 칩 기본 선택 / 다른 테마 안 선택 → 본문 치환 / 수정 후 전환 확인 팝업(앱 내 다이얼로그) / 바치는 노래 받는 사람 입력 회귀 / 200자·↺ 회귀.
+- T10 (A2·A3) 스타일링 탭: 노출 곡 안내문 새 문구 / 미노출 곡 본인 = 2줄 안내, 타인 = 1줄 / 스냅샷 없는 곡 = 기존 문구 / 어린이 계정 노출 곡 '자세히 보기' 숨김 유지 / 피드 글쓰기 '착장 아이템' 모드 곡 목록에서 미노출 곡 제외.
+- T11 (F-1 확인) 웹 E2E: 아티스트 있는 계정으로 작곡 → 커버 만들기 → "네, 아티스트 포함" → generate-cover 요청 character_object_name 존재·서버 세션 state=saved → 곡 적용 후 스타일링 노출. 실패 시 회귀로 보고.
+- T12 회귀: v3.234·v3.235·v3.237 서버 테스트 전부(의도 변경 기대값만 갱신) + 공유 랜딩 공개 200·비공개 404·og.jpg.
+
+## 대표 결정 (기본값으로 진행)
+- D1 스타일링 노출 = **곡 커버 이미지에 곡 아티스트가 들어간 곡만**(대표 요청). v3.235 D1 "커버 없으면 발매 때 옷" 폐기 → 커버 없음·아티스트 빼고 만든 커버·파일 커버·다른 아티스트 커버 = 미노출.
+- D2 착장 데이터는 **삭제·수정하지 않고 노출만 제어**(읽기 시점 판정 — 소급 스크립트·DB 쓰기 0, 코드 롤백으로 원복). 원시 `user_character_snapshot` 은 곡 목록 API 에 계속 실림(아티스트명·cid 용도, 앱 미표시).
+- D3 커버 인물이 누군지 판정 불가(레거시 가상·기타 경로) = 미노출(보수). 단 커버 시트 = 곡 스냅샷 원본 시트면 같은 아티스트로 인정(방학하면 바다가자 유지).
+- D4 MV(아티스트 포함) 부착 곡 = 현행대로 노출(현재 0곡).
+- D5 광고 착용곡 집계도 노출 규칙과 일치(미노출 곡 제외 — 2곡 6건 감소).
+- D6 기존 피드 글의 착장 첨부(사용자 작성물)는 건드리지 않음(현재 0건). 피드 글쓰기 착장 첨부 후보는 자동으로 노출 곡만.
+- D7 스타일링 탭은 유지하고 미노출 곡엔 안내문(본인 곡엔 "아티스트와 함께 커버를 만들면 표시" 안내). 커버 다시 만들기 바로가기 버튼은 범위 밖.
+- D8 공유 안 = **모든 안 항상 표시**(대표 결정). 순서 = 곡 테마 A→B → 바치는 노래 → 기본 A→B → 나머지 테마(priority: 냥이·가족·팀·청춘). 첫 칩 기본 선택.
+- D9 "다른 멘트 보기" 버튼안 폐기(대표 결정으로 대체).
+- D10 칩 라벨에 테마명 포함(위 표) — 이모지만으로는 🎧·📣 짧게 구분 불가. 설정 문서가 없어 내장 JSON·앱 상수만 수정(DB 시드 불필요).
+- D11 칩 배치 = 여러 줄 줄바꿈(가로 스크롤 제거) — "항상 보이게". 대안: 가로 스크롤 유지.
+- D12 F-1(배포 후 커버 14건 전부 아티스트 미포함)은 T11 로 확인 후 회귀면 별도 버전에서 수정(이번 범위는 확인까지).
+
+## 배포
+1. 서버: 배포 직전 md5 재대조(위 기준값 — tracks·business·share_messages·JSON + 비대상 upload·share_landing·main) → `.bak_pre_v3238` 백업 + tar 반영(tracks.py·business.py·share_messages.py·share_messages_default.json) → docker tag `pre-v3238-live` → build → 진행 중 job 0 확인 후 재생성(v3.235 DEPLOY 절차: logs 볼륨·S3_REGION) → 스모크(10분 뒤 또는 대상 곡 `cache:track:v4` 키 삭제 후): `/api/health` · `GET /api/tracks/6ab7d4919416ac9c3996cfa9`(you're mine → used_items=[]·styling_visible=false) · `GET /api/tracks/6ab790d5d0c87eed728f2fbf`(집으로 → 착장 4개 유지) · `GET /api/tracks/6ab3ca38746a2684459e69ef`(방학하면 바다가자 → 유지) · `GET /api/share/track/6aa3ec295f11b57ba518f5e8`(냥냥냥 → templates 11·첫 cat_a) · `/track/{id}` 200·og.jpg 200 · 비공개 id 404. prod 변경 = 대표 승인(메모리 maidol-admin-web).
+2. 웹앱: 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app`(순서 역전 시 공유 화면은 구서버 3안만 표시 — 기능 손상 없음).
+3. 네이티브: 다음 빌드에 포함(대표 판단). 스타일링 미노출은 서버 반영만으로 구 앱에도 적용(빈 상태 문구만 구 문구).

@@ -1,4 +1,4 @@
-// [ShareCompose] v3.237 곡 공유 문구 — 순수 함수(화면·서비스·Node 하네스 공용, RN 의존 없음).
+// [ShareCompose] v3.237(v3.238 모든 안 표시) 곡 공유 문구 — 순수 함수(화면·서비스·Node 하네스 공용, RN 의존 없음).
 //  · 안 순서 orderTemplates / 치환 renderTemplate / 글자 수 countChars / 최종 조립 assembleShareMessage /
 //    공유 ID newShareId / 수정 판정 isEdited / 받는 사람 교체 replaceRecipient / 로컬 폴백 buildLocalShareData.
 //  · 메시지 구조(요청서 §3): 편집 영역(①상황·공감 ②「{곡명}」 - {아티스트} ③소개) + 고정 영역(④혜택 ⑤링크).
@@ -157,22 +157,40 @@ export function replaceRecipient(body: string, prevName: string, nextName: strin
 }
 
 /**
- * 안 순서(요청서 §4) — enabled 만.
- *  테마 ≠ default(테마 안 있음): [테마 안들(order)] → 바치는 노래 → default 첫 안
- *  테마 = default(또는 테마 안 없음): [default 안들(order)] → 바치는 노래
+ * 안 순서 — enabled 만, id 중복 제거(첫 등장 유지). v3.238 D8(대표 결정 "모든 멘트를 항상 보여줘야지"): 모든 안을 항상 반환.
+ *  테마 ≠ default(테마 안 있음): [곡 테마 안(order)] → 바치는 노래 → [default 안 전부(order)] → [나머지 테마 안]
+ *  테마 = default(또는 테마 안 없음): [default 안(order)] → 바치는 노래 → [나머지 테마 안]
+ *  나머지 테마 안 = 입력 순서에서 테마가 처음 나온 순으로 묶음, 묶음 안은 order 순(서버 select_templates 는 priority 순으로 내려줌).
+ *  구서버(곡 테마 + default + 바치는 노래 3~5안만 옴)도 같은 규칙으로 받은 안 전부 표시.
  */
 export function orderTemplates<T extends { id: string; theme: string; kind: string; order: number; enabled?: boolean }>(
   templates: T[],
   themeKey: string,
 ): T[] {
-  const live = (templates || []).filter((t) => t && t.enabled !== false);
+  const seen = new Set<string>();
+  const live = (templates || []).filter((t) => {
+    if (!t || t.enabled === false || seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
   const byOrder = (a: T, b: T) => (a.order ?? 0) - (b.order ?? 0);
   const dedication = live.filter((t) => t.kind === 'dedication').sort(byOrder);
   const normal = live.filter((t) => t.kind !== 'dedication');
   const defaults = normal.filter((t) => t.theme === DEFAULT_THEME).sort(byOrder);
-  const themed = themeKey && themeKey !== DEFAULT_THEME ? normal.filter((t) => t.theme === themeKey).sort(byOrder) : [];
-  if (themed.length) return [...themed, ...dedication, ...defaults.slice(0, 1)];
-  return [...defaults, ...dedication];
+  const songTheme = themeKey && themeKey !== DEFAULT_THEME ? themeKey : '';
+  const themed = songTheme ? normal.filter((t) => t.theme === songTheme).sort(byOrder) : [];
+  // 나머지 테마 — 입력 순서의 테마 첫 등장 순 묶음
+  const groups = new Map<string, T[]>();
+  for (const t of normal) {
+    if (t.theme === DEFAULT_THEME || (songTheme && t.theme === songTheme)) continue;
+    const g = groups.get(t.theme);
+    if (g) g.push(t);
+    else groups.set(t.theme, [t]);
+  }
+  const rest: T[] = [];
+  groups.forEach((g) => rest.push(...g.sort(byOrder)));
+  if (themed.length) return [...themed, ...dedication, ...defaults, ...rest];
+  return [...defaults, ...dedication, ...rest];
 }
 
 /** 칩 표기 — emoji + label(D4 변경: 서버 설정 emoji/label 사용). label 이 이미 emoji 로 시작하면 중복 없이 label 만 */
@@ -281,6 +299,22 @@ export function verifiedArtistName(track: ShareArtistSource | null | undefined):
 }
 
 /**
+ * 폴백 안 정렬(v3.238 B2) — default → config.themes priority 순(냥이·가족·팀·청춘) → 그 밖(바치는 노래 '*' 등).
+ * 서버 select_templates(S4)가 내려주는 순서와 같게 맞춰 orderTemplates 의 "나머지 테마" 순서를 일치시킨다. 같은 순위는 입력 순서 유지.
+ */
+export function sortTemplatesByThemePriority<T extends { theme: string }>(templates: T[], config: ShareMessageConfig): T[] {
+  const prio = new Map<string, number>();
+  [...(config.themes || [])]
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+    .forEach((th, i) => { if (!prio.has(th.key)) prio.set(th.key, i + 1); });
+  const rank = (theme: string) => (theme === DEFAULT_THEME ? 0 : prio.get(theme) ?? Number.MAX_SAFE_INTEGER);
+  return (templates || [])
+    .map((t, i) => ({ t, i, r: rank(t.theme) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.t);
+}
+
+/**
  * 로컬 폴백 데이터(서버 실패·구서버) — theme default, audience = 앱 판단, 혜택 = 내장 종료일 비교.
  * 아티스트 = verifiedArtistName(닉네임 폴백값 미사용).
  */
@@ -297,7 +331,7 @@ export function buildLocalShareData(
     track: { id: String(track.id), title: oneLine(track.title), artist_name: verifiedArtistName(track) },
     audience,
     theme: { key: DEFAULT_THEME, name: '', source: 'default' },
-    templates: resolveAudienceTemplates(config.templates, audience),
+    templates: sortTemplatesByThemePriority(resolveAudienceTemplates(config.templates, audience), config),
     benefit: benefitOn ? { text: config.benefit.text.replace(/\{amount\}/g, String(SHARE_BENEFIT_FALLBACK.amount)) } : null,
     link,
     limits: { ...config.limits },

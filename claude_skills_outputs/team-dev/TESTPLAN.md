@@ -5233,3 +5233,69 @@ App.tsx 미변경 — 스테이징 제외(U-11 기본 경로).
 - **최상위 FAIL(배포 중단·롤백)**: 비공개·블라인드·삭제 곡 share API/랜딩 노출(CF-S2·SA-A2·LD-S4·SA-A4) · 받는 사람 이름·본문의 서버·로그·analytics 유입(AN-S2·X-L1·MT-S1·E-1 ⑦) · `?s=` 경유 XSS/리다이렉트(LD-S2) · 핵심 여정 회귀(E-1·E-3·P-3).
 - **FAIL 게이트**: 서버·앱 기본값 불일치(DF-U1) · 베타 종료 후 혜택 줄 노출·빈 줄 잔존(CF-S7·SM-U5·CP-U2) · 기존 이벤트/집계·랜딩 og:title/image 변화(AN-S3·LD-S1) · diff 범위 밖·비대상 파일 변경(RG-S1·RG-U3·P-1) · 시스템 Alert·AIDOL·칩 외 UI 이모지(X-T1).
 - **판정 회부(결함이면 FAIL)**: CF-S4 ⑤·SC-S2 `default` 강제 지정 불가 시 오탐 교정 수단 없음 · CF-S5 ⑤ 영문 키워드 부분일치 오탐 · AN-S2 `src` 자유 문자열(이름 우회 저장 가능) · SM-U6 짧은 이름 일괄 치환 부작용(D6) · DF-U3 아티스트명 40자 초과 가능성 · P-5 ⑥ iOS 링크 누락 시 D12 전환 · SC-S3 QA 제외 인자 부재. **기록·보고만**: LD-S2 중복 s 처리 · LD-S3 ⑤ HEAD 처리 · CP-U9 Android 취소 = shared 과대 · RG-U1 '링크 복사' 경로 s 미부착 · SM-U4 국기 이모지 2자 · CT-U1 이전 곡 복귀 시 CTA 재표시.
+
+## v3.238 (2026-09-27) — ① 스타일링(착장)은 커버에 곡 아티스트가 있을 때만 ② 공유 화면 모든 안(11) 항상 표시 (+ 커버 착장 참조 GIF 변환)
+
+근거: PLAN `# v3.238` T1~T12 · 스테이징 `/private/tmp/server_staging_v3238/`(DEPLOY.md) · 앱 2_housing(frontend, 미커밋 — v3.238 대상 = PlayerScreen·utils/playerStyling.ts(신규)·ShareComposeScreen·constants/shareMessages.ts·utils/shareMessage.ts. 같은 작업트리의 MusicResultScreen·services/musicService.ts = 별도 v3.239 핫픽스 — 이번 게이트 제외).
+tester 하네스(독립): `scratchpad/tester3238/` — `t_gate.js`(계약·바이트·순서 126검사) · `srv_dump.py`(서버 reason 리터럴 AST 추출 + select_templates 실행) · `deco_check.py`(라우트 데코레이터↔함수 바인딩 AST 비교) · `route_probe.py`/`route_http_probe.py`(FastAPI 라우트 실측).
+
+### S — 서버 [unit — 스테이징 하네스]
+
+**ST-S1. `_styling_visibility` 순수 판정 [unit] (T1)** — Given 스냅샷·커버·세션 조합 28종 When 판정 Then MV 포함 → mv_character / 스냅샷·아이템 없음 → no_snapshot / 커버 없음 → no_cover / 세션 없음 → file_cover / 세션 스냅샷 cid 일치·불일치 → cover_artist·cover_other_artist / no_person·no_character·경로 없음 → cover_no_artist / permanent 시트 cid 일치·불일치 → cover_artist_sheet·cover_other_artist / 레거시 가상 = 스냅샷 origin → cover_artist_sheet / 경로 불일치 → cover_person_unknown. **결과 PASS**(test_server_v3238 T1 포함 157/157 ×3 시드).
+
+**ST-S2. get_track 응답 [unit] (T2)** — Given 미노출 곡 When GET Then cover_character 유지·used_items=[]·name 유지·styling_visible=false·reason, 원시 스냅샷·DB 불변(cover_character 는 요청마다 새 dict — 변이가 스냅샷·DB 로 새지 않음, 코드 확인) / 판정 예외 → 200·error·setex 0(다음 요청 재판정). **PASS**(하네스 + tester 코드 리뷰: `styling_cacheable` 로 오류 응답 캐시 생략 확인).
+
+**ST-S3. 광고 착용곡 집계 [unit] (T4)** — Given 아이템 id 스냅샷 곡 When `_worn_counts_by_item` Then 교집합 곡만 판정·미노출 제외·MV 경로 불변·예외 = 제외. **PASS**(하네스; tester 리뷰 — projection 에 판정 재료 전부 포함, `hit_ids` 로 카운트 일관).
+
+**ST-S4. 공유 select_templates 11안 [unit] (T6)** — Given 내장 설정 When theme ∈ {default,cat,family,team,youth} × audience {own,other} Then 11안·곡 테마 A→B → 바치는 노래 → 기본 → 나머지(priority 냥이·가족·팀·청춘)·config_version 2. **PASS**(tester `srv_dump.py` 10조합 전부 11·기대 순서 일치).
+
+**ST-S5. 커버 참조 GIF 변환 [unit]** — Given 착장 제품컷 GIF When 커버 참조 수집 Then PNG 변환·실패 참조만 제외·png/jpeg/webp 바이트 동일. **PASS**(coverref 36/36 ×3 — 단, `generate_cover` 를 **직접 호출**하는 테스트라 라우팅은 검증 못 함 → ST-S7).
+
+**ST-S6. patch 재현·범위 [unit]** — Given orig When `patch -p1 diffs/*.diff` Then deploy/ md5 6종 일치·main/share_landing/character 무변경·new == deploy. **PASS**(tester 재현).
+
+**ST-S7. 라우트 바인딩 불변 [unit — tester 신규] — 최상위 FAIL 게이트** — Given 변경 .py 5종 When 데코레이터↔함수 AST 비교 + FastAPI 라우트 실측 Then 모든 `@router.*` 가 원래 함수에 붙어 있음. **FAIL** — `app/routes/upload.py:392-393` 신규 `_cover_ref_image` 가 `@router.post("/generate-cover")` 와 `async def generate_cover` 사이에 삽입 → 라우트 endpoint = `_cover_ref_image`(query data·obj·job 필수), `generate_cover` 미라우팅. TestClient `POST /api/upload/generate-cover` → orig 401(인증 요구) / new **422 missing query data,obj,job** — 배포 시 앱의 커버 생성 전부 실패 + 해당 경로 인증 없음. 라우트 수·경로 해시(367 동일)로는 못 잡는 결함. 수정 = 데코레이터 줄을 `async def generate_cover(` 바로 위로 이동(tester 스크래치 사본에서 바인딩 복구 확인).
+
+**ST-S8. 회귀 [unit] (T12)** — `run_regress_v3238.sh` 시드 1~3: v3.228 32/32 · v3.230 42/42 · v3.231 24/24 · v3.232 FAIL 3(RG-S4 원본 줄 승인 목록 — v3.237 부터 있던 diff 기준 검사) · v3.233 217/217 · v3.234 원본 135/140 → 갱신본 139/140(ST-3 파일 목록) · v3.235 원본 154/162 → 갱신본 157/162(v3.237 부터 5건 동일) · undo 3/3 · v3.237 원본 181/206 → 갱신본 206/206 · v3.236 139/139. **PASS(실회귀 0 — 잔여 FAIL 전부 diff 기준·의도 변경)**. 주의: 회귀 스위트도 generate_cover 를 직접 호출해 ST-S7 을 못 잡음.
+
+### A — 앱 [unit — Node 하네스·정적]
+
+**AP-U1. 스타일링 계약 교차 [unit] (T10)** — Given 서버가 낼 수 있는 reason 10종(AST 추출 = STYLING_VISIBLE/HIDDEN 상수와 일치) When `resolveStylingView` Then true 3종 → 목록 / false 6종(no_cover·file_cover·cover_other_artist·cover_no_artist·cover_person_unknown) → 안내(본인 곡만 2줄) / no_snapshot·error → 기존 문구 / 키 없음 → 현행(아이템 있으면 목록, 없으면 기존 문구, 미수신 = 불러오는 중) / false 인데 아이템 섞여 와도 목록 0 / 미지 reason → 안내. **PASS**(t_gate TG-C1).
+
+**AP-U2. 안내 문구 [unit]** — helper·hidden·hiddenOwn = PLAN A2·A3 원문, 기존 빈 문구 불변. **PASS**.
+
+**AP-U3. 상수 ↔ 서버 JSON 바이트 [unit] (T7)** — tester 자체 덤프 `JSON.stringify(SHARE_MESSAGES_DEFAULT,null,2)+"\n"` == deploy JSON(md5 양쪽 `6d3bddcf…`) · 11 id·라벨 D10 표 일치(😮‍💨 = U+1F62E U+200D U+1F4A8)·라벨 중복 0·전 안 body/body_other·version 2. **PASS**.
+
+**AP-U4. orderTemplates [unit] (T8)** — Given 서버 출력 10조합·뒤집은 입력·중복 입력·구서버 5안·disabled When orderTemplates Then 11 고유·곡 테마 첫 2칩·바치는 노래 3번째·테마 묶음 연속·중복 제거·구서버 5안 전부·disabled 제외 / 로컬 폴백(sortTemplatesByThemePriority·buildLocalShareData) = 서버 default 순서. **PASS**.
+
+**AP-U5. 정적 [unit — 정적] (X)** — v3.238 앱 diff 추가 142줄: 시스템 Alert 0·RN Alert import 0·"AIDOL" 0·비밀값 0·신규 로그 = `[PlayerStyling]` console.info(__DEV__ 가드) 1 · 서버 diff "AIDOL"·비밀값 0 · v3.232 어린이 구매 링크 숨김(`isChild ? null`) 무변경 · v3.237 "나도 이런 곡 만들기" CTA 무변경(HEAD 4회 = 현재 4회) · ShareCompose 칩 onPress/onSelect·accessibilityState·TextInput·showAlert 제거 줄 0(가로 ScrollView → wrap View 만, 바깥 ScrollView `keyboardShouldPersistTaps="handled"` 유지). **PASS**.
+
+**AP-U6. tsc [unit]** — `npx tsc --noEmit` exit 0. **PASS**.
+
+**AP-U7. dev 하네스 재실행 [unit]** — app1 t1_f1_cover 27/27·t2_styling 39/39 · app2 t1_order 43/43·t2_screen 27/27 · 회귀 v3235 g1 t1~t3 PASS, v3234·v3229·v3231 PASS, v3237 A조 t1~t5·t7 PASS. 잔여 FAIL 분류: v3235 g1 t4_static CV-U6·X-L1(커밋 후 git diff 기준 검사) · v3237 B t3_static 4(diff 기준 — 이 중 "Player 제거 줄"은 v3.238 의도 변경) · v3235 g2 t1_pure·t2_share CRASH(**HEAD 추출본에서도 동일 CRASH** — v3.237 공유 재설계 이후 기존) · g2 t6_static 3(diff 기준) · v3237 A t6 "매트릭스 밖 변경 0"(services/musicService.ts = v3.239 작업). **실회귀 0**.
+
+### SA — 배포 후 스모크 [api — prod 읽기] (오케스트레이터 수행, 캐시 10분 경과 또는 대상 키 삭제 후)
+
+**SA-1. 곡 상세 styling [api]** — `for t in 6ab7d4919416ac9c3996cfa9 6ab790d5d0c87eed728f2fbf 6ab3ca38746a2684459e69ef; do curl -s https://api.maidol.ai.kr/api/tracks/$t | python3 -c "import sys,json; j=json.load(sys.stdin); c=j.get('cover_character') or {}; print(j['id'][:8], j.get('styling_visible'), j.get('styling_reason'), len(c.get('used_items') or []), bool(c.get('name')))"; done` → `6ab7d491 False cover_no_artist 0 True`(you're mine) · `6ab790d5 True cover_artist_sheet 4 True`(집으로) · `6ab3ca38 True cover_artist_sheet 3 …`(방학하면 바다가자).
+**SA-2. 비공개 404 [api]** — `curl -s -o /dev/null -w "%{http_code}\n" https://api.maidol.ai.kr/api/tracks/6ab7b6afd0c87eed728f3220` → 404.
+**SA-3. 공유 API [api]** — `curl -s https://api.maidol.ai.kr/api/share/track/6aa3ec295f11b57ba518f5e8 | python3 -c "import sys,json; j=json.load(sys.stdin); ids=[t['id'] for t in j['templates']]; print(j['theme']['key'], len(ids), len(set(ids)), ids, j['config_version'])"` → `cat 11 11 [cat_a, cat_b, dedication, default_a, default_b, family_a, family_b, team_a, team_b, youth_a, youth_b] 2`.
+**SA-4. 랜딩 [api]** — `/track/6aa3ec295f11b57ba518f5e8` 200 · `/og.jpg` 200 · `/track/6ab7b6afd0c87eed728f3220` 404.
+**SA-5. 커버 생성 라우트 [api — 무과금] — 최상위 FAIL 게이트(ST-S7 재발 방지)** — `curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.maidol.ai.kr/api/upload/generate-cover -H 'Content-Type: application/json' -d '{}'` → **401**(인증 요구 = generate_cover 바인딩). 422 + `"loc":["query","data"]` 면 즉시 롤백. + 컨테이너에서 `app.routes.upload.router` 의 /generate-cover endpoint.__name__ == generate_cover.
+**SA-6. 로그 [api]** — `[StylingVisible] … reason=cover_no_artist` · `[ShareMsg] … tpl=11` · Traceback 0.
+
+### E — 핵심 여정 [e2e] (폰 웹, 배포 후 — 시뮬레이터 없음·웹 빌드 로컬 불가로 사전 실행 불가)
+
+**E-1. 스타일링 탭 [e2e] (T10)** — Given 웹앱 v3.238 When you're mine 상세 → 스타일링 탭 Then "커버에 아티스트가 함께 나온 곡만 착장을 보여드려요."(타인 곡 1줄, 소유 계정이면 2줄) / 집으로 → 착장 4개 + 새 안내문 / 어린이 계정 → '자세히 보기' 숨김 유지 / 피드 글쓰기 착장 첨부 후보에서 미노출 곡 제외.
+**E-2. 공유 화면 11칩 [e2e] (T9)** — Given 375px 폭 When 냥냥냥 ⋯ → 공유하기 Then 칩 11개 여러 줄·가로 스크롤 없음·첫 칩 🐱 냥이 공감 선택 / 다른 테마 칩 → 본문 치환 / 수정 후 전환 → 앱 내 확인 팝업 / 바치는 노래 받는 사람 입력·200자·↺ 회귀.
+**E-3. 아티스트 포함 커버 → 착장 노출 [e2e] (T3·T11 F-1)** — Given 아티스트 보유 테스트 계정 When 커버 만들기 "아티스트 포함" Then 커버 생성 성공(ST-S7 수정 후에만 가능) → 곡 적용 → 스타일링 노출. 과금 발생 — 대표 판단.
+
+### 게이트 요약 (tester 실행 2026-09-27)
+| # | 체크 | 결과 |
+|---|---|---|
+| 1 | 서버 신규 157/157·36/36 ×3 시드, 회귀 스크립트 실회귀 0 · 앱 dev 하네스 실회귀 0 | PASS |
+| 2 | tsc --noEmit | PASS |
+| 3 | 스타일링 계약 교차(AP-U1) | PASS |
+| 4 | 상수 바이트 동일·11안 순서(AP-U3·U4·ST-S4) | PASS |
+| 5 | 앱 정적(AP-U5) | PASS |
+| 6 | 서버 diff 리뷰 — tracks/business/share/openai_image OK, **upload.py 라우트 바인딩 결함(ST-S7)** · patch 재현 OK | **FAIL** |
+| 7 | 라이브 md5(호스트·컨테이너 9종) = orig, `.bak_pre_v3238` 없음, 태그 0 | PASS |
+- **판정: 배포 차단(FAIL)** — ST-S7 수정 → 재테스트(ST-S7·coverref·회귀·patch/md5 표 갱신) 후 재게이트.

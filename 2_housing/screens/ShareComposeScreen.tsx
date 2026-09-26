@@ -1,8 +1,9 @@
 // [ShareCompose] v3.237 곡 공유 문구 화면 — ⋯ 시트 '공유하기' → 안 선택·수정 → [공유하기] OS 공유 시트.
-//  · 흐름(요청서 §4): 안 칩(가로 스크롤) → 바치는 노래면 받는 사람 입력(최대 20자, 비우면 '소중한 당신', 실시간 치환)
+//  · 흐름(요청서 §4): 안 칩(여러 줄 줄바꿈 — v3.238 D11) → 바치는 노래면 받는 사람 입력(최대 20자, 비우면 '소중한 당신', 실시간 치환)
 //    → 편집 영역(①②③, 200자 카운터·초과 시 공유 비활성) → 고정 영역(④ 혜택 — 서버가 준 경우만, ⑤ 링크) 회색 미리보기
 //    → 최종 = 본문 + 빈 줄 없이 ④ + ⑤(링크 ?s=공유ID).
-//  · 안 순서: 곡 테마 안들 → 바치는 노래 → default 첫 안 / 테마 없으면 default 안들 → 바치는 노래(utils/shareMessage.orderTemplates).
+//  · 안 순서(v3.238 D8 — 모든 안 항상 표시): 곡 테마 안들 → 바치는 노래 → default 안 전부 → 나머지 테마 안(냥이·가족·팀·청춘)
+//    / 테마 없으면 default 안들 → 바치는 노래 → 나머지 테마 안(utils/shareMessage.orderTemplates). 첫 칩 기본 선택.
 //  · 수정 중 안 전환·화면 이탈 = "수정한 내용이 사라져요" 확인(showAlert, D7). [원래 문구로] = 선택 안 렌더값으로 복원.
 //  · 문구·안·혜택 = 서버 설정(GET /api/share/track/{id}) — 실패·구서버 = 내장 기본값(constants/shareMessages.ts).
 //  · 칩 표기 = 서버 설정 emoji + label(대표 D4 변경). 버튼·안내 등 앱 UI 문구는 텍스트만.
@@ -264,8 +265,8 @@ export default function ShareComposeScreen({ navigation, route }: any) {
           </View>
         </View>
 
-        {/* 안 선택 — 가로 스크롤 칩 */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
+        {/* 안 선택 — 모든 안 칩을 여러 줄로 한 번에(v3.238 D11, 가로 스크롤 없음) */}
+        <View style={styles.chips}>
           {ordered.map((t) => {
             const on = t.id === selected?.id;
             return (
@@ -281,7 +282,7 @@ export default function ShareComposeScreen({ navigation, route }: any) {
               </TouchableOpacity>
             );
           })}
-        </ScrollView>
+        </View>
 
         {/* 바치는 노래 — 받는 사람 */}
         {isDedication ? (
@@ -360,7 +361,7 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxxl },
   trackRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
-  chips: { gap: spacing.sm, paddingBottom: spacing.xs },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingBottom: spacing.xs },
   chip: {
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill,
     backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,

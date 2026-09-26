@@ -2,8 +2,9 @@
 //  · 정본은 서버 설정(Mongo share_message_config / GET /api/share/track/{id}). 이 파일은 서버 실패·구서버·설정 없음 폴백.
 //  · SHARE_MESSAGES_DEFAULT 는 서버 JSON 과 키·문구가 같아야 한다(T4 비교 스크립트) — 문구를 바꿀 땐 양쪽 함께.
 //  · 문구 안의 이모지는 요청서 원문(공유 본문 = 사용자 콘텐츠·외부 발송). 칩 표기 = label 그대로 — label 에 요청서
-//    대표 이모지 포함(v3.237 D4 대표 변경 — 요청서 4-2 예시 표기: "🐱 집사 공감"·"🎵 기본"·"💌 바치는 노래",
-//    테마 B안은 "짧게" — 한 화면엔 테마 1종 + default A + 바치는 노래만 나와 중복 없음, default 만일 땐 기본/짧게). 서버가 emoji 를 따로 주면 앞에 붙인다.
+//    대표 이모지 포함(v3.237 D4 대표 변경). v3.238 D8·D10: 공유 화면에 모든 테마 안(11개)을 항상 함께 보여주므로
+//    라벨에 테마명을 넣어 구분("🐱 냥이 공감"·"😻 냥이 짧게"·"🎧 청춘 짧게"·"📣 팀 짧게"·"🎵 기본 짧게" 등 — 라벨 중복 0).
+//    서버가 emoji 를 따로 주면 앞에 붙인다.
 //  · body = 내 곡용, body_other = 남의 곡용(1인칭 제작 주장 제거판 — planner 초안, 대표 검수 대상, D5). body_other 가
 //    없는 안은 남의 곡 공유에서 숨긴다.
 //  · 치환 변수: {곡명} {아티스트} {링크} {theme} {받는 사람} — utils/shareMessage.ts renderTemplate.
@@ -50,7 +51,7 @@ export interface ShareMessageConfig {
 }
 
 export const SHARE_MESSAGES_DEFAULT: ShareMessageConfig = {
-  version: 1,
+  version: 2,
   themes: [
     { key: 'cat', name: '냥이', priority: 1, keywords: ['고양이', '냥이', '냥냥', '집사', '반려묘', '야옹', '츄르', 'kitten', 'kitty'] },
     { key: 'family', name: '가족', priority: 2, keywords: ['가족', '엄마', '아빠', '부모', '어머니', '아버지', '환갑', '칠순', '팔순', '생신', '효도', '어버이', '할머니', '할아버지', 'family'] },
@@ -64,47 +65,47 @@ export const SHARE_MESSAGES_DEFAULT: ShareMessageConfig = {
       body_other: '🎵 이런 날엔 이런 노래 어때요?\n「{곡명}」 - {아티스트}\n누군가의 이야기로 MAIDOL에서 만든 곡이에요.\n듣다 보면… 나도 만들어볼까? 😆',
     },
     {
-      id: 'default_b', theme: 'default', kind: 'normal', label: '🎵 짧게', order: 2, enabled: true,
+      id: 'default_b', theme: 'default', kind: 'normal', label: '🎵 기본 짧게', order: 2, enabled: true,
       body: '🎵 내 이야기로 만든 노래예요\n「{곡명}」 - {아티스트}\n1분이면 나만의 곡 완성!',
       body_other: '🎵 누군가의 이야기로 만든 노래예요\n「{곡명}」 - {아티스트}\n1분이면 나만의 곡 완성!',
     },
     {
-      id: 'cat_a', theme: 'cat', kind: 'normal', label: '🐱 집사 공감', order: 1, enabled: true,
+      id: 'cat_a', theme: 'cat', kind: 'normal', label: '🐱 냥이 공감', order: 1, enabled: true,
       body: '🐱 집사님들, 이 노래 우리 애 얘기 아닌가요?\n「{곡명}」 - {아티스트}\n우리 냥이 테마곡 만들어봤어요 😻\n조심하세요, 플리에 냥이 노래만 가득해져요\n우리 애 노래도 만들 수 있다고?',
       body_other: '🐱 집사님들, 이 노래 우리 애 얘기 아닌가요?\n「{곡명}」 - {아티스트}\n어느 집사님이 만든 냥이 테마곡이에요 😻\n조심하세요, 플리에 냥이 노래만 가득해져요\n우리 애 노래도 만들 수 있다고?',
     },
     {
-      id: 'cat_b', theme: 'cat', kind: 'normal', label: '😻 짧게', order: 2, enabled: true,
+      id: 'cat_b', theme: 'cat', kind: 'normal', label: '😻 냥이 짧게', order: 2, enabled: true,
       body: '😻 우리 냥이 테마곡 나왔어요\n「{곡명}」 - {아티스트}\n집사라면 하나쯤 있어야죠!',
       body_other: '😻 냥이 테마곡 발견했어요\n「{곡명}」 - {아티스트}\n집사라면 하나쯤 있어야죠!',
     },
     {
-      id: 'family_a', theme: 'family', kind: 'normal', label: '🎉 선물', order: 1, enabled: true,
+      id: 'family_a', theme: 'family', kind: 'normal', label: '🎉 가족 선물', order: 1, enabled: true,
       body: '🎉 꽃다발 대신 노래 한 곡, 어때요?\n「{곡명}」 - {아티스트}\n부모님 환갑에 드린 세상에 하나뿐인 노래예요.\n우리 집 이야기로 직접 만들 수 있어요 🎵',
       body_other: '🎉 꽃다발 대신 노래 한 곡, 어때요?\n「{곡명}」 - {아티스트}\n가족 이야기로 만든 세상에 하나뿐인 노래예요.\n우리 집 이야기로도 직접 만들 수 있어요 🎵',
     },
     {
-      id: 'family_b', theme: 'family', kind: 'normal', label: '💐 짧게', order: 2, enabled: true,
+      id: 'family_b', theme: 'family', kind: 'normal', label: '💐 가족 짧게', order: 2, enabled: true,
       body: '💐 우리 가족 이야기가 노래가 됐어요\n「{곡명}」 - {아티스트}\n세상에 하나뿐인 선물 🎵',
       body_other: '💐 어느 가족의 이야기가 노래가 됐어요\n「{곡명}」 - {아티스트}\n세상에 하나뿐인 선물 🎵',
     },
     {
-      id: 'youth_a', theme: 'youth', kind: 'normal', label: '😮‍💨 공감', order: 1, enabled: true,
+      id: 'youth_a', theme: 'youth', kind: 'normal', label: '😮‍💨 청춘 공감', order: 1, enabled: true,
       body: '😮‍💨 요즘 우리 얘기, 노래로 만들어봤어요\n「{곡명}」 - {아티스트}\n듣다 보면 "어? 이거 완전 내 얘긴데?"\n나도 내 이야기로 한 곡?',
       body_other: '😮‍💨 요즘 우리 얘기 같은 노래 발견했어요\n「{곡명}」 - {아티스트}\n듣다 보면 "어? 이거 완전 내 얘긴데?"\n나도 내 이야기로 한 곡?',
     },
     {
-      id: 'youth_b', theme: 'youth', kind: 'normal', label: '🎧 짧게', order: 2, enabled: true,
+      id: 'youth_b', theme: 'youth', kind: 'normal', label: '🎧 청춘 짧게', order: 2, enabled: true,
       body: '🎧 오늘 내 기분, 노래로 만들었어요\n「{곡명}」 - {아티스트}\n내 얘기로도 한 곡 가능!',
       body_other: '🎧 오늘 내 기분 같은 노래예요\n「{곡명}」 - {아티스트}\n내 얘기로도 한 곡 가능!',
     },
     {
-      id: 'team_a', theme: 'team', kind: 'normal', label: '🙌 응원가', order: 1, enabled: true,
+      id: 'team_a', theme: 'team', kind: 'normal', label: '🙌 팀 응원가', order: 1, enabled: true,
       body: '🙌 우리 팀 응원가 나왔습니다!\n「{곡명}」 - {아티스트}\n다른 팀도 하나쯤 있어야 하지 않아요? 😎\n1분이면 우리 팀 노래 완성',
       body_other: '🙌 이 팀 응원가 들어보세요!\n「{곡명}」 - {아티스트}\n우리 팀도 하나쯤 있어야 하지 않아요? 😎\n1분이면 우리 팀 노래 완성',
     },
     {
-      id: 'team_b', theme: 'team', kind: 'normal', label: '📣 짧게', order: 2, enabled: true,
+      id: 'team_b', theme: 'team', kind: 'normal', label: '📣 팀 짧게', order: 2, enabled: true,
       body: '📣 우리 팀 노래 완성!\n「{곡명}」 - {아티스트}\n다 같이 들어요 🙌',
       body_other: '📣 팀 노래 한 곡 소개해요!\n「{곡명}」 - {아티스트}\n다 같이 들어요 🙌',
     },

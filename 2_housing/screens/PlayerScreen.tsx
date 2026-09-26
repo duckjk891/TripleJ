@@ -54,6 +54,7 @@ import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
 import { trackEvent } from '../utils/screenAnalytics';
 import { normalizeShareId } from '../utils/trackLink';
+import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
@@ -131,6 +132,9 @@ interface TrackData {
   created_at?: string;
   // 9004: 곡 만들 때 아티스트가 착용한 의상 스냅샷
   cover_character?: CoverCharacter | null;
+  // v3.238 A1: 스타일링 노출 판정(additive — 커버 이미지에 곡 아티스트가 있을 때만 true). 구서버 = 키 없음
+  styling_visible?: boolean;
+  styling_reason?: string;
   has_music_video?: boolean;
   music_video_url?: string | null;
   // v3.102(B-4): v216 출처 메타 — 값 있는 키만 온다(null·키부재 생략 규약)
@@ -295,8 +299,22 @@ export default function PlayerScreen({ route, navigation }: any) {
   // v3.174: 착장 카드 위시리스트 (웹 CharacterCoverCard 패리티)
   const wished = useWishlistStore((s) => s.wished);
   const wishBusy = useWishlistStore((s) => s.busy);
-  const outfitIdsKey = (track?.cover_character?.used_items || [])
-    .map((it: any) => it?.id).filter(Boolean).join(',');
+  // v3.238 A3: 스타일링 탭 표시 분기(서버 styling_visible=false → 착장 목록 대신 안내). 구서버 = 현행
+  const stylingView = resolveStylingView({
+    loaded: fullTrack !== null,
+    stylingVisible: track?.styling_visible,
+    stylingReason: track?.styling_reason,
+    itemCount: track?.cover_character?.used_items?.length ?? 0,
+    isMyTrack,
+  });
+  const outfitIdsKey = stylingView.kind === 'items'
+    ? (track?.cover_character?.used_items || []).map((it: any) => it?.id).filter(Boolean).join(',')
+    : '';
+  const stylingHiddenReason = stylingView.kind === 'hidden' ? stylingView.reason : null;
+  useEffect(() => {
+    if (!__DEV__ || !showDetails || detailTab !== 'outfit' || !stylingHiddenReason) return;
+    console.info(`[PlayerStyling] hidden reason=${stylingHiddenReason} track=${track?.id ?? ''}`);
+  }, [showDetails, detailTab, stylingHiddenReason, track?.id]);
   useEffect(() => {
     // 착장 탭 열람 + 로그인 상태에서만 일괄 조회 (sample_/미로그인은 store가 스킵·무해)
     if (!showDetails || detailTab !== 'outfit' || !user || !outfitIdsKey) return;
@@ -1420,10 +1438,11 @@ export default function PlayerScreen({ route, navigation }: any) {
                 )
               )}
               {detailTab === 'outfit' && (
-                track?.cover_character?.used_items && track.cover_character.used_items.length > 0 ? (
+                stylingView.kind === 'items' && track?.cover_character?.used_items ? (
                   <View>
                     <AppText style={styles.detailSectionTitle}>이 곡 아티스트의 착장</AppText>
-                    <AppText style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다. 옆으로 넘겨보세요.</AppText>
+                    {/* v3.238 A2: 스타일링 = 커버 이미지 속 아티스트의 착장(서버가 커버 인물 판정) */}
+                    <AppText style={styles.detailHelperText}>{STYLING_TEXT.helper}</AppText>
                     {/* v3.54: 세로 랩 그리드 → 가로 스크롤 카드(제품 사진 확대) — 아이템이 많아도 세로 스크롤 부담 없음
                         v3.55: 좌우 화살표 버튼 — 넘길 수 있다는 걸 명확히 */}
                     <View>
@@ -1509,10 +1528,18 @@ export default function PlayerScreen({ route, navigation }: any) {
                     ) : null}
                     </View>
                   </View>
-                ) : fullTrack === null ? (
-                  <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
+                ) : stylingView.kind === 'hidden' ? (
+                  // v3.238 A3: 커버에 곡 아티스트가 없는 곡 — 착장 대신 안내(본인 곡이면 방법 한 줄 더)
+                  <View>
+                    <AppText style={styles.sheetEmptyText}>{STYLING_TEXT.hidden}</AppText>
+                    {stylingView.own ? (
+                      <AppText style={[styles.sheetEmptyText, { fontSize: 12, marginTop: 8 }]}>{STYLING_TEXT.hiddenOwn}</AppText>
+                    ) : null}
+                  </View>
+                ) : stylingView.kind === 'loading' ? (
+                  <AppText style={styles.sheetEmptyText}>{STYLING_TEXT.loading}</AppText>
                 ) : (
-                  <AppText style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</AppText>
+                  <AppText style={styles.sheetEmptyText}>{STYLING_TEXT.empty}</AppText>
                 )
               )}
               {/* v3.177: 곡 댓글 — v3.180: 탭 라벨 숫자 대신 패널 상단에 "댓글 N개" */}
