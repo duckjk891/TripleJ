@@ -7,6 +7,10 @@
 //  · 비공개 내 곡 = "차트에 공개하고 공유할까요?" 확인 → 기존 공개 전환 API(PUT /tracks/{id} {is_public:true},
 //    MyMusic '차트에 업로드' 동일) 성공 시 공유(D7). 남의 비공개 곡(정상 경로 도달 불가)은 안내만.
 //  · 웹은 Share 호출 전에 await 를 두지 않는다 — navigator.share·clipboard 는 탭 직후(사용자 활성화) 안에서만 허용.
+// v3.237 A조: 고정 문구(buildTrackShareText 등) 제거 → 공유 문구 화면(ShareCompose)이 문구를 만든다.
+//  · shareTrack = 진입 게이트(24hex·비공개 확인) → onCompose(track, isOwn) 로 화면 이동(공개 전환 후에도 동일 —
+//    웹 '한 번 더 탭' 단계 불필요: 화면의 [공유하기] 가 새 사용자 제스처).
+//  · deliverShareText({trackId, text, url}) = v3.235 전달부 일반화(네이티브 Share / 웹 navigator.share / 클립보드 폴백).
 import { Platform, Share } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -19,19 +23,27 @@ export interface ShareableTrack {
   artist_name?: string;
   is_public?: boolean;
   uploader_id?: string | number;
+  cover_image?: string;
+  cover_image_url?: string;
+  /** v3.237 버그 1: 공유 문구 아티스트 판정용(실제 캐릭터 정보) — utils/shareMessage.verifiedArtistName */
+  character_id?: string;
+  user_character_snapshot?: { name?: string };
 }
 
 /** shared=공유 창 완료 · copied=클립보드 복사 · manual=복사 실패→링크 다이얼로그 · cancelled=사용자가 닫음 ·
- *  failed=오류 · aborted=공유하지 않음(비공개 남의 곡·공개 확인 취소) · pending=공개 확인 대기(결과는 onDone) */
-export type ShareOutcome = 'shared' | 'copied' | 'manual' | 'cancelled' | 'failed' | 'aborted' | 'pending';
+ *  failed=오류 · aborted=공유하지 않음(비공개 남의 곡·공개 확인 취소) · pending=공개 확인 대기(결과는 onDone) ·
+ *  compose=공유 문구 화면으로 이동(v3.237 — 최종 결과는 화면이 기록) */
+export type ShareOutcome = 'shared' | 'copied' | 'manual' | 'cancelled' | 'failed' | 'aborted' | 'pending' | 'compose';
 
 export interface ShareTrackOptions {
   /** 내 곡 여부 — 모르면 생략(비공개 곡 공개 전환 가능 여부·문구에 사용) */
   isOwn?: boolean;
   /** 비공개 → 공개 전환 성공 직후(공유 전) — 목록 갱신('차트 스트리밍 중' 표시)용 */
   onPublished?: (trackId: string) => void;
-  /** 공유 흐름 종료(결과 포함) */
+  /** 공유 흐름 종료(결과 포함) — v3.237: 화면 이동 전 단계의 결과(compose·aborted·failed)만 */
   onDone?: (trackId: string, outcome: ShareOutcome) => void;
+  /** v3.237: 공유 문구 화면 열기(공개 곡 즉시·비공개 내 곡은 공개 전환 성공 후) */
+  onCompose: (track: ShareableTrack, isOwn: boolean) => void;
   /** 로그용 진입 화면 */
   src?: string;
 }
@@ -41,37 +53,14 @@ export function trackShareUrl(id: string | number): string {
   return `${BACKEND_BASE_URL}/track/${encodeURIComponent(String(id))}`;
 }
 
-/** 한 줄 정리 — 줄바꿈·연속 공백을 공백 1칸으로(문구 줄 구조 보호) */
-function oneLine(v: unknown): string {
-  return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '';
-}
-
-/** 공유 본문(링크 제외, 순수). 내 곡이면 기존 베타 ⭐50 안내 문구를 유지한다(MyMusic 구 handleShareTrack 관행).
- *  폴백: 제목 없음/공백 → '제목 없는 곡', 아티스트 없음 → ' - 아티스트' 생략. */
-export function buildTrackShareText(track: ShareableTrack, isOwn: boolean): string {
-  const title = oneLine(track.title) || '제목 없는 곡';
-  const artist = oneLine(track.artist_name);
-  const head = artist ? `「${title}」 - ${artist}` : `「${title}」`;
-  const lines = [head];
-  if (isOwn) {
-    lines.push('MAIDOL에서 내가 만든 곡이에요. 들어보세요!');
-    lines.push('베타 테스트 기간 가입 시 ⭐50 추가 증정!');
-  } else {
-    lines.push('MAIDOL에서 들어보세요');
-  }
-  return lines.join('\n');
-}
-
-/** 공유 문구 전체(본문 + 링크, 순수) — 안드로이드 공유·클립보드 복사용 */
-export function buildTrackShareMessage(track: ShareableTrack, isOwn: boolean): string {
-  return `${buildTrackShareText(track, isOwn)}\n${trackShareUrl(track.id)}`;
-}
-
-/** 플랫폼별 Share.share 인자(순수) — iOS·웹(navigator.share)은 링크를 url 로 분리(미리보기·중복 방지),
- *  안드로이드는 url 필드를 무시하므로 message 에 링크 포함. */
-export function buildSharePayload(track: ShareableTrack, isOwn: boolean, os: string): { message: string; url?: string } {
-  if (os === 'android') return { message: buildTrackShareMessage(track, isOwn) };
-  return { message: buildTrackShareText(track, isOwn), url: trackShareUrl(track.id) };
+/** 플랫폼별 Share.share 인자(순수).
+ *  · 안드로이드: url 필드를 무시하므로 message 에 링크 포함(v3.235).
+ *  · iOS(v3.237 오케스트레이터 판정 6 — D12 안전책 선적용): message + url 분리 시 받는 앱에 따라 문구나 링크 한쪽만
+ *    전달될 수 있어 message 에 링크 포함·url 필드 생략(링크 1회·순서 본문→혜택→링크 보장, 미리보기는 본문 속 URL 로 생성).
+ *  · 웹(navigator.share): text + url 분리 유지(v3.235) — 실기기(P-5)에서 링크 누락 시 같은 방식으로 전환. */
+export function buildShareTextPayload(text: string, url: string, os: string): { message: string; url?: string } {
+  if (os === 'android' || os === 'ios') return { message: `${text}\n${url}` };
+  return { message: text, url };
 }
 
 /** 공유 창 오류 분류(순수) — 사용자가 닫은 것(AbortError)은 조용히 종료, 그 외는 복사 폴백 */
@@ -111,7 +100,7 @@ function showManualCopy(message: string, url: string, trackId: string) {
       onPress: () => {
         copyText(message).then((ok) => {
           log(ok ? 'copied' : 'fail', { id: trackId, via: 'manual-retry' });
-          if (ok) showAlert('링크 복사 완료', '곡 링크를 복사했어요. 원하는 곳에 붙여넣어 공유하세요!');
+          if (ok) showAlert('링크 복사 완료', '공유 문구와 링크를 복사했어요. 원하는 곳에 붙여넣어 공유하세요!');
           else showAlert('알림', `링크를 길게 눌러 복사해 주세요.\n${url}`);
         });
       },
@@ -119,35 +108,45 @@ function showManualCopy(message: string, url: string, trackId: string) {
   ]);
 }
 
-async function copyWithNotice(message: string, trackId: string): Promise<ShareOutcome> {
+async function copyWithNotice(message: string, url: string, trackId: string): Promise<ShareOutcome> {
   const ok = await copyText(message);
   if (ok) {
     log('copied', { id: trackId });
-    showAlert('링크 복사 완료', '곡 링크를 복사했어요. 원하는 곳에 붙여넣어 공유하세요!');
+    showAlert('링크 복사 완료', '공유 문구와 링크를 복사했어요. 원하는 곳에 붙여넣어 공유하세요!');
     return 'copied';
   }
   log('fail', { id: trackId, reason: 'copy-failed' });
-  showManualCopy(message, trackShareUrl(trackId), trackId);
+  showManualCopy(message, url, trackId);
   return 'manual';
 }
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+export interface DeliverShareInput {
+  trackId: string;
+  /** 본문 + 혜택(링크 제외) */
+  text: string;
+  /** 링크(?s= 포함) */
+  url: string;
+  /** iOS 네이티브: 직전에 닫힌 Modal 과 공유 창 표시가 겹칠 때만 대기(ms, 기본 0) */
+  iosSettleMs?: number;
+}
+
 /**
- * 공유 전달(공개 곡 전제). 웹: 첫 await 전에 navigator.share(또는 복사)를 호출해 사용자 활성화를 지킨다.
- * iOS 네이티브: 방금 닫힌 시트(Modal) 해제 애니메이션과 공유 창 표시가 겹치면 공유 창이 무시될 수 있어 잠시 대기.
+ * 공유 전달(공개 곡 전제) — v3.235 deliverTrackShare 일반화.
+ * 웹: 첫 await 전에 navigator.share(또는 복사)를 호출해 사용자 활성화를 지킨다(탭 핸들러에서 동기 호출할 것).
  */
-export async function deliverTrackShare(track: ShareableTrack, isOwn: boolean): Promise<ShareOutcome> {
-  const trackId = String(track.id);
-  const message = buildTrackShareMessage(track, isOwn);
+export async function deliverShareText(input: DeliverShareInput): Promise<ShareOutcome> {
+  const { trackId, text, url } = input;
+  const message = `${text}\n${url}`;
   const canNativeShare = Platform.OS !== 'web' || hasWebShare();
   if (!canNativeShare) {
     // 웹 + 공유 API 없음(PC 브라우저·일부 인앱) → 곧바로 복사(활성화 유지 구간)
-    return copyWithNotice(message, trackId);
+    return copyWithNotice(message, url, trackId);
   }
   try {
-    if (Platform.OS === 'ios') await wait(350);
-    const res: any = await Share.share(buildSharePayload(track, isOwn, Platform.OS));
+    if (Platform.OS === 'ios' && input.iosSettleMs) await wait(input.iosSettleMs);
+    const res: any = await Share.share(buildShareTextPayload(text, url, Platform.OS));
     const action = res?.action;
     if (action === (Share as any).dismissedAction) {
       log('cancel', { id: trackId });
@@ -162,14 +161,24 @@ export async function deliverTrackShare(track: ShareableTrack, isOwn: boolean): 
     }
     // 웹 NotAllowedError(활성화 만료)·미지원 등 → 복사 폴백
     console.warn('[TrackShare] share 실패 → 복사 폴백', { name: err?.name, message: err?.message });
-    return copyWithNotice(message, trackId);
+    return copyWithNotice(message, url, trackId);
   }
 }
 
 /** 공개 전환 진행 중인 곡 — 확인 버튼 연타 시 PUT 1회 보장 */
 const publishing = new Set<string>();
 
-/** 비공개 내 곡 → 공개 전환 후 공유(D7). 기존 공개 전환 API 재사용. */
+function openCompose(track: ShareableTrack, isOwn: boolean, opts: ShareTrackOptions): boolean {
+  try {
+    opts.onCompose(track, isOwn);
+    return true;
+  } catch (err: any) {
+    console.error('[TrackShare] fail — 공유 화면 열기', { id: String(track.id), message: err?.message });
+    return false;
+  }
+}
+
+/** 비공개 내 곡 → 공개 전환 후 공유 문구 화면(D7·v3.237). 기존 공개 전환 API 재사용. */
 function confirmPublishThenShare(track: ShareableTrack, opts: ShareTrackOptions) {
   const trackId = String(track.id);
   showAlert(
@@ -210,21 +219,8 @@ function confirmPublishThenShare(track: ShareableTrack, opts: ShareTrackOptions)
             console.error('[TrackShare] fail — onPublished 콜백', { message: err?.message });
           }
           const published: ShareableTrack = { ...track, is_public: true };
-          if (Platform.OS === 'web') {
-            // 공개 전환(네트워크 왕복) 뒤에는 웹 사용자 활성화가 만료될 수 있다 → 한 번 더 탭해서 공유
-            showAlert('차트에 공개했어요', '이제 링크를 받은 누구나 들을 수 있어요.', [
-              { text: '닫기', style: 'cancel', onPress: () => opts.onDone?.(trackId, 'cancelled') },
-              {
-                text: '공유하기',
-                onPress: () => {
-                  deliverTrackShare(published, true).then((o) => opts.onDone?.(trackId, o));
-                },
-              },
-            ]);
-            return;
-          }
-          const outcome = await deliverTrackShare(published, true);
-          opts.onDone?.(trackId, outcome);
+          const ok = openCompose(published, true, opts);
+          opts.onDone?.(trackId, ok ? 'compose' : 'failed');
         },
       },
     ]
@@ -232,10 +228,10 @@ function confirmPublishThenShare(track: ShareableTrack, opts: ShareTrackOptions)
 }
 
 /**
- * 공유하기 진입점 — 비로그인·어린이 포함(D10). 반환 = 흐름 시작 결과(공개 곡은 전달 결과).
- * 웹 사용자 활성화 보존: 공개 곡이면 동기 경로로 곧장 deliverTrackShare 를 호출한다.
+ * 공유하기 진입점 — 비로그인·어린이 포함(D10). 반환 = 흐름 시작 결과.
+ * 공개 곡 = 곧장 onCompose(공유 문구 화면), 비공개 내 곡 = 공개 확인 → PUT 성공 → onCompose.
  */
-export function shareTrack(track: ShareableTrack | null | undefined, opts: ShareTrackOptions = {}): Promise<ShareOutcome> {
+export function shareTrack(track: ShareableTrack | null | undefined, opts: ShareTrackOptions): Promise<ShareOutcome> {
   if (!track?.id) {
     console.error('[TrackShare] fail — track id 없음', { src: opts.src });
     return Promise.resolve('failed');
@@ -259,8 +255,7 @@ export function shareTrack(track: ShareableTrack | null | undefined, opts: Share
     confirmPublishThenShare(track, opts);
     return Promise.resolve('pending'); // 이후 결과는 onDone 으로
   }
-  return deliverTrackShare(track, isOwn).then((o) => {
-    opts.onDone?.(trackId, o);
-    return o;
-  });
+  const outcome: ShareOutcome = openCompose(track, isOwn, opts) ? 'compose' : 'failed';
+  opts.onDone?.(trackId, outcome);
+  return Promise.resolve(outcome);
 }

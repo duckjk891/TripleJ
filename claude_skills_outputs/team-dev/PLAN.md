@@ -7562,3 +7562,188 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 1. 서버: v3.234/v3.235 미배포 상태(라이브 md5 = v3.235 기준값). 파일 교집합 0이므로 **기본 = v3.235 서버 배포 직후 별도 빌드**(롤백 단위 분리, 태그 `pre-v3236-live`). v3.235 배포 준비가 v3.236 테스트 완료보다 늦으면 대표 판단으로 **한 빌드에 합류**(v3.235 DEPLOY 절차에 fatigue.py·fatigue_service.py 2파일 추가, 태그는 `pre-v3235-live` 공용). 배포 직전 md5 재대조(위 기준값) → `.bak_pre_v3236` → tar 반영 → build → 진행 중 job 0 확인 후 재생성 → 스모크: `/api/health`, `/api/fatigue/status?director=lyricist` additive 필드, skip-bulk 400/409(쿨다운 없는 테스트 계정 — 무과금) 확인. prod 변경 = 대표 승인.
 2. 웹앱: 앱 코드는 404 레거시 강등이 있어 순서 무관하지만, 기능 노출은 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app` 1회(v3.235 웹과 같은 export 에 묶어도 됨). 래퍼 무변경.
 3. 네이티브: 다음 빌드(v1.3.1 후보)에 포함(대표 판단). 구 네이티브는 기존 팝업·/skip 그대로 동작.
+
+# v3.237 (2026-09-26) — 곡 공유 메시지 개선
+
+## 요청서 원문(대표 전달 전문 — team-dev 호출 메시지 그대로)
+> "# MAIDOL 곡 공유 메시지 개선 요청" 문서: 1.배경(공감→궁금증→나도 만들어볼까, 여러 안 선택+직접 수정) 2.AS-IS 고정 문구 3.메시지 구조(①상황·공감 ②「{곡명}」 - {아티스트} ③곡 소개+나도? = 편집 영역, ④혜택(베타 기간) ⑤링크 = 고정 영역) 4.공유 화면 신규(흐름: 공유 탭 → 문구 선택 화면(안 카드/탭 가로 스크롤: 곡 테마 A안→B안→바치는 노래→default A안, 테마 없으면 default A→B→바치는 노래) → 바치는 노래면 받는 사람 입력(최대 20자, 비우면 '소중한 당신', 실시간 치환) → 편집 → [공유하기] OS 공유 시트; 동작 규칙: 수정 중 안 전환 시 "수정한 내용이 사라져요. 바꿀까요?" 확인, [↺ 원래 문구로], 본문 최대 200자 카운터·초과 시 공유 비활성, 빈 본문이면 「{곡명}」 - {아티스트} 한 줄 자동, 고정 영역(④⑤)은 항상 맨 아래 자동 부착, 최종 = 본문 + 빈 줄 없이 ④ + ⑤) 5.치환 변수({곡명},{아티스트},{링크}=https://api.maidol.ai.kr/track/{id},{theme},{받는 사람}) 6.테마별 문구(default A 공감형 "🎵 이런 날엔 이런 노래 어때요? / 「{곡명}」 - {아티스트} / 제 이야기로 MAIDOL에서 직접 만든 곡이에요. / 듣다 보면… 나도 만들어볼까? 😆", default B "🎵 내 이야기로 만든 노래예요 / 「…」 / 1분이면 나만의 곡 완성!", cat A "🐱 집사님들, 이 노래 우리 애 얘기 아닌가요? / 「…」 / 우리 냥이 테마곡 만들어봤어요 😻 / 조심하세요, 플리에 냥이 노래만 가득해져요 / 우리 애 노래도 만들 수 있다고?", cat B "😻 우리 냥이 테마곡 나왔어요 / 「…」 / 집사라면 하나쯤 있어야죠!", family A "🎉 꽃다발 대신 노래 한 곡, 어때요? / 「…」 / 부모님 환갑에 드린 세상에 하나뿐인 노래예요. / 우리 집 이야기로 직접 만들 수 있어요 🎵", family B "💐 우리 가족 이야기가 노래가 됐어요 / 「…」 / 세상에 하나뿐인 선물 🎵", youth A "😮‍💨 요즘 우리 얘기, 노래로 만들어봤어요 / 「…」 / 듣다 보면 \"어? 이거 완전 내 얘긴데?\" / 나도 내 이야기로 한 곡?", youth B "🎧 오늘 내 기분, 노래로 만들었어요 / 「…」 / 내 얘기로도 한 곡 가능!", team A "🙌 우리 팀 응원가 나왔습니다! / 「…」 / 다른 팀도 하나쯤 있어야 하지 않아요? 😎 / 1분이면 우리 팀 노래 완성", team B "📣 우리 팀 노래 완성! / 「…」 / 다 같이 들어요 🙌", dedication(모든 곡) "💌 {받는 사람}에게 바치는 노래 / 「…」 / {받는 사람} 생각하면서 직접 만들었어요. / 세상에 하나뿐인 노래, 들어줄래요? 🎵") 7.OG description TO-BE "이런 날엔 이런 노래 🎵 탭하면 재생 · 나도 1분 만에 만들기"(title·image 유지) 8.개발 요청(1 theme 필드 — 지정 방식 기획 확정 필요, 2 공유 화면, 3 안 선택 로직, 3-1 받는 사람 입력, 4 문구 안을 코드 수정 없이 설정 파일/DB 로 관리(테마별 안 개수 가변), 5 혜택 줄 베타 기간에만(종료 시 줄 전체 제거·빈 줄 없음), 6 OG description 변경, 7 링크로 들어온 곡 재생 페이지에서 곡 바로 아래 "나도 이런 곡 만들기" CTA → 가입/작업실) 9.확인 필요(이모지·조합 이모지 표시, 알림 첫 줄, 줄바꿈 유지 Android/iOS/웹, 200자 적절성, 테마 목록 확정) 10.측정 지표(링크 클릭률, 유입→가입, 유입→작업실 진입/곡 생성, 테마별, 안별 선택 비율, 수정 비율 및 수정 여부별 클릭률).
+
+요약: 고정 1종 공유 문구(v3.235) → **곡 테마별 문구 여러 안을 고르고·고치는 '공유 문구' 화면** + 문구는 코드 밖(서버 설정) 관리 + 베타 혜택 줄 기간 자동 제어 + OG 설명 교체 + 링크 진입 재생 화면 CTA + 측정 이벤트.
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD f6d6b8f, v1.3.0 — v3.235·v3.236 웹 배포 완료 2026-09-26 13:41Z). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004/app`(읽기 전용, 단일 uvicorn 프로세스, 이미지 latest 09-26 13:39Z · 태그 pre-v3235-live). 분석 원본 = `/private/tmp/server_staging_v3237/orig/{app,scripts}/`(.bak·static·__pycache__ 제외 tar). 실측 스크립트 = `/private/tmp/server_staging_v3237/q/q1~q6.py`(Mongo find 만). 출처 [P]=planner 실측·코드 확인.
+
+서버 md5 기준값([P] 2026-09-26 실측): routes/share_landing.py `4c4e1aaa5f81be14d1022e3240ee52e8`(09-26 11:17Z) · routes/referral.py `02b980a58e2422ed930682b9cde30614`(09-26 11:17Z) · routes/analytics.py `4ff8fc86fd2c2c25ef89e46811226f17` · routes/auth.py `2c9c085dbf9c4604a2b4395e5459990c`(비대상 — import 만) · routes/tracks.py `c68a74ac7aa4b327caee0b55d18b074f`(비대상) · main.py `78ab70741f8dc476e879c330608e0bc7`(비대상).
+
+## 0단계 Plan verification findings
+
+### 1. theme 자동 분류 가능성 — DB 실측 [P q1~q5]
+- tracks 50(공개·비블라인드 35). 기존 분류 필드 채움률: mood 50/50·genre 50/50(한/영 혼재) · **categories 21/50**(29곡 `[]`; 값 = 행복한 기분 17·로맨스 16·에너지 충전 13·파티 5·휴식 3·운동 3·출퇴근길 1·슬픔 1) · **tags 0/50(전부 [])** · theme/category 필드 없음 · search_keywords 49/50(발매 시 LLM 8개 키워드) · prompt 50/50(신규 곡 = 작사 대화 "주제: … / 꼭 들어갈 말: …" 구조, 구곡 = 가사 본문 또는 자유 요청).
+- **mood·genre·categories 는 '분위기·상황' 축이라 요청서 테마(냥이·가족·청춘·팀 = '주제' 축)로 매핑 불가** — 예: 고양이 곡 "냥냥냥" categories=[] mood=잔잔하고 편안한, 가족 곡 "사랑의 김장" categories=에너지 충전·행복한 기분.
+- 주제 신호가 있는 필드 = 제목 · prompt 의 `주제:` 줄 · search_keywords · lyrics_assets.story.topic(30/54, 그중 11 = 작사 대화 프리셋 칩 utils/lyricsPrompt.ts:56 CONTENT_OPTIONS — '가족의 사랑'·'단짝 친구'·'방학의 설렘'·'시험 응원가'·'우리 강아지' 등). 가사 본문 키워드는 **오탐 과다**("냥" 어미·영문 "cat" 부분일치 — 10곡 이상 오탐) → 제외.
+- 제안 규칙(제목 + prompt 주제 줄(가사형 prompt 는 제외) + search_keywords, 부분일치, 우선순위 cat > family > team > youth) 실측 결과:
+
+| 테마 | 공개 35곡 | 전체 50곡 | 해당 곡(공개) | 비고 |
+|---|---|---|---|---|
+| cat | 2 (6%) | 2 | 냥냥냥 · 냥냥냥 (Inst.) | 정확 |
+| family | 1 (3%) | 2 | 사랑의 김장 (+비공개 '벚꽃 같은 너' 주제=가족의 사랑) | 정확 |
+| youth | 5 (14%) | 5 | 방학하면 바다가자 · 방학 바다 쿵짝 · But Free · 쉬었음 청년 · 여름의 기억 | '여름의 기억' = 사랑 노래인데 키워드 '청춘' → **오탐 1** |
+| team | 0 | 0 | — | '대안이 읍었습니다'(75기 회장)는 규칙상 default — 관리자 지정 후보 |
+| default | 27 (77%) | 42 | 나머지 | '우리 강아지'(멍뭉이, 비공개) = 테마 없음 → default |
+
+- 결론: **자동 분류는 가능하나 커버리지 23%(8/35)·정밀도 ~88%(7/8)**. default 안(공감형·간단형)이 모든 곡에 맞는 문구라 오분류 손해보다 누락 손해가 작다 → "관리자 지정 > 자동 규칙 > default" 3단 + 규칙 키워드도 설정(DB)에 둬 코드 수정 없이 조정. 제작 시 사용자 테마 선택은 후속(D2).
+
+### 2. 현재 공유 구현(v3.235) [P 코드]
+- 앱 utils/trackShare.ts: 문구 고정 `buildTrackShareText`(:51-63 — 내 곡 = "「제목」 - 아티스트 / MAIDOL에서 내가 만든 곡이에요. 들어보세요! / 베타 테스트 기간 가입 시 ⭐50 추가 증정!", 남의 곡 = "… / MAIDOL에서 들어보세요") · 플랫폼 인자 `buildSharePayload`(:72-75 — android = message 에 링크 포함, iOS·웹 = message + url 분리) · `deliverTrackShare`(:140-167, 웹은 첫 await 전에 navigator.share/복사 — 사용자 활성화) · 비공개 내 곡 공개 확인 `confirmPublishThenShare`(:173-232, 웹은 공개 후 활성화 만료 대비 '공유하기' 한 번 더 탭 :213-224) · 진입 `shareTrack`(:238-266, 24hex 가드 :244).
+- 호출부 = components/TrackActionSheet.tsx:102-107 `handleShare`(시트 onClose 후 동기 호출 :145) 1곳뿐 + TrackShareDownloadSheet.tsx:16 은 `trackShareUrl` 만 사용. 차트·마이페이지·검색·플레이리스트·피드 ⋯ 모두 이 시트 경유(v3.235 D6).
+- 혜택 문구의 기간 제어 없음 — 베타 종료(2026-10-30 KST) 후에도 앱 문구 고정. 서버 기준 = routes/auth.py:1636-1645 `BETA_SIGNUP_BONUS_AMOUNT=50`·`BETA_SIGNUP_BONUS_UNTIL_KST=(2026,10,30)`·`_beta_signup_bonus_active()`. 공개 `GET /auth/signup-config`(:437-440)는 `guardian_consent_enabled` 만 반환.
+- 문구·안 설정 저장소 없음(Mongo 컬렉션 목록에 config/share 계열 없음 — q4).
+
+### 3. 공유 랜딩·링크 진입(v3.235 S7·B5·B6) [P]
+- routes/share_landing.py: `_OG_DESC` 상수(:50) = "MAIDOL에서 AI로 만든 곡 — 탭하면 바로 재생돼요"(라이브 curl 확인) — og:description·twitter:description·meta description(:174-183) + 본문 lede(:208) 공용. og:title `「{t}」 {a}`(:200)·og:image(:202) 유지 대상. 바로 듣기 URL `https://app.maidol.ai.kr/?track={id}`(:203) + 즉시 `location.replace`(:212-218). 방문은 logger 만(:252·:256) — **클릭 수를 DB 로 셀 수 없음**. 추가 쿼리(`?s=…`) 는 무시되고 200(라이브 확인).
+- 라우터 합류: referral.py:364-365 `public_router.include_router(_share_landing_router)`(main.py 무변경 관행).
+- 앱 utils/trackLink.ts: `?track=` 캡처(:111-122)·`aidol://track/` 캡처(:124-127)·소비 시 `GET /tracks/{id}` → 큐 append → `navigate('Player', {track, via:'share'})`(:170-210)·웹 주소창 `track` 만 제거(:130-139, `stripTrackParam` :75). 공유 출처(어느 안·수정 여부) 정보 없음.
+- PlayerScreen: `viaShare`(:194) → 튜토리얼 생략(:1563)·웹 자동재생 차단 오버레이(:958). 곡 정보 블록 = :1062-1113(제목 Marquee·아티스트/기획사 행) → 바로 아래 진행바(:1117). 커버 높이 `coverH = max(180, min(winW-48, winH-460))`(:974) — **CTA 행 추가 시 460 예약분에 CTA 높이 반영 필요**(작은 화면 컨트롤 밀림 방지).
+- 로그인/가입 = RootStack `Settings` 모달(App.tsx:762-766) 안 `AuthPanel`(SettingsScreen.tsx:981-985, onSuccess = `resetToChartTab` v3.216b F1). AuthPanel 초기 모드 'login' 고정(components/auth/AuthPanel.tsx:66-68, props = onSuccess·onModeChange 뿐) → **가입 화면 직행 파라미터 없음**. 비로그인 게이트 관행 = `navigation.navigate('Settings')`(TrackActionSheet.tsx:63-70). 작업실 = MainTabs `Studio` 탭 → `Map`(App.tsx:420-427).
+- 추천코드 보존: utils/pendingReferral.ts(`?ref=` 7일 보관, v3.230) — trackLink 와 독립.
+
+### 4. 측정 인프라 [P]
+- `POST /api/analytics/events`(routes/analytics.py:72-133): optional auth(user_id 연결)·device_id·platform·app_version. **EVENT_TYPES = screen·session_start·session_end 만(:30), 그 외 type 은 조용히 버림(:99-100)**, 이벤트 모델에 임의 속성 필드 없음(:35-42). TTL 180일(:66). 실측 누적 screen 2752·session_start 193·session_end 36.
+- 소비처 admin_stats.py: 화면 분석 `type:"screen"` 필터(:201·:390) → 새 type 무영향. 가입 플랫폼(:318-321)은 type 무필터 `$first platform` — 새 이벤트도 같은 device 의 platform 이라 결과 동일.
+- 앱 utils/screenAnalytics.ts: 이벤트 유니온 screen/session(:28-30)·배치 flush fetch(:71-100, 실패 무음) — **커스텀 이벤트 API 없음**.
+- 가입 유입 추적: users(PG) created_at + analytics_events(device_id→user_id 연결: 로그인 후 배치에 토큰 첨부)로 "공유 링크로 들어온 기기 → 이후 가입한 user" 결합 가능 → 가입 API 변경 불필요.
+
+## 설계
+
+### 원칙
+- 문구·안·테마 규칙·혜택 문구·OG 설명 = **서버 설정(Mongo 1문서) + 공개 API**, 앱은 받은 설정으로 화면 구성. 앱·서버 모두 **내장 기본값**(오프라인·구서버·설정 문서 없음 폴백) 보유 — 두 기본값은 같은 JSON(테스트로 동일성 보장).
+- 곡 theme = 서버가 결정: `tracks.share_theme`(관리자 지정, additive) > 설정 키워드 규칙 자동 분류 > `default`. 저장된 자동값 없음(요청 시 계산 — 규칙을 바꾸면 즉시 반영).
+- 받는 사람 이름·편집 본문 = **서버 전송 금지**(측정 이벤트엔 id·길이·여부 플래그만).
+- 편집 영역(①②③) = 사용자 소유 텍스트, 고정 영역(④⑤) = 앱이 항상 맨 아래 자동 부착(편집 불가).
+
+### 데이터 모델(서버, 전부 additive)
+- `share_message_config` 컬렉션 문서 `_id:"active"`:
+  `{version:int, updated_at, updated_by, themes:[{key:"cat"|"family"|"youth"|"team", name:"냥이"|"가족"|"청춘"|"팀", priority:int, keywords:[…]}], templates:[{id:"default_a", theme:"default"|<key>|"*", kind:"normal"|"dedication", label:"공감형", order:int, enabled:bool, body:"…{곡명}…", body_other?:"…"}], benefit:{text:"베타 테스트 기간 가입 시 ⭐{amount} 추가 증정!"}, og_description:"…", limits:{body:200, recipient:20, head_title:40}, recipient_default:"소중한 당신"}`
+  - 안 개수 테마별 가변(templates 에서 theme 일치 + enabled, order 순). `body` = 내 곡용, `body_other` = 남의 곡용(없으면 남의 곡에선 그 안 숨김 — D5).
+- 내장 기본값 = 서버 `app/constants/share_messages_default.json`(신규) = 앱 `constants/shareMessages.ts`(신규, 같은 내용). 시드 내용: 요청서 §6 문구 11안(default A/B, cat A/B, family A/B, youth A/B, team A/B, dedication) + 라벨(공감형·간단형·냥이 공감형… · 바치는 노래) + 테마 키워드(§1 규칙 + CONTENT_OPTIONS 매핑: '가족의 사랑'→family, '단짝 친구'·'방학의 설렘'·'시험 응원가'→youth) + planner 초안 `body_other`(1인칭 제작 주장 제거판 — D5 확인 대상).
+- `tracks.share_theme`(선택, 관리자 지정 — 스크립트로만 기록).
+- `share_link_visits` 컬렉션(신규): `{track_id, share_id|null, bot:bool, at}` — IP·UA 원문 미저장, TTL 180일, 인덱스 share_id·at.
+- `analytics_events` 새 type 4종(아래 측정) + `props`(허용 키만).
+
+### API
+| # | 엔드포인트 | 내용 |
+|---|---|---|
+| API-1 | `GET /api/share/track/{track_id}`(신규, optional auth) | 24hex 가드 → 곡 조회(공개·비블라인드, 또는 요청자 = 업로더) — 그 외 404. 응답 `{track:{id,title,artist_name}, audience:"own"|"other"(토큰 사용자 = uploader_id), theme:{key,name,source:"override"|"auto"|"default"}, templates:[해당 테마 안들 + dedication + default 안들 — body 는 audience 에 맞춰 body/body_other 로 해석, 치환 전 원문], benefit:{text(amount 치환 완료)}|null(베타 종료 시 null), link:"https://api.maidol.ai.kr/track/{id}", limits, recipient_default, config_version}`. 설정 로더 = Mongo 문서 60초 메모리 캐시, 문서 없음/검증 실패 = 내장 JSON(경고 로그). 분류 = 제목 + prompt `주제:` 줄(가사형 `[` 시작 prompt 제외) + search_keywords 소문자 부분일치, priority 순 첫 테마. |
+| API-2 | `GET/HEAD /track/{id}`(기존 랜딩 수정) | og/twitter/meta description·lede = 설정 `og_description`(기본 "이런 날엔 이런 노래 🎵 탭하면 재생 · 나도 1분 만에 만들기", 로더 실패 = 이 상수). title·image 불변. 쿼리 `s`(^[0-9a-z]{8}$ 만) → 바로 듣기 URL 에 `&s=` 전달(`/?track={id}&s={s}`, 스크립트 이동 동일). GET 이고 공개 곡일 때 `share_link_visits` insert(best-effort, bot = HEAD·UA 스크래퍼 정규식 kakaotalk-scrap·facebookexternalhit·slackbot·twitterbot·discordbot·telegrambot·whatsapp·bot/crawler/spider/preview/headless — 카카오 인앱 'KAKAOTALK' 은 사람). 404 경로·og.jpg 불변. |
+| API-3 | `POST /api/analytics/events`(기존 수정) | EVENT_TYPES += `share_compose_open`·`share_sent`·`share_link_open`·`share_cta_tap`. 모델에 `props: Optional[dict]` — 허용 키만 정제 저장: track_id(24hex)·share_id(8 base36)·template_id(≤32 [a-z0-9_])·theme(≤16)·theme_source·audience(own/other)·edited(bool)·recipient_custom(bool)·body_len(0..1000 int)·outcome(shared/copied/manual/cancelled/failed)·src(≤24)·logged_in(bool)·dest(signup/studio). 그 외 키·타입 불일치 = 버림. started_at = ts. 기존 3종 처리 불변. |
+
+- 라우터: 신규 `routes/share_messages.py`(`APIRouter(prefix="/api/share")`)를 referral.py 끝 2줄로 public_router 합류(v3.233/v3.235 관행, **main.py 무변경**). `/api/share` 기존 경로 없음(확인).
+- 스크립트(신규, 기본 dry-run·`--apply` 시에만 쓰기 — prod 쓰기 = 대표 승인): `scripts/seed_share_messages.py`(JSON → `share_message_config` upsert, 스키마 검증·version+1·변경 diff 출력) · `scripts/set_share_theme.py --track <id> --theme <key|clear>` · `scripts/share_metrics_report.py`(읽기 전용 — 아래 지표 표 출력). 문구 수정 운영 = JSON 편집 → seed 실행(배포 불필요, 60초 내 반영). 관리자 웹 편집 UI 는 **범위 밖**(다른 세션 소유 — D8).
+
+### 앱 화면 — `ShareCompose`(신규, RootStack modal, 헤더 = stackHeader '공유하기' — 메모리 header-consistency)
+```
+┌ 공유하기 ─────────────────────────────┐
+│ [커버] 냥냥냥 · 펄킴                    │
+│ ( 냥이 공감형 )( 냥이 간단형 )( 바치는 노래 )( 공감형 )  ← 가로 스크롤 칩  │
+│ ┌ 받는 사람 ────────── 0/20 ┐          │ ← '바치는 노래' 선택 시만
+│ │ 소중한 당신(placeholder)   │          │
+│ ┌ 문구 ─────────── 87/200 ┐  [원래 문구로] │ ← Feather rotate-ccw + 텍스트
+│ │ 🐱 집사님들, 이 노래 …     │          │   (수정했을 때만 활성)
+│ │ 「냥냥냥」 - 펄킴           │          │
+│ │ …                          │          │
+│ └────────────────────────────┘          │
+│ 자동으로 붙어요                          │ ← 회색 고정 영역 미리보기(편집 불가)
+│  베타 테스트 기간 가입 시 ⭐50 추가 증정! │ ← benefit null 이면 줄 자체 없음
+│  https://api.maidol.ai.kr/track/…       │
+│ [ 공유하기 ]  (200 초과 시 비활성 + "200자까지 쓸 수 있어요") │
+└──────────────────────────────────────┘
+```
+- 진입: TrackActionSheet '공유하기' → 공개 곡 = `navigate('ShareCompose', {track, isOwn, src})` / 비공개 내 곡 = 기존 공개 확인(v3.235 D7) → PUT 성공 → ShareCompose(웹 '한 번 더 탭' 단계 불필요 — 화면의 [공유하기]가 새 제스처) / 남의 비공개 = 기존 안내.
+- 로드: 마운트 시 API-1(타임아웃 3초) — 로딩 중 스켈레톤, 실패·404 외 오류 = 내장 기본값(theme default, audience = 앱 판단 isOwn, benefit = 앱 내장 종료일 2026-10-30 KST 비교) + 로그. 404 = "비공개로 바뀌었거나 삭제된 곡이에요" 후 닫기.
+- 안 순서(순수 함수 `orderTemplates`): 테마 ≠ default → [테마 안들(order)] → dedication → default 첫 안 / 테마 = default → [default 안들] → dedication. 첫 칩 기본 선택.
+- 치환(순수 `renderTemplate`): `{곡명}`(공유 문구 한정 40자 초과 …)·`{아티스트}`(없으면 머리줄 `「{곡명}」 - {아티스트}` → `「{곡명}」`)·`{theme}`(테마 표시명)·`{받는 사람}`(trim·줄바꿈 제거·20자, 비면 '소중한 당신')·`{링크}`(link). 모르는 `{…}` = 원문 유지.
+- 받는 사람 실시간 치환: 본문 미수정 = 템플릿 재렌더 / 수정 후 = 본문 속 이전 이름 문자열을 새 이름으로 일괄 치환(없으면 무변화)(D6).
+- 수정 판정 `edited = body !== 현재 렌더값`. 수정 상태에서 다른 칩 탭 → showAlert("수정한 내용이 사라져요. 바꿀까요?", [취소][바꾸기]) (메모리 app-popup-design-rule). 수정 상태에서 뒤로가기/닫기 → 같은 문구 확인(beforeRemove, D7).
+- 글자 수(순수 `countChars`): 코드포인트 수 − ZWJ(U+200D)·변이 선택자(U+FE0E/FE0F) — 조합 이모지 과대 계산 완화(Hermes 는 Intl.Segmenter 미지원). 본문만 계산(④⑤ 제외). 200 초과 = 카운터 경고색 + 버튼 비활성. TextInput maxLength 미설정(붙여넣기 후 줄이기 허용).
+- 최종 조립(순수 `assembleShareMessage`): `bodyFinal = trimEnd/trimStart(body) || 머리줄 1줄` → `[bodyFinal, benefit?].join('\n')` (빈 줄 없음) → 링크 = `link + '?s=' + shareId`. 전달 인자 = v3.235 규칙 유지(android: message = 본문+혜택+'\n'+링크 / iOS·웹: message = 본문+혜택, url = 링크 — 카톡 미리보기 카드) — 실기기에서 링크 누락·순서 문제 시 iOS 도 message 포함으로 1줄 전환(T 항목).
+- [공유하기] 탭 핸들러: `shareId` 생성(8자 base36, 동기) → **첫 await 전** navigator.share/복사 호출(웹 활성화) → 결과 확정 시 `trackEvent('share_sent', {track_id, share_id, template_id, theme, edited, recipient_custom, body_len, outcome, audience})` 1건 적재 → shared/copied = 화면 닫기, cancelled = 화면 유지(내용 보존, 재탭 시 새 shareId).
+- 이모지: 공유 본문(사용자 콘텐츠·외부 발송)은 요청서대로 이모지 포함. 앱 UI(칩·버튼·안내)는 **텍스트만**(앱 규칙 "이모지 ⭐만" 준수 — 혜택 미리보기의 ⭐ 는 허용 범위) — D4.
+
+### 링크 진입 재생 페이지 CTA
+- trackLink: `?s=`(웹 search)·`aidol://track/{id}?s=`(네이티브) 파싱 → pending `{id, src, shareId?}` → 소비 시 `navigate('Player', {track, via:'share', shareId})` + `trackEvent('share_link_open', {track_id, share_id, logged_in})`. 웹 주소창 정리 시 `track` 과 함께 `s` 제거(`ref`·hash 보존).
+- PlayerScreen: `viaShare && 현재 곡 id === route.params.track.id` 일 때 곡 정보 블록(:1062-1113) 바로 아래 버튼 **"나도 이런 곡 만들기"**(보조 강조 스타일, 이모지 없음). coverH 예약분 += CTA 높이(표시될 때만). 탭 → `trackEvent('share_cta_tap', {dest})`:
+  - 비로그인 → `navigate('Settings', {authMode:'register', after:'studio'})` → AuthPanel `initialMode` prop 신설(기본 'login' 불변) → 가입/로그인 성공 시 `after==='studio'` 면 MainTabs → Studio → Map 리셋, 아니면 현행 resetToChartTab. `?ref=` 추천코드 프리필(pendingReferral) 불변. 웹 소셜 로그인은 페이지 이탈로 params 소실 → 현행 차트 착지(한계 수용 — D9).
+  - 로그인(어린이 포함) → Player 닫고 `navigate('MainTabs', {screen:'Studio', params:{screen:'Map'}})`.
+- 공유 진입이 아닌 Player·다음 곡으로 넘어간 뒤 = CTA 없음.
+
+### 측정(요청서 §10 매핑)
+| 지표 | 산출(`scripts/share_metrics_report.py`, 읽기 전용) |
+|---|---|
+| 안별 선택 비율·테마별 공유 수 | `share_sent`(outcome∈shared/copied) template_id·theme 분포 |
+| 수정 비율 | `share_sent.edited` 비율(안별) |
+| 링크 클릭률(전체·안별·수정 여부별) | `share_link_visits`(bot=false) share_id 고유 방문 ÷ `share_sent` 수 — share_id 로 template_id·edited 결합 |
+| 유입→가입 | `share_link_open` 기기(device_id) 중 이후 같은 device 의 analytics 에 user_id 가 붙고 users.created_at(PG) > open 시각인 수 |
+| 유입→작업실 진입·곡 생성 | 위 기기/유저의 이후 screen=Map 이벤트 · generations.user_id created_at > open |
+| CTA 효과 | `share_cta_tap` dest 별 수 → 가입/작업실 전환 |
+- 앱: screenAnalytics.ts 에 `trackEvent(type, props)` export(같은 큐·배치·device_id·세션). `share_compose_open`(track·theme·theme_source·audience·src).
+- 개인정보: 받는 사람 이름·본문 텍스트 미전송(recipient_custom=bool, body_len 만). share_link_visits 에 IP·UA 원문 없음.
+
+## 변경 매트릭스
+| 영역 | 파일 | 변경 | 로그 prefix | 담당 |
+|---|---|---|---|---|
+| 서버 | app/routes/share_messages.py(신규) | 설정 로더(60초 캐시·검증·내장 폴백)·theme 분류·API-1 | `[ShareMsg] config=hit|reload|fallback ver=…` · `[ShareMsg] track=t8 theme=… src=override|auto|default aud=own|other` | backend |
+| 서버 | app/constants/share_messages_default.json(신규) | 내장 기본 설정(요청서 11안 + body_other 초안 + 키워드 + 혜택 + OG 설명) | — | backend |
+| 서버 | app/routes/share_landing.py | OG 설명 설정화(API-2)·`s` 전달·visit 기록 | `[ShareLanding] track=… ok=… s=… bot=…` · `[ShareLanding] visit insert failed` | backend |
+| 서버 | app/routes/referral.py(끝 2줄) | share_messages 라우터 합류 | — | backend |
+| 서버 | app/routes/analytics.py | share 이벤트 4종·props 정제(API-3) | `[analytics] drop props key=…`(DEBUG) | backend |
+| 서버 | scripts/seed_share_messages.py·set_share_theme.py·share_metrics_report.py(신규) | 운영 스크립트(dry-run 기본) | `[ShareSeed]`·`[ShareTheme]`·`[ShareMetrics]` | backend |
+| 앱 A조(공유 화면) | screens/ShareComposeScreen.tsx(신규) · utils/shareMessage.ts(신규 — 순수: orderTemplates·renderTemplate·countChars·assembleShareMessage·newShareId·isEdited·replaceRecipient) · constants/shareMessages.ts(신규 — 서버 JSON 동일본) · services/shareService.ts(신규 — API-1 + 폴백) · utils/trackShare.ts(전달부를 `deliverShareText({trackId,text,url})` 로 일반화, 고정 문구 함수는 TrackShareDownloadSheet 용 `trackShareUrl` 만 유지·나머지 제거/대체, 공개 확인 후 ShareCompose 로) · components/TrackActionSheet.tsx(handleShare → navigate) · App.tsx(RootStack `ShareCompose` 등록 + HIDE_MINIPLAYER_ROUTES 추가) · utils/screenAnalytics.ts(`trackEvent` export·유니온 확장) | `[ShareCompose] open|loaded|fallback|switch|reset|over-limit|send` · `[TrackShare] …`(기존) | app-A |
+| 앱 B조(링크 유입·CTA) | utils/trackLink.ts(`s` 파싱·보관·strip·share_link_open) · screens/PlayerScreen.tsx(CTA·coverH) · screens/SettingsScreen.tsx(route params authMode/after → AuthPanel·onSuccess 분기) · components/auth/AuthPanel.tsx(`initialMode` prop) | `[TrackLink] captured … s=…` · `[ShareCTA] tap dest=signup|studio` · `[AuthPanel] initialMode=…` | app-B |
+- 두 조 파일 교집합 0. B조의 이벤트 전송은 A조가 먼저 확정하는 `trackEvent(type: 'share_link_open'|'share_cta_tap'|…, props: Record<string, string|number|boolean>)` 시그니처만 사용(A조 1순위 커밋 → B조 import). 9005 미러링 없음. main.py·tracks.py·auth.py 무변경. 홈페이지 래퍼 무변경(쿼리 보존 — v3.235 확인).
+
+## 역할
+- backend: `/private/tmp/server_staging_v3237/` 에 orig 복사 → 위 서버 변경 → 테스트(아래 T1~T5, 가짜 Mongo/httpx 하네스 — v3.235 harness 관행) → 컨테이너 Python 3.11 compile + 메모리 오버레이 import(라우트 수 = 기존 + `/api/share/track/{track_id}` 1개) → DEPLOY.md(태그 `pre-v3237-live`, 백업 `.bak_pre_v3237`, md5 재대조 목록 = 위 기준값). 서버 쓰기는 대표 1줄 명령만.
+- app-A: 화면·순수 유틸·서비스·전달 경로. app-B: 링크 유입·CTA·가입 직행. 각 조 `npx tsc --noEmit` 0 + 순수 함수 Node 하네스(메모리 app-runtime-testing-limits — 시뮬레이터 없음·웹 빌드 크래시).
+- test-designer: 아래 T 항목.
+
+## 회귀 위험
+- v3.235: 비공개 내 곡 공개 확인(취소 = PUT 0·공유 0, 블라인드 400 메시지)·24hex 가드·웹 navigator.share 미지원 → 복사 → 수동 복사 폴백·iOS 350ms 대기·TrackShareDownloadSheet '링크 복사' URL(`trackShareUrl` 시그니처 불변)·⋯ 시트 다른 항목(좋아요·재생목록·플레이리스트·MyMusic extraItems) 순서·게이트.
+- 링크 재생(v3.235 B5·B6): `?track=` 단독(구 링크·s 없음) 동작 동일 · `?ref=` 동반 보존 · OAuth `#token` 부팅 독립 · 웹 자동재생 오버레이·튜토리얼 생략 · 큐 append · v3.229 재생 기록 1회.
+- 랜딩: 비공개/블라인드/형식 오류 고정 404 바이트 동일(visit 기록 없음) · og.jpg 불변 · 업로더 닉네임 미노출 · `s` 값은 정규식 통과분만 URL 에 들어감(XSS/오픈 리다이렉트 0) · visit insert 실패해도 200.
+- 분석: 기존 screen/session 이벤트 처리·admin_stats 화면 분석·가입 플랫폼 결과 불변 · 구 앱(v1.3.0)은 새 type 미전송.
+- v3.232 어린이 모드: 공유·링크 재생·CTA(로그인 어린이 → 작업실) 허용, 받는 사람 이름 서버 미전송. v3.230 추천코드 보관(pendingReferral)·v3.233 권한 갱신(kidsRefresh) 경로 무변경. AuthPanel 기본 'login' 진입·연령 게이트·약관·소셜 버튼 불변(initialMode 미전달 시 동작 동일).
+- 구 네이티브 앱(v1.3.0): 기존 고정 문구·링크(s 없음) 그대로 — 랜딩·API 호환. OG 설명 변경은 모든 링크에 적용(의도).
+- 미니플레이어: ShareCompose 에서 숨김, 닫으면 복귀.
+
+## test-designer 항목
+- T1 (API-1) 공개 곡: 비로그인 → audience other·templates body 가 body_other 로 해석(body_other 없는 안 제외) / 업로더 토큰 → own / 남의 비공개·블라인드·없는 id·형식 오류 → 404 / 업로더의 비공개 곡 → 200 / theme: share_theme 지정 > 규칙(냥냥냥=cat·사랑의 김장=family·방학하면 바다가자=youth) > default(첫눈) / 가사형 prompt 곡 오탐 없음 / 설정 문서 없음·손상 → 내장 JSON(fallback 로그) / 문서 수정 후 60초 뒤 반영 / benefit: 기간 내 = "⭐50" 치환 텍스트, 2026-10-31 00:00 KST 이후(시계 주입) = null.
+- T2 (API-2) og:description·twitter·meta·lede = 새 문구, og:title·og:image 불변 / `?s=abcd1234` → 바로 듣기 URL `…/?track={id}&s=abcd1234` / `?s=<script>`·대문자·9자 → s 미전달 / GET 공개 곡 1회 = visits 1건(bot=false), HEAD·kakaotalk-scrap UA = bot=true, 404 경로 = 0건 / Mongo insert 예외 주입 → 200.
+- T3 (API-3) share 4종 + 허용 props 저장, 비허용 키·잘못된 타입(edited="yes", track_id 비24hex) 제거 / 알 수 없는 type 여전히 드롭 / screen 이벤트 회귀 / 101개 413·429 레이트리밋 불변.
+- T4 서버 기본 JSON ≡ 앱 constants/shareMessages.ts(키·문구 바이트 동일 — 비교 스크립트) / 모든 안 × 최악 변수(곡명 100자→40자 말줄임, 아티스트 40자, 받는 사람 20자) 렌더 ≤ 200.
+- T5 스크립트: seed dry-run 은 쓰기 0·diff 출력, --apply 후 version+1 / set_share_theme 잘못된 키 거부 / metrics report 빈 데이터에서도 0 으로 출력.
+- T6 (순수 하네스) orderTemplates: cat → [cat_a, cat_b, dedication, default_a] / default → [default_a, default_b, dedication] / 테마 안 3개·1개(가변) / disabled 제외. renderTemplate: 아티스트 없음 머리줄 / 모르는 변수 유지 / 받는 사람 공백·줄바꿈·21자. countChars: "😮‍💨"=2, "🐱"=1, 한글·영문. assembleShareMessage: 빈 본문 → 머리줄 / 본문 앞뒤 빈 줄 제거 / benefit null → 줄 없음(빈 줄 0) / android vs ios payload. replaceRecipient: 수정 후 이름 변경 치환·이름 없으면 무변화. newShareId 형식.
+- T7 (화면) 칩 전환: 미수정 즉시 / 수정 후 확인 팝업 [취소]=유지 [바꾸기]=교체 / [원래 문구로] / 200 초과 비활성·안내 / 바치는 노래에서만 받는 사람 입력·실시간 반영 / 뒤로가기 수정 확인 / API 실패 → 내장 기본(default 안) 표시 / 404 → 안내 후 닫기 / 어린이·비로그인 동일.
+- T8 (전달) 웹 모바일(Android Chrome·iOS Safari): [공유하기] → OS 공유 시트(활성화 오류 0) / PC 웹 → 복사 + 안내 / 비공개 내 곡 → 공개 확인 → ShareCompose → 1탭 공유 / 공유 취소 → 화면 유지·내용 보존 / 완료 → 닫힘. 수신 확인(대표·운영 실기기): 카카오톡·문자·인스타 DM 에서 줄바꿈 유지·조합 이모지(😮‍💨) 표시·링크 1회만·알림 첫 줄 = ① 줄·카톡 미리보기 카드(새 OG 설명).
+- T9 (링크 유입) `/track/{id}?s=…` → 웹앱 `?track=&s=` → Player 착지·주소창 track·s 제거·ref 보존 / share_link_open 이벤트 1건(share_id 포함) / s 없는 구 링크 동일 동작 / aidol://track/{id}?s= 네이티브.
+- T10 (CTA) 공유 진입 Player 에서만 표시, 다음 곡·일반 진입엔 없음 / 작은 화면(375×667)에서 컨트롤·액션 행 잘림 없음 / 비로그인 탭 → 가입 화면 직행(회원가입 타이틀) → 가입 성공 → 작업실 Map / 로그인 탭 → Player 닫힘 → Map / 어린이 로그인 → Map / Settings 일반 진입 = 로그인 모드·성공 시 차트(회귀).
+- T11 측정 E2E: 공유 2회(안 다름·1회 수정) → 링크 방문(사람 1·스크래퍼 1) → report 에 안별·수정별 CTR·bot 제외 반영 / 이벤트 페이로드에 받는 사람 이름·본문 없음.
+
+## 대표 결정 (기본값으로 진행)
+- D1 테마 목록 = default·cat(냥이)·family(가족)·youth(청춘)·team(팀) 5종(요청서 그대로). 강아지 등 반려동물 확장은 후속(설정에 테마·안 추가만으로 가능 — 코드 수정 불필요).
+- D2 theme 결정 = **관리자 지정(tracks.share_theme, 스크립트) > 키워드 자동 분류(설정에 키워드) > default**. 실측 커버리지 23%·오탐 1(여름의 기억). 제작 시 사용자 테마 선택은 후속. '대안이 읍었습니다'→team 등 수동 지정은 대표 지시 시 set_share_theme 실행.
+- D3 혜택 줄 = 서버 베타 상수(auth.py BETA_SIGNUP_BONUS_*) 연동으로 API 가 기간 판단(종료 시 null → 줄 제거·빈 줄 없음). 문구 기본 = 기존 승인 문구 "베타 테스트 기간 가입 시 ⭐{amount} 추가 증정!"(요청서 ④ 전용 문구가 있으면 설정으로 교체). 앱 오프라인 폴백도 같은 종료일(2026-10-30 KST) 내장. `/auth/signup-config` 는 무변경(공유 API 1회 호출로 충분).
+- D4 이모지: 공유 본문 = 요청서대로 포함(사용자 콘텐츠). 앱 UI 칩·버튼·안내 = 텍스트만(↺ 대신 아이콘+"원래 문구로") — 앱 "이모지 ⭐만" 규칙과 충돌 없음. 칩에도 이모지를 원하면 설정 label 수정만으로 가능.
+- D5 **남의 곡 공유**(차트 등): 요청서 문구는 1인칭 제작 주장("제 이야기로 직접 만든 곡이에요")이라 그대로 쓰면 사실과 다름 → 안마다 `body_other`(제작 주장 제거판, planner 초안) 사용, 없으면 그 안 숨김. 초안은 설정 JSON 에 있으며 대표 검수·수정 대상. 대안: 남의 곡은 v3.235 고정 문구 유지.
+- D6 받는 사람 변경 시 수정된 본문은 이전 이름 문자열만 새 이름으로 치환(미수정이면 전체 재렌더).
+- D7 수정 후 화면 이탈 시에도 "수정한 내용이 사라져요" 확인(요청서는 안 전환만 명시 — 같은 원칙 확장).
+- D8 문구 관리 = Mongo 설정 1문서 + 시드 스크립트(JSON 편집 → 실행, 배포 불필요) + 앱·서버 내장 기본값. 관리자 웹 편집 UI 는 범위 밖(다른 세션 소유) — 추후 같은 컬렉션을 편집하면 됨.
+- D9 CTA: 비로그인 = 가입 화면 직행 → 성공 시 작업실 Map, 로그인 = 작업실 Map. 웹 소셜 가입(페이지 이탈)은 차트 착지 한계 수용.
+- D10 측정 = 공유 링크에 무작위 공유 ID `?s=`(8자) 부착 + 랜딩 방문 DB 기록 + analytics 이벤트 4종 + 리포트 스크립트(관리자 대시보드 반영은 후속). 요청서 {링크} 형식에 `?s=` 가 붙는 점 확인 대상.
+- D11 글자 수 = 코드포인트 − ZWJ·변이 선택자 기준 200. 공유 문구 머리줄 곡명 40자 말줄임(원 제목 불변).
+- D12 iOS·웹 전달 = v3.235 방식(message + url 분리, 미리보기 카드) 유지, 실기기에서 링크 누락 시 message 포함으로 전환.
+- 확인 필요(요청서 §9, 실기기 T8): 조합 이모지(😮‍💨) 구형 Android 분리 표시 가능성 · 알림 첫 줄 = ① 줄(이모지+훅) · 줄바꿈 유지(Android/iOS/웹) · 200자 적절성(최장 안 ≈ 110자 + 곡명/아티스트) · 테마 목록 확정(D1).
+
+## 배포
+1. 서버: 배포 직전 md5 재대조(share_landing·referral·analytics + 비대상 auth·tracks·main) → `.bak_pre_v3237` 백업 + tar 반영(routes/share_messages.py·share_landing.py·referral.py·analytics.py·constants/share_messages_default.json·scripts 3종) → docker tag `pre-v3237-live` → build → 진행 중 job 0 확인 후 재생성(v3.235 DEPLOY 절차: logs 볼륨·S3_REGION) → 스모크: `/api/health` · `GET /api/share/track/6aa3ec295f11b57ba518f5e8`(냥냥냥 → theme cat·benefit ⭐50) · 비공개 id 404 · `/track/{id}` og:description 새 문구·`?s=` 전달 · analytics share 이벤트 1건 수신(received=1). 설정 시드는 선택(내장 기본값으로 동작 — 문구 교체 시에만 seed --apply, 대표 승인). prod 변경 = 대표 승인(메모리 maidol-admin-web).
+2. 웹앱: 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app` 1회(앱은 API 실패 시 내장 폴백이라 순서 역전돼도 동작, 측정 이벤트만 드롭). 래퍼 무변경.
+3. 네이티브: 다음 빌드(v1.3.1 후보)에 포함(대표 판단). 구 네이티브는 v3.235 고정 문구로 계속 동작.
+4. 카카오 OG 캐시: 기존에 공유된 URL 은 카카오 캐시로 옛 설명이 보일 수 있음 — 새 공유(`?s=` 새 URL)는 새 설명. 필요 시 카카오 공유 디버거로 대표 곡 캐시 초기화(운영).

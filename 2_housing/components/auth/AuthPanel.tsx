@@ -61,11 +61,21 @@ interface AuthPanelProps {
   onSuccess?: () => void;
   /** 헤더 타이틀 연동용 — 로그인/가입/비밀번호 재설정 화면 전환 통지 (v3.207 ⑦: 'forgot' 추가) */
   onModeChange?: (mode: 'login' | 'register' | 'forgot') => void;
+  /** v3.237 B: 첫 화면 — 'register' 면 가입 첫 단계(연령 게이트)로 바로 진입(공유 링크 CTA).
+   *  미전달·'login' = 기존 동작 그대로(로그인 화면). 마운트 시 1회만 반영. */
+  initialMode?: 'login' | 'register';
 }
 
-export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
+export default function AuthPanel({ onSuccess, onModeChange, initialMode }: AuthPanelProps) {
   const { isLoading, error, login, register, clearError } = useAuthStore();
-  const [mode, setModeRaw] = useState<Mode>('login');
+  const [mode, setModeRaw] = useState<Mode>(() => (initialMode === 'register' ? 'gate' : 'login'));
+  // v3.237 B: 가입 직행 진입이면 헤더 타이틀도 '회원가입'으로 맞춘다(부모 onModeChange 통지 1회)
+  useEffect(() => {
+    if (!initialMode) return;
+    console.info(`[AuthPanel] initialMode=${initialMode}`);
+    if (initialMode === 'register') onModeChange?.('register');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const setMode = (m: Mode) => {
     setModeRaw(m);
     onModeChange?.(

@@ -19,6 +19,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import api from '../services/api';
+import { CommonActions } from '@react-navigation/native';
 import { resetToChartTab } from '../services/navigationRef';
 import { fetchOfficial } from '../services/officialService';
 import {
@@ -78,8 +79,13 @@ function Chip({
   );
 }
 
-export default function SettingsScreen({ navigation }: any) {
+export default function SettingsScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
+  // v3.237 B(D9): 공유 링크 재생 화면 '나도 이런 곡 만들기' CTA 진입 — navigate('Settings', {authMode:'register', after:'studio'}).
+  //  authMode='register' → AuthPanel 가입 첫 단계로 바로, after='studio' → 가입/로그인 성공 시 작업실 Map 착지.
+  //  파라미터 없음(일반 진입) = 로그인 화면·성공 시 차트 착지(v3.216b F1) 그대로.
+  const authMode: 'register' | undefined = route?.params?.authMode === 'register' ? 'register' : undefined;
+  const afterStudio = route?.params?.after === 'studio';
   const { user, isLoading, error, login, register, logout, clearError, updateProfile, setUser } = useAuthStore();
   // v3.232 K3: 둘 다 서버 키가 true 일 때만 — 구서버·성인·나이 모름은 false(기존 화면 그대로)
   const isChild = useIsChild();
@@ -488,7 +494,27 @@ export default function SettingsScreen({ navigation }: any) {
   const [notifyChartUpdate, setNotifyChartUpdate] = useState(true);
   // v3.200(F6): 'ai' = AI 생성 고지 상시 항목(앱 정보 섹션) — 가입 동의문 재사용(consentTexts)
   const [policy, setPolicy] = useState<null | 'terms' | 'privacy' | 'ai'>(null); // 정책 문서 시트
-  const [authTitle, setAuthTitle] = useState('로그인'); // 비로그인 헤더 타이틀(AuthPanel 모드 연동)
+  const [authTitle, setAuthTitle] = useState(authMode === 'register' ? '회원가입' : '로그인'); // 비로그인 헤더 타이틀(AuthPanel 모드 연동)
+  // v3.237 B: 로그인/가입 성공 착지 — CTA 진입(after='studio')이면 작업실 Map 으로 리셋, 아니면 현행 차트 리셋.
+  //  소셜 로그인(웹 페이지 이탈·네이티브 SocialLoginButtons 내부 리셋)은 이 콜백을 거치지 않아 차트 착지(한계 수용 — D9).
+  const handleAuthSuccess = () => {
+    if (!afterStudio) {
+      resetToChartTab();
+      return;
+    }
+    try {
+      console.info('[ShareCTA] auth success → studio');
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'MainTabs', state: { routes: [{ name: 'Studio', state: { index: 0, routes: [{ name: 'Map' }] } }] } }],
+        })
+      );
+    } catch (err: any) {
+      console.error('[ShareCTA] 작업실 착지 실패 — 차트로', { message: err?.message });
+      resetToChartTab();
+    }
+  };
 
   // 닫기 버튼 + 제목 row (양쪽 분기 공통)
   const TitleRow = (
@@ -977,9 +1003,11 @@ export default function SettingsScreen({ navigation }: any) {
       {TitleRow}
       <View style={styles.formContainer}>
         {/* 로그인/회원가입 — MAIDOL 구성(연령 게이트·약관 동의·소셜 로그인 포함) 공용 패널 */}
-        {/* v3.216b F1: 로그인/가입 성공 = goBack(직전 화면 복귀) 대신 항상 차트 탭으로 리셋 착지 */}
+        {/* v3.216b F1: 로그인/가입 성공 = goBack(직전 화면 복귀) 대신 항상 차트 탭으로 리셋 착지
+            (v3.237 B: 공유 CTA 진입만 작업실 Map 착지 — handleAuthSuccess) */}
         <AuthPanel
-          onSuccess={() => resetToChartTab()}
+          initialMode={authMode}
+          onSuccess={handleAuthSuccess}
           onModeChange={(m) =>
             setAuthTitle(m === 'login' ? '로그인' : m === 'forgot' ? '비밀번호 재설정' : '회원가입')
           }

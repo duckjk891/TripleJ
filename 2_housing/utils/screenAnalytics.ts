@@ -25,9 +25,20 @@ const MAX_BATCH = 100; // 서버 MAX_EVENTS 와 동일
 const MAX_QUEUE = 300;
 const IGNORED_SCREENS = new Set(['Splash']);
 
+/** v3.237: 커스텀 이벤트(공유 측정 — 서버 analytics.py EVENT_TYPES 확장분). 구서버는 조용히 버린다. */
+export type CustomEventType = 'share_compose_open' | 'share_sent' | 'share_link_open' | 'share_cta_tap';
+/** 이벤트 속성 — 원시값만(서버가 허용 키만 정제 저장). 본문·받는 사람 이름 등 사용자 텍스트는 넣지 말 것. */
+export type AnalyticsProps = Record<string, string | number | boolean>;
+
 type AnalyticsEvent =
   | { type: 'screen'; session_id: string; screen: string; started_at: string; duration_ms: number; seq: number }
-  | { type: 'session_start' | 'session_end'; session_id: string; ts: string; duration_ms?: number };
+  | { type: 'session_start' | 'session_end'; session_id: string; ts: string; duration_ms?: number }
+  | { type: CustomEventType; session_id: string; ts: string; props: AnalyticsProps };
+
+const CUSTOM_EVENT_TYPES: ReadonlySet<string> = new Set<CustomEventType>([
+  'share_compose_open', 'share_sent', 'share_link_open', 'share_cta_tap',
+]);
+const MAX_PROPS = 16;
 
 let _initialized = false;
 let _deviceId: string | null = null;
@@ -132,6 +143,41 @@ export function trackScreen(name: string | undefined): void {
   _currentScreen = name;
   _screenStartedAt = _backgroundedAt ? 0 : now;
   if (_queue.length >= FLUSH_THRESHOLD) _flush();
+}
+
+/** 속성 정제(순수) — 원시값(string ≤64자·유한 number·boolean)만, 최대 16개 */
+export function sanitizeEventProps(props: unknown): AnalyticsProps {
+  const out: AnalyticsProps = {};
+  if (!props || typeof props !== 'object') return out;
+  let n = 0;
+  for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
+    if (n >= MAX_PROPS) break;
+    if (!/^[a-z_]{1,32}$/.test(k)) continue;
+    if (typeof v === 'string') out[k] = v.slice(0, 64);
+    else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (typeof v === 'boolean') out[k] = v;
+    else continue;
+    n++;
+  }
+  return out;
+}
+
+/**
+ * v3.237: 커스텀 이벤트 1건 적재(같은 큐·배치·device_id·세션). 전송 실패는 무음(분석이 앱 동작에 영향 X).
+ * 서버: POST /api/analytics/events — type + ts(=started_at) + props(허용 키만 저장).
+ */
+export function trackEvent(type: CustomEventType, props: AnalyticsProps = {}): void {
+  try {
+    if (!_initialized || !CUSTOM_EVENT_TYPES.has(type)) {
+      if (__DEV__) console.info('[screenAnalytics] trackEvent 무시', { type, initialized: _initialized });
+      return;
+    }
+    _queue.push({ type, session_id: _sessionId, ts: new Date().toISOString(), props: sanitizeEventProps(props) });
+    if (_queue.length > MAX_QUEUE) _queue = _queue.slice(-MAX_QUEUE);
+    if (_queue.length >= FLUSH_THRESHOLD) _flush();
+  } catch (err: any) {
+    console.error('[screenAnalytics] fail — trackEvent', { type, message: err?.message });
+  }
 }
 
 export function initScreenAnalytics(): void {

@@ -125,6 +125,8 @@ import CoverLibraryScreen from './screens/CoverLibraryScreen';
 // v3.211: expo-audio 백그라운드 재생 스파이크 검증 화면 — 설정 최하단 '재생 엔진 테스트'로 진입.
 // 스파이크 기간 한정(이관 완료 후 화면·진입 행·이 등록 제거 예정).
 import AudioSpikeScreen from './screens/AudioSpikeScreen';
+// v3.237 A조: 곡 공유 문구 화면(⋯ 시트 '공유하기' 목적지)
+import ShareComposeScreen from './screens/ShareComposeScreen';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -202,6 +204,16 @@ export type RootStackParamList = {
   DirectorLineup: undefined;
   // v3.211: expo-audio 백그라운드 재생 스파이크(기간 한정 — 이관 후 제거 예정)
   AudioSpike: undefined;
+  // v3.237 A조: 곡 공유 문구 화면 — track = 표시 필드만(id·title·artist_name·cover), isOwn = 내 곡 문구, src = 측정용 진입 화면
+  ShareCompose: {
+    track: {
+      id: string; title?: string; artist_name?: string; cover_image?: string; cover_image_url?: string;
+      // v3.237 버그 1: 공유 문구 아티스트 판정(폴백) — 실제 캐릭터 정보
+      character_id?: string; user_character_snapshot?: { name: string };
+    };
+    isOwn?: boolean;
+    src?: string;
+  };
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -653,7 +665,8 @@ function useOAuthCallback() {
 // v3.211: AudioSpike — 진입 시 기존 재생을 정지하므로 미니는 어차피 소멸하지만,
 // 화면 체류 중 다른 경로로 재생이 시작돼 겹치는 엣지 방어(스파이크 기간 한정)
 // v3.220 ②: 알림·메시지(목록·채팅방)도 설정처럼 미니플레이어 렌더만 숨김(재생은 유지)
-const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat'];
+// v3.237: 공유 문구 화면(ShareCompose)도 숨김 — 하단 [공유하기] 버튼과 겹침 방지, 닫으면 복귀
+const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat', 'ShareCompose'];
 
 // v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
 // FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.
@@ -794,6 +807,16 @@ export default function App() {
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             {/* v3.211: expo-audio 스파이크 검증 화면(기간 한정 — 이관 후 제거 예정) */}
             <RootStack.Screen name="AudioSpike" component={AudioSpikeScreen} options={({ navigation }) => stackHeader(navigation, '재생 엔진 테스트')} />
+            {/* v3.237 A조: 곡 공유 문구 화면 — 모달 + 네이티브 헤더 '공유하기'(stackHeader 규격, 뒤로 = goBack·수정 시 확인) */}
+            <RootStack.Screen
+              name="ShareCompose"
+              component={ShareComposeScreen}
+              options={({ navigation }) => ({
+                presentation: 'modal',
+                animation: 'slide_from_bottom',
+                ...stackHeader(navigation, '공유하기'),
+              })}
+            />
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치. 설정 등 모달 라우트에선 숨김(재생은 유지) */}
           {!HIDE_MINIPLAYER_ROUTES.includes(currentRoute ?? '') ? <MiniPlayerWrapper /> : null}

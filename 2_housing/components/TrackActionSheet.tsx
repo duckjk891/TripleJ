@@ -98,12 +98,45 @@ export default function TrackActionSheet({
     setPlaylistTarget(t.id);
   };
 
-  // v3.235 B2: 공유 — 로그인 게이트 없음(D10). 웹 사용자 활성화 유지를 위해 탭 핸들러 안에서 동기 호출.
+  // v3.235 B2: 공유 — 로그인 게이트 없음(D10).
+  // v3.237 A조: 공개 곡 = 공유 문구 화면(ShareCompose)으로 이동, 비공개 내 곡 = 기존 공개 확인(v3.235 D7) → 공개 성공 후 이동.
   const handleShare = (t: RowTrack) => {
     const anyT = t as any;
     const isOwn = shareOwn ?? (!!user && anyT?.uploader_id != null && String(anyT.uploader_id) === String(user.id));
-    shareTrack(anyT, { isOwn, src: 'TrackActionSheet', onPublished: onSharePublished, onDone: onShared })
-      .catch((err: any) => console.error('[TrackShare] fail — sheet', { message: err?.message }));
+    const src = currentRouteName();
+    shareTrack(anyT, {
+      isOwn,
+      src,
+      onPublished: onSharePublished,
+      onDone: onShared,
+      onCompose: (st, own) => {
+        // 네비 params 는 표시에 필요한 필드만(직렬화 가능·가사 등 큰 필드 제외)
+        const params = {
+          track: {
+            id: String(st.id), title: st.title, artist_name: st.artist_name,
+            cover_image: anyT?.cover_image, cover_image_url: anyT?.cover_image_url,
+            // v3.237 버그 1: 폴백 문구 아티스트 판정용(실제 캐릭터 정보가 있을 때만 artist_name 사용 — 닉네임 유출 방지)
+            character_id: typeof anyT?.character_id === 'string' ? anyT.character_id : undefined,
+            user_character_snapshot: anyT?.user_character_snapshot?.name ? { name: String(anyT.user_character_snapshot.name) } : undefined,
+          },
+          isOwn: own,
+          src,
+        };
+        navigation.navigate('ShareCompose', params);
+      },
+    }).catch((err: any) => console.error('[TrackShare] fail — sheet', { message: err?.message }));
+  };
+
+  // 공유 진입 화면(측정 src) — 시트를 연 화면의 라우트명, 모르면 'sheet'
+  const currentRouteName = (): string => {
+    try {
+      const st = navigation.getState?.();
+      const name = st?.routes?.[st.index ?? 0]?.name;
+      return typeof name === 'string' && name ? name.slice(0, 24) : 'sheet';
+    } catch (err: any) {
+      console.error('[TrackShare] fail — route name', { message: err?.message });
+      return 'sheet';
+    }
   };
 
   return (

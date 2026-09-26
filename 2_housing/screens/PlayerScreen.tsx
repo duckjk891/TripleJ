@@ -52,6 +52,8 @@ import { AppText, Tag } from '../components/ui';
 import Marquee from '../components/Marquee';
 import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
+import { trackEvent } from '../utils/screenAnalytics';
+import { normalizeShareId } from '../utils/trackLink';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
@@ -255,6 +257,37 @@ export default function PlayerScreen({ route, navigation }: any) {
   // store.track 구독 → prev/next로 곡 바뀌면 화면도 즉시 갱신 (navigation.replace 없이)
   const storeTrack = usePlayerStore((s) => s.track);
   const track: TrackData = fullTrack || storeTrack || routeTrack;
+
+  // v3.237 B(요청 §8-7): 공유 링크로 들어온 곡(via:'share')을 재생 중일 때만 곡 정보 바로 아래 '나도 이런 곡 만들기' CTA.
+  //  현재 곡 = store 곡 우선(다음/이전 곡으로 넘어가면 즉시 숨김). 일반 진입·웹 새로고침(track 파라미터 문자열) = 없음.
+  const shareRouteTrackId = viaShare && routeTrack && typeof routeTrack === 'object' && routeTrack.id != null ? String(routeTrack.id) : '';
+  const shareCurrentId = (storeTrack || track)?.id;
+  const showShareCta = !!shareRouteTrackId && shareCurrentId != null && String(shareCurrentId) === shareRouteTrackId;
+  const shareLinkId = normalizeShareId(route.params?.shareId);
+  const handleShareCta = () => {
+    const loggedIn = !!user;
+    const dest = loggedIn ? 'studio' : 'signup';
+    console.info(`[ShareCTA] tap dest=${dest}`, { id: shareRouteTrackId, s: shareLinkId || null });
+    try {
+      // 측정(개인정보 없음): 곡 id·공유 id·목적지·로그인 여부만
+      const props: Record<string, string | number | boolean> = { dest, track_id: shareRouteTrackId, logged_in: loggedIn };
+      if (shareLinkId) props.share_id = shareLinkId;
+      trackEvent('share_cta_tap', props);
+    } catch (err: any) {
+      console.error('[ShareCTA] share_cta_tap 기록 실패', { message: err?.message });
+    }
+    try {
+      if (loggedIn) {
+        // 로그인(어린이 포함 — 작업실 제한 없음) → Player 닫고 작업실 Map. RN7 navigate 는 기존 MainTabs 로 pop 하지 않으므로 popTo.
+        navigation.popTo('MainTabs', { screen: 'Studio', params: { screen: 'Map' } });
+      } else {
+        // 비로그인 → 가입 화면 직행(추천코드 보관 v3.230 은 AuthPanel 이 그대로 복원), 성공 시 작업실 Map
+        navigation.navigate('Settings', { authMode: 'register', after: 'studio' });
+      }
+    } catch (err: any) {
+      console.error('[ShareCTA] 이동 실패', { dest, message: err?.message });
+    }
+  };
 
   // 본인 곡이면 신고 버튼을 숨긴다 (MAIDOL 규칙과 동일)
   const isMyTrack = !!user && !!track?.uploader_id && String(track.uploader_id) === String(user.id);
@@ -971,7 +1004,12 @@ export default function PlayerScreen({ route, navigation }: any) {
   // v3.161b(대표 확정): 커버 = 음악재생바(슬라이더)와 같은 가로폭(winW-48)의 정사각.
   // 세로 여백 압축으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
   const { width: winW, height: winH } = useWindowDimensions();
-  const coverH = Math.max(180, Math.min(winW - 48, winH - 460));
+  // v3.237 B: 공유 CTA 행(높이 32 + 위 여백 8)이 보일 때만 예약분에 더한다 — 작은 화면에서 컨트롤·액션 행 밀림 방지.
+  //  CTA 표시 중엔 하한 180→140: 하한이 걸리는 소형 화면(360×640 = 미표시도 하한 180)에서 예약분이 무의미해지지 않게
+  //  (coverH + 460 + 40 ≤ winH 를 640 높이까지 보장). 미표시 = v3.236 수식 그대로.
+  const coverH = showShareCta
+    ? Math.max(140, Math.min(winW - 48, winH - 460 - SHARE_CTA_RESERVE))
+    : Math.max(180, Math.min(winW - 48, winH - 460));
 
   // v3.160(대표): 가사 공유 — 네이티브 공유 시트 우선, 미지원(웹 등)이면 클립보드 복사 폴백
   const shareLyrics = async () => {
@@ -1111,6 +1149,20 @@ export default function PlayerScreen({ route, navigation }: any) {
         })()}
         {/* v3.157(대표): 출처 메타 한 줄(목소리·가사) 제거 — 제목/가수/기획사만 표기 */}
       </View>
+
+      {/* v3.237 B: 공유 링크 진입 곡 전용 CTA — 곡 정보 바로 아래(버튼 라벨 텍스트만, 이모지 없음) */}
+      {showShareCta ? (
+        <TouchableOpacity
+          style={styles.shareCta}
+          onPress={handleShareCta}
+          hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="나도 이런 곡 만들기"
+        >
+          <Feather name="music" size={14} color={colors.accent.primary} />
+          <AppText variant="footnote" tone="accent">나도 이런 곡 만들기</AppText>
+        </TouchableOpacity>
+      ) : null}
 
       {/* Progress Bar */}
       {/* v3.161b: 어떤 화면에서든 재생바 폭 == 커버 폭 보장 — 패딩을 커버 크기에 동기화 */}
@@ -1565,7 +1617,24 @@ export default function PlayerScreen({ route, navigation }: any) {
   );
 }
 
+// v3.237 B: 공유 CTA 행 세로 예약분 = styles.shareCta height(32) + marginTop(8)
+const SHARE_CTA_RESERVE = 40;
+
 const styles = StyleSheet.create({
+  // v3.237 B: 공유 링크 진입 '나도 이런 곡 만들기' — 보조 강조(아웃라인 필), 높이 고정(coverH 예약분과 일치)
+  shareCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    height: 32,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border.accent,
+    backgroundColor: colors.bg.surface1,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,
