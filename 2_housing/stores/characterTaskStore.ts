@@ -38,6 +38,12 @@ export interface ArtistDraft {
   photoIntent?: ArtistPhotoIntent;
   /** v3.227 H-1(W1): [이전 사진 사용]으로 고른 서버 원본 경로(텍스트 — 영속 가능). 있으면 사진 재업로드 불요 */
   reuseOriginalObjectName?: string | null;
+  /** v3.234 [ArtistDraft]: 마지막 기록 시각(setDraft가 자동 부여). v3.233 이전 초안에는 없음 */
+  updatedAt?: number;
+  /** v3.234 [ArtistDraft]: 이 대화로 접수(POST 202)된 생성 job — 그 job이 성공 저장되면 draft는 완료본.
+   *  대화를 다시 이어가면(ArtistInput 미러링) 새 객체로 덮여 연결이 풀린다(= 재시도 대화) */
+  submittedJobId?: string | null;
+  submittedAt?: number | null;
 }
 
 export interface CharacterTaskResult {
@@ -92,6 +98,9 @@ interface CharacterTaskState {
   legacyContract: boolean;
   /** v3.219 [ArtistDraft]: 생성 대화 진행 draft(null=없음) — 재진입 이어가기 원천 */
   draft: ArtistDraft | null;
+  /** v3.234 [ArtistDraft]: 최근 성공 저장된 아티스트 생성(sheet) job id(최신순, 최대 10) — 영속.
+   *  draft.submittedJobId가 여기 있으면 "이미 완료된 대화"로 보고 이어가기 대상에서 제외(방어) */
+  completedArtistJobIds: string[];
 
   startTask: (mode: CharacterTaskMode) => void;
   setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'photoIntent' | 'reuseOriginalObjectName' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
@@ -104,6 +113,8 @@ interface CharacterTaskState {
   /** v3.219 [ArtistDraft]: 대화 draft 기록/폐기 */
   setDraft: (draft: ArtistDraft | null) => void;
   clearDraft: () => void;
+  /** v3.234 [ArtistDraft]: 생성 접수(job_id 수신) 시 현재 draft를 그 job에 연결 */
+  markDraftSubmitted: (jobId: string) => void;
   /** 모든 상태 초기화 */
   reset: () => void;
 }
@@ -136,6 +147,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
   targetCharacterId: null,
   legacyContract: false,
   draft: null,
+  completedArtistJobIds: [],
 
   startTask: (mode) =>
     set({
@@ -155,9 +167,17 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
 
   clearMode: () => set({ mode: null }),
 
-  setDraft: (draft) => set({ draft }),
+  // v3.234: 기록 시각 자동 부여 — 기록은 ArtistInput 미러링뿐이라 새 객체에는 submittedJobId가 없다(연결 해제)
+  setDraft: (draft) => set({ draft: draft ? { ...draft, updatedAt: Date.now() } : null }),
 
   clearDraft: () => set({ draft: null }),
+
+  markDraftSubmitted: (jobId) =>
+    set((state) => {
+      const d = state.draft;
+      if (!d || !d.chat.some((m) => m.type === 'user')) return {};
+      return { draft: { ...d, submittedJobId: jobId, submittedAt: Date.now() } };
+    }),
 
   reset: () =>
     set({
@@ -193,7 +213,8 @@ export const useCharacterTaskStore = create<CharacterTaskState>()(
       storage: createJSONStorage(() => AsyncStorage),
       // 텍스트 입력물(draft)만 영속 — 사진/화풍 파일 URI·API 결과 등은 메모리 전용
       // (v3.227 H-1: 사진 사용 의도는 draft.photoIntent로 함께 영속된다)
-      partialize: (s) => ({ draft: s.draft }),
+      // v3.234: 완료 job id 목록도 영속(재시작 후에도 완료 대화 판정 유지)
+      partialize: (s) => ({ draft: s.draft, completedArtistJobIds: s.completedArtistJobIds }),
     }
   )
 );
@@ -207,4 +228,62 @@ export function hasArtistPhotoSource(
   s: Pick<CharacterTaskState, 'photoUri' | 'reuseOriginalObjectName'> = useCharacterTaskStore.getState()
 ): boolean {
   return !!s.photoUri || !!s.reuseOriginalObjectName;
+}
+
+// ── v3.234 [ArtistDraft]: 생성 성공 → 대화 draft 정리(공용 완료 지점) ─────────────────
+// 대표 제보(9/26): 아티스트를 만들고 나서도 작업실 아티스트 디렉터에 "이어서 하기"가 떠서 휴식 표시를 가렸다.
+// 원인: 성공 경로(finalizeArtistJob → ArtistResult justCreated → 자동 저장)는 draft를 지우지 않았다
+// (draft 청소는 ArtistResult reset() — 수동 저장·삭제·재생성 — 에만 있었음).
+
+/** 방어 판정: draft가 이미 성공 저장된 생성 job으로 접수된 대화인가(= 완료본, 이어가기 대상 아님) */
+export function isArtistDraftCompleted(
+  d: ArtistDraft | null | undefined,
+  completedIds: string[] = useCharacterTaskStore.getState().completedArtistJobIds
+): boolean {
+  return !!d && !!d.submittedJobId && (completedIds || []).includes(d.submittedJobId);
+}
+
+export interface ArtistJobSuccessInfo {
+  jobId: string;
+  /** TrackedJobMode — 'sheet'(생성·재생성)만 대화 draft와 연결된다. 옷 입히기(outfit)·refine은 대화 없음 */
+  mode: string;
+  /** 'local'(이 기기 접수) | 'recovered' | 'conflict' */
+  source?: string;
+  /** 로그용 — finalize | consumed */
+  via: string;
+}
+
+/**
+ * 생성(sheet) job이 서버에 성공 저장됐을 때 한 곳에서 호출 — 완료 기록 + 그 job으로 접수된 draft 폐기.
+ * - 연결된 draft(submittedJobId 일치) → 폐기
+ * - v3.233 이전 초안(연결·기록시각 없음) + 이 기기 접수 job → 그 대화로 접수된 것(단일 슬롯) → 폐기(전환기 보정)
+ * - 그 외(접수 뒤 새로 시작한 대화·다른 기기 job) → 유지
+ * 실패·취소·중간 이탈은 호출하지 않는다(draft 보존 — 이어서 하기 유지).
+ */
+export function settleArtistDraftOnSuccess(info: ArtistJobSuccessInfo): boolean {
+  try {
+    if (info.mode !== 'sheet' || !info.jobId) return false;
+    const s = useCharacterTaskStore.getState();
+    const ids = [info.jobId, ...(s.completedArtistJobIds || []).filter((x) => x !== info.jobId)].slice(0, 10);
+    const d = s.draft;
+    const linked = !!d && d.submittedJobId === info.jobId;
+    const legacyDraft = !!d && !d.submittedJobId && d.updatedAt == null && info.source === 'local';
+    if (d && (linked || legacyDraft)) {
+      useCharacterTaskStore.setState({ draft: null, completedArtistJobIds: ids });
+      console.info('[ArtistDraft] 생성 완료 — draft 폐기(이어서 하기 해제)', {
+        jobId: info.jobId, via: info.via, match: linked ? 'job' : 'legacy', step: d.step,
+      });
+      return true;
+    }
+    useCharacterTaskStore.setState({ completedArtistJobIds: ids });
+    if (d) {
+      console.info('[ArtistDraft] 생성 완료 — 다른 대화 draft 유지', {
+        jobId: info.jobId, via: info.via, draftJob: d.submittedJobId ?? null, source: info.source ?? null,
+      });
+    }
+    return false;
+  } catch (err) {
+    console.error('[ArtistDraft] 생성 완료 draft 정리 실패', err);
+    return false;
+  }
 }

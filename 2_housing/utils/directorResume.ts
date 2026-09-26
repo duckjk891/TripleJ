@@ -5,7 +5,7 @@
 import type { DirectorType } from '../components/Character';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore, type ComposeDraft, type VideoDraft } from '../stores/musicStore';
-import { useCharacterTaskStore, type ArtistDraft } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, isArtistDraftCompleted, type ArtistDraft } from '../stores/characterTaskStore';
 
 type LyricsSnap = ReturnType<typeof useLyricsStore.getState>;
 type MusicSnap = ReturnType<typeof useMusicStore.getState>;
@@ -62,10 +62,34 @@ export function hasArtistDraftProgress(d: ArtistDraft | null | undefined): d is 
   return !!d && d.chat.some((m) => m.type === 'user');
 }
 
+/** v3.234: 완료본 판정 로그 1회(렌더마다 호출되는 판정이라 job별 중복 억제) */
+const _loggedCompletedDraftJobs = new Set<string>();
+
+/**
+ * 아티스트 draft가 이어가기 대상인가 — 사용자 진행이 있고, 이미 성공 저장된 생성으로 접수된 대화(완료본)가 아닐 것.
+ * v3.234 [DirectorResume]: 완료본이 남아 있으면 맵이 "이어서 하기"를 띄워 휴식 표시를 가렸다(대표 제보) — 방어 판정.
+ * (정상 경로는 settleArtistDraftOnSuccess가 완료 시점에 draft를 지운다)
+ */
+export function isArtistDraftResumable(
+  d: ArtistDraft | null | undefined,
+  completedIds: string[] = useCharacterTaskStore.getState().completedArtistJobIds
+): d is ArtistDraft {
+  if (!hasArtistDraftProgress(d)) return false;
+  if (isArtistDraftCompleted(d, completedIds)) {
+    const jid = d.submittedJobId || '';
+    if (!_loggedCompletedDraftJobs.has(jid)) {
+      _loggedCompletedDraftJobs.add(jid);
+      console.info('[DirectorResume] 완료된 생성의 draft — 이어가기 대상 아님', { jobId: jid, step: d.step });
+    }
+    return false;
+  }
+  return true;
+}
+
 /** 읽기 전용 판정 — 키 불일치 폐기 같은 부작용은 넣지 않는다(ArtistInputScreen이 담당) */
 export function peekArtistDraft(): ArtistDraft | null {
   const d = useCharacterTaskStore.getState().draft;
-  return hasArtistDraftProgress(d) ? d : null;
+  return isArtistDraftResumable(d) ? d : null;
 }
 
 // ── 이미지(커버, 트랙 모드 전용 — 앨범 모드는 store를 쓰지 않는다) ──

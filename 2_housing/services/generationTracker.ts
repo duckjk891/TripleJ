@@ -27,7 +27,7 @@ import {
   type TrackerKindAdapter,
 } from './genJobs/runtime';
 import { useAuthStore } from '../stores/authStore';
-import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, settleArtistDraftOnSuccess } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { showAlert } from '../utils/appAlert';
@@ -135,6 +135,18 @@ export function registerArtistJob(input: RegisterArtistJobInput): void {
     staleProbeAt: null,
   });
   if (photo?.uri) _jobPhotos.set(input.jobId, photo);
+  // v3.234 [ArtistDraft]: 생성(sheet) 접수 — 지금 대화 draft를 이 job에 연결(성공 저장 시 폐기 근거).
+  // 실패·취소면 연결만 남고 draft는 그대로(이어서 하기 유지). 옷 입히기는 대화 draft와 무관.
+  if (input.mode === 'sheet') {
+    try {
+      useCharacterTaskStore.getState().markDraftSubmitted(input.jobId);
+      console.info('[ArtistDraft] 생성 접수 — draft 연결', {
+        jobId: input.jobId, linked: useCharacterTaskStore.getState().draft?.submittedJobId === input.jobId,
+      });
+    } catch (err) {
+      console.error('[ArtistDraft] 생성 접수 draft 연결 실패', err);
+    }
+  }
   console.info('[GenJobStore] 접수 기록', {
     jobId: input.jobId, mode: input.mode, kind: input.characterKind,
     target: input.targetCharacterId, photo: input.photoIntent,
@@ -283,6 +295,10 @@ function applySnapshot(jobId: string, snap: CharacterJobSnapshot | null): void {
     if (!_finalizing.has(jobId)) {
       console.info('[GenTracker] 이미 소비된 job — 정리', { jobId, consumed: snap.consumed, dismissed: snap.dismissed });
       store().removeJob(jobId);
+      // v3.234 [ArtistDraft]: 저장(consumed)은 성공 완료 — 대화 draft 정리. 버림(dismissed)은 결과를 안 가진 것이라 보존
+      if (snap.consumed && !snap.dismissed) {
+        settleArtistDraftOnSuccess({ jobId, mode: cur.mode, source: cur.source, via: 'consumed' });
+      }
     }
     return;
   }
@@ -564,6 +580,9 @@ export async function finalizeArtistJob(
     // 성공 — 레코드 완료 처리 + 기존 ArtistLoading 완료 부수효과 이관
     store().removeJob(jobId);
     _jobPhotos.delete(jobId);
+    // v3.234 [ArtistDraft]: 생성 성공 저장 — 이 job으로 접수된 대화 draft 폐기(맵 "이어서 하기" 해제 → 휴식 표시).
+    // 뷰어·말풍선·회수 카드·알림 [지금 보기] 등 모든 완료 진입이 이 함수를 지난다(단일 완료 지점)
+    settleArtistDraftOnSuccess({ jobId, mode: job.mode, source: job.source, via: 'finalize' });
     const task = useCharacterTaskStore.getState();
     if (job.pendingGender && job.legacyContract) {
       useArtistProfileStore.getState().setProfile(isVirtual ? 'virtual' : 'real', { gender: job.pendingGender });

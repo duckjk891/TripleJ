@@ -7167,3 +7167,114 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 
 **회귀 보호**: 성인·킬 스위치 off 동작 불변(v3.232 동일성 스위트 재사용), 기존 guardian consent request/decide 흐름(플래그 off 상태) 불변, 로그 규칙(§7) 준수.
 **배포**: DB 백업 → ALTER/CREATE 1줄 → 코드 반영 → 빌드·재생성(off) → 스모크 → 계정 생성 스크립트(대표) → 킬 스위치 on(대표) → 심사용 관리 링크 확인.
+
+# v3.234 (2026-09-26) — 옷 갈아입힌 뒤 만든 곡("집으로")의 스타일링 정보 미반영
+
+**요청 원문**: "방금 생성한 집으로 라는 곡에서 아티스트 옷을 갈아입힌것 같은데. 스타일링 정보에 반영이 안되어있네?"
+
+전제: 앱 = /Users/pearl/TripleJ/2_housing (frontend, HEAD ac60fb9 = v1.3.0). 서버 = maidol-ec2 `/home/ubuntu/maidol/backend_9004/app`(읽기 전용). 분석 원본 = `/private/tmp/server_staging_v3234/orig/app/`(.bak·static 제외 tar 사본, 서버 쓰기 0). 실측 스크립트 = `/private/tmp/server_staging_v3234/q1~q6.py`(Mongo find·MinIO stat 만). 출처 [P]=planner 실측·코드 확인.
+
+서버 파일 md5 기준값([P] 2026-09-26, 배포 직전 재대조): routes/tracks.py `9842e6448d0a453e99c479312f92e26f`(09-25 13:14Z) · routes/upload.py `6e6b66ff05b20c36e109683d8777da74` · routes/character.py `87273de1a2419929b5bb106068b2e54c` · routes/business.py `7b3910d2b6b44709fe0bbe0560f2913c` · services/artist_name_sync.py `2ec6a12dbd21b3778fc6a937f379950d` · main.py `78ab70741f8dc476e879c330608e0bc7`(수정 대상 아님)
+
+## 0단계 Plan verification findings
+
+### 1. 실사례 "집으로" [P q1~q3 + docker logs]
+- 트랙 `6ab790d5d0c87eed728f2fbf` "집으로" · 소유자 장충순(`2f85f76c…`) · 아티스트 "충이" cid `4b4dbbab…`(kind=real) · generation `6ab79064…` · variant_index=1 · 현재 공개.
+- `tracks.user_character_snapshot.used_items`(= 스타일링 탭 표시값) = **RAGLAN 니트 블랙 / 와이드 벌룬 팬츠 / 닥터마틴 1461 벡스** (3개), sheet = `character_snapshots/…/c9ee2366….png`(발매 시점 시트 복사본, origin `characters/…/4b4dbbab…/sheet.png`).
+- `characters(충이).used_items`(현재) = **라이크모스트 후디 멜란지 / 핀턱 와이드 팬츠 블랙 / 나이키 AF1 화이트 / 드로스트링 백 블랙** (4개), updated_at 09:36:15Z.
+
+**타임라인(UTC, KST=+9)**
+| 시각 | 사건 | 근거 |
+|---|---|---|
+| 09:29:08 | 작곡 시작(충이·내 목소리 persona, V6) | generations.created_at, `[suno] … persona=True` |
+| 09:29:47 | 작곡 완료 | generations.completed_at |
+| **09:31:02** | MusicResult "커버 만들기" → **곡 선발매**(upload-from-generation) → 서버가 충이 **당시 착장(니트)** 로 스냅샷 생성 → 즉시 `PUT is_public=false` | `[SnapFix] … copied=True`, `[SongSource] snapshot built cid=4b4dbbab… items=3`, `[tracks.update] … is_public=False` |
+| 09:33:11 | 커버 대화의 "의상 바꾸러 가기" → ArtistCody → `POST /character/generate-sheet-async`(⭐10, gpt_image_2, items=top/bottom/shoes) | character_jobs `6ab79157…`, `[CharJob] job=… status=processing` |
+| 09:36:13~15 | 시트 완성 → `POST /character/save` 경로①(update) **fields=['sheet_object_name','used_items']** → 충이 착장 = 후디 세트, `sheet.png` 덮어쓰기 | `[ArtistV212] save path=1(update)`, `[CharJob] consumed … via=save:update` |
+| **09:39:27** | 커버 생성: `character_object_name=characters/…/4b4dbbab…/sheet.png`(**새 옷 시트**) + 착장 제품컷 3장(**새 옷**) 참조 | `[CoverGenEntry] outfit item refs loaded n=3 (char=충이 items=4)`, cover_sessions `6ab792cf…` |
+| 09:39:53 | 커버 확정 `PUT /tracks/{id} {cover_image_url}` → **cover_image_url 만 갱신, 스냅샷 무변경** | `[cover-edit] track=6ab790d5 src=session` |
+| 이후 | `PUT is_public=true` 공개 | `[tracks.update] … is_public=True` |
+| 조회 | `GET /tracks/6ab790d5…` → mv 없음 → `[TrackCoverChar] fallback to track snapshot` → 스타일링 탭에 **니트 세트** 표시 | docker logs |
+
+→ **결과물 판정**: 커버 이미지는 새 옷(후디 세트)으로 만들어짐(시트 경로가 가변 permanent 경로이고 09:36 에 덮어써진 뒤 09:39 에 로드 — MinIO last_modified 09:36 ≤ 커버 09:39 [P q6]). MV 없음(mv_jobs 0). 아티스트 이미지(스냅샷 시트)·스타일링 탭은 **옛 옷(니트)** → 커버와 스타일링 불일치 확정.
+
+### 2. "스타일링 정보"가 읽는 데이터 [P]
+- 화면: PlayerScreen 상세 토글 탭 '스타일링'(screens/PlayerScreen.tsx:1278-1280 라벨, :1343-1420 렌더) → `track.cover_character.used_items`(:1344, :1365). 위시 sync :254-261. 어린이는 '자세히 보기' 링크 숨김(:206 useIsChild, :1399).
+- 동일 필드 소비처: FeedComposeScreen.tsx:102·:145(피드 글쓰기 착장 첨부) · AgencyProfileScreen.tsx:91(cover_character.name).
+- 서버: GET /tracks/{id}(routes/tracks.py:1703-) → cover_character 조립 :1780-1829 — 1순위 부착 MV(include_my_character=True)의 mv_jobs.user_character_snapshot, 2순위 **tracks.user_character_snapshot**(:1799-1801). Redis `cache:track:v4:{id}` 600초(:1716·:1834), update_track 이 삭제(:1275-1276).
+- business.py:854-897 도 tracks.user_character_snapshot.used_items.id 로 광고 아이템 착용곡 집계(현재 id 는 전부 null — Cody 저장 아이템 id 미기록, 영향 미미).
+
+### 3. 코드 경로와 누락 지점 [P]
+| 단계 | 위치 | 저장/읽는 필드 |
+|---|---|---|
+| 곡 선발매(커버 경유) | 앱 MusicResultScreen.tsx:548-600 handleGenerateCover — **커버 전에 upload-from-generation 호출**(:583) 후 CoverGeneration 이동(:600). handleSave(:452-)도 동일 페이로드 | body.user_character_snapshot(/character/me 대표 기준, :90-124) + character_id |
+| 서버 스냅샷 생성 | routes/tracks.py:2242-2258(body 스냅샷 SnapFix 복사) → :2346-2353 `_build_character_snapshot`(:98-141, 선택 아티스트 **현재** characters.used_items·sheet 복사)이 우선 → :2383 저장 | tracks.user_character_snapshot (**발매 순간 1회만 찍힘**) |
+| 옷 갈아입히기 | 앱 CoverGenerationScreen.tsx:1142-1162 handleWardrobeChange("꾸미기를 마치고 돌아오면 바뀐 의상으로 이어서 진행해요") → ArtistCody(returnToCover) → 서버 character.py:2560-2627 save 경로①: `sheet.png` 덮어쓰기 + `used_items` 교체(:2572-2573) | characters.used_items·sheet (이 아티스트로 이미 만든 곡의 스냅샷은 건드리지 않음 — 의도된 동결) |
+| 커버 생성 | 앱 CoverGenerationScreen.tsx:823·:843 character_object_name(musicStore.coverCharacterObjectName = permanent sheet 경로) → 서버 upload.py:441-519(시트 + characters.used_items[:3] 제품컷 로드) → cover_sessions insert :646-671 | cover_sessions.gen_params.character_object_name(**가변 경로만**, 당시 착장 스냅샷 없음) |
+| 커버 확정 | 앱 CoverGenerationScreen.tsx:1752-1780 handleConfirm `PUT /tracks/{id} {cover_image_url}`(:1773) · MusicResultScreen.tsx:346(보관함 커버) · 서버 tracks.py:1211-1291 update_track → `_validate_cover_image_url`(:879-937, src=session) | **cover_image_url 만 $set — 스냅샷 갱신 로직 없음** ← 누락 지점 |
+
+### 4. 영향 곡 dry-run [P q4~q6]
+- 전체 tracks 39, 스냅샷 보유 16. 착장 변경 증거(character_jobs consumed_via save:update/legacy)는 2건(consume 추적은 v3.227 이후·async job 만 — sync 생성 저장은 추적 불가).
+- "발매 후 같은 아티스트로 커버 생성" 곡 10건 전수 점검(커버 시점 시트 MinIO last_modified·스냅샷 시트 etag·아이템 비교):
+  - **불일치 1건 = "집으로"**(시트 lm 09:36 ≤ 커버 09:39, 스냅샷≠현재 착장 = 커버 착장).
+  - "가을산 밤바람"(09-25, 충이): 커버 09-25 09:30 은 니트 시절 → 스냅샷 니트가 **맞음**(시트 변경 09-26 은 커버 이후). 현재 착장으로 덮으면 오히려 틀려짐 → 소급 대상 아님.
+  - 나머지 8건: 커버 시점 이후 시트 무변경 또는 스냅샷 시트 etag = 현 시트 etag · 아이템 동일 → 정합("혼자 Merry Christmas" 는 시트 etag 만 다르고 아이템 동일, 시트 lm 이 발매 이전 — 스타일링 표시 영향 없음, sheet_preview_path 는 앱 미사용(PlayerScreen.tsx:99 타입만)).
+- **영향 곡 수 = 1(집으로)**.
+
+## 원인
+- **확정**: 곡의 스타일링(`tracks.user_character_snapshot`)은 발매 순간에만 찍히는데(tracks.py:2346-2353), "커버 만들기" 흐름은 **커버 전에 곡을 먼저 발매**하고(MusicResultScreen.tsx:583) 커버 대화 안에서 **옷 갈아입히기를 공식 제공**한다(CoverGenerationScreen.tsx:1142-1162). 옷을 바꾼 뒤 만든 커버를 곡에 붙일 때(update_track tracks.py:1211-1291) 스냅샷을 새 착장으로 갱신하는 로직이 없다 → 커버=새 옷, 스타일링=옛 옷.
+- 보조 원인: 커버 세션(cover_sessions)이 "커버에 쓴 착장"을 기록하지 않고 가변 시트 경로만 남긴다(upload.py:652-660) → 사후에 커버 착장을 정확히 복원할 근거가 없다(이번 1건은 MinIO 수정 시각으로 증명 가능).
+- 앱 표시 로직(PlayerScreen)·아티스트 저장(character.py)은 정상 — 수정 불필요.
+
+## 수정안 (backend 단독, 앱 코드 무변경)
+원칙: **곡의 스타일링 = 곡 커버에 쓰인 착장**(대표 결정 D1 기본값). 아티스트 옷을 나중에 바꿔도 이미 커버가 붙은 과거 곡은 그대로(가을산 밤바람 보호).
+
+| # | 파일 | 변경 | 로그 prefix |
+|---|---|---|---|
+| S1 | routes/upload.py generate-cover(:441-519, :646-671) | character_object_name 이 본인 permanent 아티스트 시트(`characters/{uid}/{cid}/sheet.png`)면 커버 생성 성공 직후 `_build_character_snapshot(mongo, uid, cid)`(tracks.py:98, 지연 import — 시트는 character_snapshots/ 불변 복사)로 **cover_sessions.character_snapshot**(additive 최상위 필드) 저장. 가상 슬롯·스냅샷 경로·실패 = 필드 생략(커버 생성은 절대 막지 않음, best-effort). refine-cover 는 같은 세션이라 추가 작업 없음 | `[CoverOutfitSnap] session=… cid=… items=n` |
+| S2 | routes/tracks.py update_track(:1235-1290) | cover_src == "session" 일 때 해당 세션 조회 → 결정 함수 `_cover_outfit_snapshot(mongo, uid, session, track)`: ① session.character_snapshot 있고 그 character_id == 곡 아티스트(track.character_id → 없으면 기존 스냅샷 character_id) → 채택 ② 필드 없는 구세션: gen_params.character_object_name 이 같은 cid permanent 시트이고 MinIO last_modified ≤ 세션(해당 버전) created_at 이면 현재 characters 로 재구성 채택, 아니면 무변경 ③ cid 불일치·캐릭터 미포함 커버·revert·file = 무변경. 채택 시 `name` 은 현재 characters.name 으로 덮어써 v3.229 개명 동기화와 정합. 같은 `$set` 에 user_character_snapshot 포함 → 기존 Redis 삭제(:1275-1276) 그대로 적용. 실패 시 커버 갱신은 계속(경고 로그만) | `[CoverOutfitSnap] track=… src=session|legacy_session decision=apply|skip reason=… items old→new` |
+| S3 | routes/tracks.py upload-from-generation(:2346-2353) | body.cover_object_name(보관함 커버 재사용, :2162 검증 통과) 의 세션에 같은 cid character_snapshot 이 있으면 `_server_snap` 대신 세션 스냅샷 채택(S2 결정 함수 공용). 커버 없이 발매 = 현행(v236) 그대로 | 동일 |
+| S4 | scripts/backfill_cover_outfit_snapshot.py (신규, 서버 scripts/ 관행 — backfill_snapshot_sheets.py 참조) | dry-run 기본: q6 판정(발매 후 같은 cid 커버 · 커버 시점 시트 lm ≤ 커버 버전 created_at · 스냅샷≠현재 착장)으로 목록 출력 → `--apply --track <id>` 시 해당 곡만 스냅샷 재구성($set user_character_snapshot, 시트 불변 복사) + `cache:track`/`cache:track:v4` 삭제. 멱등 | `[CoverOutfitBackfill] dry_run=… candidates=n` |
+
+- 앱(A): 코드 변경 없음. PlayerScreen 은 곡 열 때마다 `GET /tracks/{id}` 로 fullTrack 재조회(PlayerScreen.tsx:630-660) → 서버 반영만으로 스타일링 탭 갱신. 신규 빌드 불필요.
+- main.py 무변경.
+
+## 역할
+- backend: S1~S4 구현(스테이징 사본 `/private/tmp/server_staging_v3234/` 에서 작업 → 배포 직전 md5 재대조 → rsync/scp 반영). 9005 미러링 없음.
+- app: 변경 없음 — 회귀 확인만(스타일링 탭·피드 착장 첨부·어린이 링크 숨김).
+- test-designer: 아래 T 항목.
+
+## 회귀 위험
+- v3.229 artist_name_sync: 필터가 `user_character_snapshot $type object` + name ≠ 새 이름 → 스냅샷 전체 교체 후에도 그대로 동작. S2 가 name 을 현재 이름으로 채워 개명 직후 커버 교체 시 옛 이름 부활 방지.
+- v3.230 닉네임 동기화: uploader_nickname 과 무관(스냅샷 미포함) — 영향 없음.
+- v236 선택 아티스트 스냅샷 우선 규칙: 커버 없는 발매·다른 아티스트 커버는 현행 그대로(S3 는 같은 cid 세션일 때만 치환).
+- 과거 곡 보호: "가을산 밤바람"처럼 커버가 옛 옷으로 만들어진 곡은 S2/S4 판정상 무변경이어야 함(구세션 lm 조건).
+- 어린이 모드(v3.232): PlayerScreen.tsx:1399 isChild 링크 숨김은 표시 로직이라 데이터 변경과 무관 — 그대로 유지 확인.
+- MV: 부착 MV(include_my_character) 스냅샷이 1순위(tracks.py:1794-1798) — 이번 변경은 트랙 스냅샷만 건드림, MV 있는 곡 표시 불변.
+- business.py 착용곡 집계: 스냅샷 교체 곡은 새 아이템으로 집계(의도대로). id null 이라 현재 수치 영향 0.
+- 비용: 커버 생성당 MinIO copy 1회 추가(시트 ≈6MB) — 수용 가능.
+- 서버 파일 동시 수정 위험: tracks.py 는 다른 세션이 자주 수정(09-25 13:14Z) → 배포 직전 md5 재대조 필수.
+
+## test-designer 항목
+- T1 generate-cover(실사 permanent 시트) → cover_sessions.character_snapshot 저장(used_items·시트 불변 복사·character_id). 캐릭터 미포함/가상 legacy 경로/스냅샷 실패 → 필드 없음 + 커버 200.
+- T2 update_track cover(src=session, 같은 cid, 새 스냅샷) → tracks.user_character_snapshot 교체 · Redis v4 키 삭제 · GET cover_character.used_items = 새 착장.
+- T3 다른 cid 커버 / 캐릭터 미포함 커버 / revert / file 커버 → 스냅샷 불변.
+- T4 구세션(character_snapshot 없음): 시트 lm ≤ 세션 created → 재구성 적용, 시트 lm > 세션 created → 불변(가을산 밤바람 재현).
+- T5 refine 버전(v1) 을 확정해도 같은 세션 스냅샷 적용.
+- T6 upload-from-generation + 보관함 cover_object_name(같은 cid 세션 스냅샷) → 세션 스냅샷 채택, 커버 없음 → v236 현행.
+- T7 개명 후 커버 교체 → snapshot.name = 현재 이름, 이후 artist_name_sync 재개명도 정상 반영.
+- T8 S2 내부 예외 주입 → 커버 갱신 200 유지 + 경고 로그.
+- T9 S4 dry-run = 정확히 1건(6ab790d5 집으로), 가을산 밤바람 미포함 · apply 멱등(2회차 0건) · 캐시 삭제.
+- T10 E2E: 작곡 → 커버 만들기 → 의상 바꾸러 가기 → Cody 저장 → 커버 생성·확정 → 플레이어 스타일링 탭 = 새 옷, 피드 글쓰기 착장 첨부 = 새 옷, 어린이 계정은 '자세히 보기' 숨김 유지.
+- T11 성인·기존 곡 동일성: 스냅샷 보유 16곡 중 대상 외 15곡 GET 응답 cover_character 배포 전후 동일.
+
+## 대표 결정 (기본값으로 진행)
+- D1 스타일링 기준 = **곡 커버에 쓰인 착장**(기본). 대안 "아티스트 현재 착장 자동 추종"은 과거 곡(가을산 밤바람)을 틀리게 바꾸므로 기각.
+- D2 커버 인물 ≠ 곡 아티스트(다른 아티스트로 커버) → 스냅샷 무변경(기본).
+- D3 소급: "집으로" 1곡 — dry-run 목록 보고 후 **대표 승인 시 적용**(기본). 스크립트는 곡 id 단위 적용.
+- D4 커버 없이 발매 후 옷만 바꾼 곡 → 무변경(발매 시점 착장 유지, 기본).
+- D5 스냅샷 교체 시 아티스트 이미지(snapshot 시트)도 함께 새 착장으로 교체(기본 — 커버와 일치).
+
+## 배포
+- 서버 필요(backend 만): md5 재대조 → tracks.py·upload.py 반영 + scripts/backfill_cover_outfit_snapshot.py 추가 → EC2 관행대로 이미지 빌드·재기동(prod 변경 = 대표 승인) → 스모크(T2·T3·T9 dry-run) → 대표 승인 후 "집으로" 소급 apply.
+- 앱 빌드 불필요(코드 무변경).

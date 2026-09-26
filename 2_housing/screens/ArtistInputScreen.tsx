@@ -21,7 +21,7 @@ import { listArtists } from '../services/characterService';
 import { hasArtistDraftProgress } from '../utils/directorResume';
 import { useAuthStore } from '../stores/authStore';
 import { isKidsRestrictedUser, KIDS_TEXT } from '../utils/kidsMode';
-import { useCharacterTaskStore, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, isArtistDraftCompleted, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
@@ -172,6 +172,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       const st = useCharacterTaskStore.getState();
       const d = st.draft;
       if (!d) return null;
+      // v3.234 [ArtistDraft]: 이미 성공 저장된 생성으로 접수된 대화(완료본)는 이어가지 않는다 — 맵 판정과 동일
+      // (완료 시점 정리가 누락된 잔존본 방어. 실패·취소·중간 이탈 draft는 완료 기록이 없어 그대로 복원)
+      if (isArtistDraftCompleted(d, st.completedArtistJobIds)) {
+        console.info('[ArtistDraft] 완료된 생성의 draft — 폐기 후 새 대화', { jobId: d.submittedJobId, restore: restoreParam });
+        useCharacterTaskStore.getState().clearDraft();
+        return null;
+      }
       // v3.232 K12: 어린이는 실사·사진 초안을 이어가지 않는다(사진 재요구·사진 버블 없이 가상 처음부터)
       if (isChild && isKidsUnsafeArtistDraft(d)) {
         console.info('[KidsGate] artist virtual-only — 실사·사진 초안 폐기', {
