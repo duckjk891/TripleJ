@@ -72,3 +72,18 @@ export function inlineEscapeTriedAt(): number | null {
   const v = (globalThis as any).__MAIDOL_INAPP_ESCAPE_AT;
   return typeof v === 'number' ? v : null;
 }
+
+/**
+ * v3.240: 구글 로그인 차단 환경 판정 — 구글은 앱 내장 웹뷰(인앱 브라우저)에서 OAuth를 거부한다
+ * (403 disallowed_useragent 차단 페이지 → 로그인 불가). detectInApp()이 못 잡는 iOS 일반 웹뷰
+ * (UA에 Safari/ 토큰 없음, 홈 화면 앱(standalone) 제외)까지 포함. 배너 동작(detectInApp)은 그대로.
+ */
+export function googleBlockedInAppKind(): InAppKind | null {
+  const k = detectInApp();
+  if (k) return k;
+  const s = ua();
+  if (!s || !/iPhone|iPad|iPod/i.test(s)) return null;
+  const standalone = typeof navigator !== 'undefined' && (navigator as any).standalone === true;
+  if (!standalone && !/Safari\//i.test(s)) return 'etc';
+  return null;
+}

@@ -15,6 +15,13 @@ import { useAuthStore } from '../../stores/authStore';
 import { savePendingReferral } from '../../utils/pendingReferral';
 import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, notifyAccountSuspended } from '../../utils/kidsRestricted';
 import { AppText } from '../ui';
+import {
+  chromeIntentUrl,
+  googleBlockedInAppKind,
+  isAndroidWeb,
+  kakaoOpenExternalUrl,
+  tryEscape,
+} from '../../utils/browserEnv';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
@@ -46,8 +53,41 @@ export default function SocialLoginButtons({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
 
+  // v3.240: 인앱 브라우저(카톡·인스타 등으로 연 공유 링크)에서 구글은 로그인 자체를 막는다(차단 페이지).
+  // 구글로 보내지 말고 외부 브라우저 열기 / 카카오로 계속하기를 안내한다. 카카오 로그인은 인앱에서도 정상.
+  const guardGoogleInApp = (provider: string): boolean => {
+    if (Platform.OS !== 'web' || provider !== 'google') return false;
+    const kind = googleBlockedInAppKind();
+    if (!kind) return false;
+    const canEscape = kind === 'kakaotalk' || isAndroidWeb();
+    // warn = 원격 로그 수집 — 어떤 인앱에서 막히는지 추적
+    console.warn(`[${logPrefix}] 인앱 브라우저 구글 로그인 차단 안내`, { kind, canEscape });
+    const buttons = [
+      ...(canEscape
+        ? [{
+            text: '외부 브라우저로 열기',
+            onPress: () => {
+              console.info(`[${logPrefix}] 인앱 탈출 시도(구글 로그인)`, { kind });
+              tryEscape(kind === 'kakaotalk' ? kakaoOpenExternalUrl() : chromeIntentUrl());
+            },
+          }]
+        : []),
+      { text: '카카오로 계속하기', onPress: () => { void handlePress('kakao'); } },
+      { text: '닫기', style: 'cancel' as const },
+    ];
+    showAlert(
+      '구글 로그인 안내',
+      canEscape
+        ? '지금은 앱 안의 브라우저라 구글이 로그인을 막고 있어요.\n외부 브라우저로 열어서 구글로 계속하거나, 카카오로 계속해 주세요.'
+        : '지금은 앱 안의 브라우저라 구글이 로그인을 막고 있어요.\n화면의 공유(또는 ⋯) 버튼에서 "Safari로 열기"를 누른 뒤 구글로 계속하거나, 카카오로 계속해 주세요.',
+      buttons,
+    );
+    return true;
+  };
+
   const handlePress = async (provider: string) => {
     if (busy) return;
+    if (guardGoogleInApp(provider)) return;
     setBusy(provider);
     if (__DEV__) console.info(`[${logPrefix}] 소셜 로그인 시도`, { provider, platform: Platform.OS });
     const ref = (referralCode || '').trim().toUpperCase();
