@@ -3422,3 +3422,24 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 
 ### 워커 2개 전환 분석(대표 질문 후속)
 - Dockerfile "No --workers" 사유 = 워커당 torch 메모리 2배. 2중 실행 위험 전수: 진짜 블로커였던 부팅 비트복구는 v3.244로 소멸, heavy 세마포어는 워커당 1 유지로 해소, 나머지는 멱등/원자 클레임. 남은 관문 = 메모리 실측 → 추후 성능 패치에서 판단.
+
+---
+
+## v3.245 · v3.246 — 2026-09-28 — 커뮤니티 Phase 1b(클럽 코어) + 아이폰 3종·템포 폴백 (서버·웹 배포 완료)
+
+### v3.245 커뮤니티 Phase 1b (앱 28952c0, 서버 배포)
+- 서버: /api/clubs 7라우트 + /api/feeds/club/{id} — 개설(무료·계정당 1)·가입/탈퇴·목록(커서)·상세, 게시판=feeds kind='club'(타임라인 제외), 클럽 공유 플레이리스트(PG club_id/added_by, 멤버 담기·권한 매트릭스), 금칙어 club_profile·신고 club_post/club·어린이 게이트 Day1. main.py 무변경(referral public_router 합류 선례). 마이그레이션 멱등 적용(MIGRATE_V3245_OK).
+- 앱: 커뮤니티 화면 전면(내 클럽·목록·정렬·무한스크롤), 클럽 만들기·클럽 홈 3탭·클럽 글쓰기·피커 클럽 섹션·큐 교체 재생. 1a 크기 지적 반영(히어로 24→18, 아이콘 28→20 등 관행 표 기준).
+- 게이트: 테스터 조건부 FAIL → 앱 2건 수정 후 전부 green. **BUG-1** /clubs 무슬래시 307 — Android 네이티브 POST 미추종으로 개설 전면 실패 위험 → canonical '/clubs/'. **BUG-2** 상세 {club:…} 래핑 미해제 → 멤버 UI 전멸 → 언랩. 하니스: 앱 137 + 테스터 교차 33 + 서버 125×시드3 = 전부 PASS, ROUTEMAP 367 무변경+신규 8, 회귀(v3239/3241/3243) green.
+- 배포: 마이그레이션 → 코드(md5 가드 8종·.bak_pre_v3245) → pre-v3245-live 태그·nice 빌드·INFLIGHT 0·재생성 → 스모크(clubs/ 빈 목록 200·무슬래시 GET 307·무인증 POST 401·404 2종·generate-cover 401·Traceback 0).
+- 대표 확인 항목: 어린이 클럽 개설 = 허용(기본값, 차단 원하면 1줄 패치). 실개설 스모크는 계정당 1개 영구 소진이라 미실행 — 대표 실계정 확인 권장.
+
+### v3.246 아이폰 3종 + 템포 (앱 e7f8b9e, 웹 배포)
+- 녹음: iOS Safari audio/mp4 자동 선택(isTypeSupported, expo-av web 옵션 실코드 검증), null-uri 안내, 15초 미만 ⭐ 전 차단, 실패 문구에 자동 환불 명시. iOS 14.5 미만은 기존 파일 업로드 폴백.
+- 수정 팝업: AnswerEditModal 백드롭 형제 분리 — 입력칸 탭 취소 소실 해결(호출부 3곳 무수정).
+- 핀치줌: viewport maximum-scale=1·overscroll/touch-action·gesture preventDefault (a11y 트레이드오프 명시 — 추후 앱 내 글꼴 설정 권장).
+- 템포: 분석값 없으면 작곡 BPM 폴백(정수 표기 통일) — 대표 지시.
+- 검증: 신규 74 + 회귀(v3239 109/109 등) green. 웹 배포 번들 마커 확인(maximum-scale 포함).
+
+### 남은 것
+- 클럽 게시판 feeds(kind,club_id) 인덱스 후속 권고(MVP 규모 무해) / BeatTrackView 잔존 표시 후속 검토 / 네이티브 v1.3.1 빌드에 v3.234~246 포함 필요.
