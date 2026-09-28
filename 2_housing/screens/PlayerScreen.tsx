@@ -26,6 +26,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { trackCoverUri } from '../utils/coverUri';
+import { resolveTempoDisplay } from '../utils/tempoDisplay';
 import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 // v3.229 [PlayRecord]: 재생 기록 단일 지점(곡 재생 세션당 1회)
@@ -396,7 +397,9 @@ export default function PlayerScreen({ route, navigation }: any) {
       { label: '오디오 영향도', value: g.audio_weight },
       { label: '페르소나', value: g.persona_model },
       { label: 'BPM', value: t.bpm ?? g.bpm },
-      { label: '템포', value: t.tempo ? Math.round(t.tempo) : null },
+      // v3.246 T4: v3.244 박자분석 중지로 신곡 tempo=null → 작곡 설정 BPM 폴백(CEO 지시).
+      // 표시는 기존과 동일한 정수 반올림. 둘 다 없으면 null=행 숨김(기존 동작).
+      { label: '템포', value: resolveTempoDisplay(t.tempo, t.bpm ?? g.bpm) },
       { label: '키', value: t.key ?? g.key },
       { label: '언어', value: t.language },
       { label: 'AI 모델', value: t.ai_model },

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Platform,
   StyleSheet,
   View,
   TouchableOpacity,
@@ -20,6 +21,12 @@ import { useVoiceStore } from '../stores/voiceStore';
 import { usePointsStore } from '../stores/pointsStore';
 import api from '../services/api';
 import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
+import {
+  pickWebRecordingFormat,
+  isSampleTooShort,
+  MIN_SAMPLE_DURATION_S,
+  type WebRecordingFormat,
+} from '../utils/voiceRecordingFormat';
 import {
   createVoiceClone,
   getVoiceClone,
@@ -90,6 +97,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   // STEP 1
   const [voiceName, setVoiceName] = useState('');
   const [sampleSrc, setSampleSrc] = useState<AudioSrc>(null);
+  // v3.246 T1: 샘플 길이(초) — 녹음=타이머 실측, 업로드=미리듣기 로더 프로브(실패 시 null=서버 검증에 위임).
+  // 서버 최소 15초 미만을 ⭐ 확인 전에 차단(422 왕복·혼란 방지 — 차감은 서버도 검증 후라 이중 안전).
+  const [sampleDurationS, setSampleDurationS] = useState<number | null>(null);
   const [vocalStartS, setVocalStartS] = useState('0');
   const [vocalEndS, setVocalEndS] = useState('60');
   // Suno 공식 플로우: 샘플=노래, 검증=문구 따라 말하기. style은 기본 'sing' 고정(선택 UI 제거 — 혼란 방지).
@@ -113,6 +123,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // v3.246 T1: 웹 녹음에 실제 사용된 컨테이너 — 중지 시 파일명 확장자를 컨테이너와 일치시킨다
+  const recFormatRef = useRef<WebRecordingFormat | null>(null);
 
   // 미리듣기
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -200,6 +212,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           setCloneId(null);
           setValidateInfo(null);
           setSampleSrc(null);
+          setSampleDurationS(null); // v3.246 T1
           setVerifySrc(null);
           setErrText('');
           setGenStatus('generating');
@@ -236,7 +249,11 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           const msg = clone.error_message || '분석 단계에서 실패했어요.';
           console.warn('[VoiceCloneWizard] 폴링 중 failed, clone_id=', cloneId, msg);
           setPhrasePolling(false);
-          failBackToStep1('분석 실패', '샘플 분석에 실패했어요.\n음성 파일을 다시 등록해주세요.');
+          // v3.246 T1: failed 전이 = 서버가 ⭐ 원자 환불(voice_clone_service refund_clone_points) — 문구 고지
+          failBackToStep1(
+            '분석 실패',
+            `샘플 분석에 실패했어요.${msg && !/실패했어요/.test(msg) ? `\n(${msg})` : ''}\n사용한 ⭐은 자동 환불됐어요.\n음성 파일을 다시 등록해주세요.`
+          );
           return;
         }
       } catch (err: any) {
@@ -282,11 +299,13 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           const raw = clone.error_message || '';
           console.warn('[VoiceCloneWizard] 학습 실패, clone_id=', cloneId, 'status=', clone.status, raw);
           const expired = clone.status === 'expired' || /expired|만료/i.test(raw);
+          // v3.246 T1: 환불은 failed 전이에서만(서버 refund_clone_points — 만료는 무환불 정책)
+          const refundNote = clone.status === 'failed' ? '\n사용한 ⭐은 자동 환불됐어요.' : '';
           failBackToStep1(
             expired ? '인증 문구 만료' : '학습 실패',
-            expired
+            (expired
               ? '인증 문구가 만료됐어요.\n처음부터 다시 진행해주세요.'
-              : `목소리 학습에 실패했어요.\n처음부터 다시 진행해주세요.${raw ? `\n(${raw})` : ''}`
+              : `목소리 학습에 실패했어요.\n처음부터 다시 진행해주세요.${raw ? `\n(${raw})` : ''}`) + refundNote
           );
           return;
         }
@@ -343,6 +362,22 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     }
   };
 
+  // v3.246 T1: 업로드 파일 길이 프로브(베스트에포트) — 실패/미확인 시 null(차단하지 않음)
+  const probeAudioDurationS = async (uri: string): Promise<number | null> => {
+    try {
+      const { sound, status } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
+      const st: any = status;
+      const durationS =
+        st?.isLoaded && typeof st.durationMillis === 'number' && st.durationMillis > 0
+          ? st.durationMillis / 1000
+          : null;
+      await sound.unloadAsync().catch(() => {});
+      return durationS;
+    } catch {
+      return null;
+    }
+  };
+
   // ── 파일 업로드 ──
   const handlePickFile = async (target: 'sample' | 'verify') => {
     try {
@@ -353,6 +388,12 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         await stopPreview();
         if (target === 'sample') {
           setSampleSrc({ uri: file.uri, name: file.name });
+          // v3.246 T1: 길이 프로브 — 15초 미만 조기 안내용(모르면 null=서버 검증 위임)
+          setSampleDurationS(null);
+          probeAudioDurationS(file.uri).then((d) => {
+            if (d != null) console.log('[VoiceCloneWizard] 샘플 길이 프로브:', Math.round(d), '초');
+            setSampleDurationS(d);
+          });
         } else {
           setVerifySrc({ uri: file.uri, name: file.name });
         }
@@ -374,9 +415,29 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      // v3.246 T1 [1c][27]: expo-av 웹 프리셋의 web.mimeType='audio/webm' 고정이 iOS 사파리에서
+      // MediaRecorder 생성자 throw → 녹음 불가였다. ExponentAV.web.js는 options.web을 그대로
+      // new MediaRecorder(stream, options.web)에 넘기므로, isTypeSupported로 고른 컨테이너를
+      // web 옵션에 주입한다(iOS 사파리=audio/mp4, Chrome/Android=audio/webm).
+      let recordingOptions: any = Audio.RecordingOptionsPresets.HIGH_QUALITY;
+      recFormatRef.current = null;
+      if (Platform.OS === 'web') {
+        const mr: any = (globalThis as any)?.MediaRecorder;
+        const format = pickWebRecordingFormat(
+          typeof mr?.isTypeSupported === 'function' ? mr.isTypeSupported.bind(mr) : undefined
+        );
+        if (format) {
+          recFormatRef.current = format;
+          recordingOptions = {
+            ...recordingOptions,
+            web: { mimeType: format.mimeType, bitsPerSecond: 128000 },
+          };
+          console.log('[VoiceCloneWizard] 웹 녹음 컨테이너:', format.mimeType);
+        } else {
+          console.warn('[VoiceCloneWizard] 지원 컨테이너 판별 실패 — 프리셋 기본(webm) 사용');
+        }
+      }
+      const { recording } = await Audio.Recording.createAsync(recordingOptions);
       recordingRef.current = recording;
       setIsRecording(true);
       setRecordingDuration(0);
@@ -385,7 +446,11 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       }, 1000);
     } catch (err: any) {
       console.error('[VoiceCloneWizard] 녹음 시작 실패:', err?.message);
-      showAlert('녹음 불가', '웹에서는 파일 업로드를 이용해주세요.');
+      // v3.246 T1: 원인 포함 안내(웹 한정 문구 제거 — 네이티브 실패도 동일 경로)
+      showAlert(
+        '녹음을 시작할 수 없어요',
+        `이 기기/브라우저에서 녹음을 시작하지 못했어요.\n파일 업로드를 이용해주세요.${err?.message ? `\n(${err.message})` : ''}`
+      );
     }
   };
 
@@ -399,11 +464,15 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       const uri = recordingRef.current.getURI();
       recordingRef.current = null;
       if (uri) {
-        const recName = target === 'sample' ? '노래녹음.m4a' : '검증녹음.m4a';
-        console.log('[VoiceCloneWizard] 녹음 완료:', target, recordingDuration, '초');
+        // v3.246 T1: 확장자=실제 컨테이너와 일치(웹: mp4→.m4a / webm / ogg, 네이티브: 프리셋 .m4a)
+        // 서버는 확장자만 강제(voice_clone.py ALLOWED_AUDIO_EXT) — 불일치 시 400/422 원인이었다.
+        const ext = Platform.OS === 'web' ? recFormatRef.current?.extension ?? 'webm' : 'm4a';
+        const recName = target === 'sample' ? `노래녹음.${ext}` : `검증녹음.${ext}`;
+        console.log('[VoiceCloneWizard] 녹음 완료:', target, recordingDuration, '초', recName);
         await stopPreview();
         if (target === 'sample') {
           setSampleSrc({ uri, name: recName });
+          setSampleDurationS(recordingDuration > 0 ? recordingDuration : null);
           // 녹음 길이로 구간 끝 기본값 보정 (5초~120초)
           if (recordingDuration > 0) {
             setVocalEndS(String(Math.min(120, Math.max(5, recordingDuration))));
@@ -411,9 +480,19 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         } else {
           setVerifySrc({ uri, name: recName });
         }
+      } else {
+        // v3.246 T1 [27]: expo-av 웹은 화면 잠금·백그라운드 전환으로 recorder가 inactive 되면
+        // uri 없이 끝난다 — 기존엔 else 분기 자체가 없어 무반응("다음이 안 넘어감") 루프였다.
+        console.warn('[VoiceCloneWizard] 녹음 URI 없음 — 저장 실패', { target });
+        setRecordingDuration(0);
+        showAlert(
+          '녹음이 저장되지 않았어요',
+          '화면이 꺼졌거나 다른 앱으로 이동하면 녹음이 끊겨요.\n다시 한 번 녹음해주세요.'
+        );
       }
-    } catch {
-      showAlert('오류', '녹음 저장에 실패했습니다.');
+    } catch (err: any) {
+      console.error('[VoiceCloneWizard] 녹음 저장 실패:', err?.message);
+      showAlert('오류', `녹음 저장에 실패했습니다.${err?.message ? `\n(${err.message})` : ''}`);
     }
   };
 
@@ -432,6 +511,14 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     }
     if (!sampleSrc) {
       showAlert('입력 필요', '노래 샘플을 녹음하거나 업로드해주세요.');
+      return;
+    }
+    // v3.246 T1: 서버 최소 15초 — 길이를 아는 샘플은 ⭐ 확인 전에 차단(422 왕복 방지)
+    if (isSampleTooShort(sampleDurationS)) {
+      showAlert(
+        '샘플이 너무 짧아요',
+        `노래 샘플은 최소 ${MIN_SAMPLE_DURATION_S}초 이상이어야 해요.\n(지금 샘플은 약 ${Math.round(sampleDurationS as number)}초)\n조금 더 길게 녹음하거나 긴 파일을 올려주세요.`
+      );
       return;
     }
     const startS = parseInt(vocalStartS, 10);
@@ -683,7 +770,10 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
               />
 
               <AppText style={styles.fieldLabel}>노래 샘플 *</AppText>
-              {renderAudioPanel('sample', sampleSrc, () => setSampleSrc(null))}
+              {renderAudioPanel('sample', sampleSrc, () => {
+                setSampleSrc(null);
+                setSampleDurationS(null); // v3.246 T1
+              })}
 
 
               <AppText style={styles.fieldLabel}>보컬 구간 (초) *</AppText>

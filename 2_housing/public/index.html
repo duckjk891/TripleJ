@@ -11,7 +11,10 @@
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <!-- v3.246 T3 [9b]: maximum-scale=1·user-scalable=no — iOS 사파리 핀치줌 후 축소 시
+         페이지 리로드/리셋으로 진행(작곡 플로우 등)이 유실되는 문제 차단(앱형 RN웹 표준 조치).
+         트레이드오프: 브라우저 확대(저시력 접근성) 제한 — 앱 내 글꼴 크기로 보완 필요. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
     <title>%WEB_TITLE%</title>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
@@ -38,6 +41,15 @@
           height: 100dvh;
         }
       }
+      /* v3.246 T3 [9b]: 당겨서 새로고침·경계 바운스 차단 + 핀치/더블탭 줌 제스처 무력화
+         (pan-x pan-y = 스크롤 팬은 그대로 허용 — ScrollView 스크롤 영향 없음) */
+      html,
+      body {
+        overscroll-behavior: none;
+      }
+      body {
+        touch-action: pan-x pan-y;
+      }
     </style>
     <script>
       /* v3.217 ①(b) [WebShell]: 카카오톡 인앱 웹뷰 — 진입 즉시 외부 기본 브라우저 탈출 시도.
@@ -53,6 +65,20 @@
             location.href =
               'kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href);
           }
+        } catch (e) {}
+      })();
+    </script>
+    <script>
+      /* v3.246 T3 [9b]: iOS 사파리는 viewport meta·touch-action만으로 핀치줌이 완전히 막히지
+         않는다(터치 3개 등) — 비표준 gesture 이벤트를 직접 preventDefault. 줌 상태로 축소하다
+         페이지가 리로드되며 진행이 유실되는 실사용 버그(60% iOS 웹) 대응. 다른 브라우저는
+         gesturestart 미발화 = no-op. */
+      (function () {
+        try {
+          var block = function (e) { e.preventDefault(); };
+          document.addEventListener('gesturestart', block, { passive: false });
+          document.addEventListener('gesturechange', block, { passive: false });
+          document.addEventListener('gestureend', block, { passive: false });
         } catch (e) {}
       })();
     </script>

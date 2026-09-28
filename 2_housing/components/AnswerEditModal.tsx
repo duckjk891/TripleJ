@@ -77,11 +77,12 @@ export default function AnswerEditModal({
         pointerEvents="box-none"
       >
         {/* v3.202(B): overlay center→flex-end — 하단 정렬 유지(키보드 리프트와 정합) */}
-        <TouchableOpacity
-          style={[styles.reselectOverlay, { paddingBottom: insets.bottom + 24 }]}
-          activeOpacity={1}
-          onPress={cancel}
-        >
+        {/* v3.246 T2 [3]: 콘텐츠를 감싸던 full-screen TouchableOpacity(onPress=cancel)가
+            react-native-web에서 TextInput·컨테이너 탭까지 cancel로 흡수 → (되감기 중) 이전
+            단계로 튕겼다. AppDialogHost 패턴대로 백드롭을 콘텐츠의 "형제" absoluteFill로 분리 —
+            콘텐츠 탭은 백드롭에 닿지 않는다. props/API 불변(호출부 무수정). */}
+        <View style={[styles.reselectOverlay, { paddingBottom: insets.bottom + 24 }]}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={cancel} />
           <View style={styles.reselectContainer}>
             <AppText style={styles.reselectTitle}>{title}</AppText>
             <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
@@ -131,7 +132,7 @@ export default function AnswerEditModal({
               <AppText style={styles.reselectCloseText}>취소</AppText>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
