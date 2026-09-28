@@ -45,6 +45,8 @@ interface Props {
   onUpdated?: () => void;          // v3.210 ①-C: 공개 전환 성공 후 목록 갱신(옵션)
   renderBlocks: () => any;         // 본문 블록(텍스트/트랙) 렌더는 화면쪽 기존 로직 재사용
   requireLogin: () => boolean;     // 비로그인 시 CTA 처리(true=로그인됨)
+  /** v3.247: 클럽명 배지 억제 — 클럽 게시판(ClubHome)처럼 맥락상 중복인 화면에서 전달 */
+  hideClubBadge?: boolean;
 }
 
 // 서버 created_at은 타임존 표기 없는 UTC — 'Z'를 붙여 파싱(KST 9시간 오차 방지)
@@ -61,9 +63,16 @@ const fmtTime = (iso?: string): string => {
   return d.toLocaleDateString('ko-KR');
 };
 
-export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin }: Props) {
+export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin, hideClubBadge }: Props) {
   const user = useAuthStore((s) => s.user);
   const isMine = !!user && String(feed.author_id) === String(user.id);
+
+  // v3.247: 클럽 글 배지 — club_id 있는 글이 일반 피드/채널에 노출될 때 클럽명 표시.
+  // 서버가 club_name 을 내려줄 때만(구서버·미직렬화 응답은 필드 없음 → 생략, 오늘과 동일 렌더).
+  const clubBadgeName: string | null =
+    !hideClubBadge && feed?.club_id && typeof feed?.club_name === 'string' && feed.club_name
+      ? String(feed.club_name)
+      : null;
 
   // v3.210 ①-C: 공개 상태 — 응답 is_public(내 글 탭은 비공개 포함). 미포함 구응답은 공개 취급.
   const [isPublic, setIsPublic] = useState(feed.is_public !== false);
@@ -215,6 +224,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
         // v3.210 tester U-4②: 서버 FeedBody 필드는 bgm_track_id(직렬화 응답도 동일 키) —
         // 잘못된 키(bgm)로 보내면 PUT마다 BGM이 None으로 저장돼 소실된다.
         bgm_track_id: feed.bgm_track_id ?? null,
+        // v3.247: 클럽 글은 club_scope 도 직렬화에 실려온다 — PUT 전체 body 계약이라
+        // 누락 재전송 시 scope 가 기본값으로 되돌 수 있어(BGM 소실과 같은 결) 저장값을 보존 재전송.
+        ...(feed.club_scope ? { club_scope: feed.club_scope } : {}),
       });
       setIsPublic(next);
       onUpdated?.();
@@ -332,6 +344,13 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
               {isOfficialNotice ? (
                 <View style={styles.noticeBadge}>
                   <AppText variant="caption" style={styles.noticeBadgeText}>공지</AppText>
+                </View>
+              ) : null}
+              {/* v3.247: 클럽명 배지 — 일반 피드/채널에서 클럽 글 출처 구분(Feather users + 클럽명) */}
+              {clubBadgeName ? (
+                <View style={styles.clubBadge}>
+                  <Feather name="users" size={10} color={feedTheme.muted} />
+                  <AppText variant="caption" style={styles.clubBadgeText} numberOfLines={1}>{clubBadgeName}</AppText>
                 </View>
               ) : null}
               {/* v3.210 ①-C: 내 글 한정 비공개 칩(자물쇠 아이콘) — 공지 배지와 별개 */}
@@ -532,6 +551,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 1,
   },
   privateBadgeText: { color: feedTheme.muted, fontWeight: '700' },
+  // v3.247: 클럽명 배지 — 비공개 칩과 같은 보더 칩 관행(muted 톤), 긴 클럽명은 말줄임
+  clubBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.sm,
+    paddingHorizontal: 6, paddingVertical: 1, maxWidth: 120,
+  },
+  clubBadgeText: { color: feedTheme.muted, fontWeight: '700', flexShrink: 1 },
   moreBtn: { padding: 6 },
   menu: {
     alignSelf: 'flex-end', backgroundColor: colors.bg.surface2, borderRadius: radius.md,

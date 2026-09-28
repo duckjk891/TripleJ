@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { Modal, View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
 import { AppText, Button } from './ui';
@@ -112,6 +113,14 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
     }
   };
 
+  // v3.247(서버 확정): GET /playlists 는 모든 항목에 club_id·club_name 을 내려준다(개인=null) —
+  // null 은 falsy 라 아래 truthy 체크가 구서버(필드 자체 없음)와 동일하게 동작. 중복 노출 방지 결정:
+  // '클럽 섹션 우선' — 클럽 섹션에 이미 뜬 id 는 개인 섹션에서 제외한다.
+  // 클럽 섹션 로드 실패/구서버(클럽 API 404)로 클럽 섹션이 비면 개인 섹션에 그대로 남기되
+  // users 배지+클럽명 부제로 구분(항목 소실 방지 — 어느 경로로도 같은 플리가 두 번 뜨지 않음).
+  const clubSectionIds = new Set(clubPlaylists.map((p) => String(p.id)));
+  const personalRows = playlists.filter((pl: any) => !clubSectionIds.has(String(pl.id)));
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV(behavior='padding') — iOS·Android 공통.
@@ -136,14 +145,20 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
             {many ? `${trackIds.length}곡을 플레이리스트에 담기` : '플레이리스트에 담기'}
           </AppText>
           {busy ? <ActivityIndicator color={colors.accent.primary} style={{ marginBottom: spacing.lg }} /> : null}
-          {playlists.length > 0 && (
+          {personalRows.length > 0 && (
             /* v3.201(A): 목록 ScrollView 전환 — 비스크롤 View는 목록이 길면 맨 아래 입력행을
                시트 밖으로 밀어내는 잠재 결함(키보드와 무관)이 있었다. maxHeight로 입력행 상시 노출 보장. */
             <ScrollView style={[styles.list, { maxHeight: 240 }]} keyboardShouldPersistTaps="handled">
-              {playlists.map((pl: any) => (
+              {personalRows.map((pl: any) => (
                 <TouchableOpacity key={pl.id} style={styles.item} disabled={busy} onPress={() => handlePick(pl.id)}>
-                  <AppText variant="body">{pl.title || pl.name}</AppText>
-                  <AppText variant="caption" tone="muted">{pl.track_count ?? 0}곡</AppText>
+                  {/* v3.247: club_id 있는 플리(클럽 섹션 미표시분) — users 소형 배지 + 클럽명 부제 */}
+                  <View style={styles.itemTitleRow}>
+                    {pl.club_id ? <Feather name="users" size={12} color={colors.text.muted} /> : null}
+                    <AppText variant="body" numberOfLines={1} style={{ flexShrink: 1 }}>{pl.title || pl.name}</AppText>
+                  </View>
+                  <AppText variant="caption" tone="muted" numberOfLines={1}>
+                    {pl.club_id ? `${pl.club_name || '클럽'} · ${pl.track_count ?? 0}곡` : `${pl.track_count ?? 0}곡`}
+                  </AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -186,6 +201,8 @@ const styles = StyleSheet.create({
   title: { marginBottom: spacing.lg },
   list: { marginBottom: spacing.lg },
   item: { paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+  // v3.247: 클럽 플리 행 제목(users 배지 + 이름 한 줄)
+  itemTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   label: { marginBottom: spacing.sm },
   createRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'stretch' },
   input: {

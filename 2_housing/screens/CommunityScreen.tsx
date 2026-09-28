@@ -15,6 +15,7 @@ import { AppText, Button, EmptyState, ScreenLayout, Tag } from '../components/ui
 import LoginPrompt from '../components/LoginPrompt';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAuthStore } from '../stores/authStore';
+import { useIsChild } from '../utils/kidsMode';
 import { Club, ClubSort, listClubs, getMyClubs } from '../services/clubService';
 
 const LIST_LIMIT = 20;
@@ -29,6 +30,9 @@ export default function CommunityScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const playingTrack = usePlayerStore((s) => s.track);
+  // v3.247: 어린이 계정 = 클럽 개설 불가(서버 POST /clubs/ 403 child_restricted 계약) —
+  // CTA 를 안내로 대체해 403 왕복 자체를 없앤다(가입·둘러보기는 그대로).
+  const isChild = useIsChild();
 
   const [clubs, setClubs] = useState<Club[]>([]);
   const [myClubs, setMyClubs] = useState<Club[]>([]);
@@ -139,12 +143,23 @@ export default function CommunityScreen() {
         </View>
       </View>
       <View style={styles.ctaWrap}>
-        <Button
-          label="클럽 만들기"
-          fullWidth
-          leading={<Feather name="plus" size={16} color={colors.text.primary} />}
-          onPress={handleCreateClub}
-        />
+        {isChild ? (
+          // v3.247: 어린이 CTA 대체 안내 — 개설 버튼 대신 정보 행.
+          // 문구는 서버 403 child_restricted(feature:'club_create') 메시지와 동일(톤 일치 확정)
+          <View style={styles.childNotice}>
+            <Feather name="info" size={16} color={colors.text.muted} />
+            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>
+              어린이 계정은 클럽을 만들 수 없어요. 클럽에 가입해서 함께 즐기는 건 언제든 할 수 있어요.
+            </AppText>
+          </View>
+        ) : (
+          <Button
+            label="클럽 만들기"
+            fullWidth
+            leading={<Feather name="plus" size={16} color={colors.text.primary} />}
+            onPress={handleCreateClub}
+          />
+        )}
       </View>
 
       {user && myClubs.length > 0 ? (
@@ -261,6 +276,12 @@ const styles = StyleSheet.create({
   },
   heroBody: { marginTop: spacing.xs },
   ctaWrap: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
+  // v3.247: 어린이 CTA 대체 안내 행 — surface1 카드 관행(버튼과 같은 자리·높이감)
+  childNotice: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+  },
   // 섹션 라벨 — ChartScreen albumSectionLabel 관행(footnote 12 + 700)
   sectionLabel: { fontWeight: '700', letterSpacing: 0.3 },
   myClubSection: { marginTop: spacing.xl, paddingHorizontal: spacing.lg },

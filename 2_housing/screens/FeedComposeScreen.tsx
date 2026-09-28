@@ -14,7 +14,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
-import { AppText, Button } from '../components/ui';
+import { AppText, Button, Tag } from '../components/ui';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -64,6 +64,9 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const [posting, setPosting] = useState(false);
   // v3.210 ①-B: 공개/비공개 — 기본 ON(공개). 피드·공지(kind 불문) 공통, TrackUploadScreen 스위치 관행
   const [isPublic, setIsPublic] = useState(true);
+  // v3.247: 클럽 글 공개 범위 — 계약 POST /feeds kind='club' 에 club_scope:'club'|'public'(기본 'club').
+  // 구서버(필드 미지원)는 club_scope 를 무시 → 오늘과 동일(클럽 게시판에만) 동작. 어린이 게이트·이미지 규칙 불변.
+  const [clubScope, setClubScope] = useState<'club' | 'public'>('club');
   // v3.111: 첨부 사진 — 선택 즉시 업로드(진행 표시), 실패분은 재시도/제거 가능
   const [images, setImages] = useState<AttachedImage[]>([]);
 
@@ -259,7 +262,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     }
     // v3.70: 아이템은 서버 블록 화이트리스트 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
-    if (__DEV__) console.info('[Feed] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length, isPublic });
+    if (__DEV__) console.info('[Feed] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length, isPublic, ...(isClub ? { clubScope } : {}) });
     try {
       await api.post('/feeds/', {
         // v3.115: community는 서버가 title 무시(null 저장) — 입력 UI도 숨겼으니 null 고정
@@ -270,7 +273,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         is_public: isClub ? true : isPublic,
         kind,
         // v3.245: 클럽 게시판 — club_id 동반(다른 kind에는 필드 자체를 보내지 않아 기존 계약 무회귀)
-        ...(isClub ? { club_id: clubId } : {}),
+        // v3.247: club_scope 동반(기본 'club') — 클럽 글에만 전송, 다른 kind 페이로드 불변
+        ...(isClub ? { club_id: clubId, club_scope: clubScope } : {}),
       });
       navigation.goBack();
     } catch (err: any) {
@@ -448,6 +452,20 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ))}
 
+        {/* v3.247: 클럽 글 공개 범위 — 칩 2개(클럽에만 공개 기본/전체 공개). 정렬 칩(Tag) 관행 재사용 */}
+        {isClub ? (
+          <View style={styles.scopeBox}>
+            <AppText variant="callout">공개 범위</AppText>
+            <View style={styles.scopeChips}>
+              <Tag label="클럽에만 공개" selected={clubScope === 'club'} onPress={() => setClubScope('club')} />
+              <Tag label="전체 공개" selected={clubScope === 'public'} onPress={() => setClubScope('public')} />
+            </View>
+            <AppText variant="footnote" tone="muted">
+              {clubScope === 'public' ? '피드와 내 채널에도 보여요.' : '이 클럽 게시판에서만 보여요.'}
+            </AppText>
+          </View>
+        ) : null}
+
         {/* v3.210 ①-B: 공개 여부 — TrackUploadScreen '차트에 공개' 스위치 관행 재사용(피드·공지 공통)
             v3.245: 클럽 글은 항상 공개(게시판 계약) — 스위치 숨김 */}
         {isClub ? null : (
@@ -582,6 +600,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
+  // v3.247: 클럽 공개 범위 — 라벨 + 칩 2개 + 설명 1줄
+  scopeBox: { marginTop: spacing.lg, gap: spacing.sm },
+  scopeChips: { flexDirection: 'row', gap: spacing.sm },
   // v3.210 ①-B: 공개 스위치 행 — TrackUploadScreen switchRow 관행
   switchRow: {
     flexDirection: 'row',

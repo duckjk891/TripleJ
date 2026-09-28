@@ -122,3 +122,57 @@ export async function createClubPlaylist(clubId: string, title: string): Promise
   const res = await api.post('/playlists/', { title, club_id: clubId });
   return { ...res.data, id: String(res.data?.id ?? '') };
 }
+
+// ── v3.247 운영자 위임 — 서버 스테이징 확정 계약(플랫 셰이프, 미배포 시 404 → 호출자가 안내로 강등):
+//   GET  /clubs/{id}/transfer-candidates → { candidates:[{user_id, nickname, joined_at,
+//        tenure_ok, posts, comments, playlist_adds, owns_other_club}] }
+//        (어린이 멤버는 서버가 후보에서 제외 — 앱 추가 처리 불필요)
+//   POST /clubs/{id}/transfer-owner {new_owner_id} → 200
+//        403(비owner) · 400 'transferee_not_member'|'transferee_not_eligible'
+//        · 409 'club_limit'(수임자가 이미 클럽 운영 중)|'conflict'
+export interface TransferCandidate {
+  user_id: string;
+  nickname?: string;
+  joined_at?: string;
+  tenure_ok?: boolean;
+  posts?: number;
+  comments?: number;
+  playlist_adds?: number;
+  owns_other_club?: boolean;
+  /** 앱 파생 — 아래 규칙으로 normalize 시 계산(필드 미비 구응답은 선택 가능으로 방어) */
+  eligible: boolean;
+  /** 자격 미달 사유(파생) — 목록에서 흐리게 + 사유 표시용 */
+  reason?: string;
+}
+
+/** 자격 파생 규칙(서버 확정): owns_other_club → 미달 / tenure_ok=false && 활동 0 → 미달 / 그 외 가능 */
+const normCandidate = (c: any): TransferCandidate => {
+  const activity = (c?.posts ?? 0) + (c?.comments ?? 0) + (c?.playlist_adds ?? 0);
+  let eligible = true;
+  let reason: string | undefined;
+  if (c?.owns_other_club === true) {
+    eligible = false;
+    reason = '다른 클럽 운영자예요';
+  } else if (c?.tenure_ok === false && activity === 0) {
+    eligible = false;
+    reason = '클럽 활동이 있는 멤버에게만 위임할 수 있어요';
+  }
+  return { ...c, user_id: String(c?.user_id ?? ''), eligible, reason };
+};
+
+export async function transferCandidates(clubId: string): Promise<TransferCandidate[]> {
+  if (__DEV__) console.info('[Club] transferCandidates', { clubId });
+  const res = await api.get(`/clubs/${clubId}/transfer-candidates`);
+  const rows: any[] = Array.isArray(res.data?.candidates) ? res.data.candidates : [];
+  return rows.map(normCandidate);
+}
+
+export async function transferOwner(clubId: string, newOwnerId: string): Promise<void> {
+  if (__DEV__) console.info('[Club] transferOwner', { clubId, newOwnerId });
+  await api.post(`/clubs/${clubId}/transfer-owner`, { new_owner_id: newOwnerId });
+}
+
+/** v3.247 클럽 삭제 요청 초안 — 운영팀 DM(DmChat prefill)·클립보드 폴백이 같은 문구를 쓴다 */
+export function clubDeleteRequestDraft(clubName: string): string {
+  return `[클럽 삭제 요청] 클럽명: ${clubName} / 사유: `;
+}

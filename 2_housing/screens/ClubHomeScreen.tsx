@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -23,8 +24,9 @@ import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import {
-  Club, ClubPlaylist, getClub, getClubErrorCode, joinClub, leaveClub,
+  Club, ClubPlaylist, TransferCandidate, getClub, getClubErrorCode, joinClub, leaveClub,
   listClubFeeds, listClubPlaylists, createClubPlaylist,
+  transferCandidates, transferOwner, clubDeleteRequestDraft,
 } from '../services/clubService';
 
 type ClubTab = 'board' | 'playlists' | 'info';
@@ -78,6 +80,12 @@ export default function ClubHomeScreen() {
   const [showPlCreate, setShowPlCreate] = useState(false);
   const [plName, setPlName] = useState('');
   const [plBusy, setPlBusy] = useState(false);
+
+  // v3.247 운영자 위임 — 후보 시트(null=로딩 중, 실패는 transferFailed 로 구분)
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [candidates, setCandidates] = useState<TransferCandidate[] | null>(null);
+  const [transferFailed, setTransferFailed] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
 
   const isMember = !!detail?.is_member || detail?.role === 'owner' || detail?.role === 'member';
   const isOwner = detail?.role === 'owner' || (!!user && !!detail?.owner_id && String(detail.owner_id) === String(user.id));
@@ -188,18 +196,76 @@ export default function ClubHomeScreen() {
     } catch (err: any) {
       const code = getClubErrorCode(err);
       console.error('[Club] 탈퇴 실패', { clubId, status: err?.response?.status, code });
-      if (code === 'owner_cannot_leave') showAlert('알림', '운영자는 클럽을 탈퇴할 수 없어요.');
+      // v3.247: 서버 방어 응답도 위임 안내로 통일(정상 경로는 handleMembershipPress 가 선차단)
+      if (code === 'owner_cannot_leave') showAlert('알림', '운영자는 먼저 다른 멤버에게 운영을 넘겨야 해요.');
       else showAlert('오류', '탈퇴하지 못했어요. 잠시 후 다시 시도해주세요.');
     } finally {
       setJoinBusy(false);
     }
   };
 
+  // ── v3.247 운영자 위임 — 계약: GET /clubs/{id}/transfer-candidates · POST /clubs/{id}/transfer-owner ──
+  const openTransferSheet = async () => {
+    if (__DEV__) console.info('[Club] 위임 후보 시트 열기', { clubId });
+    setTransferOpen(true);
+    setCandidates(null);
+    setTransferFailed(false);
+    try {
+      const rows = await transferCandidates(String(clubId));
+      console.info('[Club] 위임 후보 조회', { clubId, count: rows.length });
+      setCandidates(rows);
+    } catch (err: any) {
+      // 구서버(라우트 미배포 404)·네트워크 오류 — 시트 내 안내로 강등(크래시 금지)
+      console.error('[Club] 위임 후보 조회 실패', { clubId, status: err?.response?.status });
+      setCandidates([]);
+      setTransferFailed(true);
+    }
+  };
+
+  const doTransfer = async (c: TransferCandidate) => {
+    if (transferBusy) return;
+    setTransferBusy(true);
+    try {
+      await transferOwner(String(clubId), c.user_id);
+      console.info('[Club] 운영자 위임 성공', { clubId, newOwner: c.user_id });
+      setTransferOpen(false);
+      // role 갱신 — owner_id 도 함께 바꿔 isOwner 재계산(위임 직후 '탈퇴' 버튼 노출)
+      setDetail((d) => d ? { ...d, role: 'member', is_member: true, owner_id: c.user_id } : d);
+      showAlert('위임 완료', `"${c.nickname || '멤버'}"님에게 운영을 넘겼어요. 이제 탈퇴할 수 있어요.`);
+    } catch (err: any) {
+      const code = getClubErrorCode(err);
+      const status = err?.response?.status;
+      console.error('[Club] 운영자 위임 실패', { clubId, status, code });
+      // v3.247 서버 확정 오류 분기: 403(비owner)/400 not_member·not_eligible/409 club_limit·conflict
+      if (code === 'transferee_not_eligible') showAlert('알림', '이 멤버는 아직 위임을 받을 수 없어요. 다른 멤버를 선택해주세요.');
+      else if (code === 'transferee_not_member') {
+        showAlert('알림', '이 멤버는 더 이상 클럽 멤버가 아니에요. 후보 목록을 새로고침할게요.');
+        openTransferSheet(); // 후보 최신화
+      } else if (code === 'club_limit') showAlert('알림', '이 멤버는 이미 다른 클럽을 운영하고 있어 위임할 수 없어요.');
+      else if (code === 'conflict') showAlert('알림', '처리 중 충돌이 발생했어요. 잠시 후 다시 시도해주세요.');
+      else if (status === 403) showAlert('알림', '클럽 운영자만 위임할 수 있어요.');
+      else showAlert('오류', '위임하지 못했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
+  const pickCandidate = (c: TransferCandidate) => {
+    if (c.eligible === false || transferBusy) return;
+    showAlert('운영자 위임', `"${c.nickname || '멤버'}"님에게 클럽 운영을 넘길까요?`, [
+      { text: '취소', style: 'cancel' },
+      { text: '위임하기', onPress: () => doTransfer(c) },
+    ]);
+  };
+
   const handleMembershipPress = () => {
     if (!requireLogin() || joinBusy) return;
     if (isOwner) {
-      // 계약: owner leave → 400 'owner_cannot_leave'. 서버 왕복 없이 같은 안내.
-      showAlert('알림', '운영자는 클럽을 탈퇴할 수 없어요.');
+      // v3.247: owner 탈퇴 시도 — 위임 선행 안내(계약: 위임 후 leave 가능). 서버 왕복 없음.
+      showAlert('알림', '운영자는 먼저 다른 멤버에게 운영을 넘겨야 해요.', [
+        { text: '취소', style: 'cancel' },
+        { text: '운영자 위임하기', onPress: openTransferSheet },
+      ]);
       return;
     }
     if (isMember) {
@@ -269,6 +335,41 @@ export default function ClubHomeScreen() {
     }
   };
 
+  // ── v3.247 클럽 삭제 요청 — 삭제 API 없음(운영팀 처리 정책). maidol_official DM 으로 요청. ──
+  // 진입 관행: SettingsScreen CS 문의(GET /dm/official → POST /dm/conversations →
+  // navigate('DmChat', { conversation, prefill })) 그대로. 실패 시 초안 클립보드 복사 폴백.
+  const startDeleteRequestDm = async () => {
+    const draft = clubDeleteRequestDraft(detail?.name ?? name ?? '클럽');
+    if (__DEV__) console.info('[Club] 삭제 요청 DM 열기', { clubId });
+    try {
+      const { data: official } = await api.get('/dm/official');
+      const officialId = official?.official_id;
+      if (!officialId) throw new Error('official_id missing');
+      const { data: conv } = await api.post('/dm/conversations', { peer_id: officialId });
+      if (!conv?.conversation_id) throw new Error('conversation_id missing');
+      const conversation = conv?.peer
+        ? conv
+        : { ...conv, peer: { id: officialId, nickname: official?.nickname || '공식 계정' } };
+      navigation.navigate('DmChat', { conversation, prefill: draft });
+    } catch (err: any) {
+      console.error('[Club] 삭제 요청 DM 열기 실패', { clubId, status: err?.response?.status, message: err?.message });
+      try {
+        await Clipboard.setStringAsync(draft);
+        showAlert('안내', '문의 채널을 열지 못했어요. 요청 문구를 복사해두었으니 공식 계정 DM에 붙여넣어 보내주세요.');
+      } catch {
+        showAlert('오류', '문의 채널을 열지 못했어요. 잠시 후 다시 시도해주세요.');
+      }
+    }
+  };
+
+  const handleDeleteRequest = () => {
+    if (__DEV__) console.info('[Club] 삭제 요청 진입', { clubId });
+    showAlert('클럽 삭제 요청', '클럽 삭제는 MAIDOL 운영팀이 처리해요.', [
+      { text: '취소', style: 'cancel' },
+      { text: '운영팀에 요청하기', onPress: startDeleteRequestDm },
+    ]);
+  };
+
   // ── 게시판 카드 — UserChannel renderFeed 관행(FeedCard + 텍스트/이미지/트랙 블록) ──
   const renderFeed = ({ item }: { item: any }) => {
     const blocks: any[] = item.blocks || [];
@@ -282,6 +383,8 @@ export default function ClubHomeScreen() {
           requireLogin={requireLogin}
           onDeleted={fetchBoard}
           onUpdated={fetchBoard}
+          hideClubBadge // v3.247: 클럽 게시판 안에서는 클럽명 배지 중복 — 억제
+
           onPressAuthor={() => {
             if (!requireLogin()) return;
             if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: item.author_nickname });
@@ -433,6 +536,14 @@ export default function ClubHomeScreen() {
       <AppText variant="body" tone="secondary" style={styles.infoValue}>
         {(detail as any)?.owner_nickname || (isOwner ? (user as any)?.nickname || '나' : '클럽 운영자')}
       </AppText>
+      {/* v3.247: 클럽 삭제 요청 — owner 전용 행(삭제는 운영팀 처리, DM 요청 진입) */}
+      {isOwner ? (
+        <TouchableOpacity style={styles.deleteReqRow} activeOpacity={0.7} onPress={handleDeleteRequest} accessibilityLabel="클럽 삭제 요청">
+          <Feather name="trash-2" size={16} color={colors.status.error} />
+          <AppText variant="body" style={{ color: colors.status.error, flex: 1 }}>클럽 삭제 요청</AppText>
+          <Feather name="chevron-right" size={16} color={colors.text.muted} />
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 
@@ -527,6 +638,63 @@ export default function ClubHomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* v3.247 운영자 위임 — 후보 목록 바텀시트(닉네임·활동 요약, 자격 미달은 흐리게+사유) */}
+      <Modal visible={transferOpen} transparent animationType="slide" onRequestClose={() => setTransferOpen(false)}>
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setTransferOpen(false)}>
+          <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
+            <AppText variant="title3" style={{ marginBottom: spacing.xs }}>운영자 위임</AppText>
+            <AppText variant="footnote" tone="secondary" style={{ marginBottom: spacing.lg }}>
+              운영을 넘길 멤버를 선택해주세요.
+            </AppText>
+            {candidates === null ? (
+              <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: spacing.xl }} />
+            ) : transferFailed ? (
+              <AppText variant="body" tone="secondary" style={styles.sheetEmpty}>
+                위임 후보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.
+              </AppText>
+            ) : candidates.length === 0 ? (
+              <AppText variant="body" tone="secondary" style={styles.sheetEmpty}>
+                아직 위임할 수 있는 멤버가 없어요. (활동한 멤버 필요)
+              </AppText>
+            ) : (
+              <FlatList
+                data={candidates}
+                keyExtractor={(c) => c.user_id}
+                style={{ maxHeight: 320 }}
+                renderItem={({ item: c }) => {
+                  // v3.247 서버 확정: 플랫 셰이프(posts/comments/playlist_adds 직접) — 자격은 서비스 파생(eligible/reason)
+                  const ineligible = c.eligible === false;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.candRow, ineligible && { opacity: 0.4 }]}
+                      disabled={ineligible || transferBusy}
+                      onPress={() => pickCandidate(c)}
+                      accessibilityLabel={`위임 후보 ${c.nickname || c.user_id}`}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="callout" numberOfLines={1}>{c.nickname || '멤버'}</AppText>
+                        <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>
+                          {`글 ${c.posts ?? 0} · 댓글 ${c.comments ?? 0} · 플리 담기 ${c.playlist_adds ?? 0}${fmtDate(c.joined_at) ? ` · ${fmtDate(c.joined_at)} 가입` : ''}`}
+                        </AppText>
+                        {ineligible ? (
+                          <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>
+                            {c.reason || '아직 위임을 받을 수 없어요'}
+                          </AppText>
+                        ) : null}
+                      </View>
+                      {!ineligible ? <Feather name="chevron-right" size={16} color={colors.text.muted} /> : null}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+            <View style={{ marginTop: spacing.lg }}>
+              <Button label="닫기" variant="tonal" fullWidth onPress={() => setTransferOpen(false)} />
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* 비로그인 액션(가입·글쓰기 등) → 로그인 오버레이 — FeedScreen 관행 */}
       {!user && ctaVisible ? (
         <TouchableOpacity style={styles.loginOverlay} activeOpacity={1} onPress={() => setCtaVisible(false)}>
@@ -575,6 +743,24 @@ const styles = StyleSheet.create({
   infoTab: { paddingHorizontal: spacing.lg },
   infoLabel: { fontWeight: '700', letterSpacing: 0.3, marginTop: spacing.lg },
   infoValue: { marginTop: spacing.xs, lineHeight: 19 },
+  // v3.247: 클럽 삭제 요청 행(정보 탭 owner 전용) — 목록 행 관행 + error 톤
+  deleteReqRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.xxl, paddingVertical: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
+  },
+  // v3.247: 운영자 위임 바텀시트 — PlaylistPickerSheet 시트 관행
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl,
+    padding: spacing.xl, maxHeight: '70%',
+  },
+  sheetEmpty: { marginVertical: spacing.xl, textAlign: 'center' as const },
+  candRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    paddingVertical: spacing.md, marginBottom: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
   // 모달 — PlaylistScreen 이름 변경 모달 관행
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
   modalCard: { backgroundColor: colors.bg.surface1, borderRadius: radius.xl, padding: spacing.xl, width: '80%' },

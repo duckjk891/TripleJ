@@ -34,6 +34,9 @@ interface Playlist {
   description?: string;
   created_at?: string;
   cover_images?: string[]; // 내부 상위 4곡 커버 (프론트에서 부가 로드)
+  // v3.247(서버 확정): 모든 항목에 내려옴 — 개인 플리는 null(구서버는 필드 없음 → 동일하게 falsy)
+  club_id?: string | null;
+  club_name?: string | null;
 }
 
 function getCoverUrl(img: string): string {
@@ -185,8 +188,14 @@ export default function PlaylistScreen({ navigation }: any) {
           </View>
         )}
         <View style={styles.playlistInfo}>
-          <AppText style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</AppText>
-          {item.description ? (
+          {/* v3.247: 클럽 공유 플리 — Feather users 소형 배지 + 클럽명 부제로 개인 플리와 구분 */}
+          <View style={styles.playlistNameRow}>
+            <AppText style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</AppText>
+            {item.club_id ? <Feather name="users" size={12} color={colors.text.muted} /> : null}
+          </View>
+          {item.club_id ? (
+            <AppText style={styles.playlistDesc} numberOfLines={1}>{item.club_name || '클럽 공유 플레이리스트'}</AppText>
+          ) : item.description ? (
             <AppText style={styles.playlistDesc} numberOfLines={1}>{item.description}</AppText>
           ) : null}
           <AppText style={styles.playlistCount}>
@@ -357,6 +366,12 @@ const styles = StyleSheet.create({
   playlistInfo: {
     flex: 1,
   },
+  // v3.247: 이름 + users 배지 한 줄(이름이 길면 이름만 말줄임)
+  playlistNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   trackItem: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -375,6 +390,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text.primary,
     marginBottom: 2,
+    flexShrink: 1, // v3.247: users 배지와 한 줄 배치 — 긴 이름은 말줄임
   },
   playlistDesc: {
     fontSize: 13,

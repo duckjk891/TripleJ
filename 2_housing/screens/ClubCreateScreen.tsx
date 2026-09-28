@@ -1,7 +1,9 @@
 // [ClubCreateScreen] v3.245 커뮤니티 Phase 1b — 클럽 개설(이름 ≤30 · 소개 ≤300, 글자수 카운터).
 // 계약: POST /clubs → 201 {id,name,...}. 409 'club_limit'(계정당 1개)·'club_name_taken', 400 'word_filtered'.
 // 성공 시 ClubHome(숨김 탭)으로 이동 — 탭은 스택이 아니라 개설 화면이 히스토리에 남지 않는다(replace 동등).
-// 어린이: 클럽 개설 허용(백엔드 기본값) — 앱에서 별도 차단하지 않음. 팝업은 전부 앱 내 다이얼로그(showAlert).
+// v3.247 어린이: 개설 불가(서버 POST /clubs/ 403 child_restricted, feature:'club_create') —
+// 정상 진입로(커뮤니티 CTA)는 안내로 대체됐고, 우회 진입 시 403 은 api 인터셉터가 서버 문구로 안내.
+// 팝업은 전부 앱 내 다이얼로그(showAlert).
 import { useState } from 'react';
 import { View, ScrollView, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
