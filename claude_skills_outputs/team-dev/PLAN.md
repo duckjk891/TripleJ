@@ -7908,3 +7908,24 @@ config.py `672c746801940276ffeab6734ae8249f` · models/user.py `d91de49cd633cc85
 1. 서버: 배포 직전 md5 재대조(위 기준값 — tracks·business·share_messages·JSON + 비대상 upload·share_landing·main) → `.bak_pre_v3238` 백업 + tar 반영(tracks.py·business.py·share_messages.py·share_messages_default.json) → docker tag `pre-v3238-live` → build → 진행 중 job 0 확인 후 재생성(v3.235 DEPLOY 절차: logs 볼륨·S3_REGION) → 스모크(10분 뒤 또는 대상 곡 `cache:track:v4` 키 삭제 후): `/api/health` · `GET /api/tracks/6ab7d4919416ac9c3996cfa9`(you're mine → used_items=[]·styling_visible=false) · `GET /api/tracks/6ab790d5d0c87eed728f2fbf`(집으로 → 착장 4개 유지) · `GET /api/tracks/6ab3ca38746a2684459e69ef`(방학하면 바다가자 → 유지) · `GET /api/share/track/6aa3ec295f11b57ba518f5e8`(냥냥냥 → templates 11·첫 cat_a) · `/track/{id}` 200·og.jpg 200 · 비공개 id 404. prod 변경 = 대표 승인(메모리 maidol-admin-web).
 2. 웹앱: 서버 배포 **후** `/Users/pearl/homepage/maidol/deploy.sh app`(순서 역전 시 공유 화면은 구서버 3안만 표시 — 기능 손상 없음).
 3. 네이티브: 다음 빌드에 포함(대표 판단). 스타일링 미노출은 서버 반영만으로 구 앱에도 적용(빈 상태 문구만 구 문구).
+
+---
+
+## v3.241 — 2026-09-28 — 베타 피드백 P0 4건 (앱·웹 전용, 서버 무변경)
+
+### 요청
+"v3.241 P0 4건 착수해줘" — 베타피드백_분석보고서_20260928.md 의 P0-1~P0-4.
+
+### Plan verification findings (조사 에이전트 파일:라인 확보 완료 — 보고서·보충 보고 참조)
+- P0-1 [13][16][24]: musicStore.ts:332 reset() 호출처 0곳 / MusicResultScreen.tsx:474-485 handleRegenerate savedTrackId 누락 / MusicLoadingScreen.tsx:271-273 doGenerate 동일, :166 setGenerationId(trackId) 잔재 / MusicResultScreen.tsx:199 showComparison·:218 audioUrl·:326 fetchVariants·:368 커버 PUT이 stale savedTrackId 사용.
+- P0-2 [26]: AlbumDetailScreen.tsx:413 전체재생=playFrom(tracks[0]) 1곡 append → repeat 상태에 따라 1곡 반복/다음곡 무반응. PlaylistScreen.tsx:201-208 큐 교체 패턴이 정답(v3.36 정책: 플레이리스트 재생=큐 교체).
+- P0-3 [25]: MusicResultScreen.tsx:90-110 fetchCharacterInfo가 real 우선 → 가상 대표(is_default) 무시. 서버는 body character_id 우선(tracks.py:2721,:2733-2735), 생성 기록엔 선택 시 정상 저장. 미선택 생성 20건은 gen_doc.character_id=None — 서버 폴백만으론 해결 불가, FE가 계정 대표를 골라 보내야 함. MusicGenerationScreen.tsx:135-137,:252 step 200 대표 미리선택 없음. musicHydrate.ts artistCharacterId 미복원.
+- P0-4 [27]: 만료 팝업 [확인]이 재학습으로 연결 안 됨(MusicGenerationScreen.tsx:1045-1054 보이스 만료 선택 차단 영역). image30·31: 만료 보이스 연결 아티스트로 생성 → 400 반복.
+
+### 변경 매트릭스 (파일 소유권 분리)
+- **app-1 (재생·발매 상태)**: stores/musicStore.ts(beginNewGeneration·savedForGenerationId), screens/MusicResultScreen.tsx(:199·:218·:326·:368 가드 + fetchCharacterInfo 대표 우선 폴백), screens/MusicLoadingScreen.tsx(:166 잔재 제거·doGenerate 초기화), utils/musicHydrate.ts(artistCharacterId 복원), screens/AlbumDetailScreen.tsx(전체재생 큐 교체). 로그: [MusicStore]·[AlbumPlay].
+- **app-2 (아티스트 선택·보이스 만료)**: screens/MusicGenerationScreen.tsx(step 200 대표 미리선택 + 만료 팝업 [다시 학습하기]/[아티스트 없이 진행] 내비게이션 + 만료 보이스 생성 차단). 필요 시 VoiceCloneWizardScreen 진입 파라미터. 로그: [ArtistSelect]·[VoiceExpired].
+- 서버: 무변경 (읽기 확인만).
+
+### 게이트
+tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2, v3235 g1 기능분 / 테스터 독립 게이트 후 커밋 → 웹 배포(deploy.sh app — 서버 무접촉).
