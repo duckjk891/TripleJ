@@ -60,6 +60,9 @@ export interface ComposeDraftAnswers {
   artistVoiceApplied: boolean;
   selectedArtistId: string | null;
   artistCharacterId: string | null;
+  /** v3.242: 명시적 '아티스트 없이 진행' 여부 — 이어서 하기 복원 시 스킵 곡이
+   *  대표 미리선택·발매 대표 폴백으로 되살아나지 않게 draft에도 동봉 */
+  artistExplicitSkip: boolean;
 }
 
 export interface ComposeDraft {
@@ -125,6 +128,13 @@ interface MusicState {
   /** v3.156: 작곡 대화에서 선택한 아티스트(character_id) — 생성 body·발매 출처로 승계되어
    *  차트 아티스트명·착장 스냅샷의 근거가 된다. 미선택 작곡은 null(기획사명 폴백). */
   artistCharacterId: string | null;
+  /** v3.242: 작곡 대화에서 사용자가 명시적으로 '아티스트 없이 진행'을 고른 곡 —
+   *  발매 시 계정 대표 폴백(v3.241 P0-3)을 건너뛰고 무캐릭터 발매(기획사명 표기, v3.156 설계·
+   *  대표 확정 2026-09-11 서버 직렬화 폴백)한다. 단순 미선택(아티스트 단계가 없는 레거시 경로·
+   *  하이드레이션 발매)은 false 유지 — 대표 폴백 그대로(피드백 [25] 부합).
+   *  수명 = 현재 작곡 대화: 마운트 초기화(v3.156a)·'처음부터'·hydrate가 클리어하고,
+   *  beginNewGeneration은 건드리지 않는다(생성 직전 실행 — 이미 확정된 사용자 선택). */
+  artistExplicitSkip: boolean;
   /** v3.102(B-4): 가사 보관함에서 작곡 진입 시 출처 스냅샷 — 생성 lyrics_source·발매 lyrics_id에 사용 */
   lyricsSource: LyricsSourceSnapshot | null;
   subVocal: string;
@@ -195,6 +205,7 @@ interface MusicState {
   setPersonaModel: (v: '' | 'style' | 'voice') => void;
   setPersonaId: (id: string | null) => void;
   setArtistCharacterId: (id: string | null) => void;
+  setArtistExplicitSkip: (v: boolean) => void;
   setLyricsSource: (v: LyricsSourceSnapshot | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
@@ -222,7 +233,7 @@ interface MusicState {
   setSavedForGenerationId: (id: string | null) => void;
   /** v3.241 [P0-1]: 새 생성 시작 직전 호출(MusicLoading doGenerate·MusicResult handleRegenerate) —
    *  이전 곡의 발매·결과 상태만 청소. 새 곡의 입력(가사/장르/무드·composeDraft·creationSession·
-   *  artistCharacterId 등)은 이 시점에 이미 새 흐름의 값이므로 건드리지 않는다. */
+   *  artistCharacterId·artistExplicitSkip 등)은 이 시점에 이미 새 흐름의 값이므로 건드리지 않는다. */
   beginNewGeneration: () => void;
   setCreationSessionId: (id: string | null) => void;
   setCreationMode: (mode: 'standard' | 'copyright') => void;
@@ -252,6 +263,7 @@ const initialState = {
   personaModel: '' as const,
   personaId: null,
   artistCharacterId: null,
+  artistExplicitSkip: false,
   lyricsSource: null,
   subVocal: '',
   subVocalStyle: '',
@@ -300,6 +312,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setPersonaModel: (personaModel) => set({ personaModel }),
   setPersonaId: (personaId) => set({ personaId }),
   setArtistCharacterId: (artistCharacterId) => set({ artistCharacterId }),
+  setArtistExplicitSkip: (artistExplicitSkip) => set({ artistExplicitSkip }),
   setLyricsSource: (lyricsSource) => set({ lyricsSource }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),

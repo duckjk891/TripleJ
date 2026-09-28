@@ -91,7 +91,16 @@ interface CharacterInfo {
 
 // v3.241 [P0-3]: 폴백 순서 = 작곡에서 선택한 아티스트 → 계정 대표(is_default, 가상 포함) → /me(구 동작).
 // 기존엔 /me의 실사 슬롯을 무조건 우선해 가상 대표가 무시됐다(피드백 [25]: 대표=가상인데 전곡 실사로 발매).
-async function fetchCharacterInfo(selectedCid: string | null): Promise<CharacterInfo> {
+// v3.242(대표 확정): 명시적 '아티스트 없이 진행'(explicitSkip) 곡은 폴백 전체를 건너뛰고 무캐릭터 발매 —
+// payload에 character_id·user_character_snapshot을 아예 싣지 않는다. 생성 body도 스킵 시 characterId를
+// 안 실었으므로 서버 gen_doc 폴백(tracks.py:2734)도 없음 → artist_name=None 저장 → 직렬화가
+// 기획사명(uploader_nickname) 폴백(tracks.py:50-51, v236 대표 확정 2026-09-11). 단순 미선택(레거시·
+// 하이드레이션)은 explicitSkip=false — v3.241 대표 폴백 그대로.
+async function fetchCharacterInfo(selectedCid: string | null, explicitSkip: boolean): Promise<CharacterInfo> {
+  if (explicitSkip && !selectedCid) {
+    console.info('[ArtistFallback] source=skip cid=none'); // v3.242
+    return { snapshot: null, characterId: null };
+  }
   try {
     const { characters } = await listArtists();
     const picked =
@@ -546,7 +555,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     setIsSaving(true);
     // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
     // v3.241 [P0-3]: 선택 아티스트 전달 — 미선택 시 계정 대표(is_default) 폴백
-    const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId);
+    // v3.242: 명시적 스킵 곡은 폴백 없이 무캐릭터 발매(기획사명 표기)
+    const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId, store.artistExplicitSkip);
     const payload = {
       generation_id: store.generationId,
       ...(snapshot ? { user_character_snapshot: snapshot } : {}),
@@ -638,7 +648,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       try {
         // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
         // v3.241 [P0-3]: handleSave와 동일 — 선택 아티스트 전달, 미선택 시 계정 대표 폴백
-        const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId);
+        // v3.242: handleSave와 동일 — 명시적 스킵 곡은 폴백 없이 무캐릭터 발매
+        const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId, store.artistExplicitSkip);
         const payload = {
           generation_id: store.generationId,
           ...(snapshot ? { user_character_snapshot: snapshot } : {}),

@@ -18,6 +18,11 @@ export function hydrateMusicStoresFromGeneration(gen: GenerationItem): void {
   // v3.241 [P0-3]: 생성 기록의 아티스트 선택 복원(미기록이면 클리어) — 발매 폴백이 이전 흐름의
   // 잔존 선택이 아니라 이 생성의 선택을 쓰게 한다(없으면 계정 대표 폴백, MusicResult fetchCharacterInfo).
   music.setArtistCharacterId(gen.character_id ? String(gen.character_id) : null);
+  // v3.242: 생성 문서에는 '명시적 아티스트 스킵' 기록이 없어 character_id=null이 스킵인지 단순
+  // 미선택인지 구분 불가 — 하이드레이션(이력·알림 경유 발매)은 레거시 호환으로 v3.241 대표 폴백을
+  // 유지한다(플래그 항상 클리어). 한계: v3.242 스킵 곡을 이력 경유로 발매하면 대표가 다시 붙는다 —
+  // 서버 gen_doc에 스킵 기록이 생기면 그때 복원(현재 스킵 곡의 정상 경로는 결과 화면 직행 발매).
+  music.setArtistExplicitSkip(false);
   music.setLyrics(gen.lyrics || '');
   music.setGenre(gen.genre || '');
   music.setMood(gen.mood || '');

@@ -251,6 +251,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const music = useMusicStore.getState();
     if (resumeDraft) {
       music.setArtistCharacterId(draftAnswers?.artistCharacterId ?? null);
+      // v3.242: 명시적 스킵 복원 — 스킵한 draft가 대표 미리선택·발매 대표 폴백으로 되살아나지 않게
+      // (구 draft 스냅샷엔 필드가 없을 수 있음 → false = v3.241 동작 유지)
+      music.setArtistExplicitSkip(draftAnswers?.artistExplicitSkip ?? false);
       if (__DEV__) {
         console.info('[ComposeDraft] draft 복원 — 이어서 진행', {
           step: resumeDraft.step,
@@ -270,6 +273,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       music.clearComposeDraft();
     }
     music.setArtistCharacterId(null);
+    music.setArtistExplicitSkip(false); // v3.242: 새 대화 = 이전 곡의 스킵 선택도 초기화
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -311,6 +315,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         artistVoiceApplied,
         selectedArtistId,
         artistCharacterId: useMusicStore.getState().artistCharacterId,
+        artistExplicitSkip: useMusicStore.getState().artistExplicitSkip, // v3.242
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -322,6 +327,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const music = useMusicStore.getState();
     music.clearComposeDraft();
     music.setArtistCharacterId(null); // v3.156a 마운트 초기화와 동치(새 대화)
+    music.setArtistExplicitSkip(false); // v3.242: 처음부터 = 스킵 선택도 새로(대표 미리선택 복귀)
     rewindRef.current = null;
     repickRef.current = false;
     personaDefaultAppliedRef.current = false;
@@ -467,6 +473,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (!def) return; // 대표 없음(edge) → 미리선택 없음(기존 동작)
     setSelectedArtistId(def.character_id);
     useMusicStore.getState().setArtistCharacterId(def.character_id);
+    useMusicStore.getState().setArtistExplicitSkip(false); // v3.242: 아티스트 선택 상태로 전환 = 스킵 아님
     if (__DEV__) console.info(`[ArtistSelect] 대표 미리선택 cid=${def.character_id} kind=${def.kind}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, artists]);
@@ -1044,6 +1051,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.info('[MusicGeneration] 아티스트 건너뛰기', { instrumental });
       setSelectedArtistId(null); // v3.202(E/F): 되감기로 아티스트→건너뛰기 전환 시 새 값 세팅
       musicStore.setArtistCharacterId(null); // v3.156: 미선택 곡은 기획사명 폴백
+      // v3.242(대표 확정): 명시적 스킵 표시 — 발매 시 계정 대표 폴백(v3.241 P0-3) 주입을 차단해
+      // v3.156 설계대로 기획사명 폴백으로 내보낸다(단순 미선택 레거시 경로는 대표 폴백 유지).
+      musicStore.setArtistExplicitSkip(true);
       commitExchange(
         { type: 'user', text: '아티스트 없이 진행', step: 200 },
         [{ type: 'director', text: instrumental ? DIRECTOR_MESSAGES[5] : vocalQuestion }],
@@ -1057,6 +1067,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // (v3.203: 연주곡 체인 재배선으로 도달 불가 — 방어 잔존)
       setSelectedArtistId(artist.character_id);
       musicStore.setArtistCharacterId(artist.character_id || null);
+      musicStore.setArtistExplicitSkip(false); // v3.242: 스킵→선택 전환(되감기 포함) 시 해제
       console.info('[MusicGeneration] 아티스트 선택(연주곡 — 목소리 미사용)', { cid: artist.character_id });
       commitExchange(
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
@@ -1101,6 +1112,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedArtistId(artist.character_id);
     // v3.156: 선택 아티스트를 store로 승계 — 생성 body character_id → 발매 시 곡 아티스트명·착장 근거
     musicStore.setArtistCharacterId(artist.character_id || null);
+    musicStore.setArtistExplicitSkip(false); // v3.242: 스킵→선택 전환(되감기 포함) 시 해제
     console.info('[MusicGeneration] 아티스트 선택', { cid: artist.character_id, hasClone, preset: preset ? `${preset.gender}·${preset.style}` : null });
     if (preset && !hasClone) {
       // v3.143: 간편 목소리 아티스트 — 성별·스타일 프리셋 자동 반영, 보컬/내 목소리 단계 전부 스킵
@@ -1146,6 +1158,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedPersonaId(null);
     setPersonaModelOn(false);
     musicStore.setArtistCharacterId(null); // v3.156: 미선택 곡은 기획사명 폴백
+    // v3.242: 유일 호출처가 만료 다이얼로그 '아티스트 없이 진행'(generate 컨텍스트) — 명시적 스킵
+    // 확정. 발매 대표 폴백을 차단해 무캐릭터(기획사명) 발매로 잇는다(handleArtistPick(null)과 동일 계약).
+    musicStore.setArtistExplicitSkip(true);
   };
 
   // v3.241 [VoiceExpired] P0-4 [27]: 만료 팝업 막다른 길 제거 — 단일 다이얼로그(중복 표시 없음,

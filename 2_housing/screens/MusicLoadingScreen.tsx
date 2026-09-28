@@ -408,11 +408,19 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
             url = '';
           }
           store.setResultUrl(url);
-          if (trackId) store.setGenerationId(trackId);
+          // v3.242: 직결과 분기(Wondera 레거시·generation_id 없는 방어 경로)의 :166 동종 잔재 정리 —
+          // generationId를 트랙 id로 덮지 않는다(후보 id 규약·variants 조회·저장 payload 보호).
+          // 이 분기의 generationId는 beginNewGeneration 이후 미설정(null)이므로 발매 귀속도 null로
+          // 맞춰 결과 화면 stale 가드(savedForGenerationId===generationId)를 통과시키고,
+          // alreadySaved로 재저장(중복 트랙)을 막는다(:183 폴링 완료 분기와 동일 배선).
+          if (trackId) {
+            store.setSavedTrackId(String(trackId));
+            store.setSavedForGenerationId(null);
+          }
           store.setStatus('completed');
           store.setIsLoading(false);
           // BUG-3 픽스: 발매 보상은 MusicResultScreen 의 트랙 저장 성공 직후에 지급.
-          navigation.replace('MusicResult');
+          navigation.replace('MusicResult', trackId ? { alreadySaved: true } : undefined);
         }
       } catch (err: any) {
         if (!isMounted) {
