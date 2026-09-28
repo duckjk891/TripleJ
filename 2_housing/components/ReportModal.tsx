@@ -17,7 +17,8 @@ import { spacing, radius } from '../theme/spacing';
 // v3.232 K11(G2): 'track_comment'(곡 댓글) 추가 — 전 사용자 신규 신고 대상. 구서버는 400 문구를 그대로 표시.
 // v3.249: 'club_member'(클럽 멤버 = 유저 대상) 추가 — clubId 필수(서버가 reason_text 에 클럽 컨텍스트 자동 부착).
 //         기존 5타깃은 clubId 미전달로 페이로드 불변(무회귀).
-export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message' | 'track_comment' | 'club_member';
+// v3.252: 'club_message'(크루 채팅 메시지) 추가 — club_member 와 동일하게 clubId 컨텍스트 동봉.
+export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message' | 'track_comment' | 'club_member' | 'club_message';
 
 const REASONS: { code: string; label: string }[] = [
   { code: 'portrait', label: '초상권 침해' },
@@ -65,22 +66,24 @@ export default function ReportModal({ visible, targetType, targetId, clubId, onC
     if (targetType === 'track_comment') console.info('[TrackCommentReport] submit', { target_id: targetId, reason_code: reasonCode });
     // v3.249: 클럽 멤버 신고(신규 대상) 추적 로그 — 기존 대상 로그 불변
     if (targetType === 'club_member') console.info('[Club] member report submit', { target_id: targetId, clubId, reason_code: reasonCode });
+    // v3.252: 크루 채팅 메시지 신고 추적 로그 — 기존 대상 로그 불변
+    if (targetType === 'club_message') console.info('[Club] chat message report submit', { target_id: targetId, clubId, reason_code: reasonCode });
     try {
       await api.post('/reports/', {
         target_type: targetType,
         target_id: targetId,
         reason_code: reasonCode,
         ...(text ? { reason_text: text } : {}),
-        // v3.249: club_member 전용 컨텍스트 — 기존 5타깃 페이로드 불변
-        ...(targetType === 'club_member' && clubId ? { club_id: clubId } : {}),
+        // v3.249: club_member 전용 컨텍스트 — 기존 5타깃 페이로드 불변 · v3.252: club_message 동일 동봉
+        ...((targetType === 'club_member' || targetType === 'club_message') && clubId ? { club_id: clubId } : {}),
       });
       setDone(true);
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[ReportModal] submit failed', { target_type: targetType, target_id: targetId, status });
       if (status === 409) setError('이미 신고한 콘텐츠입니다.');
-      else if (status === 403 && targetType === 'club_member') setError(`${CLUB_LABEL} 멤버만 신고할 수 있어요.`);
-      else if (status === 404 && targetType === 'club_member') setError('신고 대상을 찾을 수 없어요.');
+      else if (status === 403 && (targetType === 'club_member' || targetType === 'club_message')) setError(`${CLUB_LABEL} 멤버만 신고할 수 있어요.`); // v3.252: club_message 동일 분기
+      else if (status === 404 && (targetType === 'club_member' || targetType === 'club_message')) setError('신고 대상을 찾을 수 없어요.');
       else if (status === 400) setError(err?.response?.data?.error || err?.response?.data?.detail || '신고할 수 없는 콘텐츠입니다.');
       else setError('신고 접수에 실패했습니다. 잠시 후 다시 시도해주세요.');
     } finally {

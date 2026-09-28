@@ -16,7 +16,9 @@ import LoginPrompt from '../components/LoginPrompt';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAuthStore } from '../stores/authStore';
 import { useIsChild } from '../utils/kidsMode';
-import { Club, ClubSort, listClubs, getMyClubs } from '../services/clubService';
+import { CLUB_LABEL, Club, ClubSort, listClubs, getMyClubs } from '../services/clubService';
+// v3.252: 크루 채팅 unread 뱃지 — 소켓 club_chat 수신 시 화면 내 즉시 증가(재조회는 focus 관행 그대로)
+import { dmSocketSubscribeClubChat } from '../services/dmSocket';
 
 const LIST_LIMIT = 20;
 
@@ -76,6 +78,17 @@ export default function CommunityScreen() {
 
   useFocusEffect(useCallback(() => { fetchAll(sort); }, [fetchAll, sort]));
 
+  // v3.252: 화면 표시 중 크루 채팅 수신 → 해당 크루 카드 unread_chat 즉시 +1 (focus 재조회가 서버값으로 보정)
+  useFocusEffect(useCallback(() => {
+    const unsub = dmSocketSubscribeClubChat((ev) => {
+      if (ev.type !== 'club_chat' || ev.club_id == null) return;
+      setMyClubs((prev) => prev.map((c) =>
+        String(c.id) === String(ev.club_id) ? { ...c, unread_chat: (c.unread_chat ?? 0) + 1 } : c,
+      ));
+    });
+    return unsub;
+  }, []));
+
   const handleLoadMore = useCallback(async () => {
     if (!nextBefore || loadingMore || loading) return;
     setLoadingMore(true);
@@ -110,9 +123,10 @@ export default function CommunityScreen() {
     navigation.navigate('ClubHome', { clubId: club.id, name: club.name });
   };
 
-  // 클럽 카드 — 이름(목록 행 제목 관행 16/600)·소개 1줄·멤버 수(Feather users 소형)
+  // 크루 카드 — 이름(목록 행 제목 관행 16/600)·소개 1줄·멤버 수(Feather users 소형)
+  // v3.252: join_status 'pending'(승인제 신서버) → '승인 대기 중' 칩
   const renderClubCard = useCallback(({ item }: { item: Club }) => (
-    <TouchableOpacity style={styles.clubCard} activeOpacity={0.75} onPress={() => openClub(item)} accessibilityLabel={`클럽 ${item.name}`}>
+    <TouchableOpacity style={styles.clubCard} activeOpacity={0.75} onPress={() => openClub(item)} accessibilityLabel={`${CLUB_LABEL} ${item.name}`}>
       <View style={{ flex: 1 }}>
         <AppText variant="callout" numberOfLines={1}>{item.name}</AppText>
         {item.description
@@ -121,7 +135,8 @@ export default function CommunityScreen() {
         <View style={styles.clubMetaRow}>
           <Feather name="users" size={12} color={colors.text.muted} />
           <AppText variant="caption" tone="muted">{`멤버 ${item.member_count ?? 0}명`}</AppText>
-          {item.is_member ? <AppText variant="caption" tone="accent">가입됨</AppText> : null}
+          {item.is_member ? <AppText variant="caption" tone="accent">가입됨</AppText>
+            : item.join_status === 'pending' ? <AppText variant="caption" tone="muted">승인 대기 중</AppText> : null}
         </View>
       </View>
       <Feather name="chevron-right" size={18} color={colors.text.muted} />
@@ -136,7 +151,7 @@ export default function CommunityScreen() {
           <Feather name="users" size={20} color={colors.accent.primary} />
         </View>
         <View style={{ flex: 1 }}>
-          <AppText variant="subtitle">클럽에서 함께 듣고, 함께 만들어요</AppText>
+          <AppText variant="subtitle">{`${CLUB_LABEL}에서 함께 듣고, 함께 만들어요`}</AppText>
           <AppText variant="body" tone="secondary" style={styles.heroBody}>
             취향이 맞는 사람들과 곡을 나누고 플레이리스트를 함께 채워보세요.
           </AppText>
@@ -149,12 +164,12 @@ export default function CommunityScreen() {
           <View style={styles.childNotice}>
             <Feather name="info" size={16} color={colors.text.muted} />
             <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>
-              어린이 계정은 클럽을 만들 수 없어요. 클럽에 가입해서 함께 즐기는 건 언제든 할 수 있어요.
+              {`어린이 계정은 ${CLUB_LABEL}를 만들 수 없어요. ${CLUB_LABEL}에 가입해서 함께 즐기는 건 언제든 할 수 있어요.`}
             </AppText>
           </View>
         ) : (
           <Button
-            label="클럽 만들기"
+            label={`${CLUB_LABEL} 만들기`}
             fullWidth
             leading={<Feather name="plus" size={16} color={colors.text.primary} />}
             onPress={handleCreateClub}
@@ -164,13 +179,21 @@ export default function CommunityScreen() {
 
       {user && myClubs.length > 0 ? (
         <View style={styles.myClubSection}>
-          <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>내 클럽</AppText>
+          <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`내 ${CLUB_LABEL}`}</AppText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.myClubRow}>
             {myClubs.map((c) => (
-              <TouchableOpacity key={c.id} style={styles.myClubCard} activeOpacity={0.75} onPress={() => openClub(c)} accessibilityLabel={`내 클럽 ${c.name}`}>
+              <TouchableOpacity key={c.id} style={styles.myClubCard} activeOpacity={0.75} onPress={() => openClub(c)} accessibilityLabel={`내 ${CLUB_LABEL} ${c.name}`}>
                 <View style={styles.myClubIcon}>
                   <Feather name="flag" size={16} color={colors.accent.primary} />
                 </View>
+                {/* v3.252: 크루 채팅 unread 뱃지 — GET /clubs/mine 확장 필드(없으면 숨김) */}
+                {typeof c.unread_chat === 'number' && c.unread_chat > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <AppText variant="caption" style={styles.unreadBadgeText}>
+                      {c.unread_chat > 99 ? '99+' : String(c.unread_chat)}
+                    </AppText>
+                  </View>
+                ) : null}
                 <AppText variant="bodyStrong" numberOfLines={1} style={{ marginTop: spacing.sm }}>{c.name}</AppText>
                 <View style={styles.clubMetaRow}>
                   <Feather name="users" size={12} color={colors.text.muted} />
@@ -183,7 +206,7 @@ export default function CommunityScreen() {
       ) : null}
 
       <View style={styles.listLabelRow}>
-        <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>클럽 목록</AppText>
+        <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`${CLUB_LABEL} 목록`}</AppText>
         <View style={styles.sortRow}>
           {SORTS.map((s) => (
             <Tag
@@ -221,14 +244,14 @@ export default function CommunityScreen() {
             loadFailed ? (
               <EmptyState
                 icon={<Feather name="cloud-off" size={44} color={colors.text.muted} />}
-                title="클럽 목록을 불러오지 못했어요"
+                title={`${CLUB_LABEL} 목록을 불러오지 못했어요`}
                 hint="잠시 후 아래로 당겨 다시 시도해주세요."
               />
             ) : (
               <EmptyState
                 icon={<Feather name="flag" size={44} color={colors.text.muted} />}
-                title="아직 클럽이 없어요"
-                hint="첫 클럽을 만들어보세요!"
+                title={`아직 ${CLUB_LABEL}가 없어요`}
+                hint={`첫 ${CLUB_LABEL}를 만들어보세요!`}
               />
             )
           }
@@ -254,7 +277,7 @@ export default function CommunityScreen() {
       {!user && ctaVisible ? (
         <TouchableOpacity style={styles.loginOverlay} activeOpacity={1} onPress={() => setCtaVisible(false)}>
           <LoginPrompt
-            desc={'로그인하면 클럽을 만들고\n마음 맞는 사람들과 함께할 수 있어요'}
+            desc={`로그인하면 ${CLUB_LABEL}를 만들고\n마음 맞는 사람들과 함께할 수 있어요`}
             onPress={() => navigation.navigate('Settings')}
           />
         </TouchableOpacity>
@@ -295,6 +318,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2,
     alignItems: 'center', justifyContent: 'center',
   },
+  // v3.252: 크루 채팅 unread 뱃지 — 카드 우상단(알림 뱃지 관행: accent 원형 + 흰 숫자)
+  unreadBadge: {
+    position: 'absolute', top: spacing.sm, right: spacing.sm,
+    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4,
+    backgroundColor: colors.accent.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 10 },
   listLabelRow: {
     marginTop: spacing.xl, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

@@ -20,6 +20,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { useIsChild, useKidsPermission, KIDS_TEXT } from '../utils/kidsMode';
 import { isChildRestrictedError, getWordFilteredMessage } from '../utils/kidsMode'; // v3.233: 403·금칙어 안내
+import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 — 크루 문구 단일화
 
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -248,7 +249,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     // v3.245: 클럽 글은 clubId 없이는 저장 불가(계약 club_id 필수) — 진입 경로 오류 방어
     if (isClub && !clubId) {
       console.error('[FeedCompose] 클럽 글쓰기 clubId 누락');
-      showAlert('오류', '클럽 정보를 찾지 못했어요. 클럽 홈에서 다시 시도해주세요.');
+      showAlert('오류', `${CLUB_LABEL} 정보를 찾지 못했어요. ${CLUB_LABEL} 홈에서 다시 시도해주세요.`); // v3.252 리네이밍
       return;
     }
     if (posting) return;
@@ -286,10 +287,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       // v3.245: 클럽 멤버 아님(403 code 'club_members_only') — 가입 안내
       const code = err?.response?.data?.code ?? err?.response?.data?.detail?.code;
       if (isClub && code === 'club_members_only') {
-        showAlert('알림', '클럽 멤버만 글을 쓸 수 있어요. 클럽에 가입한 뒤 다시 시도해주세요.');
+        showAlert('알림', `${CLUB_LABEL} 멤버만 글을 쓸 수 있어요. ${CLUB_LABEL}에 가입한 뒤 다시 시도해주세요.`); // v3.252 리네이밍
         return;
       }
-      showAlert('오류', `${isCommunity ? '공지' : isClub ? '클럽 글' : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`);
+      showAlert('오류', `${isCommunity ? '공지' : isClub ? `${CLUB_LABEL} 글` : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`); // v3.252 리네이밍
     } finally {
       setPosting(false);
     }
@@ -351,7 +352,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           style={styles.bodyInput}
           placeholder={
             isCommunity ? '구독자에게 알릴 소식을 적어주세요.'
-            : isClub ? '클럽 멤버들과 나누고 싶은 이야기를 적어주세요.'
+            : isClub ? `${CLUB_LABEL} 멤버들과 나누고 싶은 이야기를 적어주세요.` // v3.252 리네이밍
             : '지금 어떤 음악 이야기를 나누고 싶나요?'}
           placeholderTextColor={colors.text.muted}
           value={body}
@@ -457,11 +458,12 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           <View style={styles.scopeBox}>
             <AppText variant="callout">공개 범위</AppText>
             <View style={styles.scopeChips}>
-              <Tag label="클럽에만 공개" selected={clubScope === 'club'} onPress={() => setClubScope('club')} />
+              {/* v3.252 리네이밍 */}
+              <Tag label={`${CLUB_LABEL}에만 공개`} selected={clubScope === 'club'} onPress={() => setClubScope('club')} />
               <Tag label="전체 공개" selected={clubScope === 'public'} onPress={() => setClubScope('public')} />
             </View>
             <AppText variant="footnote" tone="muted">
-              {clubScope === 'public' ? '피드와 내 채널에도 보여요.' : '이 클럽 게시판에서만 보여요.'}
+              {clubScope === 'public' ? '피드와 내 채널에도 보여요.' : `이 ${CLUB_LABEL} 게시판에서만 보여요.`}
             </AppText>
           </View>
         ) : null}

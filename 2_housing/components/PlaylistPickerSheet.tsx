@@ -16,7 +16,7 @@ import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 // v3.245: 클럽 공유 플레이리스트 섹션 — 내가 멤버인 클럽들의 플리에도 동일하게 담기
-import { getMyClubs, listClubPlaylists } from '../services/clubService';
+import { CLUB_LABEL, getMyClubs, listClubPlaylists } from '../services/clubService'; // v3.252 리네이밍 라벨
 
 interface Props {
   visible: boolean;
@@ -157,7 +157,8 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
                     <AppText variant="body" numberOfLines={1} style={{ flexShrink: 1 }}>{pl.title || pl.name}</AppText>
                   </View>
                   <AppText variant="caption" tone="muted" numberOfLines={1}>
-                    {pl.club_id ? `${pl.club_name || '클럽'} · ${pl.track_count ?? 0}곡` : `${pl.track_count ?? 0}곡`}
+                    {/* v3.252 리네이밍 — 크루명 미직렬화 구응답 폴백 라벨 */}
+                    {pl.club_id ? `${pl.club_name || CLUB_LABEL} · ${pl.track_count ?? 0}곡` : `${pl.track_count ?? 0}곡`}
                   </AppText>
                 </TouchableOpacity>
               ))}
@@ -166,7 +167,8 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
           {/* v3.245: 클럽 플레이리스트 — 내가 멤버인 클럽의 공유 플리. 데이터 없으면 섹션 자체 숨김 */}
           {clubPlaylists.length > 0 && (
             <View>
-              <AppText variant="footnote" tone="secondary" style={styles.label}>클럽 플레이리스트</AppText>
+              {/* v3.252 리네이밍 — 섹션 라벨 */}
+              <AppText variant="footnote" tone="secondary" style={styles.label}>{`${CLUB_LABEL} 플레이리스트`}</AppText>
               <ScrollView style={[styles.list, { maxHeight: 160 }]} keyboardShouldPersistTaps="handled">
                 {clubPlaylists.map((pl) => (
                   <TouchableOpacity key={`club-${pl.id}`} style={styles.item} disabled={busy} onPress={() => handlePick(pl.id)}>

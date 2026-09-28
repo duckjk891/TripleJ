@@ -4,6 +4,7 @@
 // v3.247 어린이: 개설 불가(서버 POST /clubs/ 403 child_restricted, feature:'club_create') —
 // 정상 진입로(커뮤니티 CTA)는 안내로 대체됐고, 우회 진입 시 403 은 api 인터셉터가 서버 문구로 안내.
 // 팝업은 전부 앱 내 다이얼로그(showAlert).
+// v3.252: 리네이밍 — 사용자 노출 명칭 '크루'(CLUB_LABEL 경유, 내부 식별자는 Club 유지).
 import { useState } from 'react';
 import { View, ScrollView, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -13,7 +14,7 @@ import { AppText, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import { showAlert } from '../utils/appAlert';
 import { useAuthStore } from '../stores/authStore';
-import { createClub, getClubErrorCode } from '../services/clubService';
+import { CLUB_LABEL, createClub, getClubErrorCode } from '../services/clubService';
 import { getWordFilteredMessage } from '../utils/kidsMode';
 
 const NAME_MAX = 30;
@@ -29,7 +30,7 @@ export default function ClubCreateScreen() {
   const submit = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      showAlert('알림', '클럽 이름을 입력해주세요.');
+      showAlert('알림', `${CLUB_LABEL} 이름을 입력해주세요.`);
       return;
     }
     if (busy) return;
@@ -42,14 +43,14 @@ export default function ClubCreateScreen() {
       const code = getClubErrorCode(err);
       console.error('[Club] 개설 실패', { status: err?.response?.status, code });
       if (code === 'club_limit') {
-        showAlert('알림', '클럽은 계정당 1개까지 만들 수 있어요.');
+        showAlert('알림', `${CLUB_LABEL}는 계정당 1개까지 만들 수 있어요.`);
       } else if (code === 'club_name_taken') {
         showAlert('알림', '이미 있는 이름이에요. 다른 이름을 지어주세요.');
       } else {
         // 400 word_filtered — 서버 안내 문구(피드 작성 관행), 그 외(미배포 404 포함)는 공통 안내
         const wf = getWordFilteredMessage(err);
         if (wf) showAlert('알림', wf);
-        else showAlert('오류', '클럽을 만들지 못했어요. 잠시 후 다시 시도해주세요.');
+        else showAlert('오류', `${CLUB_LABEL}를 만들지 못했어요. 잠시 후 다시 시도해주세요.`);
       }
     } finally {
       setBusy(false);
@@ -61,7 +62,7 @@ export default function ClubCreateScreen() {
     return (
       <View style={[styles.container, styles.center]}>
         <LoginPrompt
-          desc={'로그인하면 클럽을 만들고\n마음 맞는 사람들과 함께할 수 있어요'}
+          desc={`로그인하면 ${CLUB_LABEL}를 만들고\n마음 맞는 사람들과 함께할 수 있어요`}
           onPress={() => navigation.navigate('Settings')}
         />
       </View>
@@ -72,12 +73,12 @@ export default function ClubCreateScreen() {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
         <View style={styles.labelRow}>
-          <AppText variant="footnote" tone="secondary" style={styles.label}>클럽 이름</AppText>
+          <AppText variant="footnote" tone="secondary" style={styles.label}>{`${CLUB_LABEL} 이름`}</AppText>
           <AppText variant="caption" tone="muted">{`${name.length}/${NAME_MAX}`}</AppText>
         </View>
         <TextInput
           style={styles.nameInput}
-          placeholder="예) 새벽 감성 발라드 클럽"
+          placeholder={`예) 새벽 감성 발라드 ${CLUB_LABEL}`}
           placeholderTextColor={colors.text.muted}
           value={name}
           onChangeText={setName}
@@ -91,7 +92,7 @@ export default function ClubCreateScreen() {
         </View>
         <TextInput
           style={styles.descInput}
-          placeholder="어떤 음악을 함께 듣는 클럽인지 알려주세요. (선택)"
+          placeholder={`어떤 음악을 함께 듣는 ${CLUB_LABEL}인지 알려주세요. (선택)`}
           placeholderTextColor={colors.text.muted}
           value={desc}
           onChangeText={setDesc}
@@ -102,7 +103,7 @@ export default function ClubCreateScreen() {
         />
 
         <AppText variant="caption" tone="muted" style={styles.hint}>
-          클럽은 계정당 1개까지 만들 수 있어요. 가입한 멤버 누구나 게시판과 공유 플레이리스트를 함께 써요.
+          {`${CLUB_LABEL}는 계정당 1개까지 만들 수 있어요. 가입한 멤버 누구나 채팅·게시판과 공유 플레이리스트를 함께 써요.`}
         </AppText>
 
         <View style={{ marginTop: spacing.xl }}>

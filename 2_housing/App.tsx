@@ -83,6 +83,7 @@ import CommunityScreen from './screens/CommunityScreen';
 // v3.245 Phase1b: 클럽 개설·클럽 홈 — 숨김 탭(MyMusic 관행), 커뮤니티 탭에서 진입(딥링크 없음)
 import ClubCreateScreen from './screens/ClubCreateScreen';
 import ClubHomeScreen from './screens/ClubHomeScreen';
+import ClubChatScreen from './screens/ClubChatScreen'; // v3.252 크루 단톡방
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -189,6 +190,8 @@ export type RootStackParamList = {
   StarHistory: undefined;
   // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
   DmChat: { conversation: any; prefill?: string };
+  // v3.252: 크루 채팅 풀스크린(자체 헤더 — DmChat 관행). isOwner 는 롱프레스 삭제 권한 판단용.
+  ClubChat: { clubId: string; name?: string; isOwner?: boolean };
   // v3.205(④): initialTab — 설정 '공지사항' 진입 시 커뮤니티 탭(공지) 직행. 미지정 시 기존 music 탭 시작.
   UserChannel: { authorId: string; name?: string; initialTab?: 'music' | 'artists' | 'feed' | 'community' };
   // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
@@ -502,7 +505,7 @@ function MainTabs() {
           tabBarButton: () => null,
           tabBarItemStyle: { display: 'none' },
           headerShown: true,
-          headerTitle: () => <AppText variant="subtitle">클럽 만들기</AppText>,
+          headerTitle: () => <AppText variant="subtitle">크루 만들기</AppText>, // v3.252 리네이밍
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
           headerShadowVisible: false,
@@ -521,7 +524,7 @@ function MainTabs() {
           tabBarItemStyle: { display: 'none' },
           headerShown: true,
           // 기본은 진입 파라미터의 클럽명 — 상세 로드 후 화면이 setOptions로 실제 이름 반영
-          headerTitle: () => <AppText variant="subtitle">{(route.params as any)?.name || '클럽'}</AppText>,
+          headerTitle: () => <AppText variant="subtitle">{(route.params as any)?.name || '크루'}</AppText>, // v3.252 리네이밍
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
           headerShadowVisible: false,
@@ -728,7 +731,8 @@ function useOAuthCallback() {
 // 화면 체류 중 다른 경로로 재생이 시작돼 겹치는 엣지 방어(스파이크 기간 한정)
 // v3.220 ②: 알림·메시지(목록·채팅방)도 설정처럼 미니플레이어 렌더만 숨김(재생은 유지)
 // v3.237: 공유 문구 화면(ShareCompose)도 숨김 — 하단 [공유하기] 버튼과 겹침 방지, 닫으면 복귀
-const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat', 'ShareCompose'];
+// v3.252: ClubChat(크루 채팅) — 입력바와 겹침 방지, DmChat 관행 동일
+const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat', 'ClubChat', 'ShareCompose'];
 
 // v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
 // FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.
@@ -829,6 +833,8 @@ export default function App() {
             <RootStack.Screen name="MyReports" component={MyReportsScreen} />
             <RootStack.Screen name="StarHistory" component={StarHistoryScreen} options={({ navigation }) => stackHeader(navigation, '스타 내역')} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />
+            {/* v3.252: 크루 채팅 — DmChat 관행(자체 헤더·키보드 처리, 탭바 없음 풀스크린) */}
+            <RootStack.Screen name="ClubChat" component={ClubChatScreen} />
             <RootStack.Screen
               name="Player"
               component={PlayerScreen}
@@ -848,7 +854,7 @@ export default function App() {
               headerTitle: () => (
                 <AppText variant="subtitle">
                   {route.params?.kind === 'community' ? '공지 작성'
-                    : route.params?.kind === 'club' ? '클럽 글쓰기'
+                    : route.params?.kind === 'club' ? '크루 글쓰기' // v3.252 리네이밍
                     : '피드 작성'}
                 </AppText>
               ),

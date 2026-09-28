@@ -5,15 +5,16 @@
 //          409 code 'club_limit'(계정당 1개) | 'club_name_taken' · 400 code 'word_filtered'
 //   GET    /clubs?sort=new|members&limit&before= → { clubs:[{id,name,description,member_count,owner_id,is_member,created_at}], next_before }
 //   GET    /clubs/{id} → detail + is_member + role
-//   POST   /clubs/{id}/join · DELETE /clubs/{id}/join (owner 탈퇴 → 400 'owner_cannot_leave')
+//   POST   /clubs/{id}/join → 202 {status:'pending'}(v3.252 승인제)|200(구서버 즉시 가입)
+//          · DELETE /clubs/{id}/join = 탈퇴/신청 철회 (owner 탈퇴 → 400 'owner_cannot_leave')
 //   GET    /clubs/mine → 내 가입 클럽 목록
 //   게시판: GET /feeds/club/{club_id}?limit&before= → { feeds, next_before } (공개 읽기, 글쓰기는 멤버만 — 403 'club_members_only')
 //   클럽 플리: POST /playlists {title, club_id} · GET /clubs/{id}/playlists → [{id,title,track_count,...}]
 import api from './api';
 
-// v3.249: 커뮤니티 명칭('클럽'→다른 이름) 변경 논의 중 — 신규 사용자 노출 문구는 이 상수만 쓰면
-// 라벨 교체가 1줄이 된다(기존 화면 문구 소급 정리는 범위 외).
-export const CLUB_LABEL = '클럽';
+// v3.252: 대표 확정 리네이밍 — 사용자 노출 명칭 '크루'(내부 식별자·라우트명은 Club 유지).
+// 서버가 내려주는 메시지는 서버(v3.252 병행)가 바꾼다 — 앱 자체 문구만 이 상수/직접 문구로 교체.
+export const CLUB_LABEL = '크루';
 
 export type ClubSort = 'new' | 'members';
 
@@ -27,6 +28,20 @@ export interface Club {
   created_at?: string;
   /** 'owner' | 'member' — 서버가 내 역할을 알 때만 */
   role?: string | null;
+  /** v3.252 가입 승인제 — 신서버 확장 필드(구서버 미존재). 'none'|'pending'|'member' */
+  join_status?: string | null;
+  /** v3.252 크루 채팅 — GET /clubs/mine 확장 필드(없으면 뱃지 숨김) */
+  unread_chat?: number;
+}
+
+/** v3.252: 가입 상태 파생 — join_status(신서버) 우선, 구서버는 is_member/role 로 폴백 */
+export type ClubJoinStatus = 'none' | 'pending' | 'member';
+export function clubJoinStatus(club?: Club | null): ClubJoinStatus {
+  if (!club) return 'none';
+  if (club.join_status === 'pending') return 'pending';
+  if (club.join_status === 'member') return 'member';
+  if (club.is_member || club.role === 'owner' || club.role === 'member') return 'member';
+  return 'none';
 }
 
 export interface ClubListPage {
@@ -85,9 +100,17 @@ export async function getClub(clubId: string): Promise<Club> {
   return normClub(res.data?.club ?? res.data);
 }
 
-export async function joinClub(clubId: string): Promise<void> {
+// v3.252 가입 승인제(서버 병행 스테이징, 계약 fixed):
+//   POST /clubs/{id}/join → 202 {status:'pending'}(신서버 승인제) | 200(구서버 즉시 가입)
+//   DELETE /clubs/{id}/join → 탈퇴(member) 또는 신청 철회(pending) 겸용
+export type JoinResult = 'member' | 'pending';
+export async function joinClub(clubId: string): Promise<JoinResult> {
   if (__DEV__) console.info('[Club] joinClub', { clubId });
-  await api.post(`/clubs/${clubId}/join`);
+  const res = await api.post(`/clubs/${clubId}/join`);
+  // 202 또는 body status 'pending' → 승인 대기(둘 다 방어 — 프록시가 상태코드를 뭉갤 수 있음)
+  const pending = res?.status === 202 || res?.data?.status === 'pending';
+  if (__DEV__) console.info('[Club] joinClub 결과', { clubId, pending });
+  return pending ? 'pending' : 'member';
 }
 
 export async function leaveClub(clubId: string): Promise<void> {
@@ -156,10 +179,10 @@ const normCandidate = (c: any): TransferCandidate => {
   let reason: string | undefined;
   if (c?.owns_other_club === true) {
     eligible = false;
-    reason = '다른 클럽 운영자예요';
+    reason = `다른 ${CLUB_LABEL} 운영자예요`; // v3.252 리네이밍
   } else if (c?.tenure_ok === false && activity === 0) {
     eligible = false;
-    reason = '클럽 활동이 있는 멤버에게만 위임할 수 있어요';
+    reason = `${CLUB_LABEL} 활동이 있는 멤버에게만 위임할 수 있어요`; // v3.252 리네이밍
   }
   return { ...c, user_id: String(c?.user_id ?? ''), eligible, reason };
 };
@@ -176,9 +199,9 @@ export async function transferOwner(clubId: string, newOwnerId: string): Promise
   await api.post(`/clubs/${clubId}/transfer-owner`, { new_owner_id: newOwnerId });
 }
 
-/** v3.247 클럽 삭제 요청 초안 — 운영팀 DM(DmChat prefill)·클립보드 폴백이 같은 문구를 쓴다 */
+/** v3.247 클럽 삭제 요청 초안 — 운영팀 DM(DmChat prefill)·클립보드 폴백이 같은 문구를 쓴다 (v3.252 리네이밍) */
 export function clubDeleteRequestDraft(clubName: string): string {
-  return `[클럽 삭제 요청] 클럽명: ${clubName} / 사유: `;
+  return `[${CLUB_LABEL} 삭제 요청] ${CLUB_LABEL}명: ${clubName} / 사유: `;
 }
 
 // ── v3.249 멤버 관리 — 서버 스테이징 확정 계약(미배포 구서버 404 → 호출자가 안내로 강등):
@@ -246,7 +269,105 @@ export function memberMenuActions(
 /** 내보내기 실패 문구(서버 확정 오류 분기) — 404 는 호출자가 목록 새로고침을 함께 수행 */
 export function kickErrorMessage(code: string | null, status?: number): string {
   if (code === 'cannot_kick_owner') return '운영자는 내보낼 수 없어요.';
-  if (status === 404) return `이미 ${CLUB_LABEL}을 떠난 멤버예요. 목록을 새로고침할게요.`;
+  if (status === 404) return `이미 ${CLUB_LABEL}를 떠난 멤버예요. 목록을 새로고침할게요.`; // v3.252: 조사 을→를(크루)
   if (status === 403) return `${CLUB_LABEL} 운영자만 멤버를 내보낼 수 있어요.`;
   return '내보내지 못했어요. 잠시 후 다시 시도해주세요.';
+}
+
+// ── v3.252 가입 승인제(owner 신청 관리) — 서버 병행 스테이징 계약(구서버 404 → 호출자가 숨김/안내 강등):
+//   GET  /clubs/{id}/join-requests → { requests:[{user_id, nickname, requested_at, was_kicked}] }
+//   POST /clubs/{id}/join-requests/{user_id}/approve → 200 {member_count}
+//   POST /clubs/{id}/join-requests/{user_id}/reject  → 200
+//   404(이미 철회·처리됨)는 호출자가 목록 새로고침으로 수습.
+export interface JoinRequest {
+  user_id: string;
+  nickname?: string | null;
+  requested_at?: string;
+  /** 이전에 내보낸(강퇴) 멤버 — owner 판단 참고용 표시 */
+  was_kicked?: boolean;
+}
+
+export async function listJoinRequests(clubId: string): Promise<JoinRequest[]> {
+  if (__DEV__) console.info('[Club] listJoinRequests', { clubId });
+  const res = await api.get(`/clubs/${clubId}/join-requests`);
+  const rows: any[] = Array.isArray(res.data?.requests) ? res.data.requests : [];
+  return rows.map((r) => ({ ...r, user_id: String(r?.user_id ?? '') }));
+}
+
+export async function approveJoinRequest(clubId: string, userId: string): Promise<{ member_count?: number }> {
+  if (__DEV__) console.info('[Club] approveJoinRequest', { clubId, userId });
+  const res = await api.post(`/clubs/${clubId}/join-requests/${userId}/approve`);
+  return { member_count: res.data?.member_count };
+}
+
+export async function rejectJoinRequest(clubId: string, userId: string): Promise<void> {
+  if (__DEV__) console.info('[Club] rejectJoinRequest', { clubId, userId });
+  await api.post(`/clubs/${clubId}/join-requests/${userId}/reject`);
+}
+
+// ── v3.252 크루 채팅 — 서버 계약 fixed(구서버 404 → 호출자가 안내 강등, 크래시 금지):
+//   GET  /clubs/{id}/chat?limit&before=<id>&after=<id> → { messages:[…최신순], next_before }
+//        before=과거 방향 커서(위로 무한스크롤) · after=재접속 캐치업(마지막 id 이후 1회)
+//   POST /clubs/{id}/chat {text ≤1000} → 201 {message} · 403 'club_members_only'|'child_restricted' · 429 'rate_limited'
+//   DELETE /clubs/{id}/chat/{message_id} → 200 (본인·owner, 소프트 삭제 — deleted=true 로 남음)
+//   POST /clubs/{id}/chat/read → 읽음 처리(화면 진입·신규 수신 시, 실패 무시)
+export interface ClubChatMessage {
+  id: string;
+  club_id?: string;
+  sender_id: string;
+  sender_nickname?: string | null;
+  text?: string | null;
+  created_at?: string;
+  /** 소프트 삭제 — true 면 회색 '삭제된 메시지예요' 렌더 */
+  deleted?: boolean;
+}
+
+export interface ClubChatPage {
+  messages: ClubChatMessage[];
+  next_before: string | null;
+}
+
+const normChatMsg = (m: any): ClubChatMessage => ({
+  ...m,
+  id: String(m?.id ?? ''),
+  sender_id: String(m?.sender_id ?? ''),
+});
+
+export async function listClubChat(
+  clubId: string,
+  opts: { limit?: number; before?: string | null; after?: string | null } = {},
+): Promise<ClubChatPage> {
+  const params: Record<string, any> = { limit: opts.limit ?? 50 };
+  if (opts.before) params.before = opts.before;
+  if (opts.after) params.after = opts.after;
+  if (__DEV__) console.info('[Club] listClubChat', { clubId, ...params });
+  const res = await api.get(`/clubs/${clubId}/chat`, { params });
+  const messages: ClubChatMessage[] = Array.isArray(res.data?.messages) ? res.data.messages.map(normChatMsg) : [];
+  return { messages, next_before: res.data?.next_before ?? null };
+}
+
+export const CHAT_TEXT_MAX = 1000;
+
+export async function sendClubChat(clubId: string, text: string): Promise<ClubChatMessage | null> {
+  if (__DEV__) console.info('[Club] sendClubChat', { clubId, len: text.length });
+  const res = await api.post(`/clubs/${clubId}/chat`, { text });
+  return res.data?.message ? normChatMsg(res.data.message) : null;
+}
+
+export async function deleteClubChatMessage(clubId: string, messageId: string): Promise<void> {
+  if (__DEV__) console.info('[Club] deleteClubChatMessage', { clubId, messageId });
+  await api.delete(`/clubs/${clubId}/chat/${messageId}`);
+}
+
+/** 읽음 처리 — 실패는 무시(다음 진입·수신에서 재시도되는 성질) */
+export function markClubChatRead(clubId: string): void {
+  if (__DEV__) console.info('[Club] markClubChatRead', { clubId });
+  api.post(`/clubs/${clubId}/chat/read`).catch(() => {});
+}
+
+/** 채팅 송신 실패 문구(계약 fixed 오류 분기) — child_restricted 403 은 api 인터셉터가 서버 문구로 안내 */
+export function chatSendErrorMessage(code: string | null, status?: number): string {
+  if (status === 429 || code === 'rate_limited') return '메시지를 너무 빨리 보내고 있어요. 잠시 후 다시 보내주세요.';
+  if (status === 403 || code === 'club_members_only') return `${CLUB_LABEL} 멤버만 채팅에 참여할 수 있어요.`;
+  return '메시지를 보내지 못했어요. 잠시 후 다시 시도해주세요.';
 }
