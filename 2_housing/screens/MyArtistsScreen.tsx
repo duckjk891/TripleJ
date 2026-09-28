@@ -29,6 +29,8 @@ import GenerationJobCard from '../components/GenerationJobCard';
 import { refreshRecoverable, guardArtistGeneration } from '../services/generationTracker';
 import { fetchPointCosts, FALLBACK_POINT_COSTS } from '../services/pointCosts';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
+import ArtistLevelBadge from '../components/ArtistLevelBadge';
+import { normalizeRecognition, type ArtistRecognition } from '../data/levels';
 import { colors } from '../theme/colors';
 
 // ── v3.103(B-1): 내 아티스트 목록 — 서버 /character/list 기반 N명 체제 ─────────
@@ -56,6 +58,8 @@ interface ArtistEntry {
   personaStatus: string | null; // 'ready' | 'missing' | null
   /** v3.143 — 간편 목소리 프리셋 "male:소프트" | '' (persona와 배타) */
   voicePreset: string;
+  /** v3.251 [Recog] 인지도 — 구서버·레거시 카드는 연습생 5 폴백(normalizeRecognition) */
+  recognition: ArtistRecognition;
 }
 
 // v3.230 A5-6: 폴백 단가는 services/pointCosts 단일 표(서버 POINT_COSTS 동일)
@@ -132,6 +136,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaName: c.persona_name,
                 personaStatus: c.persona_status,
                 voicePreset: c.voice_preset || '',
+                recognition: normalizeRecognition(c.recognition), // v3.251
               }));
           } else {
             // 레거시(마이그레이션 미실행) 계정 — /me 구 shape로 조립 카드 표시.
@@ -157,6 +162,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaName: null,
                 personaStatus: null,
                 voicePreset: '',
+                recognition: normalizeRecognition(null), // v3.251 레거시 — 연습생 5 폴백
               });
             }
             if (ch?.virtual_sheet_object_name) {
@@ -172,6 +178,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaName: null,
                 personaStatus: null,
                 voicePreset: '',
+                recognition: normalizeRecognition(null), // v3.251 레거시 — 연습생 5 폴백
               });
             }
             // v3.116 구제: used=0으로 왔지만 me에 시트가 실존 — 레거시로 확정(빈 상태 방지)
@@ -443,7 +450,14 @@ export default function MyArtistsScreen({ navigation }: any) {
                 onPress={() => handleOpenArtist(a)}
                 activeOpacity={0.8}
               >
-                <Image source={{ uri: a.sheetUrl }} style={styles.cardImg} />
+                {/* v3.251 [Recog]: 시트 좌하단 휘장(md) + 라벨 오버레이 */}
+                <View style={styles.cardImgWrap}>
+                  <Image source={{ uri: a.sheetUrl }} style={styles.cardImg} />
+                  <View style={styles.recogOverlay}>
+                    <ArtistLevelBadge tier={a.recognition.tier} sub={a.recognition.sub} size="md" />
+                    <AppText style={styles.recogOverlayText}>{a.recognition.label}</AppText>
+                  </View>
+                </View>
                 <View style={styles.cardBody}>
                   <View style={styles.cardNameRow}>
                     <AppText style={styles.cardName} numberOfLines={1}>
@@ -576,10 +590,20 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
     padding: 12, marginBottom: 12, gap: 12,
   },
+  cardImgWrap: { width: 84, height: 84 }, // v3.251: 휘장 오버레이 기준 컨테이너(카드 규격 84 불변)
   cardImg: {
     width: 84, height: 84, borderRadius: 12,
     backgroundColor: colors.bg.surface2,
   },
+  // v3.251 [Recog]: 시트 좌하단 오버레이 — 휘장(md 22) + 라벨('연습생 5')
+  recogOverlay: {
+    position: 'absolute', left: 3, bottom: 3,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(13, 8, 32, 0.78)',
+    borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2,
+    maxWidth: 78,
+  },
+  recogOverlayText: { color: colors.text.primary, fontSize: 9, fontWeight: '700' },
   cardBody: { flex: 1 },
   cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cardName: { color: colors.text.primary, fontSize: 15, fontWeight: '700', flexShrink: 1 },

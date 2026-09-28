@@ -19,10 +19,9 @@ import Character, { DirectorType } from '../components/Character';
 import HomeHeaderActions from '../components/HomeHeaderActions';
 import Marquee from '../components/Marquee';
 import { useDirectorsStore } from '../stores/directorsStore';
-import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { useFanSimulationStore } from '../stores/fanSimulationStore';
-import { getArtistRank, getCompanyTier } from '../data/levels';
+import { getCompanyTier } from '../data/levels';
 import { DIRECTOR_CATALOG, getDirectorById } from '../data/directors';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
@@ -457,11 +456,9 @@ export default function MapScreen({ navigation }: Props) {
   // v3.207 ⑫: 헤더 ⓘ 재보기 버튼 제거 — tutorialRef도 함께 정리(재보기 수단 소멸은 ⑪과 정합, 의도된 동작)
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // 영입 시스템
-  const artistLevel = useArtistStore((s) => s.level);
-  const artistSongs = useArtistStore((s) => s.songsReleased);
+  // 영입 시스템 — v3.251: 구 이모지 등급표(getArtistRank) 폐기에 따라 미사용 레거시
+  // 아티스트 레벨 참조 제거(렌더 미사용 확인). 인지도 표시는 내 아티스트/상세/채널로 이관.
   const companyLevel = useCompanyStore((s) => s.level);
-  const artistRank = getArtistRank(artistLevel);
   const companyTier = getCompanyTier(companyLevel);
   const { hiredIds, selectedByCategory, selectForCategory, initIfEmpty: initDirectors } =
     useDirectorsStore();

@@ -18,7 +18,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText, Button } from '../components/ui';
 import { TrackCover } from '../components/TrackRow';
 import { showAlert } from '../utils/appAlert';
-import { deliverShareText, ShareableTrack } from '../utils/trackShare';
+import { deliverShareText, reportSharePerformed, ShareableTrack } from '../utils/trackShare';
+// v3.251 [Recog] 공유=공연 — 완료 시 +10 RP 안내는 경량 토스트(levelUpQueue 재사용, showAlert 금지 아님·연출 위계상 토스트)
+import { useLevelUpQueueStore } from '../stores/levelUpQueueStore';
 import { TRACK_ID_RE } from '../utils/trackLink';
 import { trackEvent } from '../utils/screenAnalytics';
 import { fetchShareData } from '../services/shareService';
@@ -226,6 +228,24 @@ export default function ShareComposeScreen({ navigation, route }: any) {
     deliverShareText({ trackId, text: msg.text, url: msg.url })
       .then((outcome) => {
         trackEvent('share_sent', { ...props, outcome: outcome === 'shared' || outcome === 'copied' || outcome === 'manual' || outcome === 'cancelled' ? outcome : 'failed' });
+        // v3.251 [Recog] 공유=공연: 완료 판정 지점 = 여기(전달부 단일 콜사이트).
+        //  'shared'(네이티브 공유 시트 복귀/웹 navigator.share resolve)·'copied'(웹 공유 API 부재
+        //  폴백 복사 완료)만 공연으로 집계 — cancelled·manual(재시도 미확정)·failed 제외.
+        //  rp_granted 10 = 토스트(전역 마운트 — leave() 이후에도 표시), 0(일 1회 소진·구서버) = 무표시.
+        if (outcome === 'shared' || outcome === 'copied') {
+          void reportSharePerformed(trackId).then((r) => {
+            if (r.granted > 0) {
+              useLevelUpQueueStore.getState().enqueue({
+                kind: 'notice',
+                newLevel: 0,
+                rankLabel: '공연을 마쳤어요!',
+                emoji: '',
+                bonus: 0,
+                message: `인지도 +${r.granted}`,
+              });
+            }
+          });
+        }
         if (!aliveRef.current) return;
         if (outcome === 'shared' || outcome === 'copied') leave();
       })

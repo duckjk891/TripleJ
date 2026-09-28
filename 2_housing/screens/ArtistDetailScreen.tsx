@@ -17,6 +17,16 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { useIsChild } from '../utils/kidsMode';
+// v3.251 [Recog]: 헤더 휘장(lg)·라벨·RP 진행바.
+// 서버 확정: recognition은 GET /artists/{id}/characters 항목(= /character/list 셰이프)에만 동봉 —
+// GET /artists/{id}는 기획사(유저) 집계라 recognition 없음. 대표(is_default) 캐릭터 우선,
+// 없으면 최고 step 캐릭터로 표시. 구서버(라우트 404·필드 부재)는 연습생 5 폴백.
+import ArtistLevelBadge from '../components/ArtistLevelBadge';
+import {
+  normalizeRecognition,
+  recognitionNextStepRp,
+  recognitionProgress,
+} from '../data/levels';
 
 interface Artist {
   id: string;
@@ -80,16 +90,27 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
   const [artist, setArtist] = useState<Artist | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [ads, setAds] = useState<AdItem[]>([]);
+  // v3.251 [Recog]: /artists/{id}/characters 항목에서 고른 대표 recognition 페이로드(부재 = null)
+  const [recogRaw, setRecogRaw] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [artistRes, tracksRes, adsRes] = await Promise.all([
+      const [artistRes, tracksRes, adsRes, charsRes] = await Promise.all([
         api.get(`/artists/${artistId}`),
         api.get(`/artists/${artistId}/tracks`, { params: { limit: 30 } }),
         api.get(`/business/ads/active`),
+        // v3.251 [Recog]: recognition의 유일한 출처(구서버 404 = 조용히 빈 목록 → 연습생 5 폴백)
+        api.get(`/artists/${artistId}/characters`).catch(() => ({ data: { characters: [] } })),
       ]);
       setArtist(artistRes.data);
+      // 대표(is_default) 우선, 없으면 최고 step — 기획사 집계 페이지의 대표 휘장 규칙
+      const chars: any[] = Array.isArray(charsRes.data?.characters) ? charsRes.data.characters : [];
+      const rep = chars.find((c) => c?.is_default)
+        ?? chars.slice().sort((a, b) => normalizeRecognition(b?.recognition).step - normalizeRecognition(a?.recognition).step)[0]
+        ?? null;
+      setRecogRaw(rep?.recognition ?? null);
+      if (__DEV__) console.info('[Recog] ArtistDetail 대표 인지도', { artistId, chars: chars.length, hasRecognition: !!rep?.recognition });
       setTracks(Array.isArray(tracksRes.data) ? tracksRes.data : (tracksRes.data?.tracks || []));
       // 이 아티스트의 광고만 필터 (advertiser_id 또는 user_id 매칭)
       const allAds = adsRes.data?.items || [];
@@ -136,6 +157,11 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
 
   const profileImg = getProfileImage(artist?.image);
 
+  // v3.251 [Recog]: 인지도 표시값 — /characters 대표 항목의 recognition 정본, 부재 시 연습생 5(rp 0)
+  const recog = normalizeRecognition(recogRaw);
+  const nextRp = recognitionNextStepRp(recog);
+  const recogPct = Math.round(recognitionProgress(recog) * 100);
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -163,6 +189,23 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
               </View>
             )}
             <AppText style={styles.profileName}>{artist?.name || artistName || '알 수 없음'}</AppText>
+
+            {/* v3.251 [Recog]: 휘장(lg) + 라벨 + RP 진행바(현재 RP/다음 단계 RP) */}
+            <View style={styles.recogRow}>
+              <ArtistLevelBadge tier={recog.tier} sub={recog.sub} size="lg" />
+              <AppText style={styles.recogLabel}>{recog.label}</AppText>
+            </View>
+            <View style={styles.recogBarWrap}>
+              <View style={styles.recogBarBg}>
+                <View style={[styles.recogBarFill, { width: `${recogPct}%` }]} />
+              </View>
+              <AppText style={styles.recogRpText}>
+                {nextRp != null
+                  ? `RP ${recog.rp.toLocaleString()} / ${nextRp.toLocaleString()}`
+                  : `RP ${recog.rp.toLocaleString()} · 최고 단계`}
+              </AppText>
+            </View>
+
             {artist?.bio ? <AppText style={styles.bioText}>{artist.bio}</AppText> : null}
 
             <View style={styles.statsRow}>
@@ -279,6 +322,19 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     marginTop: 16,
   },
+  // v3.251 [Recog]: 헤더 인지도 — 휘장 lg(28) + 라벨 + 진행바(폭 180 고정, 통계행 규격과 정렬)
+  recogRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+  recogLabel: { fontSize: 14, fontWeight: '700', color: colors.text.primary },
+  recogBarWrap: { alignItems: 'center', marginTop: 8 },
+  recogBarBg: {
+    width: 180, height: 6, borderRadius: 3,
+    backgroundColor: colors.bg.surface2, overflow: 'hidden',
+  },
+  recogBarFill: {
+    height: 6, borderRadius: 3,
+    backgroundColor: colors.accent.secondary,
+  },
+  recogRpText: { fontSize: 11, color: colors.text.secondary, marginTop: 4 },
   bioText: {
     fontSize: 13,
     color: colors.text.secondary,

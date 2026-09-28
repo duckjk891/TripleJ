@@ -19,6 +19,9 @@ import TrackRow from '../components/TrackRow';
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
+// v3.251 [Recog]: 아티스트 탭 휘장(sm) — 구서버(recognition 부재)는 연습생 5 폴백
+import ArtistLevelBadge from '../components/ArtistLevelBadge';
+import { normalizeRecognition } from '../data/levels';
 
 const mediaUri = (obj?: string | null): string | null =>
   obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}` : null;
@@ -343,6 +346,7 @@ export default function UserChannelScreen() {
               const img = mediaUri(c.latest_cover_image);
               const cid = c.character_id;
               const opened = !!cid && expandedArtist === cid;
+              const recog = normalizeRecognition(c.recognition); // v3.251
               const artistTracks = tracks.filter((t) => t.character_id && String(t.character_id) === String(cid));
               return (
                 <View key={cid || i}>
@@ -362,8 +366,16 @@ export default function UserChannelScreen() {
                         : <Feather name="user" size={22} color={colors.text.muted} />}
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <AppText style={styles.albumRowTitle} numberOfLines={1}>{c.name || '이름 없음'}</AppText>
-                      <AppText style={styles.albumRowMeta}>{`곡 ${c.track_count ?? 0} · 앨범 ${c.album_count ?? 0}`}</AppText>
+                      {/* v3.251 [Recog]: 휘장(sm) + 이름, 메타에 인지도 라벨 병기 */}
+                      <View style={styles.artistNameRow}>
+                        <ArtistLevelBadge tier={recog.tier} sub={recog.sub} size="sm" />
+                        <AppText style={[styles.albumRowTitle, styles.artistNameText]} numberOfLines={1}>
+                          {c.name || '이름 없음'}
+                        </AppText>
+                      </View>
+                      <AppText style={styles.albumRowMeta}>
+                        {`${recog.label} · 곡 ${c.track_count ?? 0} · 앨범 ${c.album_count ?? 0}`}
+                      </AppText>
                     </View>
                     <Feather name={opened ? 'chevron-up' : 'chevron-down'} size={18} color={colors.text.muted} />
                   </TouchableOpacity>
@@ -454,6 +466,9 @@ const styles = StyleSheet.create({
   albumRowTitle: { fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 3 },
   albumRowMeta: { fontSize: 12, color: colors.text.muted },
   // v3.160: 아티스트 대표이미지는 최신곡 커버(albumRowCover 재사용) — 시트 스타일 제거
+  // v3.251 [Recog]: 아티스트 행 — 휘장(sm 16) + 이름 한 줄(행 규격 albumRow 불변)
+  artistNameRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 3 },
+  artistNameText: { marginBottom: 0, flexShrink: 1 },
   // v3.159: 피드 리스트/블록 — MyMusicScreen 관행
   feedList: { paddingHorizontal: 12, paddingBottom: 40 },
   feedBody: { marginTop: 8, fontSize: 14, lineHeight: 21, color: colors.text.secondary },

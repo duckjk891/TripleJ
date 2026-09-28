@@ -1,4 +1,5 @@
 import api, { BACKEND_BASE_URL } from './api';
+import { useArtistStore } from '../stores/artistStore';
 
 // ── v3.103(B-1/B-3): 아티스트 N명 체제 — /api/character/* v216 정본 계약 ──────
 // GET  /character/list → { characters: [ServerArtist...], slots: {used, max} }
@@ -14,6 +15,24 @@ import api, { BACKEND_BASE_URL } from './api';
 //   max_slots 영구 +1 (v216에서 효과 버그 수정 — 구매이력 dedupe 불필요). 402=잔액 부족.
 
 export type ArtistKind = 'real' | 'virtual';
+
+// v3.251 [Recog]: 인지도 페이로드(서버 정본 — /character/list 항목·GET /character/{cid}·save/patch
+// 응답에 동봉). 구서버는 필드 부재(null) → 표시부는 data/levels.normalizeRecognition 으로 연습생 5 폴백.
+// 승급 비교는 listArtists 단일 지점(개별 GET/patch 응답으로는 연출 중복 방지 위해 비교하지 않음).
+export interface ServerRecognition {
+  /** 누적 RP(float) */
+  rp: number;
+  tier: 'trainee' | 'newcomer' | 'rookie' | 'rising' | 'idol';
+  /** 세부 단계 — 5가 시작, 1이 정점 */
+  sub: 1 | 2 | 3 | 4 | 5;
+  /** '연습생 5' … '아이돌 1' */
+  label: string;
+  /** '연습생' … '아이돌' */
+  tier_label?: string;
+  /** 전체 25스텝 중 위치(1..25) — 서버 제공값을 비교에 그대로 사용 */
+  step: number;
+  updated_at?: string | null;
+}
 
 export interface ServerArtist {
   character_id: string;
@@ -37,6 +56,8 @@ export interface ServerArtist {
   persona_status: string | null;
   /** v3.143(서버 v231) 간편 목소리 프리셋 "male:소프트" | "" — persona와 상호 배타 */
   voice_preset: string;
+  /** v3.251 [Recog] 인지도(서버 정본) — 구서버 부재 시 null(표시부 연습생 5 폴백) */
+  recognition: ServerRecognition | null;
   created_at?: string;
   updated_at?: string;
   [key: string]: any;
@@ -99,6 +120,11 @@ function normalizeArtist(raw: any): ServerArtist {
     persona_voice_id: raw?.persona_voice_id ?? null,
     persona_status: raw?.persona_status ?? null,
     voice_preset: typeof raw?.voice_preset === 'string' ? raw.voice_preset : '',
+    // v3.251 [Recog]: 값 검증은 표시 시점(normalizeRecognition) — 여기선 셰이프 가드만
+    recognition:
+      raw?.recognition && typeof raw.recognition === 'object'
+        ? (raw.recognition as ServerRecognition)
+        : null,
   };
 }
 
@@ -119,6 +145,15 @@ export const listArtists = async (): Promise<{ characters: ServerArtist[]; slots
     };
     if (__DEV__) {
       console.info('[characterService] listArtists:', characters.length, '명, slots', slots);
+    }
+    // v3.251 [Recog]: 목록 응답의 recognition → 승급 감지 단일 지점(모든 list 호출 경로 공용).
+    // 첫 관측(캐시 없음)은 기준 저장만 — 연출 실패가 목록 반환에 영향 주지 않게 격리.
+    try {
+      useArtistStore.getState().applyRecognitionSnapshot(
+        characters.map((a: ServerArtist) => ({ characterId: a.character_id, recognition: a.recognition }))
+      );
+    } catch (recogErr: any) {
+      console.warn('[Recog] snapshot 반영 실패(목록은 정상 반환)', { message: recogErr?.message });
     }
     return { characters, slots };
   } catch (err: any) {

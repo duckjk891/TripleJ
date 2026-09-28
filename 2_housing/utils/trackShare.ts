@@ -48,6 +48,39 @@ export interface ShareTrackOptions {
   src?: string;
 }
 
+// ── v3.251 [Recog] 공유 = 공연 ──────────────────────────────────────────────
+// 공유 완료(deliverShareText 'shared'|'copied') 시 POST /tracks/{id}/share-performed —
+// 서버가 유저·곡당 일 1회 +10 RP 판정(rp_granted 0|10). 구서버(404·405) = 조용히 건너뜀,
+// 그 외 실패도 silent(로그만) — 공유 UX에 절대 영향 없음.
+
+export interface SharePerformedResult {
+  /** 이번 호출로 지급된 RP(0 = 미지급: 일 1회 소진·구서버·실패) */
+  granted: number;
+  /** 서버가 돌려준 최신 recognition(없으면 null) */
+  recognition: unknown | null;
+  /** false = 구서버(라우트 미배포) */
+  supported: boolean;
+}
+
+export async function reportSharePerformed(trackId: string): Promise<SharePerformedResult> {
+  try {
+    const res = await api.post(`/tracks/${encodeURIComponent(trackId)}/share-performed`);
+    const granted = typeof res.data?.rp_granted === 'number' ? res.data.rp_granted : 0;
+    if (__DEV__) console.info('[Recog] share-performed', { id: trackId, granted });
+    return { granted, recognition: res.data?.recognition ?? null, supported: true };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404 || status === 405) {
+      if (__DEV__) console.info('[Recog] share-performed 미지원(구서버) — 건너뜀', { id: trackId });
+      return { granted: 0, recognition: null, supported: false };
+    }
+    console.warn('[Recog] share-performed 실패(무표시)', {
+      id: trackId, status: status ?? null, message: err?.message,
+    });
+    return { granted: 0, recognition: null, supported: true };
+  }
+}
+
 /** 공유 링크 — 서버 공유 랜딩(S7) 주소 */
 export function trackShareUrl(id: string | number): string {
   return `${BACKEND_BASE_URL}/track/${encodeURIComponent(String(id))}`;
