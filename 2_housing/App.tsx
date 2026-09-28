@@ -80,6 +80,9 @@ import FeedScreen from './screens/FeedScreen';
 import SearchScreen from './screens/SearchScreen';
 // v3.243 Phase1a: 커뮤니티(클럽) 탭 골격 — 검색 탭 자리를 대체(검색은 숨김 탭 + 차트 상단 검색바)
 import CommunityScreen from './screens/CommunityScreen';
+// v3.245 Phase1b: 클럽 개설·클럽 홈 — 숨김 탭(MyMusic 관행), 커뮤니티 탭에서 진입(딥링크 없음)
+import ClubCreateScreen from './screens/ClubCreateScreen';
+import ClubHomeScreen from './screens/ClubHomeScreen';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -189,7 +192,8 @@ export type RootStackParamList = {
   // v3.205(④): initialTab — 설정 '공지사항' 진입 시 커뮤니티 탭(공지) 직행. 미지정 시 기존 music 탭 시작.
   UserChannel: { authorId: string; name?: string; initialTab?: 'music' | 'artists' | 'feed' | 'community' };
   // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
-  FeedCompose: { kind?: 'feed' | 'community' } | undefined;
+  // v3.245: kind='club' + clubId — 클럽 게시판 글쓰기(ClubHome 진입, payload kind='club'+club_id)
+  FeedCompose: { kind?: 'feed' | 'community' | 'club'; clubId?: string } | undefined;
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
   FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };
@@ -487,6 +491,45 @@ function MainTabs() {
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
           headerLeft: () => <BackIcon navigation={navigation} />,
+        })}
+      />
+      {/* v3.245 Phase1b: 클럽 개설/클럽 홈 — 숨김 탭(MyMusic 관행). ← 는 진입 지점인 커뮤니티 탭 복귀
+          (BackIcon은 차트 복귀 고정이라 재사용하지 않고 동일 규격의 커뮤니티 복귀 아이콘 사용). 딥링크 없음. */}
+      <Tab.Screen
+        name="ClubCreate"
+        component={ClubCreateScreen}
+        options={({ navigation }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          headerTitle: () => <AppText variant="subtitle">클럽 만들기</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Community')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
+            </TouchableOpacity>
+          ),
+        })}
+      />
+      <Tab.Screen
+        name="ClubHome"
+        component={ClubHomeScreen}
+        options={({ navigation, route }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          // 기본은 진입 파라미터의 클럽명 — 상세 로드 후 화면이 setOptions로 실제 이름 반영
+          headerTitle: () => <AppText variant="subtitle">{(route.params as any)?.name || '클럽'}</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Community')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
+            </TouchableOpacity>
+          ),
         })}
       />
       {/* v3.220 ①: 앨범 상세 — RootStack에서 이 숨김 탭으로 이동(하단 탭바 유지, MyMusic 관행).
@@ -801,8 +844,14 @@ export default function App() {
             <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={({ navigation, route }) => ({
               presentation: 'modal', animation: 'slide_from_bottom',
               headerShown: true,
-              // v3.115: 커뮤니티(공지) 모드면 타이틀도 구분
-              headerTitle: () => <AppText variant="subtitle">{route.params?.kind === 'community' ? '공지 작성' : '피드 작성'}</AppText>,
+              // v3.115: 커뮤니티(공지) 모드면 타이틀도 구분 · v3.245: 클럽 글쓰기 타이틀
+              headerTitle: () => (
+                <AppText variant="subtitle">
+                  {route.params?.kind === 'community' ? '공지 작성'
+                    : route.params?.kind === 'club' ? '클럽 글쓰기'
+                    : '피드 작성'}
+                </AppText>
+              ),
               headerStyle: { backgroundColor: colors.bg.deepest },
               headerTintColor: colors.text.primary,
               headerShadowVisible: false,

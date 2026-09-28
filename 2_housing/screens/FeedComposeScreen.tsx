@@ -45,8 +45,17 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.115: kind 지원 — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입 시 kind='community'.
   // 계약(백엔드 feeds.py v133 실측): community는 텍스트 블록만 허용(track 400·image 400·bgm 400, title은 무시·null 저장)
   // → 커뮤니티 모드에선 제목·음악 첨부·사진 첨부 UI를 숨긴다. 가사 복사(클립보드)와 [item] 마커(텍스트 블록)는 계약상 허용이라 유지.
-  const kind: 'feed' | 'community' = route?.params?.kind === 'community' ? 'community' : 'feed';
+  // v3.245: kind='club' — 클럽 게시판 글쓰기(ClubHome 진입, route.params.clubId 필수).
+  //   계약: POST /feeds/ 에 kind='club' + club_id 동반(403 code 'club_members_only' = 멤버 아님).
+  //   블록은 피드 파이프라인 재사용(글+사진+음악) — 어린이 이미지 금지 게이트(!isChild)도 기존 로직 그대로 적용.
+  //   공개 스위치는 숨김·항상 공개(클럽 게시판 = 공개 읽기 계약, 비공개 글 의미 없음).
+  const kind: 'feed' | 'community' | 'club' =
+    route?.params?.kind === 'community' ? 'community'
+    : route?.params?.kind === 'club' ? 'club'
+    : 'feed';
   const isCommunity = kind === 'community';
+  const isClub = kind === 'club';
+  const clubId: string | undefined = route?.params?.clubId ? String(route.params.clubId) : undefined;
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
@@ -233,6 +242,12 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       showAlert('알림', isCommunity ? '공지 내용을 입력해주세요.' : '내용을 입력하거나 음악·사진·아이템을 첨부해주세요.');
       return;
     }
+    // v3.245: 클럽 글은 clubId 없이는 저장 불가(계약 club_id 필수) — 진입 경로 오류 방어
+    if (isClub && !clubId) {
+      console.error('[FeedCompose] 클럽 글쓰기 clubId 누락');
+      showAlert('오류', '클럽 정보를 찾지 못했어요. 클럽 홈에서 다시 시도해주세요.');
+      return;
+    }
     if (posting) return;
     setPosting(true);
     const blocks: any[] = [];
@@ -251,8 +266,11 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         title: isCommunity ? null : (title.trim() || null),
         blocks,
         // v3.210 ①-B: 하드코딩 true 제거 — 공개 스위치 실값 전달(서버 계약 feeds.py:63 기본 True)
-        is_public: isPublic,
+        // v3.245: 클럽 글은 스위치 숨김·항상 공개(게시판 = 공개 읽기 계약)
+        is_public: isClub ? true : isPublic,
         kind,
+        // v3.245: 클럽 게시판 — club_id 동반(다른 kind에는 필드 자체를 보내지 않아 기존 계약 무회귀)
+        ...(isClub ? { club_id: clubId } : {}),
       });
       navigation.goBack();
     } catch (err: any) {
@@ -261,7 +279,13 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       if (isChildRestrictedError(err)) return;
       const wf = getWordFilteredMessage(err);
       if (wf) { showAlert('알림', wf); return; }
-      showAlert('오류', `${isCommunity ? '공지' : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`);
+      // v3.245: 클럽 멤버 아님(403 code 'club_members_only') — 가입 안내
+      const code = err?.response?.data?.code ?? err?.response?.data?.detail?.code;
+      if (isClub && code === 'club_members_only') {
+        showAlert('알림', '클럽 멤버만 글을 쓸 수 있어요. 클럽에 가입한 뒤 다시 시도해주세요.');
+        return;
+      }
+      showAlert('오류', `${isCommunity ? '공지' : isClub ? '클럽 글' : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`);
     } finally {
       setPosting(false);
     }
@@ -321,7 +345,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         ) : null}
         <TextInput
           style={styles.bodyInput}
-          placeholder={isCommunity ? '구독자에게 알릴 소식을 적어주세요.' : '지금 어떤 음악 이야기를 나누고 싶나요?'}
+          placeholder={
+            isCommunity ? '구독자에게 알릴 소식을 적어주세요.'
+            : isClub ? '클럽 멤버들과 나누고 싶은 이야기를 적어주세요.'
+            : '지금 어떤 음악 이야기를 나누고 싶나요?'}
           placeholderTextColor={colors.text.muted}
           value={body}
           onChangeText={setBody}
@@ -421,7 +448,9 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ))}
 
-        {/* v3.210 ①-B: 공개 여부 — TrackUploadScreen '차트에 공개' 스위치 관행 재사용(피드·공지 공통) */}
+        {/* v3.210 ①-B: 공개 여부 — TrackUploadScreen '차트에 공개' 스위치 관행 재사용(피드·공지 공통)
+            v3.245: 클럽 글은 항상 공개(게시판 계약) — 스위치 숨김 */}
+        {isClub ? null : (
         <View style={styles.switchRow}>
           <View style={{ flex: 1 }}>
             <AppText variant="callout">공개</AppText>
@@ -439,6 +468,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             thumbColor="#fff"
           />
         </View>
+        )}
       </ScrollView>
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}

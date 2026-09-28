@@ -5352,3 +5352,65 @@ dev 하네스: `scratchpad/v3241/app1/`(74검사)·`scratchpad/v3241/app2/`(31�
 | 5 | tester 독립 교차 심: t1_cross 28/28 · t2_album 13/13 | PASS |
 | 6 | 정적: 소유 7파일 정확·Alert/AIDOL/이모지(⭐ 제외)/비밀값 0·로그 prefix 매트릭스 일치 | PASS |
 - **판정: 배포 가능(PASS)** — 판정 회부 2건은 비차단(의미 결정·후속 정리). 커밋 → 웹 배포(deploy.sh app) → E-1~E-6 수동 스모크.
+
+---
+
+## v3.245 (2026-09-28) — 커뮤니티 Phase 1b 클럽 코어 (앱 7파일 + 서버 8파일, 배포 전 게이트)
+
+근거: PLAN `## v3.243+ 커뮤니티(클럽) 기능 로드맵` · 서버 스테이징 `/private/tmp/server_staging_v3245/`(DEPLOY.md) · 앱 2_housing 미커밋 — services/clubService.ts(신규)·screens/CommunityScreen.tsx·ClubCreateScreen.tsx(신규)·ClubHomeScreen.tsx(신규)·FeedComposeScreen.tsx·components/PlaylistPickerSheet.tsx·App.tsx. (병행 v3.246 dev 소유 VoiceCloneWizardScreen·AnswerEditModal·public/index.html·PlayerScreen·utils/voiceRecordingFormat.ts·tempoDisplay.ts 는 이번 감사 범위 제외.)
+dev 하네스: `scratchpad/v3245/app/`(t1~t6, 137검사). tester 독립 교차 하네스: 세션 스크래치 `v3245/tester/` — gen_fixtures.py(deploy/ 서버 코드를 **실행**해 응답 바이트를 fixtures.json 으로 채록) + t_cross.js(그 바이트로 앱 5화면 구동, 33검사 — 계약 문서 아닌 서버 산출물 기준).
+
+### U — 단위/통합 [unit]
+
+**SV-U1. 서버 스위트 재실행 [unit]** — Given 스테이징 orig(라이브 md5 동일)+new When `PYTHONHASHSEED=1·2·3` × test_server_v3245.py Then 125케이스 전수 PASS ×3 (C 클럽 CRUD/F 피드 club/P 플리/R 신고·어드민/EQ 동등성/RG 범위 고정/X 로그 PII). **PASS 375/375**.
+**SV-U2. 무결성 [unit]** — PATCH_EQ_DEPLOY(diffs→orig patch = deploy md5 전량 일치) 재검증 · MD5SUMS.orig/deploy = DEPLOY.md §0·§1 표와 일치 · pyflakes 8파일 0건. **PASS**.
+**SV-U3. 라우트맵 [unit]** — cv45_orig/new diff = 신규 8건(clubs 7 + GET /api/feeds/club/{club_id})·ROUTES 367→375·기존 367 (method,path)→endpoint 결속 무변경 + tester 로컬 재도출(C.router/F.router 직접 열거) 일치. **PASS**.
+**SV-U4. 무인증 탐침(tester 독립) [unit]** — TestClient 로 POST /api/clubs/ · POST·DELETE /api/clubs/{id}/join · GET /api/clubs/mine · POST /api/feeds/ 전부 401 / GET /api/clubs/ 200 · 상세 404(비401). **PASS**.
+**SV-U5. 마이그레이션 [unit]** — Given migrate_v3245_clubs.py PG 3문장(전부 IF NOT EXISTS)+Mongo 인덱스 6종 When 가짜 카탈로그에 2회 적용 Then 상태 동일(멱등). 4-1→4-2 순서: apporig(구코드)를 신컬럼 있는 PG로 구동(개인 플리 생성·목록·상세) → club_id/added_by 참조 쿼리 0건 = 구코드+신컬럼 무해. 역순(신코드+무컬럼)은 500 위험 — 절차서 순서 고정 확인. **PASS**.
+**SV-U6. EQ 스팟 [unit]** — 비클럽 경로 app vs apporig: 일반 피드 생성 직렬화 키 동일 · 개인 플리 생성 응답 = 기존 키 + `club_id:null` 1개 추가(계약 "추가만" 준수·상태코드 불변). **PASS**.
+**KD-U7. 어린이·금칙어 [unit — 서버 실행 채록]** — 어린이 가입 200({member_count,role}) · 어린이 개설 201 허용(kids 가드 없음 — DEPLOY §6-1 대표 확인 대상 그대로) · 보호자 미허용 클럽 글 403 child_restricted(feature=feed_write) · 허용돼도 이미지 403(feature=feed_image) · 텍스트 글 201 · club_profile 금칙어 400 word_filtered(성인도 — SOCIAL_WHERE 포함) · 클럽 글 본문 금칙어는 기존 feed_create where 경유. **PASS**(fixtures + 스위트 F·C-7 ×3시드).
+**AP-U8. 앱 하네스 재실행 [unit]** — dev t1~t6 **137/137** + `npx tsc --noEmit` exit 0. **PASS**.
+**RG-U9. 회귀 [unit]** — v3243 run_all(t1~t3+tsc) 전부 PASS · v3241/tester t1_cross 29/29·t2_album 13/13 · v3239 worktree 109/109(+--head 대조군 109/109, OBS 4건 = 기존 관찰 그대로). **실회귀 0**.
+**X-U10. tester 교차 심 [unit]** — Given fixtures.json(서버 실행 산출물) When Community→ClubCreate→ClubHome→가입/탈퇴/owner 400→FeedCompose(회원·비회원·어린이)→클럽 플리 생성→피커 담기→재생 Then 33/33 PASS — 단 이 중 5건은 **BUG 증거 고정**: ① POST /clubs 307(Android 미추종) 시 개설 실패 강등 ② 그때 ClubHome 미진입 ③ {club:...} 래핑 미해제 → 멤버 수 0 표시 ④ 회원인데 [가입하기] 버튼 ⑤ [플레이리스트 만들기] 숨김. 언랩 등가 재생 시(S3-7·S3-8) 멤버 UI·생성 payload {title,club_id} 정상 = 수정안 유효성 검증.
+**X-S11. 정적 [unit — 정적]** — 2_housing diff = 소유 7파일 + 신규 3파일 정확(병행 dev 파일 무접촉) · 시스템 Alert 0 · 'AIDOL' 0 · 신규 이모지 0 · paddingTop 고정값 0 · 비밀값 0 · 서버 [Club] 로그 id 앞 8자 전수(X-1 ×3시드) · 앱 [Club] console 로그는 전체 id(기존 house 관행과 동일 — FeedScreen 등, PII 아님·관찰만). **PASS**.
+
+### 계약 교차 감사 — 발견 결함 (배포 전 수정 필요)
+
+| # | 심각도 | 위치 | 내용 | 최소 수정(한쪽) |
+|---|---|---|---|---|
+| BUG-1 | **차단(Android)** | 앱 `services/clubService.ts:63·71` | 앱은 `/clubs`(무슬래시) 호출, 서버 canonical 은 `POST·GET /api/clubs/` → **307**(라이브 nginx 실측: Location https·쿼리 보존). GET 은 RN 네이티브가 추종하나 **Android OkHttp 는 POST 307 미추종** → 클럽 개설이 Android 네이티브에서 전부 실패(웹·iOS 는 동작). | 앱 한쪽 2글자: `:63` `api.post('/clubs/' , …)` · `:71` `api.get('/clubs/', …)` — 기존 `/playlists/` 슬래시 관행과 동일화. 서버 무변경. |
+| BUG-2 | **차단(전 플랫폼)** | 앱 `services/clubService.ts:78-79` ↔ 서버 `deploy/app/routes/clubs.py:290` | 상세 응답이 `{"club": {...}}` 래핑(서버 실측)인데 앱 getClub 은 평면 기대 → ClubHome 상세 전멸(멤버 수 0·회원/owner 판정 상실·가입 버튼 오표시·멤버 전용 UI 숨김). dev 하네스는 계약 문서대로 평면을 시뮬해 미검출. | 앱 한쪽 1줄: `getClub` 에서 `return normClub(res.data?.club ?? res.data);` (양셰이프 허용). |
+
+비차단 관찰: ① 게시판 쿼리 {kind:'club', club_id} 용 feeds 인덱스가 §4-1 에 없음(스캔 — MVP 규모 무해, 후속 인덱스 권고) ② 개인 플리 생성 응답에 club_id:null 키 추가(계약 허용 범위) ③ 어린이 개설 허용 기본값 = 대표 확인 대상(DEPLOY §6-1).
+
+### E — 배포 후 스모크 [e2e — 읽기 전용, 서버 쓰기 0·⭐ 0·클럽 개설 없음]
+
+```
+# 1) 코드 반영·라우트 확인 (컨테이너 안 127.0.0.1:9006)
+ssh maidol-ec2 'curl -fsS http://127.0.0.1:9006/api/health'
+ssh maidol-ec2 'curl -fsS http://127.0.0.1:9006/api/clubs/'                          # 기대 {"clubs":[],"next_before":null}
+ssh maidol-ec2 'curl -fsS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9006/api/clubs/000000000000000000000000'   # 404
+ssh maidol-ec2 'curl -fsS -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:9006/api/clubs/'                    # 401
+ssh maidol-ec2 'curl -fsS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9006/api/feeds/club/000000000000000000000000' # 404
+# 2) 공개 도메인 경유(앱 실경로) — 무슬래시 307 확인(BUG-1 수정 후 앱은 슬래시로 직행)
+curl -fsS -o /dev/null -w '%{http_code} %{redirect_url}\n' 'https://api.maidol.ai.kr/api/clubs?limit=1'  # 307 + https .../api/clubs/?limit=1
+curl -fsS 'https://api.maidol.ai.kr/api/clubs/?limit=1'                                                  # 200 {"clubs":[...]}
+# 3) 오류 로그 0
+ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback|ImportError" | head'
+# 4) (선택 — 실계정 필요, 대표/오케스트레이터 결정) 클럽 1건 개설 스모크:
+#    실계정 JWT 로 POST /api/clubs/ {name,description} → 201 → GET /api/clubs/{id} → {"club":{...,role:"owner"}}
+#    → DELETE 라우트 없음(개설 취소 불가·계정당 1개 소진)이므로 개설은 반드시 대표 판단 하에 1회만.
+```
+
+### 게이트 요약 (tester 실행 2026-09-28)
+| # | 체크 | 결과 |
+|---|---|---|
+| 1 | tsc --noEmit 0 · dev 앱 하네스 137/137 재실행 | PASS |
+| 2 | 서버 125케이스 × 시드 1·2·3 · PATCH_EQ_DEPLOY · pyflakes 0 | PASS |
+| 3 | 계약 교차 감사(서버 코드 ↔ 앱 호출 필드 단위) | **FAIL — BUG-1·BUG-2 (앱 한쪽 최소수정 2건 제시)** |
+| 4 | tester 교차 하네스(서버 실행 채록 재생) 33/33 — BUG 증거 5건 포함 | PASS(증거 고정) |
+| 5 | 서버 안전 재감사: 라우트맵 367+8·데코레이터 결속·무인증 401·EQ 스팟·마이그레이션 멱등×2·순서 시뮬 | PASS |
+| 6 | 어린이(가입·개설·글 403·이미지 403)+금칙어(club_profile·feed_create) | PASS |
+| 7 | 정적(범위 7파일·Alert/AIDOL/이모지/paddingTop/비밀값 0·[Club] 서버 로그 8자) | PASS |
+| 8 | 회귀 v3243·v3241-tester·v3239 | PASS |
+- **판정: 조건부 FAIL — BUG-1(clubService.ts:63·71 슬래시)·BUG-2(getClub 언랩) 앱 2줄 수정 후 하네스 재실행(t_cross 의 언랩 등가 검증 S3-7·S3-8 이 수정안 유효성 선검증 완료) 시 배포 가능. 서버 스테이징은 결함 0 — 수정은 앱 쪽만.**

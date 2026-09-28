@@ -14,6 +14,8 @@ import api from '../services/api';
 import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+// v3.245: 클럽 공유 플레이리스트 섹션 — 내가 멤버인 클럽들의 플리에도 동일하게 담기
+import { getMyClubs, listClubPlaylists } from '../services/clubService';
 
 interface Props {
   visible: boolean;
@@ -21,9 +23,13 @@ interface Props {
   onClose: () => void;
 }
 
+// v3.245: 클럽 플리 행 — 어느 클럽의 플리인지 이름을 함께 보여준다
+interface ClubPlRow { id: string; title: string; track_count?: number; clubName: string }
+
 export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Props) {
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const [playlists, setPlaylists] = useState<any[]>([]);
+  const [clubPlaylists, setClubPlaylists] = useState<ClubPlRow[]>([]); // v3.245: 없으면 섹션 숨김
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const many = trackIds.length > 1;
@@ -38,6 +44,24 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
       } catch (err: any) {
         console.error('[PlaylistPickerSheet] 플레이리스트 조회 실패', { status: err?.response?.status });
         setPlaylists([]);
+      }
+    })();
+    // v3.245: 클럽 플리 병행 로드 — 서버 미배포/실패·클럽 없음이면 섹션 숨김(개인 플리 동작 불변)
+    (async () => {
+      try {
+        const mine = await getMyClubs();
+        if (!mine.length) { setClubPlaylists([]); return; }
+        const results = await Promise.allSettled(mine.map((c) => listClubPlaylists(c.id)));
+        const rows: ClubPlRow[] = [];
+        results.forEach((r, i) => {
+          if (r.status !== 'fulfilled') return;
+          for (const p of r.value) rows.push({ id: p.id, title: p.title || p.name || '플레이리스트', track_count: p.track_count, clubName: mine[i].name });
+        });
+        if (__DEV__) console.info('[Club] 피커 클럽 플리', { clubs: mine.length, playlists: rows.length });
+        setClubPlaylists(rows);
+      } catch (err: any) {
+        console.error('[Club] 피커 클럽 플리 조회 실패', { status: err?.response?.status });
+        setClubPlaylists([]);
       }
     })();
   }, [visible]);
@@ -123,6 +147,20 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
                 </TouchableOpacity>
               ))}
             </ScrollView>
+          )}
+          {/* v3.245: 클럽 플레이리스트 — 내가 멤버인 클럽의 공유 플리. 데이터 없으면 섹션 자체 숨김 */}
+          {clubPlaylists.length > 0 && (
+            <View>
+              <AppText variant="footnote" tone="secondary" style={styles.label}>클럽 플레이리스트</AppText>
+              <ScrollView style={[styles.list, { maxHeight: 160 }]} keyboardShouldPersistTaps="handled">
+                {clubPlaylists.map((pl) => (
+                  <TouchableOpacity key={`club-${pl.id}`} style={styles.item} disabled={busy} onPress={() => handlePick(pl.id)}>
+                    <AppText variant="body" numberOfLines={1}>{pl.title}</AppText>
+                    <AppText variant="caption" tone="muted" numberOfLines={1}>{`${pl.clubName} · ${pl.track_count ?? 0}곡`}</AppText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           )}
           <AppText variant="footnote" tone="secondary" style={styles.label}>새 플레이리스트 만들기</AppText>
           <View style={styles.createRow}>
