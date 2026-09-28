@@ -35,6 +35,9 @@ import {
   verifyVoiceClone,
   cloneValidatePhrase,
 } from '../services/voiceService';
+// v3.254: 작곡 복귀 시 새 클론 자동 연결 — ArtistResultScreen v3.103(B-3)과 동일 계약
+// (PATCH persona_id=clone_id, ready 클론만).
+import { patchArtist } from '../services/characterService';
 
 // ── v3.83: Voice Clone 4단계 위저드 (MAIDOL VoiceCloneWizard.jsx 이식) ─────────
 // ① 노래 샘플(녹음/업로드) + 보컬 구간 + 이름 → POST /voice-clone/create
@@ -42,6 +45,9 @@ import {
 // ③ 검증 녹음 + 가창 실력 → POST /voice-clone/{id}/verify
 // ④ 완료 안내 (학습은 백그라운드 — 목록에서 상태 확인)
 // route.params.resumeCloneId → 클론 GET 후 문구 있으면 3단계, 없으면 2단계부터 재개.
+// v3.254: route.params.returnTo==='compose'(+artistCharacterId) — 작곡 만료 다이얼로그의
+// '다시 학습하기' 진입. 학습 완료(ready) 시 새 클론을 해당 아티스트에 자동 연결하고
+// 앱 내 다이얼로그 안내 후 작곡 화면으로 복귀(goBack)한다.
 
 type Props = NativeStackScreenProps<any, 'VoiceCloneWizard'>;
 
@@ -78,6 +84,10 @@ const GEN_SLOW_TRIES = 24; // 약 2분 경과 안내
 export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const resumeCloneId: string | undefined = (route.params as any)?.resumeCloneId;
+  // v3.254: 작곡 만료 다이얼로그 '다시 학습하기' 진입 — 완료 시 자동 연결·작곡 복귀
+  const returnTo: 'compose' | undefined =
+    (route.params as any)?.returnTo === 'compose' ? 'compose' : undefined;
+  const composeArtistCid: string | null = (route.params as any)?.artistCharacterId ?? null;
   // v3.232 K14 [KidsGate]: 어린이 계정은 목소리 클로닝 진입 불가(진입점 숨김 — 방어). 성인은 false.
   const isChild = useIsChild();
   useEffect(() => {
@@ -638,6 +648,55 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     navigation.goBack();
   };
 
+  // ── v3.254: 작곡 복귀(returnTo==='compose') ──
+  // 학습 완료(ready) 시 ① 새 클론을 진입 아티스트에 자동 연결(patchArtist persona_id=clone_id)
+  // 시도 — 실패해도 복귀는 진행(문구로만 구분) ② 앱 내 다이얼로그 후 작곡 화면으로 복귀.
+  // 진입이 navigate라 MusicGeneration이 스택 바로 아래에 보존 — goBack이 곧 복귀(방어로 canGoBack).
+  const composeReturnRanRef = useRef(false);
+  const goBackToCompose = () => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate('MusicGeneration' as any);
+  };
+  const handleComposeReturn = async () => {
+    if (composeReturnRanRef.current) {
+      // 자동 실행 후 화면의 [작곡으로 돌아가기] 재탭 — 연결 재시도 없이 복귀만
+      goBackToCompose();
+      return;
+    }
+    composeReturnRanRef.current = true;
+    const canConnect = !!composeArtistCid && !!cloneId;
+    let connected = false;
+    if (canConnect) {
+      try {
+        await patchArtist(composeArtistCid as string, { persona_id: cloneId as string });
+        connected = true;
+        console.info('[Voice] compose 복귀 — 새 목소리 아티스트 연결 완료', { cid: composeArtistCid, cloneId });
+      } catch (err: any) {
+        console.error('[Voice] compose 복귀 — 아티스트 연결 실패(복귀는 진행)', {
+          cid: composeArtistCid,
+          status: err?.response?.status,
+        });
+      }
+    } else {
+      console.warn('[Voice] compose 복귀 — 연결 대상 없음(연결 생략)', { cid: composeArtistCid, cloneId });
+    }
+    useVoiceStore.getState().fetchClones();
+    showAlert(
+      '목소리 준비 완료',
+      connected || !canConnect
+        ? '작곡하던 화면으로 돌아갈게요.'
+        : '작곡하던 화면으로 돌아갈게요.\n아티스트 연결은 실패했어요 — 아티스트 화면에서 목소리를 다시 연결해주세요.',
+      [{ text: '확인', onPress: goBackToCompose }]
+    );
+  };
+  // 학습 완료(ready) 도달 시 자동 실행 — resume로 곧장 ready에 진입한 경우 포함
+  useEffect(() => {
+    if (returnTo !== 'compose' || step !== 4 || genStatus !== 'ready') return;
+    if (composeReturnRanRef.current) return;
+    void handleComposeReturn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnTo, step, genStatus]);
+
   // ── 녹음/업로드 패널 (RecordPanel 이식 — RN 단순화) ──
   const renderAudioPanel = (target: 'sample' | 'verify', src: AudioSrc, clear: () => void) => (
     <View>
@@ -949,9 +1008,19 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                   </>
                 )}
               </View>
-              <TouchableOpacity style={styles.primaryBtn} onPress={handleDone}>
-                <AppText style={styles.primaryBtnText}>목록으로</AppText>
-              </TouchableOpacity>
+              {/* v3.254: 작곡 복귀 진입이면 [목록으로] 대신 — ready에서만 복귀 버튼
+                  (자동 다이얼로그의 보조 경로), 학습 중에는 버튼 없음(이탈=헤더 뒤로가기). */}
+              {returnTo === 'compose' ? (
+                genStatus === 'ready' && (
+                  <TouchableOpacity style={styles.primaryBtn} onPress={() => void handleComposeReturn()}>
+                    <AppText style={styles.primaryBtnText}>작곡으로 돌아가기</AppText>
+                  </TouchableOpacity>
+                )
+              ) : (
+                <TouchableOpacity style={styles.primaryBtn} onPress={handleDone}>
+                  <AppText style={styles.primaryBtnText}>목록으로</AppText>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </ScrollView>

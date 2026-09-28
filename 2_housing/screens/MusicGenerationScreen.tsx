@@ -463,6 +463,35 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }, [step, refreshArtists])
   );
 
+  // v3.254 [VoiceExpired]: 재학습 위저드에서 복귀(focus)하면 아티스트의 최신 클론 voice_id로
+  // 전송값을 갱신 — 위저드가 patchArtist로 새 클론을 연결해도 selectedPersonaId에는 만료된
+  // 옛 voice_id가 남아 생성 시 서버 400이 나는 문제 차단. 아티스트 경유 클론 적용 상태에서만
+  // 검사하고, 조회 실패는 무시(기존 상태 유지 — 생성 직전 ensureArtistVoiceUsable이 최종 판정).
+  useFocusEffect(
+    useCallback(() => {
+      if (!artistVoiceApplied || !personaModelOn || !selectedPersonaId) return;
+      const cid = useMusicStore.getState().artistCharacterId;
+      if (!cid) return;
+      (async () => {
+        try {
+          const artist = await getArtist(cid);
+          if (
+            artist.persona_voice_id &&
+            artist.persona_status === 'ready' &&
+            artist.persona_voice_id !== selectedPersonaId
+          ) {
+            console.info('[Voice] focus — 아티스트 최신 목소리로 전송값 갱신', { cid });
+            setSelectedPersonaId(artist.persona_voice_id);
+            setPersonaModel('voice');
+          }
+        } catch (err: any) {
+          console.warn('[Voice] focus 목소리 재검사 실패 — 무시', { status: err?.response?.status });
+        }
+      })();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [artistVoiceApplied, personaModelOn, selectedPersonaId])
+  );
+
   // v3.241 [ArtistSelect] P0-3 [25]: 아티스트 단계(200) 진입 시 계정 대표(is_default)를 초기값으로
   // 미리선택 — 미선택 생성이 실사 폴백으로 잘못 발매되는 문제의 FE 절반(결과 화면 폴백은 app-1).
   // 초기값일 뿐: 다른 아티스트 선택·'아티스트 없이 진행'(null 클리어)은 기존 그대로. 만료/미연결
@@ -1105,7 +1134,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // v3.241 [VoiceExpired] P0-4 [27]: 만료는 [확인]뿐인 막다른 팝업 대신 행동 다이얼로그로 —
       // [다시 학습하기]=VoiceCloneWizard 이동 / [아티스트 없이 진행]=무아티스트 계속 / [닫기]
       if (artist.persona_status === 'expired') {
-        showVoiceExpiredDialog(artist.name, 'pick', 'expired');
+        showVoiceExpiredDialog(artist.name, artist.character_id, 'pick', 'expired');
         return;
       }
       showAlert(
@@ -1171,8 +1200,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.241 [VoiceExpired] P0-4 [27]: 만료 팝업 막다른 길 제거 — 단일 다이얼로그(중복 표시 없음,
   // v3.232 이중 팝업 금지 유지). pick=아티스트 선택 시 차단, generate=생성 직전 차단(선택 당시
   // ready였던 목소리가 이후 만료된 경우 — 서버 400 반복 사전 차단). 재학습 ⭐ 비용 문구 유지.
+  // v3.254: artistCharacterId — '다시 학습하기'가 위저드에 넘겨 학습 완료 시 자동 연결·복귀에 쓴다.
   const showVoiceExpiredDialog = (
     artistName: string | null,
+    artistCharacterId: string | null,
     context: 'pick' | 'generate',
     reason: 'expired' | 'unavailable'
   ) => {
@@ -1206,9 +1237,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           text: '다시 학습하기',
           onPress: () => {
             if (__DEV__) console.info(`[VoiceExpired] dialog action=retrain ctx=${context}`);
-            // 재학습 = 새 클론 학습(만료 클론 재개 불가) — 파라미터 없이 위저드 진입.
-            // 이 화면은 스택에 보존되어 뒤로가기 복귀 시 대화가 이어진다(step 200 focus 갱신).
-            navigation.navigate('VoiceCloneWizard' as any);
+            // 재학습 = 새 클론 학습(만료 클론 재개 불가).
+            // v3.254: returnTo/artistCharacterId 전달 — 학습 완료 시 위저드가 새 클론을 이
+            // 아티스트에 자동 연결(patchArtist)하고 이 화면으로 goBack 복귀한다(navigate라
+            // 이 화면이 스택에 보존 — 복귀 focus에서 아티스트 목록·전송 목소리 갱신).
+            navigation.navigate(
+              'VoiceCloneWizard' as any,
+              { returnTo: 'compose', artistCharacterId: artistCharacterId ?? undefined } as any
+            );
           },
         },
       ]
@@ -1642,7 +1678,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const reason = artistVoiceBlockReason(artist);
     if (!reason) return true;
     console.warn(`[VoiceExpired] generate blocked cid=${cid}`, { status: artist.persona_status });
-    showVoiceExpiredDialog(artist.name, 'generate', reason);
+    showVoiceExpiredDialog(artist.name, cid, 'generate', reason);
     return false;
   };
 
