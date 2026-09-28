@@ -7,6 +7,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
+import { CLUB_LABEL } from '../services/clubService'; // v3.249 — 클럽 라벨 단일화(명칭 변경 대비)
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Button } from './ui';
 import LoginStartButton from './LoginStartButton';
@@ -14,7 +15,9 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
 // v3.232 K11(G2): 'track_comment'(곡 댓글) 추가 — 전 사용자 신규 신고 대상. 구서버는 400 문구를 그대로 표시.
-export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message' | 'track_comment';
+// v3.249: 'club_member'(클럽 멤버 = 유저 대상) 추가 — clubId 필수(서버가 reason_text 에 클럽 컨텍스트 자동 부착).
+//         기존 5타깃은 clubId 미전달로 페이로드 불변(무회귀).
+export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message' | 'track_comment' | 'club_member';
 
 const REASONS: { code: string; label: string }[] = [
   { code: 'portrait', label: '초상권 침해' },
@@ -28,10 +31,12 @@ interface Props {
   visible: boolean;
   targetType: ReportTargetType;
   targetId: string;
+  /** v3.249: targetType='club_member' 전용 클럽 컨텍스트 — 그 외 타입은 미전달(서버도 무시) */
+  clubId?: string;
   onClose: () => void;
 }
 
-export default function ReportModal({ visible, targetType, targetId, onClose }: Props) {
+export default function ReportModal({ visible, targetType, targetId, clubId, onClose }: Props) {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
   // [KeyboardCtl] v3.207(⑤): v3.202 수동 리프트(translateY/(kbPad+insets)/2·동적 maxHeight) 제거 —
@@ -58,18 +63,24 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
     if (__DEV__) console.info('[ReportModal] submit', { target_type: targetType, target_id: targetId, reason_code: reasonCode, text_len: text.length });
     // v3.232 K11: 곡 댓글 신고(신규 대상) 추적 로그 — 기존 대상 4종은 로그 불변
     if (targetType === 'track_comment') console.info('[TrackCommentReport] submit', { target_id: targetId, reason_code: reasonCode });
+    // v3.249: 클럽 멤버 신고(신규 대상) 추적 로그 — 기존 대상 로그 불변
+    if (targetType === 'club_member') console.info('[Club] member report submit', { target_id: targetId, clubId, reason_code: reasonCode });
     try {
       await api.post('/reports/', {
         target_type: targetType,
         target_id: targetId,
         reason_code: reasonCode,
         ...(text ? { reason_text: text } : {}),
+        // v3.249: club_member 전용 컨텍스트 — 기존 5타깃 페이로드 불변
+        ...(targetType === 'club_member' && clubId ? { club_id: clubId } : {}),
       });
       setDone(true);
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[ReportModal] submit failed', { target_type: targetType, target_id: targetId, status });
       if (status === 409) setError('이미 신고한 콘텐츠입니다.');
+      else if (status === 403 && targetType === 'club_member') setError(`${CLUB_LABEL} 멤버만 신고할 수 있어요.`);
+      else if (status === 404 && targetType === 'club_member') setError('신고 대상을 찾을 수 없어요.');
       else if (status === 400) setError(err?.response?.data?.error || err?.response?.data?.detail || '신고할 수 없는 콘텐츠입니다.');
       else setError('신고 접수에 실패했습니다. 잠시 후 다시 시도해주세요.');
     } finally {

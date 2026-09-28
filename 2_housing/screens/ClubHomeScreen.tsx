@@ -18,7 +18,8 @@ import LoginPrompt from '../components/LoginPrompt';
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import TrackRow from '../components/TrackRow';
-import { showAlert } from '../utils/appAlert';
+import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
+import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -27,10 +28,14 @@ import {
   Club, ClubPlaylist, TransferCandidate, getClub, getClubErrorCode, joinClub, leaveClub,
   listClubFeeds, listClubPlaylists, createClubPlaylist,
   transferCandidates, transferOwner, clubDeleteRequestDraft,
+  // v3.249 멤버 관리 — 멤버 목록·내보내기·행 메뉴 규칙(문구 라벨은 CLUB_LABEL 단일화)
+  CLUB_LABEL, ClubMember, ClubMembersError, classifyMembersError,
+  listClubMembers, kickClubMember, memberMenuActions, kickErrorMessage,
 } from '../services/clubService';
 
 type ClubTab = 'board' | 'playlists' | 'info';
 const BOARD_LIMIT = 20;
+const MEMBERS_LIMIT = 30; // v3.249 — 멤버 목록 페이지 크기(before 커서 무한스크롤)
 
 const TABS: { key: ClubTab; label: string }[] = [
   { key: 'board', label: '게시판' },
@@ -87,6 +92,14 @@ export default function ClubHomeScreen() {
   const [transferFailed, setTransferFailed] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
 
+  // v3.249 멤버 관리 — 정보 탭 멤버 목록(무한스크롤) + 행 ⋯ 메뉴(신고하기/내보내기)
+  const [members, setMembers] = useState<ClubMember[]>([]);
+  const [membersError, setMembersError] = useState<ClubMembersError | null>(null);
+  const [membersBefore, setMembersBefore] = useState<string | null>(null);
+  const [membersMore, setMembersMore] = useState(false);
+  const [kickBusy, setKickBusy] = useState(false);
+  const [reportTarget, setReportTarget] = useState<ClubMember | null>(null);
+
   const isMember = !!detail?.is_member || detail?.role === 'owner' || detail?.role === 'member';
   const isOwner = detail?.role === 'owner' || (!!user && !!detail?.owner_id && String(detail.owner_id) === String(user.id));
 
@@ -133,13 +146,28 @@ export default function ClubHomeScreen() {
     }
   }, [clubId]);
 
+  // v3.249 — 멤버 목록(멤버 전용). 구서버(신규 라우트 404)·비멤버(403)·네트워크 전부 안내 강등(크래시 0)
+  const fetchMembers = useCallback(async () => {
+    try {
+      const page = await listClubMembers(String(clubId), { limit: MEMBERS_LIMIT });
+      setMembers(page.members);
+      setMembersBefore(page.next_before);
+      setMembersError(null);
+    } catch (err: any) {
+      console.error('[Club] 멤버 목록 조회 실패', { clubId, status: err?.response?.status });
+      setMembers([]);
+      setMembersBefore(null);
+      setMembersError(classifyMembersError(err));
+    }
+  }, [clubId]);
+
   const fetchAll = useCallback(async () => {
     if (__DEV__) console.info('[Club] ClubHome fetchAll', { clubId });
     setLoading(true);
-    await Promise.allSettled([fetchDetail(), fetchBoard(), fetchPlaylists()]);
+    await Promise.allSettled([fetchDetail(), fetchBoard(), fetchPlaylists(), fetchMembers()]);
     setLoading(false);
     setRefreshing(false);
-  }, [fetchDetail, fetchBoard, fetchPlaylists]);
+  }, [fetchDetail, fetchBoard, fetchPlaylists, fetchMembers]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -167,6 +195,26 @@ export default function ClubHomeScreen() {
     }
   }, [tab, boardBefore, boardMore, clubId]);
 
+  // v3.249 — 멤버 목록 무한스크롤(정보 탭, before 커서 — 게시판 loadMore 관행)
+  const handleMembersMore = useCallback(async () => {
+    if (tab !== 'info' || !membersBefore || membersMore) return;
+    setMembersMore(true);
+    if (__DEV__) console.info('[Club] 멤버 목록 loadMore', { before: membersBefore });
+    try {
+      const page = await listClubMembers(String(clubId), { limit: MEMBERS_LIMIT, before: membersBefore });
+      setMembers((prev) => {
+        const seen = new Set(prev.map((m) => m.user_id));
+        return [...prev, ...page.members.filter((m) => !seen.has(m.user_id))];
+      });
+      setMembersBefore(page.next_before);
+    } catch (err: any) {
+      console.error('[Club] 멤버 목록 loadMore 실패', { status: err?.response?.status });
+      setMembersBefore(null);
+    } finally {
+      setMembersMore(false);
+    }
+  }, [tab, membersBefore, membersMore, clubId]);
+
   const requireLogin = (): boolean => {
     if (!user) { setCtaVisible(true); return false; }
     return true;
@@ -179,6 +227,7 @@ export default function ClubHomeScreen() {
       await joinClub(String(clubId));
       console.info('[Club] 가입 성공', { clubId });
       setDetail((d) => d ? { ...d, is_member: true, role: d.role === 'owner' ? d.role : 'member', member_count: (d.member_count ?? 0) + 1 } : d);
+      fetchMembers(); // v3.249 — 멤버가 되면 멤버 목록 열람 가능(정보 탭 동기화)
     } catch (err: any) {
       console.error('[Club] 가입 실패', { clubId, status: err?.response?.status, code: getClubErrorCode(err) });
       showAlert('오류', '클럽에 가입하지 못했어요. 잠시 후 다시 시도해주세요.');
@@ -193,6 +242,7 @@ export default function ClubHomeScreen() {
       await leaveClub(String(clubId));
       console.info('[Club] 탈퇴 성공', { clubId });
       setDetail((d) => d ? { ...d, is_member: false, role: null, member_count: Math.max(0, (d.member_count ?? 1) - 1) } : d);
+      fetchMembers(); // v3.249 — 탈퇴 후 멤버 목록은 서버 규칙(비멤버 403)대로 안내 강등
     } catch (err: any) {
       const code = getClubErrorCode(err);
       console.error('[Club] 탈퇴 실패', { clubId, status: err?.response?.status, code });
@@ -256,6 +306,52 @@ export default function ClubHomeScreen() {
       { text: '취소', style: 'cancel' },
       { text: '위임하기', onPress: () => doTransfer(c) },
     ]);
+  };
+
+  // ── v3.249 멤버 관리 — 행 ⋯ 메뉴(신고하기=멤버 누구나 / 내보내기=owner 만), 팝업은 전부 showAlert ──
+  const doKick = async (m: ClubMember) => {
+    if (kickBusy) return;
+    setKickBusy(true);
+    try {
+      const res = await kickClubMember(String(clubId), m.user_id);
+      console.info('[Club] 멤버 내보내기 성공', { clubId, userId: m.user_id });
+      // 성공: 목록 새로고침(커서 리셋) + 멤버 수 갱신(서버 응답 member_count 우선)
+      setDetail((d) => d ? { ...d, member_count: res.member_count ?? Math.max(0, (d.member_count ?? 1) - 1) } : d);
+      fetchMembers();
+    } catch (err: any) {
+      const code = getClubErrorCode(err);
+      const status = err?.response?.status;
+      console.error('[Club] 멤버 내보내기 실패', { clubId, userId: m.user_id, status, code });
+      // 서버 확정 오류 분기(cannot_kick_owner·403·404) — 문구는 clubService 단일화
+      showAlert('알림', kickErrorMessage(code, status));
+      if (status === 404) fetchMembers(); // 이미 떠난 멤버 — 목록 최신화
+    } finally {
+      setKickBusy(false);
+    }
+  };
+
+  const confirmKick = (m: ClubMember) => {
+    showAlert(
+      '멤버 내보내기',
+      `"${m.nickname || '멤버'}"님을 ${CLUB_LABEL}에서 내보낼까요? 작성한 글과 담은 곡은 남아요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '내보내기', style: 'destructive', onPress: () => doKick(m) },
+      ],
+    );
+  };
+
+  const openMemberMenu = (m: ClubMember) => {
+    const actions = memberMenuActions(
+      { id: user?.id != null ? String(user.id) : null, isMember, isOwner }, m,
+    );
+    if (!actions.length || kickBusy) return;
+    if (__DEV__) console.info('[Club] 멤버 메뉴 열기', { clubId, userId: m.user_id, actions });
+    const buttons: AppAlertButton[] = [];
+    if (actions.includes('report')) buttons.push({ text: '신고하기', onPress: () => setReportTarget(m) });
+    if (actions.includes('kick')) buttons.push({ text: '내보내기', style: 'destructive', onPress: () => confirmKick(m) });
+    buttons.push({ text: '취소', style: 'cancel' });
+    showAlert('멤버 관리', `"${m.nickname || '멤버'}"님`, buttons);
   };
 
   const handleMembershipPress = () => {
@@ -440,6 +536,76 @@ export default function ClubHomeScreen() {
     />
   );
 
+  // ── v3.249 멤버 행 — 닉네임·role 뱃지·가입일 + ⋯ 메뉴(본인·owner 행 제외) ──
+  const renderMemberRow = ({ item }: { item: ClubMember }) => {
+    const isRowOwner = (item.role || 'member') === 'owner';
+    const isMe = !!user && String(item.user_id) === String(user.id);
+    const canMenu = memberMenuActions(
+      { id: user?.id != null ? String(user.id) : null, isMember, isOwner }, item,
+    ).length > 0;
+    const joined = fmtDate(item.joined_at);
+    return (
+      <View style={styles.memberRow}>
+        <View style={styles.memberAvatar}>
+          <Feather name="user" size={16} color={colors.text.muted} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <View style={styles.memberNameRow}>
+            <AppText variant="callout" numberOfLines={1} style={{ flexShrink: 1 }}>{item.nickname || '멤버'}</AppText>
+            {isRowOwner ? (
+              <View style={styles.roleBadge}>
+                <AppText variant="caption" tone="accent">운영자</AppText>
+              </View>
+            ) : null}
+            {isMe ? <AppText variant="caption" tone="muted">나</AppText> : null}
+          </View>
+          {joined ? (
+            <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>{`${joined} 가입`}</AppText>
+          ) : null}
+        </View>
+        {canMenu ? (
+          <TouchableOpacity
+            onPress={() => openMemberMenu(item)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={`멤버 메뉴 ${item.nickname || '멤버'}`}
+          >
+            <Feather name="more-horizontal" size={18} color={colors.text.muted} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
+  // ── 정보 탭 본문(소개·개설일·운영자) — v3.249: 멤버 목록이 리스트 데이터가 되면서 헤더로 이동 ──
+  const infoContent = (
+    <View style={styles.infoTab}>
+      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>소개</AppText>
+      <AppText variant="body" tone="secondary" style={styles.infoValue}>
+        {detail?.description || '아직 소개가 없어요.'}
+      </AppText>
+      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>개설일</AppText>
+      <AppText variant="body" tone="secondary" style={styles.infoValue}>
+        {fmtDate(detail?.created_at) || '정보 없음'}
+      </AppText>
+      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>운영자</AppText>
+      <AppText variant="body" tone="secondary" style={styles.infoValue}>
+        {(detail as any)?.owner_nickname || (isOwner ? (user as any)?.nickname || '나' : '클럽 운영자')}
+      </AppText>
+      {/* v3.247: 클럽 삭제 요청 — owner 전용 행(삭제는 운영팀 처리, DM 요청 진입) */}
+      {isOwner ? (
+        <TouchableOpacity style={styles.deleteReqRow} activeOpacity={0.7} onPress={handleDeleteRequest} accessibilityLabel="클럽 삭제 요청">
+          <Feather name="trash-2" size={16} color={colors.status.error} />
+          <AppText variant="body" style={{ color: colors.status.error, flex: 1 }}>클럽 삭제 요청</AppText>
+          <Feather name="chevron-right" size={16} color={colors.text.muted} />
+        </TouchableOpacity>
+      ) : null}
+      {/* v3.249: 멤버 섹션 라벨 — 목록 행은 FlatList 데이터(무한스크롤) */}
+      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>
+        {`멤버 ${detail?.member_count ?? members.length}명`}
+      </AppText>
+    </View>
+  );
+
   // ── 상단 정보 + 탭바(FlatList 헤더) ──
   const header = (
     <View>
@@ -518,32 +684,9 @@ export default function ClubHomeScreen() {
           </TouchableOpacity>
         ) : null
       ) : null}
-    </View>
-  );
 
-  // ── 정보 탭 본문(소개·개설일·운영자) ──
-  const infoContent = (
-    <View style={styles.infoTab}>
-      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>소개</AppText>
-      <AppText variant="body" tone="secondary" style={styles.infoValue}>
-        {detail?.description || '아직 소개가 없어요.'}
-      </AppText>
-      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>개설일</AppText>
-      <AppText variant="body" tone="secondary" style={styles.infoValue}>
-        {fmtDate(detail?.created_at) || '정보 없음'}
-      </AppText>
-      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>운영자</AppText>
-      <AppText variant="body" tone="secondary" style={styles.infoValue}>
-        {(detail as any)?.owner_nickname || (isOwner ? (user as any)?.nickname || '나' : '클럽 운영자')}
-      </AppText>
-      {/* v3.247: 클럽 삭제 요청 — owner 전용 행(삭제는 운영팀 처리, DM 요청 진입) */}
-      {isOwner ? (
-        <TouchableOpacity style={styles.deleteReqRow} activeOpacity={0.7} onPress={handleDeleteRequest} accessibilityLabel="클럽 삭제 요청">
-          <Feather name="trash-2" size={16} color={colors.status.error} />
-          <AppText variant="body" style={{ color: colors.status.error, flex: 1 }}>클럽 삭제 요청</AppText>
-          <Feather name="chevron-right" size={16} color={colors.text.muted} />
-        </TouchableOpacity>
-      ) : null}
+      {/* v3.249: 정보 탭 — 소개·개설일·운영자(+owner 삭제 요청)는 헤더, 멤버 행은 리스트 데이터 */}
+      {tab === 'info' ? infoContent : null}
     </View>
   );
 
@@ -569,11 +712,17 @@ export default function ClubHomeScreen() {
     );
   }
 
-  const listData = tab === 'board' ? feeds : tab === 'playlists' ? (selectedPl ? plTracks : playlists) : [];
-  const listRender = tab === 'board' ? renderFeed : tab === 'playlists' ? (selectedPl ? renderTrackRow : renderPlaylistRow) : () => null;
+  // v3.249: 정보 탭 리스트 데이터 = 멤버 행(무한스크롤) — 소개 등 본문은 헤더(infoContent)로 이동
+  const listData = tab === 'board' ? feeds : tab === 'playlists' ? (selectedPl ? plTracks : playlists) : members;
+  const listRender = tab === 'board' ? renderFeed : tab === 'playlists' ? (selectedPl ? renderTrackRow : renderPlaylistRow) : renderMemberRow;
 
   const emptyComponent = tab === 'info'
-    ? infoContent
+    // v3.249: 멤버 목록 강등 상태 — 구서버 404/네트워크 = failed, 비멤버 403 = forbidden
+    ? (membersError === 'failed'
+      ? <EmptyState icon={<Feather name="cloud-off" size={44} color={colors.text.muted} />} title="멤버 목록을 불러오지 못했어요" hint="잠시 후 아래로 당겨 다시 시도해주세요." />
+      : membersError === 'forbidden'
+      ? <EmptyState icon={<Feather name="lock" size={44} color={colors.text.muted} />} title={`${CLUB_LABEL} 멤버만 볼 수 있어요`} hint="가입하면 멤버 목록을 볼 수 있어요." />
+      : <EmptyState icon={<Feather name="users" size={44} color={colors.text.muted} />} title="아직 멤버가 없어요" />)
     : tab === 'board'
     ? (boardFailed
       ? <EmptyState icon={<Feather name="cloud-off" size={44} color={colors.text.muted} />} title="게시판을 불러오지 못했어요" hint="잠시 후 아래로 당겨 다시 시도해주세요." />
@@ -590,14 +739,14 @@ export default function ClubHomeScreen() {
     <ScreenLayout>
       <FlatList
         data={listData}
-        keyExtractor={(item: any, i: number) => String(item?.id ?? item?.track_id ?? i)}
+        keyExtractor={(item: any, i: number) => String(item?.id ?? item?.track_id ?? item?.user_id ?? i)}
         renderItem={listRender as any}
         ListHeaderComponent={header}
         ListEmptyComponent={<View style={{ paddingTop: tab === 'info' ? 0 : spacing.xl }}>{emptyComponent}</View>}
-        ListFooterComponent={tab === 'board' && boardMore
+        ListFooterComponent={(tab === 'board' && boardMore) || (tab === 'info' && membersMore)
           ? <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: spacing.lg }} />
           : null}
-        onEndReached={handleBoardMore}
+        onEndReached={() => { handleBoardMore(); handleMembersMore(); }}
         onEndReachedThreshold={0.4}
         refreshControl={
           <RefreshControl
@@ -695,6 +844,15 @@ export default function ClubHomeScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* v3.249 멤버 신고 — 기존 ReportModal 재사용(targetType 'club_member' + 클럽 컨텍스트) */}
+      <ReportModal
+        visible={!!reportTarget}
+        targetType="club_member"
+        targetId={reportTarget?.user_id || ''}
+        clubId={String(clubId)}
+        onClose={() => setReportTarget(null)}
+      />
+
       {/* 비로그인 액션(가입·글쓰기 등) → 로그인 오버레이 — FeedScreen 관행 */}
       {!user && ctaVisible ? (
         <TouchableOpacity style={styles.loginOverlay} activeOpacity={1} onPress={() => setCtaVisible(false)}>
@@ -748,6 +906,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     marginTop: spacing.xxl, paddingVertical: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
+  },
+  // v3.249: 멤버 행(정보 탭) — 위임 후보 행 관행 + 아바타 원형
+  memberRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    paddingVertical: spacing.md, marginHorizontal: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  memberAvatar: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
+  },
+  memberNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  roleBadge: {
+    paddingHorizontal: spacing.xs, paddingVertical: 1,
+    borderRadius: radius.sm, backgroundColor: colors.bg.surface2,
   },
   // v3.247: 운영자 위임 바텀시트 — PlaylistPickerSheet 시트 관행
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },

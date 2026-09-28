@@ -11,6 +11,10 @@
 //   클럽 플리: POST /playlists {title, club_id} · GET /clubs/{id}/playlists → [{id,title,track_count,...}]
 import api from './api';
 
+// v3.249: 커뮤니티 명칭('클럽'→다른 이름) 변경 논의 중 — 신규 사용자 노출 문구는 이 상수만 쓰면
+// 라벨 교체가 1줄이 된다(기존 화면 문구 소급 정리는 범위 외).
+export const CLUB_LABEL = '클럽';
+
 export type ClubSort = 'new' | 'members';
 
 export interface Club {
@@ -175,4 +179,74 @@ export async function transferOwner(clubId: string, newOwnerId: string): Promise
 /** v3.247 클럽 삭제 요청 초안 — 운영팀 DM(DmChat prefill)·클립보드 폴백이 같은 문구를 쓴다 */
 export function clubDeleteRequestDraft(clubName: string): string {
   return `[클럽 삭제 요청] 클럽명: ${clubName} / 사유: `;
+}
+
+// ── v3.249 멤버 관리 — 서버 스테이징 확정 계약(미배포 구서버 404 → 호출자가 안내로 강등):
+//   GET    /clubs/{id}/members?limit&before= → { members:[{user_id, nickname, role, joined_at}], next_before }
+//          멤버 전용(비멤버 403 'club_members_only'), 최신 가입순, before=<멤버십 커서>
+//   DELETE /clubs/{id}/members/{user_id} → 200 {member_count} — owner 전용(403)
+//          400 'cannot_kick_owner'(본인·owner 대상) · 404(미멤버) — 작성한 글·담은 곡은 보존
+//   멤버 신고: 기존 POST /reports/ 재사용 — target_type 'club_member', target_id=유저 id,
+//          club_id 필수(서버가 reason_text 에 "[클럽:{club_id}] " 컨텍스트 자동 부착)
+export interface ClubMember {
+  user_id: string;
+  nickname?: string | null;
+  /** 'owner' | 'member' */
+  role?: string;
+  joined_at?: string;
+}
+
+export interface ClubMemberPage {
+  members: ClubMember[];
+  next_before: string | null;
+}
+
+export async function listClubMembers(
+  clubId: string,
+  opts: { limit?: number; before?: string | null } = {},
+): Promise<ClubMemberPage> {
+  const params: Record<string, any> = { limit: opts.limit ?? 30 };
+  if (opts.before) params.before = opts.before;
+  if (__DEV__) console.info('[Club] listClubMembers', { clubId, ...params });
+  const res = await api.get(`/clubs/${clubId}/members`, { params });
+  const members: ClubMember[] = Array.isArray(res.data?.members)
+    ? res.data.members.map((m: any) => ({ ...m, user_id: String(m?.user_id ?? '') }))
+    : [];
+  return { members, next_before: res.data?.next_before ?? null };
+}
+
+export async function kickClubMember(clubId: string, userId: string): Promise<{ member_count?: number }> {
+  if (__DEV__) console.info('[Club] kickClubMember', { clubId, userId });
+  const res = await api.delete(`/clubs/${clubId}/members/${userId}`);
+  return { member_count: res.data?.member_count };
+}
+
+export type ClubMembersError = 'forbidden' | 'failed';
+
+/** 멤버 목록 실패 분류 — 403(비멤버)만 구분, 그 외(404 구서버·네트워크)는 안내 강등 */
+export function classifyMembersError(err: any): ClubMembersError {
+  return err?.response?.status === 403 ? 'forbidden' : 'failed';
+}
+
+export type MemberMenuAction = 'report' | 'kick';
+
+/** 행 ⋯ 메뉴 노출 규칙(v3.249 확정) — 본인·owner 행 제외, [신고]는 멤버 누구나, [내보내기]는 owner 만 */
+export function memberMenuActions(
+  viewer: { id?: string | null; isMember: boolean; isOwner: boolean },
+  row: ClubMember,
+): MemberMenuAction[] {
+  if (!viewer.isMember || !viewer.id) return [];
+  if (String(row.user_id) === String(viewer.id)) return []; // 본인 행
+  if ((row.role || 'member') === 'owner') return []; // owner 행(신고는 기존 '클럽 신고' 경로)
+  const actions: MemberMenuAction[] = ['report'];
+  if (viewer.isOwner) actions.push('kick');
+  return actions;
+}
+
+/** 내보내기 실패 문구(서버 확정 오류 분기) — 404 는 호출자가 목록 새로고침을 함께 수행 */
+export function kickErrorMessage(code: string | null, status?: number): string {
+  if (code === 'cannot_kick_owner') return '운영자는 내보낼 수 없어요.';
+  if (status === 404) return `이미 ${CLUB_LABEL}을 떠난 멤버예요. 목록을 새로고침할게요.`;
+  if (status === 403) return `${CLUB_LABEL} 운영자만 멤버를 내보낼 수 있어요.`;
+  return '내보내지 못했어요. 잠시 후 다시 시도해주세요.';
 }
