@@ -3468,3 +3468,17 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 서버: md5 가드·.bak_pre_v3247·pre-v3247-live 태그·nice 빌드·INFLIGHT 0·재생성·Traceback 0.
 - 웹: AppEntry-cbef3cb9… 마커 7종 확인.
 - 남은 후속: 클럽 오픈채팅(v3.249 대기), 운영자 멤버 관리(신고·내보내기 — 대표 지시로 착수), share-video 서버 Range·폴링화, 네이티브 v1.3.1.
+
+---
+
+## v3.249 — 2026-09-28 — 클럽 운영자 멤버 관리 (서버·웹 배포 완료)
+
+### 반영 (앱 2ed0847, 서버 배포)
+- 멤버 목록: GET /clubs/{id}/members (멤버 전용, 커서 페이징, 정보 탭에 무한스크롤 목록).
+- 내보내기: DELETE /clubs/{id}/members/{uid} (owner 전용, 본인·owner 대상 400, 작성물 보존, club_kicks 기록 — 후속 '재가입 차단' 기반). 확인 문구 "작성한 글과 담은 곡은 남아요."
+- 멤버 신고: reports target_type 'club_member' + club_id 필수(멤버 보편 권리, kick만 owner). 서버가 신고 사유에 클럽 컨텍스트 자동 부착, 관리자 큐 표시·dismiss만 허용(blind/strike 오귀속 원천 차단 가드).
+- CLUB_LABEL 상수화 — 명칭('클럽'→크루 등) 확정 시 1줄 교체 구조.
+### 검증·배포
+- 서버 81×3=243 + 회귀(v3.247 120·v3.245 125) PASS, ROUTEMAP 378→380(신규 2만), 무인증 401 스모크 5종.
+- 앱 tsc 0, 담당 하니스 48/48 + 오케스트레이터 전 스위트 재실행 green(v3247/245/243/248·t_cross·v3239 109/109).
+- md5 가드·.bak_pre_v3249·pre-v3249-live 태그·nice 빌드·INFLIGHT 0·Traceback 0. 웹 번들 마커 확인.
