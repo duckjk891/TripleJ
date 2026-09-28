@@ -161,6 +161,10 @@ interface MusicState {
   videoStylePrefs: VideoStylePrefs | null;
   generationId: string | null;
   savedTrackId: string | null;
+  /** v3.241 [P0-1]: savedTrackId가 "어느 생성의 발매인지" — generationId와 일치할 때만 유효한 발매로
+   *  취급한다(MusicResult effectiveSavedTrackId 가드). 이전 곡 발매 후 새 작곡에 잔존한 savedTrackId가
+   *  결과 화면 재생·A/B 비교·커버 PUT을 오염시키는 것을 차단(피드백 [13][16][24]). */
+  savedForGenerationId: string | null;
   /** v3.200: 창작 기록 세션(Phase 0) id — creationLogService가 관리, 생성/발매 body에 동봉.
    *  서버 미배포·비로그인 시 null 유지(기록 없이 기존 흐름 그대로 — 실패 무해). */
   creationSessionId: string | null;
@@ -215,6 +219,11 @@ interface MusicState {
   clearCoverContext: () => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
+  setSavedForGenerationId: (id: string | null) => void;
+  /** v3.241 [P0-1]: 새 생성 시작 직전 호출(MusicLoading doGenerate·MusicResult handleRegenerate) —
+   *  이전 곡의 발매·결과 상태만 청소. 새 곡의 입력(가사/장르/무드·composeDraft·creationSession·
+   *  artistCharacterId 등)은 이 시점에 이미 새 흐름의 값이므로 건드리지 않는다. */
+  beginNewGeneration: () => void;
   setCreationSessionId: (id: string | null) => void;
   setCreationMode: (mode: 'standard' | 'copyright') => void;
   setStatus: (status: GenerationStatus) => void;
@@ -262,6 +271,7 @@ const initialState = {
   videoStylePrefs: null,
   generationId: null,
   savedTrackId: null,
+  savedForGenerationId: null,
   creationSessionId: null,
   creationMode: 'standard' as const,
   status: 'idle' as GenerationStatus,
@@ -323,6 +333,18 @@ export const useMusicStore = create<MusicState>((set) => ({
     }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
+  setSavedForGenerationId: (savedForGenerationId) => set({ savedForGenerationId }),
+  beginNewGeneration: () => {
+    if (__DEV__) console.info('[MusicStore] beginNewGeneration — 이전 발매/결과 상태 청소');
+    set({
+      generationId: null,
+      savedTrackId: null,
+      savedForGenerationId: null,
+      resultUrl: null,
+      error: null,
+      status: 'idle',
+    });
+  },
   setCreationSessionId: (creationSessionId) => set({ creationSessionId }),
   setCreationMode: (creationMode) => set({ creationMode }),
   setStatus: (status) => set({ status }),

@@ -141,6 +141,18 @@ export default function AlbumDetailScreen() {
     navigation.navigate('Player', { track: rowTrack });
   };
 
+  // v3.241 [P0-2]: 전체재생 = 앨범 트랙 전체로 큐 교체 후 1번 트랙부터(v3.36 정책: 리스트 단위 재생=
+  // 큐 교체 — PlaylistScreen.playTrack 패턴 1:1). 기존 playFrom(tracks[0])은 첫 곡 1개만 append라
+  // 반복 모드에서 그 곡만 돌고 다음곡도 같은 곡이었다(피드백 [26]). 개별 곡 탭은 append(playFrom) 유지.
+  const playAll = () => {
+    if (!tracks.length) return;
+    const rows = tracks.map(toRowTrack);
+    playerStore.setQueue(rows);
+    playerStore.setCurrentIndex(0);
+    console.info(`[AlbumPlay] 전체재생 queue교체 n=${rows.length}`, { albumId });
+    navigation.navigate('Player', { track: rows[0] });
+  };
+
   // ── 관리: 정보 수정 ──────────────────────────────────────────────────────
   const openEdit = () => {
     if (!album) return;
@@ -410,7 +422,7 @@ export default function AlbumDetailScreen() {
           ) : null}
 
           <View style={styles.headActions}>
-            <Button label="전체 재생" size="sm" onPress={() => tracks.length && playFrom(tracks[0])} />
+            <Button label="전체 재생" size="sm" onPress={playAll} />
             {isOwner ? (
               <Button
                 label={manageMode ? '관리 완료' : '앨범 관리'}

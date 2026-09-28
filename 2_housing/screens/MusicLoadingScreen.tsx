@@ -163,7 +163,14 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
             url = '';
           }
           store.setResultUrl(url);
-          if (trackId) store.setGenerationId(trackId);
+          // v3.241 [P0-1]: setGenerationId(trackId) 잔재 제거 — generationId는 생성 id를 유지해야
+          // 후보 id "{gen_id}:v{n}" 규약·variants 조회·저장 payload(generation_id)가 깨지지 않는다.
+          // 이미 발매된 생성(result_track_id)은 savedTrackId+귀속 생성 id로 표시(genJobs/music 관행)
+          // → 결과 화면이 stale 가드를 통과해 그 트랙의 단일 플레이어로 뜬다.
+          if (trackId) {
+            store.setSavedTrackId(String(trackId));
+            store.setSavedForGenerationId(genId);
+          }
           store.setStatus('completed');
           store.setIsLoading(false);
           // v3.228: 결과를 이 화면이 직접 받음 → 확인 처리(추적 레코드 정리 + 서버 ack — 재배달 방지)
@@ -172,7 +179,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           });
           // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
           // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
-          navigation.replace('MusicResult');
+          // v3.241 [P0-1]: 발매 완료 생성은 alreadySaved로 진입(재저장 중복 방지 — genJobs/music.ts:124 동일)
+          navigation.replace('MusicResult', trackId ? { alreadySaved: true } : undefined);
         } else if (status.status === 'failed' || status.status === 'error') {
           if (pollInterval) clearInterval(pollInterval);
           // v3.228 X-K1: 서버 확정 실패 — 환불은 refunded=true(또는 서버 문장)일 때만 안내
@@ -268,6 +276,9 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       }
       if (isMounted) setGuardActive(true);
       const rid = newRequestId();
+      // v3.241 [P0-1]: 새 생성 시작 — 이전 곡의 발매(savedTrackId)·결과 잔존 상태를 청소.
+      // 작곡 입력·composeDraft·creationSession은 새 곡의 것이므로 유지(beginNewGeneration 주석 참조).
+      store.beginNewGeneration();
       store.setIsLoading(true);
       store.setError(null);
       store.setStatus('pending');

@@ -24,6 +24,8 @@ import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+// v3.241 [P0-3]: 계정 대표(is_default) 아티스트 폴백 — /character/list 조회
+import { listArtists } from '../services/characterService';
 import { getGenerationStatus, generationStreamUrl, savedTrackStreamUrl } from '../services/musicService';
 // v3.200: 창작 기록 계층 — 후보 청취(LISTEN)·선택(CANDIDATE_SELECT) 계측 + 발매 시 flush.
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 기록이 재생·발매를 절대 막지 않는다.
@@ -87,13 +89,38 @@ interface CharacterInfo {
   characterId: string | null;
 }
 
-async function fetchCharacterInfo(): Promise<CharacterInfo> {
+// v3.241 [P0-3]: 폴백 순서 = 작곡에서 선택한 아티스트 → 계정 대표(is_default, 가상 포함) → /me(구 동작).
+// 기존엔 /me의 실사 슬롯을 무조건 우선해 가상 대표가 무시됐다(피드백 [25]: 대표=가상인데 전곡 실사로 발매).
+async function fetchCharacterInfo(selectedCid: string | null): Promise<CharacterInfo> {
+  try {
+    const { characters } = await listArtists();
+    const picked =
+      (selectedCid ? characters.find((a) => a.character_id === selectedCid) : undefined) ||
+      characters.find((a) => a.is_default);
+    if (picked) {
+      const source = selectedCid && picked.character_id === selectedCid ? 'selected' : 'default';
+      console.info(`[ArtistFallback] source=${source} cid=${picked.character_id}`);
+      return {
+        snapshot: picked.sheet_object_name
+          ? {
+              sheet_object_name: picked.sheet_object_name,
+              used_items: Array.isArray(picked.used_items) ? picked.used_items : [],
+            }
+          : null,
+        characterId: picked.character_id,
+      };
+    }
+    // characters가 비었거나 대표 없음(레거시 미마이그레이션 계정 등) — 아래 /me 구 shape 폴백
+  } catch (err: any) {
+    console.warn('[ArtistFallback] /character/list 조회 실패 — /me 폴백:', err?.response?.status, err?.message);
+  }
   try {
     const res = await api.get('/character/me');
     const ch = res.data?.character;
     const realCid = ch ? String(ch.character_id ?? ch.id ?? ch._id ?? '') || null : null;
     const virtualCid = ch?.virtual_character_id ? String(ch.virtual_character_id) : null;
     if (ch?.sheet_object_name) {
+      console.info(`[ArtistFallback] source=me cid=${realCid}`); // v3.241 [P0-3]
       return {
         snapshot: {
           sheet_object_name: ch.sheet_object_name,
@@ -107,6 +134,7 @@ async function fetchCharacterInfo(): Promise<CharacterInfo> {
     // characterId는 가상 cid 전달 — 서버 _build_character_snapshot(cid, kind 무관 used_items)
     // 재조립이 우선하므로 가상 cid도 자동 커버된다.
     if (ch?.virtual_sheet_object_name) {
+      console.info(`[ArtistFallback] source=me cid=${virtualCid ?? realCid}`); // v3.241 [P0-3]
       return {
         snapshot: {
           sheet_object_name: ch.virtual_sheet_object_name,
@@ -116,11 +144,24 @@ async function fetchCharacterInfo(): Promise<CharacterInfo> {
       };
     }
     if (__DEV__) console.log('[MusicResult] 캐릭터 시트 미보유(실사·가상 모두) — snapshot 생략, characterId=', realCid ?? virtualCid);
+    console.info(`[ArtistFallback] source=me cid=${realCid ?? virtualCid}`); // v3.241 [P0-3]
     return { snapshot: null, characterId: realCid ?? virtualCid };
   } catch (err: any) {
     console.error('[MusicResult] /character/me 조회 실패 — snapshot 생략:', err?.response?.status, err?.message);
   }
   return { snapshot: null, characterId: null };
+}
+
+// v3.241 [P0-1]: stale savedTrackId 가드 — 이 생성(generationId)에서 발매된 trackId만 유효로 취급.
+// 이전 곡 발매 후 새 작곡의 결과 화면에 잔존한 savedTrackId가 이전 곡 재생·A/B 숨김·variants 스킵·
+// 커버 PUT 오염(피드백 [13][16][24])을 일으키지 않게 한다. 하이드레이션 경로(musicHydrate)는
+// savedForGenerationId를 함께 세팅하므로 이력·알림 [지금 보기]의 발매곡 동작은 그대로 유지된다.
+function effectiveSavedTrackIdOf(s: {
+  savedTrackId: string | null;
+  savedForGenerationId: string | null;
+  generationId: string | null;
+}): string | null {
+  return s.savedTrackId && s.savedForGenerationId === s.generationId ? s.savedTrackId : null;
 }
 
 type Props = NativeStackScreenProps<any, 'MusicResult'>;
@@ -195,15 +236,17 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   };
   const hasError = !!store.error;
   const hasResult = !!store.resultUrl;
+  // v3.241 [P0-1]: 이 생성에 귀속된 발매만 유효 — 이하 재생/비교/variants/커버는 전부 이 값 기준
+  const effectiveSavedTrackId = effectiveSavedTrackIdOf(store);
   // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
-  const showComparison = hasResult && variantCount > 1 && !isSaved && !store.savedTrackId;
+  const showComparison = hasResult && variantCount > 1 && !isSaved && !effectiveSavedTrackId;
 
   // Load audio
   useEffect(() => {
     let mounted = true;
 
     const loadAudio = async () => {
-      if (!store.resultUrl && !store.generationId && !store.savedTrackId) return;
+      if (!store.resultUrl && !store.generationId && !effectiveSavedTrackId) return;
 
       // 백엔드 프록시 우선 사용 (LTE/cloudflared 환경에서도 동작)
       // 저장된 트랙: stream-proxy / 생성 직후: generate stream / 폴백: 원본 URL
@@ -215,9 +258,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       if (prev) prev.unloadAsync().catch(() => {});
 
       let audioUrl: string;
-      if (store.savedTrackId) {
+      if (effectiveSavedTrackId) {
         // v3.239: 비공개 발매곡 — 웹은 presigned, 네이티브는 proxy+token (savedTrackStreamUrl)
-        audioUrl = await savedTrackStreamUrl(store.savedTrackId);
+        // v3.241 [P0-1]: 이 생성의 발매만 — 잔존 savedTrackId로 이전 곡을 재생하지 않는다
+        audioUrl = await savedTrackStreamUrl(effectiveSavedTrackId);
         if (!mounted) return;
       } else if (store.generationId) {
         // v3.93: variant별 스트림(?variant=N) + expo-av 헤더 미지원 대비 ?token= 쿼리 인증
@@ -306,7 +350,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
     };
-  }, [store.resultUrl, store.generationId, store.savedTrackId, selectedVariant]);
+  // v3.241 [P0-1]: savedForGenerationId 의존 추가 — 발매 직후(setSavedTrackId→setSavedForGenerationId)
+  // 가드 통과 시점에 발매곡 소스로 확실히 재로드되게 한다
+  }, [store.resultUrl, store.generationId, store.savedTrackId, store.savedForGenerationId, selectedVariant]);
 
   // v3.239: 화면 이탈 시 현재 sound 해제(라이브 ref 기준)
   useEffect(() => {
@@ -323,7 +369,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   useEffect(() => {
     let mounted = true;
     const fetchVariants = async () => {
-      if (!store.generationId || store.savedTrackId || hasError || isSaved) return;
+      // v3.241 [P0-1]: 잔존 savedTrackId가 variants 조회를 막지 않게 — 이 생성 귀속 발매만 스킵 사유
+      if (!store.generationId || effectiveSavedTrackIdOf(useMusicStore.getState()) || hasError || isSaved) return;
       try {
         console.log('[MusicResult] variants 조회:', store.generationId);
         const doc = await getGenerationStatus(store.generationId);
@@ -365,7 +412,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       if (!picked) return;
       useCoverLibraryStore.getState().setPickedCover(null); // 유령 선택 방지
       console.info('[MusicResult] 보관함 커버 선택됨', { objectName: picked.objectName });
-      const trackId = useMusicStore.getState().savedTrackId;
+      // v3.241 [P0-1]: 이 생성 귀속 발매만 즉시 PUT — 잔존 savedTrackId로 이전 곡 커버를 덮어쓰지 않는다
+      const trackId = effectiveSavedTrackIdOf(useMusicStore.getState());
       if (trackId) {
         (async () => {
           try {
@@ -477,10 +525,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       soundRef.current = null;
       setSound(null);
     }
-    store.setResultUrl(null);
-    store.setError(null);
-    store.setStatus('idle');
-    store.setGenerationId(null);
+    // v3.241 [P0-1]: savedTrackId 포함 발매/결과 상태 일괄 청소 — 기존 개별 클리어는 savedTrackId를
+    // 남겨 다음 곡 결과 화면이 이전 발매곡을 재생·PUT하는 원인이었다(피드백 [13][16][24])
+    store.beginNewGeneration();
     navigation.replace('MusicGeneration');
   };
 
@@ -498,7 +545,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
     setIsSaving(true);
     // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
-    const { snapshot, characterId } = await fetchCharacterInfo();
+    // v3.241 [P0-3]: 선택 아티스트 전달 — 미선택 시 계정 대표(is_default) 폴백
+    const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId);
     const payload = {
       generation_id: store.generationId,
       ...(snapshot ? { user_character_snapshot: snapshot } : {}),
@@ -552,7 +600,11 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         }
       }
 
-      if (trackId) store.setSavedTrackId(trackId);
+      if (trackId) {
+        store.setSavedTrackId(trackId);
+        // v3.241 [P0-1]: 발매 귀속 생성 id — 새 작곡 시작 후 잔존 가드(effectiveSavedTrackId)의 기준
+        store.setSavedForGenerationId(store.generationId);
+      }
       setIsSaved(true);
       // BUG-3 픽스: 발매 보상은 트랙 저장 성공 직후에만 지급 (같은 generation 재지급 가드)
       grantReleaseRewards(String(payload.generation_id), trackId);
@@ -585,7 +637,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     if (!isSaved && store.generationId) {
       try {
         // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
-        const { snapshot, characterId } = await fetchCharacterInfo();
+        // v3.241 [P0-3]: handleSave와 동일 — 선택 아티스트 전달, 미선택 시 계정 대표 폴백
+        const { snapshot, characterId } = await fetchCharacterInfo(store.artistCharacterId);
         const payload = {
           generation_id: store.generationId,
           ...(snapshot ? { user_character_snapshot: snapshot } : {}),
@@ -620,6 +673,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         if (trackId) {
           try { await api.put(`/tracks/${trackId}`, { is_public: false }); } catch {}
           store.setSavedTrackId(trackId);
+          // v3.241 [P0-1]: handleSave와 동일 — 발매 귀속 생성 id 세팅
+          store.setSavedForGenerationId(store.generationId);
         }
         setIsSaved(true);
         // BUG-3 픽스: 커버 경유 저장도 동일하게 저장 성공 직후 지급 (중복 가드 공유)
@@ -853,10 +908,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
                   {libraryCover.title || '커버'}
                 </AppText>
                 <AppText style={styles.libraryCoverHint}>
-                  {isSaved || store.savedTrackId ? '곡에 적용된 보관함 커버예요.' : '저장하면 이 커버로 발매돼요.'}
+                  {isSaved || effectiveSavedTrackId ? '곡에 적용된 보관함 커버예요.' : '저장하면 이 커버로 발매돼요.'}
                 </AppText>
               </View>
-              {!(isSaved || store.savedTrackId) && (
+              {!(isSaved || effectiveSavedTrackId) && (
                 <TouchableOpacity
                   onPress={() => setLibraryCover(null)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

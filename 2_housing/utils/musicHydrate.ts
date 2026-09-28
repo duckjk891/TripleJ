@@ -12,6 +12,12 @@ export function hydrateMusicStoresFromGeneration(gen: GenerationItem): void {
   music.setSelectedModel('suno'); // 서버 생성 이력은 suno 경로만 존재 (generate.py:171)
   music.setGenerationId(gen.id);
   music.setSavedTrackId(gen.result_track_id || null);
+  // v3.241 [P0-1]: 발매 귀속 생성 id 동봉 — MusicResult stale 가드(savedForGenerationId===generationId)를
+  // 통과해야 이력·알림 [지금 보기]의 발매곡 단일 플레이어/재생이 기존대로 동작한다.
+  music.setSavedForGenerationId(gen.result_track_id ? gen.id : null);
+  // v3.241 [P0-3]: 생성 기록의 아티스트 선택 복원(미기록이면 클리어) — 발매 폴백이 이전 흐름의
+  // 잔존 선택이 아니라 이 생성의 선택을 쓰게 한다(없으면 계정 대표 폴백, MusicResult fetchCharacterInfo).
+  music.setArtistCharacterId(gen.character_id ? String(gen.character_id) : null);
   music.setLyrics(gen.lyrics || '');
   music.setGenre(gen.genre || '');
   music.setMood(gen.mood || '');

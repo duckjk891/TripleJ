@@ -5299,3 +5299,56 @@ tester 하네스(독립): `scratchpad/tester3238/` — `t_gate.js`(계약·바�
 | 6 | 서버 diff 리뷰 — tracks/business/share/openai_image OK, **upload.py 라우트 바인딩 결함(ST-S7)** · patch 재현 OK | **FAIL** |
 | 7 | 라이브 md5(호스트·컨테이너 9종) = orig, `.bak_pre_v3238` 없음, 태그 0 | PASS |
 - **판정: 배포 차단(FAIL)** — ST-S7 수정 → 재테스트(ST-S7·coverref·회귀·patch/md5 표 갱신) 후 재게이트.
+
+## v3.241 (2026-09-28) — 베타 피드백 P0 4건: 이전곡 재생 오염·앨범 전체재생·발매 대표 귀속·보이스 만료 갇힘 (앱·웹 전용, 서버 무변경)
+
+근거: PLAN `## v3.241` · `베타피드백_분석보고서_20260928.md` P0-1~P0-4([13][16][24]·[26]·[25]·[27]) · 앱 2_housing(frontend, HEAD fe93f96 + 미커밋 7파일 — app-1: stores/musicStore.ts·screens/MusicResultScreen.tsx·screens/MusicLoadingScreen.tsx·utils/musicHydrate.ts·types/index.ts·screens/AlbumDetailScreen.tsx / app-2: screens/MusicGenerationScreen.tsx).
+dev 하네스: `scratchpad/v3241/app1/`(74검사)·`scratchpad/v3241/app2/`(31검사). tester 독립 하네스: `scratchpad/v3241/tester/` — t1_cross.js(작곡→로딩→발매 교차 심 28검사+관찰 1)·t2_album.js(전체재생 엣지 13검사).
+
+### U — 단위 [unit — Node 실렌더 하네스·정적]
+
+**MR-U1. stale savedTrackId 가드 [unit] (P0-1)** — Given 이전 곡 발매 잔존(savedTrackId=tA·귀속 g1) + 새 생성 g2 결과 When MusicResult 렌더 Then g2 스트림 로드(tA 소스 0)·A/B 비교 노출·variants 조회 실행·커버 선택 시 PUT /tracks/tA 0 / 이 상태에서 발매 → savedForGenerationId=g2 갱신·payload generation_id=g2 / 하이드레이션([지금 보기] 발매 생성)은 savedForGenerationId 동봉으로 가드 통과 → 단일 플레이어·그 트랙 재생·variants 스킵. **PASS**(dev t1 42/42 재실행 + tester t1 A·C).
+
+**ML-U2. doGenerate 청소·폴링 잔재 [unit] (P0-1)** — Given 발매 잔존 When 새 doGenerate Then beginNewGeneration = generationId·savedTrackId·savedForGenerationId·resultUrl·error·status만 청소(작곡 입력·composeDraft·creationSession·artistCharacterId 유지) / 폴링 완료: generationId=생성 id 유지(:166 잔재 제거)·발매된 생성은 savedTrackId+귀속 세팅 후 alreadySaved 진입. **PASS**(dev t2 18/18 + tester t1 A). ⚠ 기록: **MusicLoadingScreen.tsx:411** direct-result(비폴링·genId 없음) 분기에 `if (trackId) store.setGenerationId(trackId)` 동종 잔재 잔존 — suno는 항상 generation_id 폴링이라 실경로 아님(Wondera 직결과 전용). 판정 회부(후속 정리 권고, 배포 비차단).
+
+**AL-U3. 앨범 전체재생 = 큐 교체 [unit] (P0-2)** — Given 3곡 앨범·기존 큐(z1,z2)·repeat all When 전체 재생 Then 큐 전체 교체·currentIndex 0·next 전진·마지막 곡 next=0 순환 / 개별 트랙 탭은 append 유지. **PASS**(dev t3 14/14). tester 엣지(t2 13/13): 1곡 앨범 off→next -1(같은 곡 무한반복 아님)·all→0·shuffle+1곡 안전 / repeat 'one' 영속 상태에서 전체재생 → 큐 교체되고 one 설정 보존(one 의미 그대로 같은 곡 반복, 해제 시 즉시 순차) / 빈 앨범 → 기존 큐 보존·무동작.
+
+**MG-U4. step 200 대표 미리선택 [unit] (P0-3)** — Given 계정 대표(is_default, 가상 포함) When 아티스트 단계 진입 Then store.artistCharacterId=대표 미리선택(1회 가드·draft 복원 시 미적용) / 사용자 전환·'아티스트 없이 진행'(null) 존중 / 대표 없음·연주곡 → 미적용. **PASS**(dev t1_flow 31/31 재실행).
+
+**MG-U5. 만료 보이스 다이얼로그·생성 차단 [unit] (P0-4)** — Given 만료(persona_status=expired) 아티스트 When 선택 탭(pick) 또는 생성 직전(generate, 선택 후 만료) Then 앱 내 3버튼 다이얼로그([닫기]/[아티스트 없이 진행]/[다시 학습하기])·⭐ 확인 전 차단(400 루프 사전 차단)·중복 팝업 0 / [다시 학습하기]→VoiceCloneWizard·생성 미진행 / [아티스트 없이 진행]→persona·cid 확정 제외 후 생성 계속(skipArtistVoice) / 조회 실패 시 통과(서버 판정 위임). **PASS**(dev t1_flow S3·S4).
+
+**MR-U6. 발매 아티스트 폴백 [unit] (P0-3)** — Given 발매 시점 When fetchCharacterInfo(selectedCid) Then selected > 계정 대표(is_default, 가상 우선 아님·대표면 가상도 선택) > /me(구 동작) 순 폴백·payload character_id/snapshot 반영·목록 실패해도 발매 성공. **PASS**(dev t1 s5a~s5d).
+
+**X-U7. 교차 심(tester 독립) [unit]** — Given 이전 발매 잔존 상태에서 실 스토어 공유로 3화면 연속 구동 When 작곡(미리선택 vD·클론 적용)→MusicLoading(doGenerate 실행)→MusicResult(발매) Then ① artistCharacterId가 beginNewGeneration을 **생존**해 생성 body(character_id=vD·persona_id=pv1)와 발매 payload(character_id=vD·시트 스냅샷)에 실림 ② 재생성 루프: 발매(tA/g2)→다시 생성하기→g3→재발매(tB) — 2회차 payload generation_id=g3·variant_index 반영·귀속 g3·커버 PUT은 /tracks/tB만(tA 오염 0) ③ 만료 스킵 경로: 생성 body에 persona·character_id 미전송(400 재발 없음)·발매 성공. **PASS**(t1_cross 28/28).
+
+**X-S1. 정적 [unit — 정적]** — 2_housing diff = 소유 7파일 정확(app-2 diff에 app-1 관심사(savedTrackId·beginNewGeneration·큐) 0, 역방향 0) · 신규 문자열: 시스템 Alert.alert/window.alert 0·'AIDOL' 0·이모지 = ⭐(통화 표기, 기존 관행) 4건뿐·비밀값 0 · 신규 로그 prefix = [MusicStore]·[AlbumPlay]·[ArtistFallback]·[ArtistSelect]·[VoiceExpired](PLAN 매트릭스 일치) · tsc --noEmit exit 0. **PASS**.
+
+**RG-U8. 회귀 [unit]** — v3239 run_all: worktree **109/109** + --head 대조군 109/109(v3.239 픽스가 HEAD에 커밋되어 재현 FAIL은 더 이상 기대치 아님·not-loaded 0 정상) · v3238 app1 t1 27/27·t2 38/39 · v3238 app2 t1~t7 실회귀 0 · v3235 g1 t1~t3 전부 PASS · v3234·v3229 하네스·v3231 163/163. 잔여 FAIL 분류(전부 비회귀): ① 구버전 정적검사의 diff-기준 불일치(v3238 t2 "PlayerScreen 삭제 7줄"·v3235 g1 t4 CV-U6/X-L1·v3238 app2 t6 매트릭스·v3237 b t3 4건 — 당시 미커밋 diff를 전제, 지금은 커밋됨/새 diff) ② v3234 test_static X-T1 "[KidsGate]만 허용" — v3.241 PLAN이 [ArtistSelect]·[VoiceExpired] 신규 prefix를 명시 승인(구규칙 실효) ③ v3235 g2 공유 하네스 FAIL/CRASH — v3.238 공유 11안 재설계 이후 기준 실효(대상 utils/trackShare.ts는 이번 diff 무접촉, v3.238 TESTPLAN AP-U7에 동일 기록) ④ MUTATE=1 음성 대조군 FAIL = 기대 동작.
+
+**AUD-1. dev의 구 하네스 수정 감사 [unit — tester]** — 대상: `scratchpad/v3239/t1_result_audio.js:33` resetWorld 시드에 `savedForGenerationId: saved ? gen : null` 추가(v3.241 유일 수정 — 타 구 하네스 v3.241 흔적 0, result_env 무수정). 판정: **정당한 픽스처 갱신** — 실제 코드의 savedTrackId 세팅 3경로(musicHydrate·MusicLoading 폴링 완료·MusicResult 발매)가 전부 귀속 id를 함께 세팅하므로 시드가 실계약을 따라간 것. 검증: 시드 원복 사본 실행 → 정확히 3 FAIL(d 2건·e-saved 1건 — 모두 "무귀속 seed 발매곡" 픽스처가 새 가드에 걸리는 계약 불일치, 그 외 106 전부 PASS = 검사 약화 없음) · --head 대조군은 시드 유무 무관 109/109(HEAD 화면은 이 필드 미참조 — 대조군 무손상). **PASS**.
+
+### E — 배포 후 수동 스모크 [e2e — app.maidol.ai.kr 폰 웹, 무과금·별 소비 0] (시뮬레이터 없음 → 전부 배포 후 수동)
+
+**E-1. 번들 마커 [e2e — 비로그인]** — 배포 JS 번들에 `savedForGenerationId`·`[AlbumPlay]`·`아티스트 없이 진행`·`다시 학습하기` 문자열 존재(새 번들 서빙 확인). 곡 상세·차트 정상 렌더.
+**E-2. 앨범 전체재생 [e2e] (P0-2)** — 테스트 계정 로그인 → 앨범 상세 → [전체 재생] → 플레이어 진입·1번 트랙 재생 → [다음 곡] 탭 → 2번 트랙으로 전진(같은 곡 반복 아님) → 반복 모드 무단 변경 없음. 재생만 — 과금 0.
+**E-3. 발매곡 이력 재진입 [e2e] (P0-1 절반)** — 생성 이력에서 이미 발매된 곡 [지금 보기] → 단일 플레이어·"저장 완료"·그 곡 재생. 서로 다른 발매곡 이력 2건을 연속 진입 → 두 번째 곡 소리가 첫 곡이 아님. 생성·발매 버튼 탭 금지(⭐ 0).
+**E-4. 대표 미리선택 [e2e] (P0-3 절반)** — 작곡 대화 진입(⭐ 차감은 '음악 생성 시작' 확인 팝업 이후이므로 여기까지 무과금) → 제목/가사 확인 → 아티스트 단계에서 계정 대표가 미리 선택되어 표시 → **뒤로가기로 이탈**(생성 시작 금지).
+**E-5. 만료 다이얼로그 [e2e] (P0-4)** — 만료 보이스 연결 아티스트 보유 계정으로 아티스트 단계에서 해당 아티스트 탭 → 앱 내 다이얼로그 3버튼([닫기]/[아티스트 없이 진행]/[다시 학습하기]) 확인 → [다시 학습하기] 탭 시 보이스 위저드 **진입까지만** 확인 후 뒤로(학습 시작 금지 — ⭐ 0) → [닫기]로 종료.
+**E-6. 회귀 훑기 [e2e]** — 재생목록 재생(큐 교체 정책 v3.36)·미니플레이어·차트 재생 1곡 — 기존 동작 그대로.
+※ P0-1 발매 직후 잔존/P0-3 발매 payload는 생성·발매(⭐ 소비)가 필요해 웹 스모크에서 제외 — 하네스( MR-U1·X-U7)로 갈음, 실과금 확인은 대표 판단(선택).
+
+### 판정 회부 (오케스트레이터 결정 필요)
+
+- **[의미] '아티스트 없이 진행' 발매의 대표 귀속(4b)** — 만료 다이얼로그·아티스트 단계에서 명시적으로 "아티스트 없이 진행"을 고른 곡도, 발매 시 MR-U6 폴백이 계정 대표(is_default)를 character_id+시트 스냅샷으로 주입한다(tester 관찰: 만료 대표 vD가 그대로 귀속 — 보이스는 미전송이라 400 위험은 없음). v3.241 이전에도 /me 폴백이 실사 슬롯을 주입했으므로 **회귀는 아니며**, 피드백 [25]의 "미선택 곡 대표 귀속" 요구와는 부합. 다만 작곡 화면 쪽 계약 주석(v3.156 "미선택 곡은 기획사명 폴백")과 상충 — "명시적 스킵"과 "그냥 미선택"을 구분해 스킵은 기획사명 폴백으로 남길지 결정 필요(구분하려면 스킵 플래그 저장 필요 — 현 구조는 둘 다 cid=null로 동일).
+- **[정리] MusicLoadingScreen.tsx:411** — direct-result 분기의 `setGenerationId(trackId)` 동종 잔재(ML-U2 기록). Wondera 직결과 전용 사경로 — 후속 버전에서 :166과 동일하게 정리 권고.
+
+### 게이트 요약 (tester 실행 2026-09-28)
+| # | 체크 | 결과 |
+|---|---|---|
+| 1 | `npx tsc --noEmit` exit 0 | PASS |
+| 2 | dev 하네스 재실행: app-1 74/74(42+18+14) · app-2 31/31 | PASS |
+| 3 | 회귀: v3239 109/109(+대조군) · v3238 app1/app2 · v3235 g1 · v3234·v3231·v3229 — 실회귀 0(잔여 FAIL = diff-기준·실효 규칙·음성 대조군, RG-U8 분류) | PASS |
+| 4 | 구 하네스 수정 감사(v3239 t1:33 시드) — 정당한 픽스처 갱신·검사 약화 없음·대조군 무손상(AUD-1) | PASS |
+| 5 | tester 독립 교차 심: t1_cross 28/28 · t2_album 13/13 | PASS |
+| 6 | 정적: 소유 7파일 정확·Alert/AIDOL/이모지(⭐ 제외)/비밀값 0·로그 prefix 매트릭스 일치 | PASS |
+- **판정: 배포 가능(PASS)** — 판정 회부 2건은 비차단(의미 결정·후속 정리). 커밋 → 웹 배포(deploy.sh app) → E-1~E-6 수동 스모크.

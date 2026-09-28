@@ -106,6 +106,8 @@ export interface GenerationItem {
   model?: string;
   result_track_id?: string | null;
   result_audio_url?: string | null;
+  /** v3.241 [P0-3]: 생성 시 선택한 아티스트(character_id) — 서버 gen_doc 필드(미선택 생성은 None) */
+  character_id?: string | null;
   variants?: GenerationVariant[];
   error_message?: string | null;
   /** v3.228: 서버 실패 확정 시 환불 여부(재시작 정리 포함) — true일 때만 환불 안내(X-K1) */

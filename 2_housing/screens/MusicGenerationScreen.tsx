@@ -25,7 +25,7 @@ import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
-import { listArtists, artistSheetUrl, parseVoicePreset, artistHasVoice, type ServerArtist } from '../services/characterService';
+import { listArtists, getArtist, artistSheetUrl, parseVoicePreset, artistHasVoice, type ServerArtist } from '../services/characterService';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
@@ -99,6 +99,23 @@ interface ChatMessage {
   echoOfStep?: number;
 }
 
+// v3.241 [ArtistSelect] P0-3: 계정 대표(is_default) 아티스트 — step 200 미리선택 대상.
+// 대표가 없으면 null(미리선택 없음 = 기존 동작 유지). 순수 함수 — Node 하니스 검증용 export.
+export function pickDefaultArtist(list: ServerArtist[] | null | undefined): ServerArtist | null {
+  if (!list || list.length === 0) return null;
+  return list.find((a) => a.is_default && !!a.character_id) || null;
+}
+
+// v3.241 [VoiceExpired] P0-4: 아티스트 클론 목소리 차단 사유 — ready면 null(통과).
+// 만료(expired)와 그 외 사용 불가(missing 등)를 구분해 다이얼로그 문구에 쓴다.
+export function artistVoiceBlockReason(
+  artist: Pick<ServerArtist, 'persona_voice_id' | 'persona_status'> | null | undefined
+): 'expired' | 'unavailable' | null {
+  if (!artist) return null;
+  if (!!artist.persona_voice_id && artist.persona_status === 'ready') return null;
+  return artist.persona_status === 'expired' ? 'expired' : 'unavailable';
+}
+
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
 
 // v3.219 [ComposeDraft]: 가사 신원 키(computeComposeLyricsKey)·draft 이어가기 판정은 v3.229에서
@@ -135,6 +152,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(
     draftAnswers ? draftAnswers.selectedArtistId : null
   );
+  // v3.241 [ArtistSelect] P0-3: step 200 대표(is_default) 미리선택 1회 가드 — draft 복원 시에는
+  // 사용자 확정값(스킵=null 포함)을 존중해 재적용하지 않는다(personaDefaultAppliedRef 관행).
+  const artistPreselectAppliedRef = useRef(!!resumeDraft);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
     resumeDraft
       ? (resumeDraft.chatHistory as ChatMessage[])
@@ -305,6 +325,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     rewindRef.current = null;
     repickRef.current = false;
     personaDefaultAppliedRef.current = false;
+    artistPreselectAppliedRef.current = false; // v3.241 [ArtistSelect]: 처음부터 = 대표 미리선택도 새로
     setEditStep(null);
     setStep(0);
     setChatHistory([{ type: 'director', text: DIRECTOR_MESSAGES[0] }]);
@@ -430,6 +451,25 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       if (step === 200) refreshArtists();
     }, [step, refreshArtists])
   );
+
+  // v3.241 [ArtistSelect] P0-3 [25]: 아티스트 단계(200) 진입 시 계정 대표(is_default)를 초기값으로
+  // 미리선택 — 미선택 생성이 실사 폴백으로 잘못 발매되는 문제의 FE 절반(결과 화면 폴백은 app-1).
+  // 초기값일 뿐: 다른 아티스트 선택·'아티스트 없이 진행'(null 클리어)은 기존 그대로. 만료/미연결
+  // 대표도 미리선택은 하되 확정 탭 시 기존 게이트(handleArtistPick)가 그대로 막는다.
+  // 연주곡은 step 200에 진입하지 않으며(v3.203 재배선) 방어로도 제외.
+  useEffect(() => {
+    if (step !== 200 || artistPreselectAppliedRef.current) return;
+    if (!artists || artists.length === 0) return;
+    if (useMusicStore.getState().instrumental) return;
+    artistPreselectAppliedRef.current = true;
+    if (selectedArtistId) return; // 이미 선택돼 있으면 존중(되감기 재진입 등)
+    const def = pickDefaultArtist(artists);
+    if (!def) return; // 대표 없음(edge) → 미리선택 없음(기존 동작)
+    setSelectedArtistId(def.character_id);
+    useMusicStore.getState().setArtistCharacterId(def.character_id);
+    if (__DEV__) console.info(`[ArtistSelect] 대표 미리선택 cid=${def.character_id} kind=${def.kind}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, artists]);
 
   // v3.84: 아티스트 목소리가 "클론"이면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중).
   // "프리셋"이면 이 스텝은 건너뛰기 기본 — 스타일 태그는 성별/스타일 스텝에서 이미 반영됨.
@@ -1046,11 +1086,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (!hasClone && !preset) {
       console.warn('[MusicGeneration] 목소리 미연결 아티스트 선택 차단', { cid: artist.character_id, status: artist.persona_status });
       // v3.147: 만료(Suno측 사정)면 재학습 안내로 구분
+      // v3.241 [VoiceExpired] P0-4 [27]: 만료는 [확인]뿐인 막다른 팝업 대신 행동 다이얼로그로 —
+      // [다시 학습하기]=VoiceCloneWizard 이동 / [아티스트 없이 진행]=무아티스트 계속 / [닫기]
+      if (artist.persona_status === 'expired') {
+        showVoiceExpiredDialog(artist.name, 'pick', 'expired');
+        return;
+      }
       showAlert(
-        artist.persona_status === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
-        artist.persona_status === 'expired'
-          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
-          : `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
+        '목소리 연결이 필요해요',
+        `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
       );
       return;
     }
@@ -1091,6 +1135,64 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       );
     }
     // v3.143: 목소리 미연결 아티스트는 위에서 선택 차단 — 성별 추정 폴백(v3.137) 제거
+  };
+
+  // v3.241 [VoiceExpired]: 이번 생성에서 아티스트·클론 목소리 선택 해제 — 만료 다이얼로그의
+  // '아티스트 없이 진행'용. store는 동기 반영(artistCharacterId), React state는 다음 렌더 반영이라
+  // 즉시 이어지는 생성은 proceedGenerate의 skipArtistVoice 오버라이드가 확정 제외를 담당한다.
+  const clearArtistVoiceSelection = () => {
+    setSelectedArtistId(null);
+    setArtistVoiceApplied(false);
+    setSelectedPersonaId(null);
+    setPersonaModelOn(false);
+    musicStore.setArtistCharacterId(null); // v3.156: 미선택 곡은 기획사명 폴백
+  };
+
+  // v3.241 [VoiceExpired] P0-4 [27]: 만료 팝업 막다른 길 제거 — 단일 다이얼로그(중복 표시 없음,
+  // v3.232 이중 팝업 금지 유지). pick=아티스트 선택 시 차단, generate=생성 직전 차단(선택 당시
+  // ready였던 목소리가 이후 만료된 경우 — 서버 400 반복 사전 차단). 재학습 ⭐ 비용 문구 유지.
+  const showVoiceExpiredDialog = (
+    artistName: string | null,
+    context: 'pick' | 'generate',
+    reason: 'expired' | 'unavailable'
+  ) => {
+    const who = artistName || '이 아티스트';
+    showAlert(
+      reason === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
+      reason === 'expired'
+        ? `${who}에 연결된 목소리가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
+        : `${who}에 연결된 목소리를 지금 사용할 수 없어요. 다시 학습해서 연결하거나, 아티스트 없이 진행할 수 있어요. (재학습 ⭐${getPointCostSync('voice_clone')})`,
+      [
+        {
+          text: '닫기',
+          style: 'cancel',
+          onPress: () => {
+            if (__DEV__) console.info(`[VoiceExpired] dialog action=close ctx=${context}`);
+          },
+        },
+        {
+          text: '아티스트 없이 진행',
+          onPress: () => {
+            if (__DEV__) console.info(`[VoiceExpired] dialog action=skip ctx=${context}`);
+            if (context === 'pick') {
+              handleArtistPick(null); // 기존 스킵 선택지와 동일 경로(대화 진행 포함)
+              return;
+            }
+            clearArtistVoiceSelection();
+            void confirmThenProceed('button', { skipArtistVoice: true });
+          },
+        },
+        {
+          text: '다시 학습하기',
+          onPress: () => {
+            if (__DEV__) console.info(`[VoiceExpired] dialog action=retrain ctx=${context}`);
+            // 재학습 = 새 클론 학습(만료 클론 재개 불가) — 파라미터 없이 위저드 진입.
+            // 이 화면은 스택에 보존되어 뒤로가기 복귀 시 대화가 이어진다(step 200 focus 갱신).
+            navigation.navigate('VoiceCloneWizard' as any);
+          },
+        },
+      ]
+    );
   };
 
   // v3.202(G): 아티스트 0명 CTA — 앱 내 다이얼로그(showAlert 규칙)로 아티스트 디렉터 안내.
@@ -1404,8 +1506,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     return `${m}:${s}`;
   };
 
+  // v3.241 [VoiceExpired]: 생성 옵션 — 만료 다이얼로그 '아티스트 없이 진행'이 React state 반영
+  // (다음 렌더)을 기다리지 않고 이번 생성에서 클론 목소리를 확정 제외하기 위한 오버라이드.
+  type ProceedOpts = { skipArtistVoice?: boolean };
+
   // Final generate — 실제 시작 처리 (v3.94: 피로 게이트 통과 후에만 호출)
-  const proceedGenerate = () => {
+  const proceedGenerate = (opts?: ProceedOpts) => {
     // v3.202(J): 연주곡 처리 —
     //  · 가사 없이 진입(카드)한 곡은 잔존 드래프트(editedLyrics 초기값)가 실리지 않게 공백 고정.
     //    가사 버전 커밋(v3.200)은 빈 가사라 musicService에서 자연 스킵된다.
@@ -1435,8 +1541,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.info('[MusicGeneration] V1 audio_weight 미전송(참고 음원 없음)', { audioWeight });
     }
     musicStore.setAudioWeight(audioWeightOn && hasReferenceAtGen ? audioWeight : null);
-    musicStore.setPersonaModel(!instrumental && personaModelOn && personaModel ? personaModel : '');
-    musicStore.setPersonaId(!instrumental && personaModelOn && selectedPersonaId ? selectedPersonaId : null);
+    // v3.241 [VoiceExpired]: skipArtistVoice — 만료 목소리 제외 생성(클로저 state가 아직 이전
+    // 값이어도 persona 미전송 확정 — 400 재발 차단)
+    const personaOn = personaModelOn && !opts?.skipArtistVoice;
+    musicStore.setPersonaModel(!instrumental && personaOn && personaModel ? personaModel : '');
+    musicStore.setPersonaId(!instrumental && personaOn && selectedPersonaId ? selectedPersonaId : null);
     if (kidsNow && (personaModelOn || selectedPersonaId)) {
       console.info('[KidsGate] voice hidden — 생성 직전 내 목소리 제외');
       musicStore.setPersonaModel('');
@@ -1477,16 +1586,44 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.230 A5-2/A5-4: 작곡 ⭐ 차감 직전 확인 1회 — 순서: 진행 중 차단(guardGeneration) → 휴식 게이트 → 확인.
   // 휴식 단축 해제(onCleared)도 이 확인을 거친다(확인 없는 자동 생성 연쇄 금지).
   const composeConfirmingRef = useRef(false);
-  const confirmThenProceed = async (via: 'button' | 'fatigue-chain') => {
+  const confirmThenProceed = async (via: 'button' | 'fatigue-chain', opts?: ProceedOpts) => {
     if (composeConfirmingRef.current) return;
     composeConfirmingRef.current = true;
     try {
+      // v3.241 [VoiceExpired] P0-4: ⭐ 확인·요청 전에 만료 목소리 차단 — 서버 400 루프 사전 차단.
+      // 차단 시 다이얼로그만 띄우고 종료(중복 팝업 없음 — v3.232 이중 팝업 금지 유지).
+      if (!opts?.skipArtistVoice && !(await ensureArtistVoiceUsable())) return;
       const ok = await confirmStarSpend({ source: 'MusicGeneration', costKey: 'compose', action: '곡 만들기' });
       console.info('[MusicGeneration] ⭐ 확인 결과', { via, ok });
-      if (ok) proceedGenerate();
+      if (ok) proceedGenerate(opts);
     } finally {
       composeConfirmingRef.current = false;
     }
+  };
+
+  // v3.241 [VoiceExpired] P0-4 [27]: 생성 직전 아티스트 목소리 유효성 확인 — 선택 당시 ready였던
+  // 클론이 이후 만료(수명 2h)되면 서버가 400을 반복하므로 요청 전에 최신 상태로 판정해 차단한다.
+  // 아티스트 경유 클론을 실제로 보낼 때만 검사(간편 프리셋·연주곡·무아티스트·어린이 제외).
+  // 조회 실패 시에는 통과 — 서버 판정에 위임(생성을 막는 오탐 금지).
+  const ensureArtistVoiceUsable = async (): Promise<boolean> => {
+    const cid = useMusicStore.getState().artistCharacterId;
+    if (!cid || musicStore.instrumental || isChildNow()) return true;
+    if (!personaModelOn || !selectedPersonaId) return true; // 클론 목소리 미전송 경로
+    let artist: ServerArtist | null = null;
+    try {
+      artist = await getArtist(cid);
+    } catch (err: any) {
+      console.error('[MusicGeneration] 생성 전 아티스트 조회 실패 — 서버 판정에 위임', { status: err?.response?.status });
+      return true;
+    }
+    // 보낼 페르소나가 이 아티스트의 목소리일 때만 아티스트 상태로 판정(별도 내 목소리 선택은 통과)
+    const usingArtistVoice = artistVoiceApplied || artist.persona_voice_id === selectedPersonaId;
+    if (!usingArtistVoice) return true;
+    const reason = artistVoiceBlockReason(artist);
+    if (!reason) return true;
+    console.warn(`[VoiceExpired] generate blocked cid=${cid}`, { status: artist.persona_status });
+    showVoiceExpiredDialog(artist.name, 'generate', reason);
+    return false;
   };
 
   const handleGenerate = () => {
