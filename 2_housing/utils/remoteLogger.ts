@@ -30,6 +30,8 @@ import { Platform, AppState } from 'react-native';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { navigationRef } from '../services/navigationRef';
+// v3.243: 웹 UA 분류(ios/android/desktop) — screenAnalytics 와 동일 판정 재사용
+import { classifyUaPlatform } from './screenAnalytics';
 
 const FLUSH_INTERVAL_MS = 5000;
 const FLUSH_THRESHOLD = 20;
@@ -61,6 +63,9 @@ let _initialized = false;
 let _queue: RemoteLogEvent[] = [];
 let _flushTimer: ReturnType<typeof setInterval> | null = null;
 let _userAgent = '';
+// v3.243: 플랫폼 태그 — 각 로그 이벤트에 부착(버그 리포트 플랫폼 귀속, CEO 결정).
+// 네이티브 = Platform.OS('ios'/'android'), 웹 = 'web:ios'|'web:android'|'web:desktop'(UA 분류).
+let _platformTag = '';
 // v3.227 B: 폭주 차단 상태
 let _inflight: Promise<void> | null = null;   // 단일 in-flight
 let _authBlockedToken: string | null = null;  // 401/403 받은 토큰 — 같은 토큰이면 일시정지
@@ -171,6 +176,10 @@ function _enqueue(level: string, args: any[], extraStack?: string): void {
     const { message, context, stack } = _serializeArgs(args);
     // 자기 flush 요청이 발생시킨 console(api 인터셉터의 '[API Error] /_logs/frontend'·'[AUTH]') 재진입 차단
     if (message.includes(SELF_ENDPOINT) || (_inflight && message.startsWith('[AUTH]'))) return;
+    // v3.243: 플랫폼 태그를 context 에 비파괴 추가 — 서버 FrontendLogEvent 는 최상위 신규 필드를
+    // pydantic 이 버리지만 context(Dict[str,Any])는 파일 라인·Mongo 에 그대로 저장된다(_logs.py 실측).
+    // 호출부가 이미 platform 키를 실었다면 존중(덮어쓰기 금지).
+    if (_platformTag && context.platform === undefined) context.platform = _platformTag;
     const ev: RemoteLogEvent = {
       level,
       message,
@@ -299,6 +308,15 @@ export function initRemoteLogger(): void {
       : `${Platform.OS} ${String(Platform.Version ?? '')}`.trim();
   } catch {
     _userAgent = '';
+  }
+
+  // v3.243: 플랫폼 태그 1회 계산 — UA 원문이 아닌 분류값만(민감정보 없음)
+  try {
+    _platformTag = Platform.OS === 'web' && typeof navigator !== 'undefined'
+      ? `web:${classifyUaPlatform(navigator.userAgent || '', navigator.maxTouchPoints || 0)}`
+      : Platform.OS;
+  } catch {
+    _platformTag = Platform.OS;
   }
 
   // console 후킹 — error/warn 항상, info는 DEV만 (MAIDOL 관행)

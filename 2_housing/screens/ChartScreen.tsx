@@ -4,12 +4,11 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, FlatList, TouchableOpacity, Image, ActivityIndicator,
-  RefreshControl, Modal, TextInput, ScrollView,
+  RefreshControl, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import api, { BACKEND_BASE_URL } from '../services/api';
+import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -98,8 +97,6 @@ const RANK_COLORS: Record<number, string> = {
 };
 
 export default function ChartScreen() {
-  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
-  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<ChartTab>('new'); // v3.207 ②: 기본 탭 = 신곡
@@ -110,11 +107,7 @@ export default function ChartScreen() {
   const [latestAlbums, setLatestAlbums] = useState<Album[]>([]); // v3.96(A-20)→v3.106: 신곡 탭 상단 최신 앨범
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<ChartTrack[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchSubmitted, setSearchSubmitted] = useState(false);
+  // v3.243 Phase1a: 휴면 검색 모달 상태 제거 — 검색은 상단 검색바 → 숨김 'Search' 탭(SearchScreen)으로 일원화
   const playerStore = usePlayerStore();
   // v3.213: 차트 탭 스트립 anchor — chipBar 컨테이너 전체 영역(가로 스크롤 무관)
   const chipBarRef = useRef<View>(null);
@@ -184,28 +177,6 @@ export default function ChartScreen() {
     return true;
   };
 
-  const handleSearch = async (q: string) => {
-    const query = q.trim();
-    if (!query) return;
-    if (__DEV__) console.info('[ChartScreen] handleSearch', { q: query });
-    setSearchLoading(true);
-    setSearchSubmitted(true);
-    try {
-      const res = await api.get(`/tracks/search`, { params: { q: query, limit: 50 } });
-      setSearchResults(res.data?.tracks || []);
-    } catch (err: any) {
-      console.error('[ChartScreen] 검색 실패', { q: query, status: err?.response?.status });
-      setSearchResults([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  };
-
-  const closeSearchModal = () => {
-    setShowSearchModal(false);
-    setSearchQuery(''); setSearchResults([]); setSearchSubmitted(false);
-  };
-
   const handleTrackPress = (track: ChartTrack) => {
     // v3.106: 앨범 소속 곡은 AlbumDetail로 보내 앨범의 다른 곡도 담아 듣게 한다 — 백엔드 준비 대기 골격.
     // TODO(백엔드 요청): 2026-08 실측 기준 트랙 응답(GET /api/charts/*, /api/tracks/*)에 album_id가 없고,
@@ -224,34 +195,6 @@ export default function ChartScreen() {
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
     if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     navigation.navigate('Player', { track });
-  };
-
-  const handleSearchTrackPress = (track: ChartTrack) => {
-    // v3.223 ①: 검색 결과 탭 = append(차트 곡 탭 :218-224 관행 1:1) — searchResults 통째
-    // setQueue 교체 제거(로그인 재생목록 보존 — 교체는 플레이리스트 재생만).
-    playerStore.addToQueue(track);
-    const q = usePlayerStore.getState().queue;
-    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id)); // v3.223 O-1 정규화
-    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
-    if (__DEV__) console.info('[ChartScreen] 검색 곡 탭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
-    closeSearchModal();
-    navigation.navigate('Player', { track });
-  };
-
-  const getCoverUri = (track: ChartTrack): string | null => {
-    const img = track.cover_image || track.cover_image_url;
-    if (!img) return null;
-    return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
-  };
-
-  const Cover = ({ track }: { track: ChartTrack }) => {
-    const uri = getCoverUri(track);
-    return (
-      <View style={styles.cover}>
-        {uri ? <Image source={{ uri }} style={styles.coverImg} />
-          : <View style={styles.coverPlaceholder}><Feather name="music" size={20} color={colors.text.muted} /></View>}
-      </View>
-    );
   };
 
   // 행 디자인은 공용 TrackRow (검색 등 다른 목록 화면과 동일) — 좌측 슬롯만 탭별로 다르다
@@ -286,6 +229,22 @@ export default function ChartScreen() {
 
   return (
     <ScreenLayout>
+      {/* v3.243 Phase1a: 차트 상단 고정 검색 진입 — 검색 탭이 커뮤니티로 바뀌면서
+          검색은 이 바 → 숨김 'Search' 탭(SearchScreen — 비로그인 게이트·느낌칩은 화면 내부 소관) */}
+      <TouchableOpacity
+        style={styles.searchEntry}
+        activeOpacity={0.7}
+        onPress={() => {
+          if (__DEV__) console.info('[ChartScreen] 상단 검색바 탭 → Search(숨김 탭) 이동');
+          navigation.navigate('Search');
+        }}
+        accessibilityRole="button"
+        accessibilityLabel="곡·아티스트 검색"
+      >
+        <Feather name="search" size={16} color={colors.text.muted} />
+        <AppText variant="body" tone="muted">곡·아티스트 검색</AppText>
+      </TouchableOpacity>
+
       {/* Spotify식 가로 칩 필터 — v3.213: 탭 스트립 전체가 튜토리얼 anchor */}
       <View
         ref={chipBarRef}
@@ -394,57 +353,6 @@ export default function ChartScreen() {
         <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
       </Fab>
 
-      {/* 검색 모달 */}
-      <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
-        <View style={[styles.searchModal, { paddingTop: insets.top }]}>
-          <View style={styles.searchHeader}>
-            <TouchableOpacity onPress={closeSearchModal} style={styles.searchBack}>
-              <Feather name="arrow-left" size={22} color={colors.text.primary} />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="곡 제목, 아티스트, 태그 검색"
-              placeholderTextColor={colors.text.muted}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onSubmitEditing={() => handleSearch(searchQuery)}
-              returnKeyType="search"
-              autoFocus
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchSubmitted(false); }} style={styles.searchClear}>
-                <Feather name="x" size={18} color={colors.text.secondary} />
-              </TouchableOpacity>
-            )}
-          </View>
-          {searchLoading ? (
-            <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
-          ) : searchResults.length > 0 ? (
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }} // v3.196: 마지막 행 제스처 바 가림 방지
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.searchResult} activeOpacity={0.7} onPress={() => handleSearchTrackPress(item)}>
-                  <Cover track={item} />
-                  <View style={styles.info}>
-                    <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
-                    <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
-                      {item.artist_name || '알 수 없는 아티스트'}
-                    </AppText>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
-          ) : searchSubmitted ? (
-            <EmptyState icon={<Feather name="search" size={44} color={colors.text.muted} />} title="검색 결과가 없습니다" hint="다른 검색어로 시도해보세요" />
-          ) : (
-            <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="곡을 검색해보세요" hint="제목, 아티스트, 태그로 검색 가능" />
-          )}
-        </View>
-      </Modal>
-
       {/* 곡 더보기(⋮) — 공용 액션 시트(재생/좋아요/재생목록/플레이리스트 + 비회원 담기 안내) */}
       <TrackActionSheet
         track={actionTrack}
@@ -500,11 +408,6 @@ const styles = StyleSheet.create({
     width: 32, height: 18, backgroundColor: colors.accent.primary, borderRadius: radius.sm,
     justifyContent: 'center', alignItems: 'center',
   },
-  cover: { width: 48, height: 48, borderRadius: radius.md, overflow: 'hidden', marginHorizontal: spacing.md },
-  coverImg: { width: 48, height: 48 },
-  coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
-  info: { flex: 1, marginRight: spacing.sm },
-  artist: { marginTop: 3 },
   releasedFooter: { marginTop: 3 }, // v3.207 ②: 신곡 탭 발매일 footer
   statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
   statLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
@@ -517,22 +420,13 @@ const styles = StyleSheet.create({
   },
   actionSheetItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   fabIcon: { marginTop: -2 },
-  // search modal
-  searchModal: { flex: 1, backgroundColor: colors.bg.deepest },
-  searchHeader: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
-  },
-  searchBack: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-  searchInput: {
-    flex: 1, backgroundColor: colors.bg.surface1, borderRadius: radius.md,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, color: colors.text.primary,
-    fontSize: 14, marginHorizontal: spacing.xs,
-  },
-  searchClear: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  searchResult: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  // v3.243 Phase1a: 검색 모달 스타일 삭제(휴면 죽은 코드 — 검색은 숨김 'Search' 탭으로 일원화)
+  // v3.243 Phase1a: 차트 상단 고정 검색 진입 바 — 비활성 검색 인풋 모양(탭 시 Search 탭 이동)
+  searchEntry: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginTop: spacing.md,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.md,
   },
   // v3.196: 미사용 playlist sheet 스타일 삭제(TrackActionSheet 공용화 후 잔존 죽은 코드)
 });

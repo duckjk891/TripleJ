@@ -51,6 +51,31 @@ let _screenStartedAt = 0;
 let _backgroundedAt = 0;
 let _flushing = false;
 
+/**
+ * v3.243: 웹 접속 기기 구분 — platform 은 Platform.OS 그대로('web' 유지, 네이티브는 ios/android)
+ * 이고, 웹에서만 UA 기반 ua_platform('ios'|'android'|'desktop')을 덧붙인다.
+ * (현행 배포가 웹 중심이라 관리자 대시보드에서 전부 'web'으로 뭉개지는 문제의 구분자.)
+ * 서버는 스키마리스(Mongo) 저장이라 추가 필드는 하위호환 — 구서버도 조용히 무시/보존.
+ * UA 원문은 보내지 않는다(분류값만 — 민감정보·핑거프린팅 최소화).
+ */
+export function classifyUaPlatform(ua: string, maxTouchPoints = 0): 'ios' | 'android' | 'desktop' {
+  if (/iPad|iPhone|iPod/i.test(ua)) return 'ios';
+  // iPadOS 13+ 데스크톱 모드: Macintosh UA + 멀티터치 → iOS 취급
+  if (/Macintosh/i.test(ua) && maxTouchPoints > 1) return 'ios';
+  if (/Android/i.test(ua)) return 'android';
+  return 'desktop';
+}
+
+function _uaPlatform(): 'ios' | 'android' | 'desktop' | null {
+  if (Platform.OS !== 'web') return null;
+  try {
+    if (typeof navigator === 'undefined') return null;
+    return classifyUaPlatform(navigator.userAgent || '', navigator.maxTouchPoints || 0);
+  } catch {
+    return null;
+  }
+}
+
 function _randomId(): string {
   const hex = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
   return `${Date.now().toString(16)}-${hex()}${hex()}-${hex()}${hex()}${hex()}`;
@@ -95,6 +120,8 @@ async function _flush(): Promise<void> {
       body: JSON.stringify({
         device_id: _deviceId,
         platform: Platform.OS,
+        // v3.243: 웹만 UA 분류 추가(ios/android/desktop) — 네이티브는 platform 으로 이미 구분됨
+        ...(_uaPlatform() ? { ua_platform: _uaPlatform() } : {}),
         app_version: Constants.expoConfig?.version || '',
         events: batch,
       }),

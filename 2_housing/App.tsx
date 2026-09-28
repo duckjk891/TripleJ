@@ -78,6 +78,8 @@ import ChartScreen from './screens/ChartScreen';
 import PlaylistScreen from './screens/PlaylistScreen';
 import FeedScreen from './screens/FeedScreen';
 import SearchScreen from './screens/SearchScreen';
+// v3.243 Phase1a: 커뮤니티(클럽) 탭 골격 — 검색 탭 자리를 대체(검색은 숨김 탭 + 차트 상단 검색바)
+import CommunityScreen from './screens/CommunityScreen';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -418,15 +420,16 @@ function MainTabs() {
           ...titleHeader(navigation, '피드'),
         })}
       />
+      {/* v3.243 Phase1a: 검색 탭 자리 → 커뮤니티 탭. 검색은 숨김 탭(아래)으로 이동 — 차트 상단 검색바에서 진입 */}
       <Tab.Screen
-        name="Search"
-        component={SearchScreen}
+        name="Community"
+        component={CommunityScreen}
         options={({ navigation }) => ({
-          tabBarLabel: '검색',
+          tabBarLabel: '커뮤니티',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="search" size={size - 2} color={color} />
+            <Feather name="users" size={size - 2} color={color} />
           ),
-          ...titleHeader(navigation, '검색'),
+          ...titleHeader(navigation, '커뮤니티'),
         })}
       />
       <Tab.Screen
@@ -468,6 +471,22 @@ function MainTabs() {
               <Feather name="settings" size={20} color={colors.text.primary} />
             </TouchableOpacity>
           ),
+        })}
+      />
+      {/* v3.243 Phase1a: 검색 = 숨김 탭(MyMusic 관행) — 차트 상단 검색바로 진입.
+          route명 'Search' 유지: 기존 navigate('Search') 호환(외부 호출자 0건 실측·딥링크 무영향).
+          느낌칩·비로그인 게이트·클릭로깅은 SearchScreen 내부 소관 — 무수정 보존. */}
+      <Tab.Screen
+        name="Search"
+        component={SearchScreen}
+        options={({ navigation }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          headerTitle: () => <AppText variant="subtitle">검색</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerLeft: () => <BackIcon navigation={navigation} />,
         })}
       />
       {/* v3.220 ①: 앨범 상세 — RootStack에서 이 숨김 탭으로 이동(하단 탭바 유지, MyMusic 관행).
