@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { usePlayerStore } from '../stores/playerStore';
+import { usePlayerStore, selectMiniPlayerVisible } from '../stores/playerStore';
 import { loadAndPlayTrack, invalidatePlayback, maybeHydrateCover } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
 import { trackCoverUri } from '../utils/coverUri';
 import { colors } from '../theme/colors';
@@ -13,26 +13,24 @@ export default function MiniPlayer() {
   // 재생 상태는 상태 콜백이 store에 반영한다(낙관적 토글 제거).
   const { track, isPlaying, position, duration, cleanup, queue, currentIndex, playTrackAtIndex, isPlayerScreenOpen } = usePlayerStore();
   // v3.198: 사운드 객체 직접 구독 금지(v3.197) — 존재 여부만 불리언 셀렉터로 구독(리렌더 소음 방지)
-  const hasSound = usePlayerStore((s) => !!s.sound);
-  const sessionActive = usePlayerStore((s) => s.sessionActive);
+  // v3.248 B2(A-6): 렌더 조건을 selectMiniPlayerVisible 단일 판정으로 통일 —
+  // AppScreenLayout·작곡/디렉터 화면 하단 패딩과 같은 셈법(불일치 봉합). 의미는 기존과 동일:
+  // Player 화면 열림 숨김 + (track && (sound || sessionActive)) — v3.197→v3.198 복구 경로 보존.
+  const visible = usePlayerStore(selectMiniPlayerVisible);
 
   // v3.225: 목록 스냅샷에 커버가 빠진 채 큐에 들어온 곡(v3.223 append 경로·다음곡·재시작 복원)은
   // 재생 화면(상세 재조회)과 달리 하단 미니플레이어에서 플레이스홀더로 남았다 — 곡이 바뀔 때 보강.
+  // v3.248 B1(A-5): 갱신 조건 확장 — 결손일 때만이 아니라 곡 전환 시 서버 커버와 대조(verify,
+  // 곡당 세션 1회)해 "커버 교체 후 스테일 스냅샷"도 병합한다.
   const trackId = track?.id;
-  const lacksCover = !!track && !track.cover_image && !track.cover_image_url;
   useEffect(() => {
-    if (trackId != null && lacksCover) maybeHydrateCover(track);
+    if (trackId != null) maybeHydrateCover(track, { verify: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackId, lacksCover]);
+  }, [trackId]);
 
-  // Player 화면이 열려있으면 숨김
-  if (isPlayerScreenOpen) return null;
-
-  // v3.197→v3.198: 전환 실패로 사운드가 정리(null)돼도 이번 세션에 재생한 적 있으면(sessionActive)
-  // 미니를 유지해 "재생버튼 1탭" 복구 경로를 보존한다. 반면 로그인 복원 큐(track만 있고
-  // 재생한 적 없음 — sound null + sessionActive false)는 앱 시작부터 미니가 뜨지 않게 숨긴다.
-  if (!track || (!hasSound && !sessionActive)) {
-    if (__DEV__ && track) console.info('[MiniPlayer] restored queue hidden — 재생 전 복원 큐(세션 미시작)');
+  if (!visible) {
+    if (__DEV__ && track && !isPlayerScreenOpen)
+      console.info('[MiniPlayer] hidden — 복원 큐(세션 미시작) 또는 miniHidden');
     return null;
   }
 

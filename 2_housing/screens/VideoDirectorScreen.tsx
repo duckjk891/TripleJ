@@ -31,6 +31,13 @@ import { listMyShareVideos, latestShareVideoByTrack, shareVideoObjectUrl, type S
 import { FatigueStatus } from '../types';
 // v3.219 [VideoDraft]: 대화 draft(선곡·진행·대화) 미러링 + 스타일 sticky — musicStore 보존
 import { useMusicStore, type VideoDraft, type VideoStylePrefs } from '../stores/musicStore';
+// v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
+// v3.248 B5(A-12): 웹 저장·공유 — window.open([보기] 확인창·팝업 차단) 대신 Blob → share(files)/a[download]
+import {
+  fetchWebMediaFile, canShareWebFile, shareWebFile, downloadWebFile, releaseWebMedia,
+  type WebMediaFile,
+} from '../utils/webMediaSave';
 // v3.228 W0-2 [GenJob:video]: 서버 원장(request_id) 연동 — 추적기 공개 API(1조) + video 어댑터(2조, import 시 registerKind)
 import {
   newRequestId, registerGenJob, adoptGenJob, markGenJobDone, guardGeneration,
@@ -62,7 +69,8 @@ interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
 const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; ratioW: number; ratioH: number }[] = [
   { key: 'sns', label: 'SNS용 세로', desc: '9:16 · 릴스/쇼츠/틱톡', ratioW: 36, ratioH: 64 },
   { key: 'wide', label: '와이드 가로', desc: '16:9 · 유튜브/PC', ratioW: 64, ratioH: 36 },
-  { key: 'kakao', label: '카톡 프로필 배경', desc: '15초 · 프로필 배경용', ratioW: 42, ratioH: 64 },
+  // v3.248 B5(A-12): 15초의 의미(가사 시작부터 클립) 명시 — "왜 15초냐" 문의 선제 안내
+  { key: 'kakao', label: '카톡 프로필 배경', desc: '가사 시작부터 15초 클립 · 프로필 배경용', ratioW: 42, ratioH: 64 },
 ];
 
 const FONTS: { key: string; label: string }[] = [
@@ -185,6 +193,9 @@ const INITIAL_VIDEO_GREETING: ChatMessage = {
 };
 
 export default function VideoDirectorScreen({ navigation, route }: any) {
+  const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
+  // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
+  const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
   // v3.219 [VideoDraft]: 마운트 시점 draft/스타일 sticky 스냅샷 — 커버(v3.202 H-⑤) 패턴.
   // draft(선곡·step·대화)는 재진입 이어가기용(저장/공유 완료·'처음부터'에 클리어),
   // stylePrefs는 완주 후에도 유지(다음 영상에 이전 취향 승계 — creationMode sticky 관행).
@@ -1036,12 +1047,45 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     return res.uri;
   };
 
+  // ── v3.248 B5(A-12): 웹 저장·공유 — Blob 기반 ─────────────────────────────
+  // window.open(Linking.openURL)은 iOS Safari에서 [보기]/[다운로드] 확인창으로 끝나 "보기만 된다"는
+  // 피드백 [22]의 원인. Blob을 받아 share(files)/a[download]로 대체하고, 같은 결과 영상은 1회만
+  // fetch해 캐시(두 번째 탭부터는 사용자 제스처 안에서 즉시 공유 시트 열림).
+  const webMediaRef = useRef<{ src: string; media: WebMediaFile } | null>(null);
+  useEffect(() => {
+    // 결과 영상이 바뀌면 이전 Blob 해제
+    if (webMediaRef.current && webMediaRef.current.src !== videoUrl) {
+      releaseWebMedia(webMediaRef.current.media);
+      webMediaRef.current = null;
+    }
+  }, [videoUrl]);
+  useEffect(() => () => releaseWebMedia(webMediaRef.current?.media), []);
+  const getWebMedia = async (): Promise<{ media: WebMediaFile; fromCache: boolean }> => {
+    if (!videoUrl) throw new Error('no video url');
+    const c = webMediaRef.current;
+    if (c && c.src === videoUrl) return { media: c.media, fromCache: true };
+    const base = (selected?.title || 'maidol').replace(/[^\w가-힣.-]+/g, '_').slice(0, 40) || 'maidol';
+    const media = await fetchWebMediaFile(videoUrl, `${base}_${madeFormat || 'video'}.mp4`);
+    if (webMediaRef.current) releaseWebMedia(webMediaRef.current.media);
+    webMediaRef.current = { src: videoUrl, media };
+    return { media, fromCache: false };
+  };
+
   const handleSaveToDevice = async () => {
     if (!videoUrl || saving) return;
     setSaving(true);
     try {
       if (Platform.OS === 'web') {
-        await Linking.openURL(videoUrl); // 웹: 브라우저 다운로드
+        // v3.248 B5(A-12): window.open([보기] 확인창) → Blob 받아 a[download] — 활성화 불요라 fetch 뒤에도 안전
+        try {
+          const { media } = await getWebMedia();
+          downloadWebFile(media);
+          showAlert('저장 시작', '브라우저 다운로드로 저장을 시작했어요. 파일 앱(다운로드)에서 확인할 수 있어요.');
+        } catch (werr: any) {
+          // Blob 실패(CORS 등) — 기존 새 창 열기로 폴백(최소한 보기·수동 저장 가능)
+          console.warn('[VideoDirector] 웹 Blob 저장 실패 — openURL 폴백', { message: werr?.message });
+          await Linking.openURL(videoUrl);
+        }
       } else {
         const { status } = await MediaLibrary.requestPermissionsAsync();
         if (status !== 'granted') {
@@ -1069,7 +1113,46 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     setSharing(true);
     try {
       if (Platform.OS === 'web') {
-        await Linking.openURL(videoUrl);
+        // v3.248 B5(A-12): Blob → 기기 공유 시트(share files) 우선.
+        //  · 캐시 적중(재탭) = 탭 직후라 사용자 활성화 유지 → 바로 공유 시트.
+        //  · 방금 fetch한 경우 활성화가 만료됐을 수 있어 2단계 — 팝업 버튼(새 제스처)에서 공유.
+        //  · share 미지원 브라우저는 a[download] 저장으로 대체.
+        try {
+          const { media, fromCache } = await getWebMedia();
+          if (!canShareWebFile(media)) {
+            downloadWebFile(media);
+            showAlert('안내', '이 브라우저는 파일 공유를 지원하지 않아 다운로드로 저장했어요.');
+          } else if (fromCache) {
+            const ok = await shareWebFile(media, selected?.title || undefined);
+            if (ok) {
+              useMusicStore.getState().clearVideoDraft();
+              if (__DEV__) console.info('[VideoDraft] 공유 완료(웹) — draft 클리어(스타일 sticky 유지)');
+            } else {
+              downloadWebFile(media);
+              showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+            }
+          } else {
+            showAlert('영상 준비 완료', '영상 파일이 준비됐어요. 공유 시트를 열려면 아래 버튼을 눌러주세요.', [
+              { text: '저장만 하기', onPress: () => downloadWebFile(media) },
+              {
+                text: '공유하기',
+                onPress: async () => {
+                  const ok = await shareWebFile(media, selected?.title || undefined);
+                  if (!ok) {
+                    downloadWebFile(media);
+                    showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+                    return;
+                  }
+                  useMusicStore.getState().clearVideoDraft();
+                  if (__DEV__) console.info('[VideoDraft] 공유 완료(웹 2단계) — draft 클리어');
+                },
+              },
+            ]);
+          }
+        } catch (werr: any) {
+          console.warn('[VideoDirector] 웹 Blob 공유 실패 — openURL 폴백', { message: werr?.message });
+          await Linking.openURL(videoUrl);
+        }
       } else {
         const uri = await downloadToCache();
         // v3.214 ⑥-b: mimeType(Android 공유 대상 확장)·UTI(iOS) 명시 — 미지정 시 일부 기기에서
@@ -1213,7 +1296,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       </ScrollView>
 
       {/* 입력 영역 — 단계별 선택지 */}
-      <View style={styles.inputArea}>
+      <View style={inputAreaStyle}>
         {step === 'pick' && (
           loadingTracks ? <ActivityIndicator size="small" color={colors.accent.primary} />
           : (

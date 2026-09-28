@@ -19,6 +19,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+// v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 // v3.229 [DirectorResume]: 보존 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { isLyricsDraftResumable } from '../utils/directorResume';
 import { colors } from '../theme/colors';
@@ -117,6 +119,9 @@ const DURATION_LABEL_BY_SEC: Record<number, string> = {
 
 export default function LyricsInputScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
+  // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
+  const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
   const store = useLyricsStore();
   // v3.219 [LyricsDraft]: 마운트 시점 store 스냅샷 — draft가 있으면 진행도·대화를 hydrate(이어서).
   // draft는 아래 미러링 effect가 스텝마다 기록하고, 발매(lyricsStore.reset())·'처음부터 다시'에만 지운다.
@@ -451,7 +456,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
 
       {/* 이전에 완성한 프롬프트가 있으면 바로 이동 버튼 표시 */}
       {store.generatedPrompt ? (
-        <View style={styles.inputArea}>
+        <View style={inputAreaStyle}>
           <TouchableOpacity
             style={[styles.sendButton, { flex: 1, paddingVertical: 14 }]}
             onPress={() => navigation.navigate('LyricsPromptReview')}
@@ -463,7 +468,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
 
       {/* Current step choices */}
       {!isComplete && (
-        <View style={styles.inputArea}>
+        <View style={inputAreaStyle}>
           {currentConfig.choices && (
             <ScrollView
               horizontal={false}

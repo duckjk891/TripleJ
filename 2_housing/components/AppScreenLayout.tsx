@@ -9,7 +9,7 @@ import {
   StyleProp,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { usePlayerStore } from '../stores/playerStore';
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT as MINI_HEIGHT } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 
 /**
@@ -27,7 +27,8 @@ import { colors } from '../theme/colors';
  * MapScreen 같은 특수 화면은 사용하지 않음 (자체 레이아웃 유지).
  */
 
-const MINI_PLAYER_HEIGHT = 70;
+// v3.248 B2: 미니 높이는 playerStore 공용 상수(MINI_HEIGHT) — 화면별 패딩과 단일 소스
+const MINI_PLAYER_HEIGHT = MINI_HEIGHT;
 const TAB_BAR_HEIGHT = 49;
 
 interface AppScreenLayoutProps {
@@ -65,7 +66,8 @@ export default function AppScreenLayout({
   padded = false,
 }: AppScreenLayoutProps) {
   const insets = useSafeAreaInsets();
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
+  // v3.248 B2(A-6): 판정 통일 — !!track(복원 큐에도 true)이 아니라 MiniPlayer 실노출 조건과 같은 셀렉터
+  const hasMiniPlayer = useMiniPlayerVisible();
 
   // 상단: 헤더가 있으면 RN Navigation이 처리 → 0. 아니면 노치 영역만큼
   const topPad = hasHeader ? 0 : insets.top;

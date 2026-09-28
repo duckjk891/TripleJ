@@ -706,21 +706,17 @@ export default function PlayerScreen({ route, navigation }: any) {
           } else {
             // v3.225: 제목은 있고 커버만 빠진 스냅샷(영속 큐 포함) — 재생 화면은 fullTrack으로 커버가
             // 보이지만 미니플레이어는 store.track을 그려 영구히 비었다. 커버 필드만 track·queue에 병합.
-            // setQueue가 saveOwnerQueue(계정 보관함 queue+track)까지 갱신 → 재시작 후에도 복구 유지.
+            // v3.248 B1(A-5): 병합 조건 확장 — 결손("커버가 아예 없음")만이 아니라 서버 커버 ≠ 스토어
+            // 커버(교체 후 스테일)도 병합. patchTrackEverywhere가 큐·현재곡·계정 보관함(영속)까지
+            // 일괄 반영하고 동일 값이면 no-op(참조 유지)라 무해.
             const cover = res.data.cover_image || res.data.cover_image_url;
             const rid = String(res.data.id);
-            const lacksCover = (t: any) =>
-              !!t && String(t.id) === rid && !t.cover_image && !t.cover_image_url;
-            const ps = usePlayerStore.getState();
-            if (cover && (lacksCover(ps.track) || ps.queue.some(lacksCover))) {
-              const merge = (t: any) => ({
-                ...t,
+            if (cover) {
+              const n = usePlayerStore.getState().patchTrackEverywhere(rid, {
                 cover_image: cover,
-                ...(res.data.cover_image_url ? { cover_image_url: res.data.cover_image_url } : {}),
+                cover_image_url: res.data.cover_image_url || cover,
               });
-              if (lacksCover(ps.track)) ps.setTrack(merge(ps.track));
-              ps.setQueue(ps.queue.map((t: any) => (lacksCover(t) ? merge(t) : t)));
-              if (__DEV__) console.info('[PlayerScreen] 커버 결손 스냅샷 → 커버 병합', { id: rid });
+              if (n > 0 && __DEV__) console.info('[PlayerScreen] 커버 스냅샷 병합(결손·스테일)', { id: rid, n });
             }
           }
         }

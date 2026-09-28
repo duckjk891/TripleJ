@@ -14,6 +14,8 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText } from './ui';
 import { trackShareUrl } from '../utils/trackShare';
+// v3.248 B5(A-12): 웹 Blob 저장·공유 유틸(VideoDirector와 공용)
+import { fetchWebMediaFile, canShareWebFile, shareWebFile, downloadWebFile } from '../utils/webMediaSave';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -27,10 +29,11 @@ interface Props {
 }
 
 // 영상 포맷 3종 — 서버 share-video API의 format 값과 1:1
+// v3.248 B5(A-12): 카톡 15초의 의미(가사 시작부터 클립) 설명 라벨 추가 — hint는 포맷별
 const VIDEO_FORMATS = {
-  wide: { label: '일반 화질 (가로 16:9)', icon: 'monitor' as const },
-  sns: { label: 'SNS용 (세로 9:16)', icon: 'smartphone' as const },
-  kakao: { label: '카톡 프로필 배경 (15초)', icon: 'message-circle' as const },
+  wide: { label: '일반 화질 (가로 16:9)', icon: 'monitor' as const, hint: '영상 생성 — 최초 1~2분' },
+  sns: { label: 'SNS용 (세로 9:16)', icon: 'smartphone' as const, hint: '영상 생성 — 최초 1~2분' },
+  kakao: { label: '카톡 프로필 배경 (15초)', icon: 'message-circle' as const, hint: '가사 시작부터 15초 클립 · 최초 1~2분' },
 };
 
 // 공유 대상별 폴백 업로드 페이지(모바일 공유 시트가 안 뜰 때)
@@ -42,9 +45,36 @@ const SNS_UPLOAD_URLS: Record<string, string> = {
 
 // v3.221: 시트 밖(마이페이지 ⋮ 다운로드 → 음원)에서도 재사용하는 모듈 헬퍼.
 // 컴포넌트 내부 saveToDevice/handleDownloadMp3 와 동일 로직 — 시트는 아래 함수를 위임 호출.
+// v3.248 B5(A-12): 웹은 window.open(iOS Safari [보기]/[다운로드] 확인창·팝업 차단의 원인) 대신
+// Blob을 받아 기기 공유 시트(navigator.canShare files) 우선, 미지원이면 a[download].
+// 서버 빌드(수 분) 뒤라 사용자 활성화가 만료됐을 수 있어 공유는 팝업 버튼(새 제스처)에서 여는 2단계.
 export async function saveTrackFileToDevice(url: string, filename: string): Promise<void> {
   if (Platform.OS === 'web') {
-    await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err }));
+    try {
+      const isMp3 = /\.mp3$/i.test(filename);
+      const media = await fetchWebMediaFile(url, filename, isMp3 ? 'audio/mpeg' : 'video/mp4');
+      if (canShareWebFile(media)) {
+        showAlert('파일 준비 완료', '저장하거나 다른 앱으로 공유할 수 있어요.', [
+          { text: '기기에 저장', onPress: () => downloadWebFile(media) },
+          {
+            text: '공유하기',
+            onPress: async () => {
+              const ok = await shareWebFile(media, filename);
+              if (!ok) {
+                downloadWebFile(media);
+                showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+              }
+            },
+          },
+        ]);
+      } else {
+        downloadWebFile(media); // a[download]는 활성화 불요 — 바로 브라우저 다운로드
+      }
+    } catch (err: any) {
+      // Blob 실패(CORS 등) — 기존 새 창 열기 폴백(최소한 보기·수동 저장 가능)
+      console.error('[TrackShareDownloadSheet] 웹 Blob 저장 실패 — openURL 폴백', { message: err?.message });
+      await Linking.openURL(url).catch((e) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err: e }));
+    }
     return;
   }
   try {
@@ -120,7 +150,14 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     setBusy(null);
     if (!url) return;
     onClose();
-    // 생성된 영상을 열어 저장/공유 → 이어서 해당 SNS 업로드 페이지로 이동
+    if (Platform.OS === 'web') {
+      // v3.248 B5(A-12): 수 분 빌드 뒤 window.open 2연발(영상+업로드 페이지)은 팝업 차단·[보기]
+      // 확인창으로 끝났다 — Blob 공유/저장 2단계(saveTrackFileToDevice 웹 분기)로 대체.
+      await saveTrackFileToDevice(url, `maidol_${key}_sns.mp4`);
+      showAlert('공유 영상 준비 완료', '영상을 저장·공유한 뒤 해당 SNS 앱에서 업로드해주세요.');
+      return;
+    }
+    // 네이티브: 생성된 영상을 열어 저장/공유 → 이어서 해당 SNS 업로드 페이지로 이동(기존 동작 유지)
     await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 영상 열기 실패', { err }));
     const fallback = SNS_UPLOAD_URLS[key];
     if (fallback) Linking.openURL(fallback).catch(() => {});
@@ -150,7 +187,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     setBusy(null);
     if (!url) return;
     onClose();
-    await saveToDevice(url, `aidol_${format}.mp4`);
+    await saveToDevice(url, `maidol_${format}.mp4`); // v3.248: 노출 파일명 브랜딩 정정(AIDOL 금지)
   };
 
   const handleDownloadMp3 = async () => {
@@ -199,7 +236,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
             <>
               {(['wide', 'sns', 'kakao'] as const).map((f) => (
                 <Item key={f} itemKey={f} icon={VIDEO_FORMATS[f].icon} label={VIDEO_FORMATS[f].label}
-                  hint="영상 생성 — 최초 1~2분" onPress={() => handleDownloadVideo(f)} />
+                  hint={VIDEO_FORMATS[f].hint} onPress={() => handleDownloadVideo(f)} />
               ))}
               <Item itemKey="mp3" icon="music" label="음원만 (mp3)" hint={user ? undefined : '로그인 필요'} onPress={handleDownloadMp3} />
             </>

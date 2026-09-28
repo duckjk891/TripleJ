@@ -23,6 +23,8 @@ import { DialogueNode } from '../types';
 import lyricistDialogue from '../dialogues/lyricist.json';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+// v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 // v3.202(C): 창작 과정 기록 가이드 — recChip 탭·모드 안내 '자세히 보기'에서 PolicySheet로 표시
@@ -93,6 +95,9 @@ export default function DialogueScreen({ route, navigation }: Props) {
   // v3.214 ②: 시트 상단 ≥ 헤더 하단 — 훅 실패/0(헤더 미측정)이면 insets.top + 56 폴백
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
+  const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
+  // v3.248 B2(A-6): 대화 상자(선택지 포함)가 미니플레이어에 덮이지 않게 들어올림 — image13·16
+  const dialogueBoxStyle = [styles.dialogueBox, miniVisible && { marginBottom: 8 + MINI_PLAYER_HEIGHT }];
   const recordGuideTopLimit = headerHeight > 0 ? headerHeight : insets.top + 56;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -421,7 +426,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
         </View>
 
         {/* White dialogue box at bottom */}
-        <View style={styles.dialogueBox}>
+        <View style={dialogueBoxStyle}>
           <AppText style={styles.dialogueText}>
             {displayedText}
             {isTyping && <AppText style={styles.cursor}>|</AppText>}

@@ -49,6 +49,20 @@ import {
 const GRID_BASIC_CATS: Cat[] = ['상의', '하의', '신발'];
 const LOCKED_CATS: string[] = ['헤어스타일', '헤어컬러', '안경', '문신'];
 
+// v3.248 B3(A-7): 카테고리별 '착용 안 함'(벗기기) — 시트의 모자를 벗길 방법이 없던 피드백 [5].
+// 서버는 이미 빈 착장(used_items 빈 리스트)을 허용하므로 FE 프롬프트·게이트만 보강.
+const REMOVABLE_CATS: Cat[] = ['모자', '가방', '신발'];
+const REMOVE_CHIP_LABEL: Partial<Record<Cat, string>> = {
+  모자: '모자 벗기 (맨머리)',
+  가방: '가방 없이',
+  신발: '신발 없이 (맨발)',
+};
+const REMOVE_PROMPT: Partial<Record<Cat, string>> = {
+  모자: '모자=착용하지 않음(맨머리 — 모자·캡·비니 등 머리에 쓰는 것 일절 없음)',
+  가방: '가방=착용하지 않음(가방·백팩·크로스백 등 일절 없음)',
+  신발: '신발=맨발(신발 없음)',
+};
+
 // 카테고리별 핏/기장 옵션 (선택사항, 빠른 토글) — A방안
 type OptionGroup = { label: string; values: string[] };
 const CAT_OPTIONS: Partial<Record<Cat, OptionGroup[]>> = {
@@ -451,9 +465,29 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     );
   }, [draftReady, selected, itemOptions, freeDirecting, draftMode, draftCharacterId, draftKind]);
 
+  // v3.248 B3(A-7): 카테고리별 '착용 안 함' 상태 — 켜면 그 카테고리 선택은 해제(상호배타).
+  // 세션 상태(영속 draft 미포함) — 벗기기는 1회성 지시라 복원 대상 아님.
+  const [removeCats, setRemoveCats] = useState<Partial<Record<Cat, boolean>>>({});
+  const toggleRemoveCat = (cat: Cat) => {
+    setRemoveCats((prev) => {
+      const on = !prev[cat];
+      if (__DEV__) console.info('[ArtistCody] 착용 안 함 토글', { cat, on });
+      return { ...prev, [cat]: on };
+    });
+    // 켜는 순간 해당 카테고리의 선택 아이템은 해제(벗기기 의도와 충돌 방지)
+    setSelected((prev) => {
+      if (!prev[cat]) return prev;
+      const next = { ...prev };
+      delete next[cat];
+      return next;
+    });
+  };
+
   const pickItem = (item: AdItem) => {
     if (!pickerCat) return;
     setSelected((prev) => ({ ...prev, [pickerCat]: item }));
+    // v3.248 B3: 아이템을 고르면 그 카테고리의 '착용 안 함'은 해제
+    setRemoveCats((prev) => (prev[pickerCat] ? { ...prev, [pickerCat]: false } : prev));
     api.post(`/business/ads/${item.id}/impression`).catch(() => {});
     closePicker();
   };
@@ -470,6 +504,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     .map((c) => [c, selected[c]] as const)
     .filter(([, item]) => !!item);
 
+  // v3.248 B3(A-7): 명시적으로 '착용 안 함'을 켠 카테고리 목록
+  const removedCats = REMOVABLE_CATS.filter((c) => !!removeCats[c]);
+
   // v3.230 A5-2: ⭐ 확인 대기 중 재진입 방지
   const applyConfirmingRef = useRef(false);
   const handleApply = async (opts: { skipStaleCheck?: boolean } = {}) => {
@@ -480,8 +517,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       showAlert('오류', '먼저 캐릭터 시트가 필요해요.');
       return;
     }
-    if (!isSheetMode && selectedEntries.length === 0) {
-      showAlert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
+    // v3.248 B3(A-7): 해제-온리 요청 허용 — '착용 안 함'만 켠 경우(모자 벗기기 등)도 진행 가능
+    if (!isSheetMode && selectedEntries.length === 0 && removedCats.length === 0) {
+      showAlert('알림', "입혀줄 아이템을 고르거나 '착용 안 함'을 선택해주세요.");
       return;
     }
     // v3.227(E): 복원한 선택 중 판매가 끝난(카탈로그에서 사라진) 아이템 — 적용 전 경고
@@ -578,6 +616,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (!explicitCats.has('상의')) missingClothingDefaults.push('상의=단순한 흰 반팔 티');
     if (!explicitCats.has('하의')) missingClothingDefaults.push('하의=무릎 살짝 위 길이의 회색 면반바지(루즈핏)');
     if (!explicitCats.has('신발')) missingClothingDefaults.push('신발=맨발');
+    // v3.248 B3(A-7): 미선택 모자/가방 기본형 보강 — 기존 프롬프트는 모자를 언급하지 않아
+    // 1단계 "의상 완전 제거"에도 시트의 모자가 그대로 유지되던 원인(피드백 [5]).
+    if (!explicitCats.has('모자')) missingClothingDefaults.push('모자=착용하지 않음(맨머리)');
+    if (!explicitCats.has('가방')) missingClothingDefaults.push('가방=착용하지 않음(가방 없음)');
 
     // 사용자가 하의를 선택했는지 → 별도 강력 constraint 추가
     const hasBottomSelected = explicitCats.has('하의');
@@ -635,6 +677,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       .map((v) => WEAR_STYLE_HINTS[v]);
     if (wearStyleHints.length > 0) {
       parts.push(`【착용 방식 해석】 ${wearStyleHints.join(', ')}.`);
+    }
+
+    // v3.248 B3(A-7): 사용자가 명시한 '착용 안 함' — 해당 부위는 반드시 비운다(모자 벗기기 등)
+    if (removedCats.length > 0) {
+      parts.push(
+        `【착용 해제 — 사용자 명시】 ${removedCats.map((c) => REMOVE_PROMPT[c]).join(', ')}.\n` +
+        '위 카테고리는 반드시 아무것도 착용하지 않은 상태로 그리세요. 현재 시트에 그려져 있는 해당 아이템(모자 등)은 완전히 제거해야 합니다.'
+      );
     }
 
     // 하의 강력 constraint
@@ -778,11 +828,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       headerLeft: () => (
         <TouchableOpacity
           onPress={() => {
-            if (route?.params?.returnToCover && navigation.canGoBack()) {
-              console.info('[ArtistCody] ← 커버 대화로 복귀 (returnToCover)');
+            // v3.248 B4(A-11): ←는 "온 곳으로" — 무조건 popTo('Map')이던 것이 꾸미기(ArtistResult 경유)
+            // 뒤로가기를 초기 화면으로 보내던 원인(피드백 [19]). 커버 경유(returnToCover)도 같은 goBack.
+            if (navigation.canGoBack()) {
+              console.info('[ArtistCody] ← goBack', {
+                returnToCover: !!route?.params?.returnToCover,
+                from: route?.params?.from ?? null,
+              });
               navigation.goBack();
             } else {
-              navigation.popTo('Map'); // v3.222: RN7 navigate 는 Map 을 새로 push — popTo 로 스택 정리
+              // 딥 진입(스택 없음) 폴백 — v3.222: RN7 navigate 는 Map 을 새로 push하므로 popTo 유지
+              navigation.popTo('Map');
             }
           }}
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
@@ -901,6 +957,30 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           ))}
         </View>
 
+        {/* v3.248 B3(A-7): 카테고리별 '착용 안 함' 칩 — 시트의 모자를 벗기는 등 해제 의도 명시.
+            켜면 그 카테고리 선택은 해제되고, 해제만으로도(아이템 0개) 적용 가능 */}
+        <View style={styles.optBox}>
+          <AppText style={styles.optBoxTitle}>착용 안 함 (벗기기)</AppText>
+          <View style={styles.optChipsRow}>
+            {REMOVABLE_CATS.map((cat) => {
+              const on = !!removeCats[cat];
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.optChip, on && styles.optChipSelected]}
+                  onPress={() => toggleRemoveCat(cat)}
+                  accessibilityLabel={`${cat} 착용 안 함`}
+                >
+                  <AppText style={[styles.optChipText, on && styles.optChipTextSelected]}>
+                    {REMOVE_CHIP_LABEL[cat]}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <AppText style={styles.hint}>선택하면 그 부위는 아무것도 착용하지 않은 모습으로 만들어요.</AppText>
+        </View>
+
         {/* 선택된 카테고리의 옵션 칩 (핏/기장 등) */}
         {selectedEntries.some(([cat]) => CAT_OPTIONS[cat as Cat]) && (
           <View style={styles.optBox}>
@@ -996,6 +1076,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 // v3.105: restore — store에 보존된 컨셉/사진/화풍·재생성 대상(cid)을 버리지 않고
                 // "이어서 만들기"로 재개 가능 (취소해도 입력 데이터 보존 — 대표 지적)
                 navigation.replace('ArtistInput', { restore: true });
+              } else if (route?.params?.from === 'ArtistResult' && navigation.canGoBack()) {
+                // v3.248 B4(A-11): navigate 진입(ArtistResult가 스택에 남음) — replace면 결과 화면이
+                // 중복 push되므로 goBack으로 복귀
+                navigation.goBack();
               } else {
                 navigation.replace('ArtistResult');
               }
@@ -1003,13 +1087,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           >
             <AppText style={styles.skipBtnText}>취소</AppText>
           </TouchableOpacity>
+          {/* v3.248 B3(A-7): '착용 안 함'만 켠 해제-온리 요청도 버튼 활성 */}
           <TouchableOpacity
             style={[
               styles.applyBtn,
-              !isSheetMode && selectedEntries.length === 0 && { opacity: 0.4 },
+              !isSheetMode && selectedEntries.length === 0 && removedCats.length === 0 && { opacity: 0.4 },
             ]}
             onPress={() => handleApply()}
-            disabled={!isSheetMode && selectedEntries.length === 0}
+            disabled={!isSheetMode && selectedEntries.length === 0 && removedCats.length === 0}
           >
             <AppText style={styles.applyBtnText}>
               {isSheetMode ? `이 옷으로 만들기 ⭐${characterCost}` : `이 옷으로 입히기 ⭐${characterCost}`}

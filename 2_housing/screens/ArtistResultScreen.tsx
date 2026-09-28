@@ -449,6 +449,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               appliedAt: Date.now(),
             }));
             useOutfitStore.getState().setItems(mapped);
+          } else if (Array.isArray(ch.used_items) && useOutfitStore.getState().items.length > 0) {
+            // v3.248 B3(A-7): 해제-온리 적용(모자 벗기기 등) — 서버 착장이 빈 리스트인데
+            // 옛 착장 표시가 잔존하던 문제. 서버=진실의 원천 그대로 비운다(setItems([]) —
+            // clear()는 sheet draft까지 지우므로 착용 목록만 동기화).
+            console.info('[ArtistResult] used_items 빈 리스트 — 착용 목록 초기화');
+            useOutfitStore.getState().setItems([]);
           }
           // v3.121: 가상 슬롯 착용 아이템 — me 응답의 virtual_used_items(별도 필드, 실측).
           // 기존 코드는 real used_items만 읽어 가상 탭에서 착용 제품이 누락됐다(대표 지적).
@@ -589,7 +595,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       console.log('[ArtistResult] 가상 아티스트 꾸미기 진입', { characterId: cid });
       // ArtistCody/ArtistLoading의 outfit 분기가 cartoon 경로를 타도록 kind·대상 cid 고정
       useCharacterTaskStore.getState().setInput({ characterKind: 'virtual', targetCharacterId: cid });
-      navigation.replace('ArtistCody');
+      // v3.248 B4(A-11): replace → navigate — 결과 화면을 스택에 남겨 꾸미기 ←가 여기로 복귀(피드백 [19]).
+      // from 파라미터 = 복귀 규약 명확화(ArtistCody 취소 버튼이 goBack 분기에 사용)
+      navigation.navigate('ArtistCody', { from: 'ArtistResult' });
       return;
     }
     if (isChild) {
@@ -601,7 +609,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     if (!apiResult) return;
     // 실사 꾸미기: 가상 생성 잔존값(characterKind='virtual')이 outfit 분기를 오염시키지 않도록 정규화
     useCharacterTaskStore.getState().setInput({ characterKind: 'real' });
-    navigation.replace('ArtistCody');
+    // v3.248 B4(A-11): replace → navigate — 꾸미기 ←가 결과 화면으로 복귀(위 가상 분기와 동일 규약)
+    navigation.navigate('ArtistCody', { from: 'ArtistResult' });
   };
 
   const handleResetCharacter = () => {

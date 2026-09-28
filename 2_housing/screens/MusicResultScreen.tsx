@@ -428,6 +428,11 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           try {
             await api.put(`/tracks/${trackId}`, { cover_image_url: picked.objectName });
             console.info('[MusicResult] 보관함 커버 적용 완료', { trackId });
+            // v3.248 B1(A-5): 재생 큐·현재곡·계정 보관함(영속)의 옛 커버 스냅샷 즉시 교체(피드백 [23])
+            usePlayerStore.getState().patchTrackEverywhere(String(trackId), {
+              cover_image: picked.objectName,
+              cover_image_url: picked.objectName,
+            });
             setLibraryCover(picked); // 미리보기 표시용
             showAlert('완료', '보관함 커버가 곡에 적용되었어요!');
           } catch (err: any) {

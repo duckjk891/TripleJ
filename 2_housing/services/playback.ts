@@ -837,26 +837,37 @@ export async function loadAndPlayTrack(newTrack: any, opts?: { auto?: boolean })
  * track에 cover_image/cover_image_url이 모두 결손이면 GET /tracks/{id}로 백그라운드 보강하고
  * store의 track/queue 항목에 병합한다(실패 무시). 미니플레이어는 store 구독이라 자동 반영.
  * 필드명 확인: MiniPlayer(:93)·TrackRow·PlayerScreen 전부 `cover_image || cover_image_url` 셈법.
+ * v3.248 B1(A-5):
+ *  · 병합 조건 확장 — "커버 결손"만이 아니라 서버 커버 ≠ 스토어 커버(교체 후 스테일 스냅샷)도
+ *    patchTrackEverywhere로 큐·현재곡·계정 보관함(영속)까지 일괄 병합.
+ *  · opts.verify — 커버가 있어도 서버와 대조(곡당 세션 1회 캐시). 미니플레이어가 곡 전환 시
+ *    사용해, 이전 세션에 교체된 커버가 복원 큐에 스테일로 남는 경우를 치유한다.
+ *    (사진 업로드 커버의 같은 objectName 덮어쓰기 캐시버스터는 서버 몫 — 앱은 objectName 변화만 반영)
  */
-export function maybeHydrateCover(track: any): void {
+const verifiedCoverIds = new Set<string>();
+export function maybeHydrateCover(track: any, opts?: { verify?: boolean }): void {
   if (!track?.id) return;
-  if (track.cover_image || track.cover_image_url) return;
+  const hasCover = !!(track.cover_image || track.cover_image_url);
   const id = String(track.id);
+  if (hasCover) {
+    if (!opts?.verify) return;
+    if (verifiedCoverIds.has(id)) return; // 세션당 1회 대조 — 곡 전환마다 중복 GET 방지
+    verifiedCoverIds.add(id);
+  }
   (async () => {
     try {
       const res = await api.get(`/tracks/${id}`);
       const cover = res.data?.cover_image || res.data?.cover_image_url;
       if (!cover) return; // 서버에도 커버 없음 — 플레이스홀더 유지가 정답
-      const s = usePlayerStore.getState();
-      const lacksCover = (t: any) =>
-        !!t && String(t.id) === id && !t.cover_image && !t.cover_image_url;
-      if (lacksCover(s.track)) s.setTrack({ ...s.track, cover_image: cover });
-      if (s.queue.some(lacksCover)) {
-        s.setQueue(s.queue.map((t: any) => (lacksCover(t) ? { ...t, cover_image: cover } : t)));
-      }
-      if (__DEV__) console.info('[playback] cover hydrate', { id });
+      // 서버 커버 ≠ 스토어 커버(결손 포함)인 항목만 실변경 — patchTrackEverywhere가 동일값은 no-op
+      const n = usePlayerStore.getState().patchTrackEverywhere(id, {
+        cover_image: cover,
+        cover_image_url: res.data?.cover_image_url || cover,
+      });
+      if (__DEV__) console.info('[playback] cover hydrate', { id, n, verify: !!opts?.verify });
     } catch (err: any) {
-      // 보강 실패는 무해(기존 플레이스홀더 유지) — 재생 흐름에 영향 금지
+      // 보강 실패는 무해(기존 플레이스홀더 유지) — 재생 흐름에 영향 금지. verify 캐시는 되돌려 재시도 허용
+      if (hasCover) verifiedCoverIds.delete(id);
       if (__DEV__)
         console.info('[playback] cover hydrate 실패(무시)', { id, status: err?.response?.status });
     }

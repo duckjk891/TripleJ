@@ -21,6 +21,8 @@ import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore, type ComposeDraft, type ComposeDraftAnswers } from '../stores/musicStore';
+// v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -123,6 +125,9 @@ type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
 
 export default function MusicGenerationScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
+  // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
+  const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
   const musicStore = useMusicStore();
   const lyricsStore = useLyricsStore();
 
@@ -1663,7 +1668,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const renderInputArea = () => {
     if (isComplete) {
       return (
-        <View style={styles.inputArea}>
+        <View style={inputAreaStyle}>
           <TouchableOpacity style={styles.generateButton} onPress={handleGenerate}>
             <AppText style={styles.generateButtonText}>음악 생성 시작</AppText>
           </TouchableOpacity>
@@ -1675,7 +1680,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 0:
         // Title editing
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <TextInput
               style={styles.advancedInput}
               value={editedTitle}
@@ -1692,7 +1697,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 1:
         // Lyrics editing
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <TextInput
               style={styles.lyricsInput}
               value={editedLyrics}
@@ -1719,7 +1724,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 3:
         // Vocal selection
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView
               style={styles.choicesScroll}
               contentContainerStyle={styles.choicesContainer}
@@ -1747,7 +1752,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 220:
         // v3.143: 목소리 방식 선택 — 간편 목소리(스타일) / 내 목소리(클론)
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               <TouchableOpacity style={styles.choiceButton} onPress={handleVoiceModeQuick}>
                 <AppText style={styles.choiceNumber}>1</AppText>
@@ -1766,7 +1771,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 210:
         // v3.139: 내 목소리(클론) 선택 — ready 클론 목록 / 없으면 만들기 안내
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {clonesLoading && readyClones.length === 0 ? (
                 <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: 16 }} />
@@ -1814,7 +1819,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 4:
         // Vocal style selection + free input
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -1839,7 +1844,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 200:
         // v3.135: 아티스트 선택 (가사 다음·보컬 전) — 선택 없이 진행 가능
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {(artists || []).map((a, idx) => {
                 // v3.143: 클론(ready) 또는 간편 프리셋 연결 여부 — 미연결은 탭 시 차단(필수 안내)
@@ -1893,7 +1898,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 302:
         // v3.145: 작사 장르/분위기 유지 여부 확인 — 아니오면 작곡 선택 우선
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               <TouchableOpacity style={styles.choiceButton} onPress={handleGenreConfirmYes}>
                 <AppText style={styles.choiceNumber}>1</AppText>
@@ -1910,7 +1915,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 300:
         // v3.137: 장르 선택 (가사에 장르 정보 없음)
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {GENRE_OPTIONS.map((g, idx) => (
                 <TouchableOpacity key={g} style={styles.choiceButton} onPress={() => handleGenrePick(g)}>
@@ -1944,7 +1949,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 301:
         // v3.137: 분위기 선택 (가사에 분위기 정보 없음)
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {MOOD_OPTIONS.map((m, idx) => (
                 <TouchableOpacity key={m} style={styles.choiceButton} onPress={() => handleMoodPick(m)}>
@@ -1979,7 +1984,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         // v3.203: 연주곡 곡 길이(분) 선택 — Suno V6 duration(10~360초, 최대 6분) 직접 지원.
         // 분 버튼 6개 + '자동'(길이를 맡김 = durationSec null). 기존 choiceButton 스타일 재사용.
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {DURATION_OPTIONS.map((min, idx) => (
                 <TouchableOpacity
@@ -2004,7 +2009,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 100:
         // 듀엣: 서브 보컬 성별 선택
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {['남성', '여성'].map((vocal, idx) => (
                 <TouchableOpacity
@@ -2023,7 +2028,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 101:
         // 듀엣: 서브 보컬 스타일 선택
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vocalStyleScroll} contentContainerStyle={styles.vocalStyleContainer}>
               {VOCAL_STYLES.map((style) => (
                 <TouchableOpacity
@@ -2041,7 +2046,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 5:
         // Reference - file upload
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             {/* v3.232 K14: 어린이는 참고 음원 파일 업로드 없음(건너뛰기 유지) */}
             {!isChild && (
             <TouchableOpacity
@@ -2075,7 +2080,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 6:
         // 제외 스타일
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <TextInput
               style={styles.advancedInput}
               value={negativeTags}
@@ -2101,7 +2106,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 7:
         // 자유도 (스타일 강도): 0 자유 ~ 1 엄격
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <View style={styles.sliderRow}>
               <AppText style={styles.sliderEndLabel}>자유롭게</AppText>
               <Slider
@@ -2132,7 +2137,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 8:
         // 대중성 ↔ 실험성 (weirdness)
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <View style={styles.sliderRow}>
               <AppText style={styles.sliderEndLabel}>대중적</AppText>
               <Slider
@@ -2163,7 +2168,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 9:
         // 참고 오디오 세기
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <View style={styles.sliderRow}>
               <AppText style={styles.sliderEndLabel}>약하게</AppText>
               <Slider
@@ -2194,7 +2199,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 10:
         // BPM
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <View style={styles.sliderRow}>
               <AppText style={styles.sliderEndLabel}>60</AppText>
               <Slider
@@ -2225,7 +2230,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 11:
         // Key (조성)
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
               {KEY_OPTIONS.map((k) => (
                 <TouchableOpacity
@@ -2256,7 +2261,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         // v3.78: 내 목소리 선택 — v3.102: 클론(ready) + 프리셋만 (구 persona 칩 제거, 'voice' 고정)
         // v3.84: 프리셋형이면 이 스텝은 건너뛰기 기본 — 안내만 표시
         return (
-          <View style={styles.inputArea}>
+          <View style={inputAreaStyle}>
             {artistPreset && (
               <AppText style={styles.presetNotice}>
                 아티스트 목소리(간편: {artistVoiceLabel(artistPreset)})가 설정되어 있어요.

@@ -61,7 +61,26 @@ interface PlayerState {
    *  항목의 artist_name을 새 이름으로 일괄 치환(빈 이름이면 기획사명 → 'AI' 폴백, 서버 직렬화 규칙과 동일).
    *  character_id가 없는 항목은 대상 아님(다음 서버 조회 때 갱신). 반환: 치환된 항목 수(큐·보관함·현재곡 합계) */
   renameArtistInQueue: (characterId: string, name: string) => number;
+  /** v3.248 B1(A-5): 트랙 필드 패치 일괄 전파 — 재생 큐·현재 곡·계정 보관함(savedQueues)의 같은 id 항목에
+   *  patch를 병합한다(renameArtistInQueue 패턴). 커버 교체 PUT 성공 직후 등 "서버가 바뀐 걸 아는 지점"에서
+   *  호출해 미니플레이어·플레이어·영속 큐가 옛 스냅샷을 계속 그리는 문제를 막는다.
+   *  값이 전부 동일하면 참조 유지(no-op). 반환: 패치된 항목 수(큐·보관함·현재곡 합계). */
+  patchTrackEverywhere: (trackId: string | number, patch: Record<string, any>) => number;
 }
+
+/** v3.248 B2(A-6): 미니플레이어 "실노출" 판정 단일화.
+ *  MiniPlayer 실제 렌더 조건(track 존재 + (sound 있음 || 이번 세션 재생 이력) + 플레이어 화면 아님)에
+ *  App.tsx MiniPlayerWrapper의 miniHidden(작업실 화면 숨김)까지 합산한 값.
+ *  AppScreenLayout·작곡/디렉터 화면의 하단 패딩이 전부 이 판정을 공유한다
+ *  (기존 AppScreenLayout은 !!track만 봐서 "로그인 복원 큐(미니 미노출)"에도 패딩이 생기는 불일치가 있었다). */
+export const selectMiniPlayerVisible = (s: PlayerState): boolean =>
+  !!s.track && (!!s.sound || s.sessionActive) && !s.isPlayerScreenOpen && !s.miniHidden;
+
+/** v3.248 B2: 화면 훅 — 미니플레이어가 실제로 떠 있는지(하단 패딩 필요 여부) */
+export const useMiniPlayerVisible = (): boolean => usePlayerStore(selectMiniPlayerVisible);
+
+/** v3.248 B2: 미니플레이어 높이(px) — AppScreenLayout·각 화면 하단 패딩 공용 상수 */
+export const MINI_PLAYER_HEIGHT = 70;
 
 // v3.229 N4: 큐 항목의 아티스트 식별 — 곡 문서의 character_id(발매 시 선택 아티스트) 우선,
 // 없으면 곡 스냅샷(user_character_snapshot.character_id). 둘 다 없으면 대상 아님.
@@ -277,6 +296,49 @@ export const usePlayerStore = create<PlayerState>()(
         console.info('[ArtistRename] queue rename', { n: total, queue: nQueue, saved: nSaved, current: nTrack, nameLen: newName.length });
         if (total === 0) return 0;
         // 현재 작업 큐·현재곡·보관함을 한 번에 반영(재생 상태·인덱스는 불변 — 곡 id 기준 비교라 재로드 없음)
+        set({ queue: nextQueue, track: nextTrack, savedQueues: nextSaved });
+        return total;
+      },
+      // v3.248 B1(A-5): renameArtistInQueue와 같은 3면 순회 — id 일치 항목에 patch 병합.
+      // savedQueues를 직접 패치하므로 영속(partialize: savedQueues)에도 다음 저장 시 그대로 실린다.
+      patchTrackEverywhere: (trackId, patch) => {
+        const id = String(trackId ?? '').trim();
+        if (!id || !patch || Object.keys(patch).length === 0) return 0;
+        const apply = (t: any): any => {
+          if (!t || String(t.id) !== id) return t;
+          const changed = Object.keys(patch).some((k) => t[k] !== patch[k]);
+          return changed ? { ...t, ...patch } : t;
+        };
+        const { queue, track, savedQueues } = get();
+        let nQueue = 0;
+        let nSaved = 0;
+        let nTrack = 0;
+        const nextQueue = queue.map((t) => {
+          const r = apply(t);
+          if (r !== t) nQueue++;
+          return r;
+        });
+        const nextTrack = apply(track);
+        if (nextTrack !== track) nTrack = 1;
+        const nextSaved: PlayerState['savedQueues'] = {};
+        for (const [owner, entry] of Object.entries(savedQueues || {})) {
+          if (!entry) { nextSaved[owner] = entry; continue; }
+          let changed = false;
+          const q = (entry.queue || []).map((t) => {
+            const r = apply(t);
+            if (r !== t) { nSaved++; changed = true; }
+            return r;
+          });
+          const et = apply(entry.track);
+          if (et !== entry.track) { nSaved++; changed = true; }
+          nextSaved[owner] = changed ? { ...entry, queue: q, track: et } : entry;
+        }
+        const total = nQueue + nSaved + nTrack;
+        if (total === 0) return 0;
+        console.info('[TrackPatch] patchTrackEverywhere', {
+          id, keys: Object.keys(patch), n: total, queue: nQueue, saved: nSaved, current: nTrack,
+        });
+        // 재생 상태·인덱스 불변(id 기준 병합) — 커버 등 표시 필드만 바뀌므로 재로드 없음
         set({ queue: nextQueue, track: nextTrack, savedQueues: nextSaved });
         return total;
       },

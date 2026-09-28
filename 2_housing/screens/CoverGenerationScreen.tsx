@@ -28,6 +28,8 @@ import { updateAlbumCover } from '../services/albumService';
 import * as DocumentPicker from 'expo-document-picker';
 import { uploadCoverBackground } from '../services/trackService';
 import { listLyricsAssets } from '../services/lyricsService';
+// v3.248 B1(A-5)·B2(A-6): 커버 PUT 성공 → 재생 큐/현재곡/보관함 일괄 반영 + 미니플레이어 하단 패딩 판정
+import { usePlayerStore, useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useCallback } from 'react';
 import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
@@ -421,6 +423,9 @@ type ScreenMode = 'dialogue' | 'loading' | 'result';
 
 export default function CoverGenerationScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
+  const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
+  // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
+  const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
   // v3.232 K15 [KidsGate]: 어린이 계정 — 배경·장소 "사진 올리기" 숨김(글 설명·건너뛰기·다듬기 유지). 성인은 false.
   const isChild = useIsChild();
   const bgQuestion = isChild
@@ -2075,6 +2080,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       try {
         await api.put(`/tracks/${trackId}`, { cover_image_url: coverObjectName });
         console.log('[Cover] 트랙에 커버 연결 성공:', trackId, coverObjectName);
+        // v3.248 B1(A-5): 재생 큐·현재곡·계정 보관함(영속)의 옛 커버 스냅샷 즉시 교체 —
+        // PUT만 하면 미니플레이어/플레이어가 큐의 옛 트랙 객체(옛 커버)를 계속 그린다(피드백 [23]).
+        usePlayerStore.getState().patchTrackEverywhere(String(trackId), {
+          cover_image: coverObjectName,
+          cover_image_url: coverObjectName,
+        });
       } catch (err: any) {
         console.error('[Cover] 연결 실패:', err?.message);
       }
@@ -2659,7 +2670,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       </ScrollView>
 
       {/* 입력 영역 */}
-      <View style={styles.inputArea}>
+      <View style={inputAreaStyle}>
         {trackLoading ? (
           <ActivityIndicator size="large" color={colors.accent.primary} />
         ) : step === 0 ? (
