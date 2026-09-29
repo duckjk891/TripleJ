@@ -3593,3 +3593,20 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 기존 무분류 공개곡 백필: dry-run 실측 57건 중 56 매핑·1 스킵(무드 없는 곡). **Mongo 일괄 쓰기+ES 재색인은 분류기 차단 — 대표 승인 대기.**
 ### 게이트
 - 서버 5파일 py_compile OK, 라우트 AST 검사(/samples가 /{clone_id}보다 선행 확인), 매핑 유닛 16/16, 앱 tsc 0.
+
+---
+
+## 서버 합본 배포 (v3.261+263+264) + 웹 배포 — 2026-09-29 오후 (대표 "둘다 지금 실행" 지시)
+
+### 배포 실측
+- 가드: 대상 7파일 라이브 md5 = 스테이징 orig 전건 일치(clubs c9cec9de·notifications 179d944a·generate 35c9d495·tracks 23b3e6cb·lyrics_assets b18309db·voice_clone ccc5d847·voice_clone_service 11dd3a88). main.py 무접촉(타 세션 변경분 4d0be800 존중).
+- 절차: .bak_pre_v3264 백업 7건 → 이미지 태그 pre-v3264-live → 파일 반영(+category_infer.py·backfill 스크립트 신규) → **빌드 전 사전검증**(throwaway 컨테이너 임포트: ROUTES 393→395 정확히 +2, samples·promote 등록, category_infer 동작) → nice -n 19 빌드 → INFLIGHT 0 확인 → 재기동(v3264).
+- 스모크: /voice-clone/samples 무인증 401 · promote 무인증 401 · 가짜 클럽 members 404 · search 200 · Traceback 0 · 실트래픽 200 흐름 확인. 참고: 앱 포트는 9006(nginx 프록시) — 이전 9004 curl 무응답 미스터리 해소.
+- v3.261 인덱스 2종 생성(club_promos·club_promo_receipts). 배포된 백필 스크립트 dry-run 재검증 PASS(PYTHONPATH=/srv/app 필요 — 스크립트 단독 실행 시).
+- 웹 배포 + 번들 마커 검증: 보관함 UI·새 문구(v3.263)·club_promo/크루 홍보(v3.261) 존재, 구 "만든 후 2시간" 문구 0건.
+### 잔여 1건
+- **categories 백필 --apply**: 분류기(프로드 DB 일괄쓰기) 차단으로 대표 직접 실행 대기 — `ssh maidol-ec2 'sudo docker exec -w /srv/app -e PYTHONPATH=/srv/app maidol-app python -B scripts/backfill_categories_v3264.py --apply'` (멱등·ES 재색인 포함). 실행 전까지 "슬픔" 등 느낌명 검색·칩은 구곡만 노출.
+
+### 백그라운드 재생 중단 진단 (대표 질문 — frontend.log 실측)
+- 대표 환경 = **iPhone 사파리 웹앱(web:ios)**. 연속재생 자체는 동작(00:03~00:23 스왑 5연속 성공 로그). 멈춤 시점엔 **에러 로그조차 없음** = iOS가 백그라운드 웹페이지 JS를 통째로 정지시킨 것(다음 곡 전환 코드가 실행 기회를 못 받음). 1건 관측된 'swap play 거부(AbortError)'는 부차 레이스.
+- 웹은 v3.217 단일 element+동기 스왑·URL 프리페치로 **플랫폼 한계까지 이미 구현**(코드 주석에 동일 판정 기재). 근본 해결 = 네이티브 앱 + react-native-track-player(포그라운드 서비스·iOS background audio) — **v1.3.1 네이티브 빌드 과제로 편성**.
