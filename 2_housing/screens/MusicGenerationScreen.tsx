@@ -1790,6 +1790,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {/* v3.268 [피드백2-32a]: 210과 동일 — 조용한 진입 시 문맥 캡션 */}
+              <AppText variant="footnote" tone="secondary" style={{ marginBottom: 8 }}>
+                🎤 목소리 방식을 고르는 중이에요
+              </AppText>
               <TouchableOpacity style={styles.choiceButton} onPress={handleVoiceModeQuick}>
                 <AppText style={styles.choiceNumber}>1</AppText>
                 <AppText style={styles.choiceText}>간편 목소리 (보컬 스타일 선택)</AppText>
@@ -1809,6 +1813,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={inputAreaStyle}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {/* v3.268 [피드백2-32a]: 되감기·위저드 복귀로 이 픽커에 조용히 진입하면(커밋 없음 —
+                  v3.202 E/F 설계) 마지막 디렉터 말풍선(예: "서브 보컬 성별을…")과 선택지가 어긋나
+                  보인다(실사고 캡처). 지금 뭘 고르는 중인지 캡션으로 명시해 혼란 차단. */}
+              <AppText variant="footnote" tone="secondary" style={{ marginBottom: 8 }}>
+                🎤 노래할 목소리를 고르는 중이에요
+              </AppText>
               {clonesLoading && readyClones.length === 0 ? (
                 <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: 16 }} />
               ) : (

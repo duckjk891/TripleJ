@@ -2086,6 +2086,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           cover_image: coverObjectName,
           cover_image_url: coverObjectName,
         });
+        // v3.268 [피드백2-29 커버 롤백]: 저장 확정 = 이 커버 세션 종결 — 잔존 컨텍스트
+        // (coverTrackId·대화 스냅샷)가 다음 저장 흐름과 얽혀 "옛 objectName을 다른 곡에
+        // 재적용"하던 실사고(9-27 귀여워! 남자애→여자애 롤백, 17초 간격 재PATCH 실측) 차단.
+        musicStore.clearCoverContext();
       } catch (err: any) {
         console.error('[Cover] 연결 실패:', err?.message);
       }
