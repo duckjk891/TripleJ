@@ -11,6 +11,7 @@ import {
   RefreshControl,
   ScrollView,
   Linking,
+  Modal,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
@@ -113,6 +114,14 @@ export default function MyMusicScreen({ navigation }: any) {
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
   // v3.117: 다중 아티스트 목록(대표 요약 행용) — 빈 배열이면 myCharacter(/me)로 레거시 폴백
   const [artists, setArtists] = useState<ServerArtist[]>([]);
+  // v3.269 [피드백2-30]: 발매 후 아티스트 재지정 — ⋮ '아티스트 지정' 시트 대상 곡
+  const [retagTrack, setRetagTrack] = useState<Track | null>(null);
+  const [retagBusy, setRetagBusy] = useState(false);
+  // v3.269 [피드백2-33]: 통계 상세 시트 — 팔로워/팔로잉 목록 · 재생 성적표(재생순+받은 하트)
+  const [statSheet, setStatSheet] = useState<null | 'followers' | 'following' | 'plays'>(null);
+  const [statLoading, setStatLoading] = useState(false);
+  const [followRows, setFollowRows] = useState<{ id: string; nickname: string; profile_image?: string | null; followed_at?: string | null }[]>([]);
+  const [receivedLikes, setReceivedLikes] = useState<{ user: { id: string; nickname: string }; track_title: string; at?: string | null }[]>([]);
   // v3.96(A-2): 내 앨범 탭
   const [albums, setAlbums] = useState<Album[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
@@ -318,6 +327,53 @@ export default function MyMusicScreen({ navigation }: any) {
       },
       { text: '음원', onPress: () => { downloadTrackMp3({ id: String(t.id), title: t.title }, !!user); } },
     ]);
+  };
+
+  // v3.269 [30]: 아티스트 재지정 실행 — 서버 PUT(검증·artist_name 동기·ES 재색인)
+  const doArtistRetag = async (characterId: string) => {
+    if (!retagTrack || retagBusy) return;
+    setRetagBusy(true);
+    const trackId = String(retagTrack.id);
+    try {
+      await api.put(`/tracks/${trackId}`, { character_id: characterId });
+      const picked = artists.find((a) => a.character_id === characterId);
+      const newName = characterId === '' ? null : (picked?.name ?? null);
+      setTracks((prev) => prev.map((t) =>
+        String(t.id) === trackId ? { ...t, artist_name: newName ?? undefined } as any : t));
+      console.info('[MyMusic] [ArtistRetag] 적용', { trackId, characterId: characterId || '(해제)' });
+      setRetagTrack(null);
+      showAlert('완료', characterId === ''
+        ? '아티스트 연결을 해제했어요. 곡에는 기획사명으로 표기돼요.'
+        : `이제 이 곡의 아티스트가 "${picked?.name ?? '선택한 아티스트'}"로 표기돼요.`);
+      fetchTracks(true);
+    } catch (err: any) {
+      console.error('[MyMusic] [ArtistRetag] 실패', { trackId, status: err?.response?.status });
+      showAlert('오류', err?.response?.data?.error || '아티스트 지정에 실패했어요.');
+    } finally {
+      setRetagBusy(false);
+    }
+  };
+
+  // v3.269 [33]: 통계 상세 시트 열기 — followers/following 목록·plays 성적표(받은 하트 포함)
+  const openStatSheet = async (kind: 'followers' | 'following' | 'plays') => {
+    setStatSheet(kind);
+    setStatLoading(true);
+    try {
+      if (kind === 'plays') {
+        const res = await api.get('/likes/received', { params: { limit: 30 } });
+        setReceivedLikes(Array.isArray(res.data?.items) ? res.data.items : []);
+      } else {
+        const res = await api.get(`/follows/${kind}`, { params: { limit: 50 } });
+        const rows = kind === 'followers' ? res.data?.followers : res.data?.following;
+        setFollowRows(Array.isArray(rows) ? rows : []);
+      }
+    } catch (err: any) {
+      console.error('[MyMusic] [StatSheet] 조회 실패', { kind, status: err?.response?.status });
+      if (kind === 'plays') setReceivedLikes([]);
+      else setFollowRows([]);
+    } finally {
+      setStatLoading(false);
+    }
   };
 
   const handlePublishToChart = (trackId: string, title: string) => {
@@ -720,30 +776,30 @@ export default function MyMusicScreen({ navigation }: any) {
           </View>
           {/* v3.115: 지표 5종 — 발매곡/앨범/재생/팔로워/팔로잉 (레벨 지표 제거). 5열이라 라벨은 짧게 */}
           <View style={styles.growthStatsRow}>
-            <View style={styles.growthStat}>
+            <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => { setActiveTab('music'); setMusicSub('tracks'); }} accessibilityLabel="발매곡 상세 보기">
               <AppText style={styles.growthStatValue}>{tracks.length}</AppText>
               <AppText style={styles.growthStatLabel}>발매곡</AppText>
-            </View>
+            </TouchableOpacity>
             <View style={styles.growthStatDivider} />
-            <View style={styles.growthStat}>
+            <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => { setActiveTab('music'); setMusicSub('albums'); }} accessibilityLabel="앨범 상세 보기">
               <AppText style={styles.growthStatValue}>{albums.length}</AppText>
               <AppText style={styles.growthStatLabel}>앨범</AppText>
-            </View>
+            </TouchableOpacity>
             <View style={styles.growthStatDivider} />
-            <View style={styles.growthStat}>
+            <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => openStatSheet('plays')} accessibilityLabel="재생 상세 보기">
               <AppText style={styles.growthStatValue}>{totalPlays.toLocaleString()}</AppText>
               <AppText style={styles.growthStatLabel}>재생</AppText>
-            </View>
+            </TouchableOpacity>
             <View style={styles.growthStatDivider} />
-            <View style={styles.growthStat}>
+            <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => openStatSheet('followers')} accessibilityLabel="팔로워 상세 보기">
               <AppText style={styles.growthStatValue}>{followerCount == null ? '-' : followerCount.toLocaleString()}</AppText>
               <AppText style={styles.growthStatLabel}>팔로워</AppText>
-            </View>
+            </TouchableOpacity>
             <View style={styles.growthStatDivider} />
-            <View style={styles.growthStat}>
+            <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => openStatSheet('following')} accessibilityLabel="팔로잉 상세 보기">
               <AppText style={styles.growthStatValue}>{followingCount == null ? '-' : followingCount.toLocaleString()}</AppText>
               <AppText style={styles.growthStatLabel}>팔로잉</AppText>
-            </View>
+            </TouchableOpacity>
           </View>
           {bestTrack && (
             <View style={styles.bestTrackRow}>
@@ -1036,9 +1092,91 @@ export default function MyMusicScreen({ navigation }: any) {
           ...(actionTrack.is_public
             ? [{ icon: 'eye-off' as const, label: '차트에서 숨기기', onPress: () => handleHideFromChart(String(actionTrack.id), actionTrack.title) }]
             : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),
+          // v3.269 [30]: 발매 후 아티스트 재지정 — 만료 팝업 '아티스트 없이 진행'으로 나간 곡 구제
+          { icon: 'user', label: '아티스트 지정', onPress: () => setRetagTrack(actionTrack) },
           { icon: 'trash-2', label: '삭제', danger: true, onPress: () => handleDeleteTrack(String(actionTrack.id), actionTrack.title) },
         ] : undefined}
       />
+
+      {/* v3.269 [30]: 아티스트 재지정 시트 */}
+      <Modal visible={!!retagTrack} transparent animationType="slide" onRequestClose={() => setRetagTrack(null)}>
+        <TouchableOpacity style={styles.retagBackdrop} activeOpacity={1} onPress={() => setRetagTrack(null)}>
+          <TouchableOpacity style={styles.retagSheet} activeOpacity={1} onPress={() => {}}>
+            <AppText variant="title3" style={{ marginBottom: 4 }}>아티스트 지정</AppText>
+            <AppText variant="footnote" tone="secondary" style={{ marginBottom: 12 }} numberOfLines={1}>
+              "{retagTrack?.title}"의 아티스트 표기를 바꿔요. (착장 기록은 발매 시점 그대로)
+            </AppText>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {artists.map((a) => (
+                <TouchableOpacity key={a.character_id} style={styles.retagRow} disabled={retagBusy}
+                  onPress={() => doArtistRetag(a.character_id)}>
+                  <Feather name="user" size={16} color={colors.accent.primary} />
+                  <AppText variant="body" style={{ marginLeft: 10 }}>{a.name || '이름 없는 아티스트'}</AppText>
+                  {a.is_default && <AppText variant="caption" tone="muted" style={{ marginLeft: 8 }}>대표</AppText>}
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.retagRow} disabled={retagBusy} onPress={() => doArtistRetag('')}>
+                <Feather name="briefcase" size={16} color={colors.text.secondary} />
+                <AppText variant="body" tone="secondary" style={{ marginLeft: 10 }}>아티스트 없이 (기획사명 표기)</AppText>
+              </TouchableOpacity>
+            </ScrollView>
+            <Button label="닫기" variant="tonal" fullWidth disabled={retagBusy} onPress={() => setRetagTrack(null)} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* v3.269 [33]: 통계 상세 시트 — 팔로워/팔로잉 목록 · 재생 성적표 */}
+      <Modal visible={!!statSheet} transparent animationType="slide" onRequestClose={() => setStatSheet(null)}>
+        <TouchableOpacity style={styles.retagBackdrop} activeOpacity={1} onPress={() => setStatSheet(null)}>
+          <TouchableOpacity style={styles.retagSheet} activeOpacity={1} onPress={() => {}}>
+            <AppText variant="title3" style={{ marginBottom: 12 }}>
+              {statSheet === 'followers' ? '나를 팔로우하는 사람' : statSheet === 'following' ? '내가 팔로우하는 사람' : '내 곡 성적표'}
+            </AppText>
+            {statLoading ? (
+              <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: 24 }} />
+            ) : statSheet === 'plays' ? (
+              <ScrollView style={{ maxHeight: 420 }}>
+                <AppText variant="footnote" tone="secondary" style={{ marginBottom: 6 }}>많이 들린 순</AppText>
+                {[...tracks].sort((a, b) => (b.play_count ?? 0) - (a.play_count ?? 0)).slice(0, 10).map((t, i) => (
+                  <View key={String(t.id)} style={styles.retagRow}>
+                    <AppText variant="footnote" tone="muted" style={{ width: 22 }}>{i + 1}</AppText>
+                    <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>{t.title}</AppText>
+                    <AppText variant="caption" tone="secondary">▶ {(t.play_count ?? 0).toLocaleString()}  ♥ {t.like_count ?? 0}</AppText>
+                  </View>
+                ))}
+                <AppText variant="footnote" tone="secondary" style={{ marginTop: 14, marginBottom: 6 }}>최근 받은 하트</AppText>
+                {receivedLikes.length === 0 ? (
+                  <AppText variant="caption" tone="muted" style={{ marginVertical: 8 }}>아직 받은 하트가 없어요.</AppText>
+                ) : receivedLikes.map((r, i) => (
+                  <View key={`${r.user.id}_${i}`} style={styles.retagRow}>
+                    <Feather name="heart" size={14} color={colors.accent.primary} />
+                    <AppText variant="body" style={{ marginLeft: 10, flex: 1 }} numberOfLines={1}>
+                      {r.user.nickname}님이 "{r.track_title}"에 ♥
+                    </AppText>
+                    {!!r.at && <AppText variant="caption" tone="muted">{String(r.at).slice(5, 10)}</AppText>}
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }}>
+                {followRows.length === 0 ? (
+                  <AppText variant="caption" tone="muted" style={{ marginVertical: 8 }}>
+                    {statSheet === 'followers' ? '아직 팔로워가 없어요.' : '아직 팔로우한 사람이 없어요.'}
+                  </AppText>
+                ) : followRows.map((u) => (
+                  <TouchableOpacity key={u.id} style={styles.retagRow}
+                    onPress={() => { setStatSheet(null); navigation.getParent()?.navigate('UserChannel', { authorId: u.id, name: u.nickname }); }}>
+                    <Feather name="user" size={16} color={colors.accent.primary} />
+                    <AppText variant="body" style={{ marginLeft: 10, flex: 1 }}>{u.nickname}</AppText>
+                    {!!u.followed_at && <AppText variant="caption" tone="muted">{String(u.followed_at).slice(5, 10)}</AppText>}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+            <Button label="닫기" variant="tonal" fullWidth onPress={() => setStatSheet(null)} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -1047,6 +1185,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,
+  },
+  // v3.269 [30]/[33] — 재지정·통계 상세 시트(공용)
+  retagBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  retagSheet: {
+    backgroundColor: colors.bg.surface1,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 32,
+  },
+  retagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border.subtle,
   },
   // v3.179: sticky 탭 블록 — 스크롤 시 아래 콘텐츠가 비치지 않도록 배경 필수
   stickyTabs: {
