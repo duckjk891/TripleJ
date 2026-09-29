@@ -19,7 +19,8 @@ import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import TrackRow from '../components/TrackRow';
 import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
-import CrewLevelBadge from '../components/CrewLevelBadge'; // v3.253 — 크루 인지도 레벨 배지
+// v3.257: v3.253 크루 인지도 레벨 배지(CrewLevelBadge) 제거 — 대표 확정 "크루는 인지도가 필요없어.
+// 크루원들한테 혜택이 가는 형태면 되." 실적 축적(queueSource·play-start)은 그대로 유지.
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -34,8 +35,9 @@ import {
   listClubMembers, kickClubMember, memberMenuActions, kickErrorMessage,
   // v3.252 가입 승인제 — join 202/200 분기·pending 파생·owner 신청 목록(승인/거절)
   clubJoinStatus, JoinRequest, listJoinRequests, approveJoinRequest, rejectJoinRequest,
-  // v3.253 크루 플리 혜택 — 인지도 폴백·비멤버 재생 시작 보고(401/404 침묵)
-  clubRecognition, recordClubPlaylistPlayStart,
+  // v3.253 크루 플리 혜택 — 비멤버 재생 시작 보고(401/404 침묵). v3.257: 레벨 배지 제거로
+  // clubRecognition import 는 삭제(실적 축적 배선은 유지 — 멤버 혜택 정산 원천).
+  recordClubPlaylistPlayStart,
 } from '../services/clubService';
 
 // v3.252: 채팅 탭 신설(첫 탭) — 채팅|게시판|플레이리스트|정보 4탭
@@ -800,14 +802,7 @@ export default function ClubHomeScreen() {
           <View style={{ flex: 1 }}>
             <AppText variant="subtitle" numberOfLines={1}>{detail?.name ?? name ?? CLUB_LABEL}</AppText>
             <View style={styles.metaRow}>
-              {/* v3.253: 크루 인지도 레벨 배지 + 라벨(구서버 recognition 부재 = Lv1 '신생 크루' 폴백) */}
-              {detail ? (
-                <CrewLevelBadge
-                  level={clubRecognition(detail).level}
-                  label={clubRecognition(detail).label}
-                  size="sm"
-                />
-              ) : null}
+              {/* v3.257: v3.253 크루 레벨 배지·라벨 노출 제거(대표 확정 — 크루 인지도 미노출) */}
               <Feather name="users" size={12} color={colors.text.muted} />
               <AppText variant="caption" tone="muted">{`멤버 ${detail?.member_count ?? 0}명`}</AppText>
               {isOwner ? <AppText variant="caption" tone="accent">내가 운영</AppText>

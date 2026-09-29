@@ -16,11 +16,13 @@ import api from './api';
 // 서버가 내려주는 메시지는 서버(v3.252 병행)가 바꾼다 — 앱 자체 문구만 이 상수/직접 문구로 교체.
 export const CLUB_LABEL = '크루';
 
-// v3.253: 'popular' = 인지도(rp) 순 — 구서버는 미지원(400 가능) → 호출자가 sort=new 로 조용히 폴백
+// v3.253: 'popular' = 인지도(rp) 순. v3.257: 대표 확정(크루 인지도 미노출)으로 앱 UI 사용처 0 —
+// 타입·파라미터는 유지(서버 v3.253 계약 구간 호환, 재도입 시 재사용). UI 는 new|members 만 쓴다.
 export type ClubSort = 'new' | 'members' | 'popular';
 
-// ── v3.253 크루 인지도 — 서버 병행 스테이징 계약(clubs list/detail/mine 항목 확장 필드):
-//   recognition { rp, level:1..5, label } · 구서버 부재 → Lv1 '신생 크루' rp0 폴백(clubRecognition)
+// ── v3.253 크루 인지도 — v3.257 부터 앱 노출 0(대표 확정 "크루는 인지도가 필요없어").
+//   서버가 recognition 키를 잠시 더 내려도 무해하도록 타입·폴백 헬퍼만 유지(UI 사용처 0).
+//   크루 플리 실적(재생 +2·담기 +10)은 멤버 혜택 정산 원천으로 서버 내부 축적 계속.
 export interface ClubRecognition {
   rp: number;
   /** 1..5 (그레이/브론즈/실버/골드/보라) */
@@ -28,7 +30,7 @@ export interface ClubRecognition {
   label: string;
 }
 
-/** v3.253: recognition 폴백 단일화 — 필드 부재(구서버)·이상값 전부 Lv1 '신생 크루' rp0 으로 방어 */
+/** v3.253: recognition 폴백 단일화 — v3.257: UI 사용처 0(노출 제거), 방어 파서로만 존치 */
 export function clubRecognition(club?: { recognition?: any } | null): ClubRecognition {
   const r = club?.recognition;
   const levelRaw = Number(r?.level);
@@ -52,7 +54,7 @@ export interface Club {
   join_status?: string | null;
   /** v3.252 크루 채팅 — GET /clubs/mine 확장 필드(없으면 뱃지 숨김) */
   unread_chat?: number;
-  /** v3.253 크루 인지도 — 신서버 확장 필드(구서버 부재 → clubRecognition 이 Lv1 폴백) */
+  /** v3.253 크루 인지도 — v3.257: 앱 미사용(노출 제거). 서버가 내려도/안 내려도 무해한 optional */
   recognition?: ClubRecognition | null;
 }
 
@@ -387,7 +389,8 @@ export function markClubChatRead(clubId: string): void {
   api.post(`/clubs/${clubId}/chat/read`).catch(() => {});
 }
 
-// ── v3.253 크루 플리 혜택 — 재생 시작 보고(서버 병행 스테이징, 계약 fixed):
+// ── v3.253 크루 플리 혜택 — 재생 시작 보고(계약 fixed). v3.257: 실적 축적 배선 그대로 유지
+//   (멤버 혜택 정산 원천 — 노출만 제거). 서버 v3.257 부터 응답에 recognition 없음(?? null 방어 유지).
 //   POST /clubs/{club_id}/playlists/{playlist_id}/play-start → {granted:10|0, recognition?}
 //   호출 조건(호출자 책임): 인증 사용자이면서 그 크루의 비멤버가 크루 플리를 전체 재생(큐 교체)으로
 //   시작하는 시점 1회. 내 크루(멤버·owner)는 절대 호출하지 않는다. 401/404(구서버)·네트워크는
