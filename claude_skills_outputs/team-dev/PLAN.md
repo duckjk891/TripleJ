@@ -7962,3 +7962,16 @@ tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2
 - **spend_points 멱등 결함**: 차감 후 원장 삽입 순서라, 같은 ref 재시도 시 중복 차감되고 원장은 안 남음(points_service.py:201-224). zone 확장·유료 액션 추가 시 예약문서 선삽입 등 진짜 멱등 가드 필요. credit_points도 원장 성공 후 잔액 실패 시 유실 갭 있음(:337-341).
 - **hire_director 패턴 금지**: 서버 상태 없이 차감만(중복 구매 미차단, 소유는 기기 로컬 zustand) — zone 확장은 extra_slot 패턴(서버 grant+실패 시 환불, points.py:47-65)으로.
 - 일회성 보상 = credit_points(ref="-", day="-") 유니크 인덱스 관행. 재생 보상 가드 = v3.230 차트 선례(쓰기·읽기 이중 제외 + SET NX EX 30s dedup + daily_cap).
+
+---
+
+## v3.253 — 2026-09-29 — 크루 플리 혜택 (대표 확정 구조)
+
+### 확정 구조 (2026-09-28 대표 승인)
+① 크루명 부착 노출 ② 크루 RP: 타인(비멤버·인증 사용자) 재생 +2 / 타인이 크루 플리 전체를 재생목록에 담기(=큐 교체 재생 시작) +10(유저·플리·일 1회) ③ 비화폐 혜택: 크루 레벨·휘장 + 커뮤니티 '인기 크루' 랭킹 ④ ⭐ 분배는 추후 별도 승인.
+
+### 설계 확정
+- 크루 RP: clubs.recognition {rp, level 1~5, label} — 임계 0/100/500/2,000/8,000 (신생→떠오르는→인기→대세→전설 크루), recognition.py CREW_THRESHOLDS 확장.
+- 재생 귀속: playRecord payload source {type:'club_playlist', playlist_id, club_id}(playerStore queueSource — 큐 교체 시 설정·개별 재생 해제). 서버 record-play 검증(플리 소속·비멤버·30초 dedup) 후 +2, 유저·크루·일 상한 +30 RP. 멤버 자기 재생 제외, 게스트 미적립(MVP 보수).
+- 담기 +10: POST /clubs/{cid}/playlists/{pid}/play-start — 비멤버 인증 사용자, 유저·플리·KST일 1회 멱등.
+- 랭킹: GET /clubs/?sort=popular, CommunityScreen '인기 크루' 상위 5 + CrewLevelBadge(카드·홈).
