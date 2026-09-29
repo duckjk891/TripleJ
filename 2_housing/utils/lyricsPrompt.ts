@@ -69,6 +69,14 @@ export const DURATION_OPTIONS = [
   { value: 300, label: '5분' },
 ];
 
+// v3.256 [MakeLike]: 작사 대화 앞부분(장르·분위기·듀엣) 질문 원문 공용화 —
+// LyricsInputScreen STEPS와 '이 곡 느낌으로 만들기' 프리셋 draft(utils/makeLike)가 같은 문구를 쓴다.
+// (draft 대화가 화면 대화와 글자 단위로 일치해야 v3.219 복원 화면에서 어색함 없이 이어진다)
+export const GENRE_QUESTION = '어떤 장르의 곡을 만들까요?';
+export const buildMoodQuestion = (genre: string): string =>
+  `좋아요! ${genre}(으)로 갈게요. 분위기는 어떻게 할까요?`;
+export const DUET_QUESTION = '혼자 부르는 곡인가요, 둘이 부르는 곡인가요?';
+
 export const formatDuration = (sec: number): string =>
   sec >= 60 ? `${Math.floor(sec / 60)}분` : `${sec}초`;
 

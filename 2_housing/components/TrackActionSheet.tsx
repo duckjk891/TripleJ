@@ -15,6 +15,8 @@ import { AppText } from './ui';
 import { TrackCover, RowTrack } from './TrackRow';
 import GuestQueueNoticeModal from './GuestQueueNoticeModal';
 import { shareTrack, ShareOutcome } from '../utils/trackShare';
+// v3.256 [MakeLike]: '이 곡 느낌으로 만들기' — 장르·분위기 프리셋 후 작사 디렉터 직행(공용 로직)
+import { startMakeLikeFlow } from '../utils/makeLike';
 import PlaylistPickerSheet from './PlaylistPickerSheet';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -127,6 +129,15 @@ export default function TrackActionSheet({
     }).catch((err: any) => console.error('[TrackShare] fail — sheet', { message: err?.message }));
   };
 
+  // v3.256 [MakeLike]: 곡의 장르·분위기만 프리셋(제목·가사·주제 비움)해 작사 디렉터로 직행.
+  // 로그인 필요(비로그인 → 기존 로그인 유도 관행), 어린이 계정은 기존 작곡 게이트 그대로(별도 차단 없음).
+  // 진행 중 작업 확인·프리셋·이동은 utils/makeLike 공용(v3.237 CTA 배선과 같은 집).
+  const handleMakeLike = (t: RowTrack) => {
+    if (!requireLogin()) return;
+    if (__DEV__) console.info('[MakeLike] 시트 탭', { id: t.id });
+    startMakeLikeFlow(navigation, t as any);
+  };
+
   // 공유 진입 화면(측정 src) — 시트를 연 화면의 라우트명, 모르면 'sheet'
   const currentRouteName = (): string => {
     try {
@@ -180,6 +191,11 @@ export default function TrackActionSheet({
                     <AppText variant="body">공유하기</AppText>
                   </TouchableOpacity>
                 ) : null}
+                {/* v3.256 [MakeLike]: 이 곡 느낌으로 만들기 — 시트를 쓰는 모든 화면에서 자동 노출 */}
+                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = track; onClose(); handleMakeLike(t); }}>
+                  <Feather name="feather" size={20} color={colors.text.secondary} />
+                  <AppText variant="body">이 곡 느낌으로 만들기</AppText>
+                </TouchableOpacity>
                 {/* 화면 고유 항목 (제거·공유·다운로드·삭제 등) */}
                 {(extraItems || []).map((ex) => (
                   <TouchableOpacity

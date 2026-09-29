@@ -55,6 +55,8 @@ import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
 import { trackEvent } from '../utils/screenAnalytics';
 import { normalizeShareId } from '../utils/trackLink';
+// v3.256 [MakeLike]: v3.237 공유 CTA 목적지 배선 공용화(동작 불변) — 시트 '이 곡 느낌으로 만들기'와 같은 집
+import { navigateShareCtaDestination } from '../utils/makeLike';
 import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
@@ -282,13 +284,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       console.error('[ShareCTA] share_cta_tap 기록 실패', { message: err?.message });
     }
     try {
-      if (loggedIn) {
-        // 로그인(어린이 포함 — 작업실 제한 없음) → Player 닫고 작업실 Map. RN7 navigate 는 기존 MainTabs 로 pop 하지 않으므로 popTo.
-        navigation.popTo('MainTabs', { screen: 'Studio', params: { screen: 'Map' } });
-      } else {
-        // 비로그인 → 가입 화면 직행(추천코드 보관 v3.230 은 AuthPanel 이 그대로 복원), 성공 시 작업실 Map
-        navigation.navigate('Settings', { authMode: 'register', after: 'studio' });
-      }
+      // v3.256 [MakeLike]: 목적지 배선을 utils/makeLike 공용으로 이동(동작 불변 — 회원 popTo Map·비회원 가입 직행)
+      navigateShareCtaDestination(navigation, loggedIn);
     } catch (err: any) {
       console.error('[ShareCTA] 이동 실패', { dest, message: err?.message });
     }

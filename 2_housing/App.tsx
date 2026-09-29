@@ -142,7 +142,8 @@ export type StudioStackParamList = {
     directorRole: string;
     directorY: number;
   };
-  LyricsInput: undefined;
+  // v3.256 [MakeLike]: 차트 시트 '이 곡 느낌으로 만들기' 직행 진입 — 안내 문구(title)·기마운트 재수화 키(nonce)
+  LyricsInput: { makeLike?: { title?: string; nonce?: string } } | undefined;
   LyricsPromptReview: undefined;
   // v3.228 W3: jobId — 진행 중 작사 이어보기(POST 없이 추적 레코드 구독)
   LyricsLoading: { jobId?: string } | undefined;

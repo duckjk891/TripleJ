@@ -26,6 +26,10 @@ import { isLyricsDraftResumable } from '../utils/directorResume';
 import { colors } from '../theme/colors';
 import {
   buildLyricsRequest,
+  // v3.256 [MakeLike]: 질문 원문 공용화 — '이 곡 느낌으로' 프리셋 draft(utils/makeLike)와 문구 단일화
+  GENRE_QUESTION,
+  buildMoodQuestion,
+  DUET_QUESTION,
   GENRE_OPTIONS,
   MOOD_OPTIONS,
   CONTENT_OPTIONS,
@@ -58,15 +62,15 @@ interface StepConfig {
 // v3.110 — 선택지는 utils/lyricsPrompt 와 공유 (요약 카드 수정 시에도 동일 목록 사용)
 const STEPS: StepConfig[] = [
   {
-    question: '어떤 장르의 곡을 만들까요?',
+    question: GENRE_QUESTION, // v3.256: 원문은 utils/lyricsPrompt 공용 상수
     choices: GENRE_OPTIONS,
   },
   {
-    question: '', // dynamic
+    question: '', // dynamic — buildMoodQuestion(장르)
     choices: MOOD_OPTIONS,
   },
   {
-    question: '혼자 부르는 곡인가요, 둘이 부르는 곡인가요?',
+    question: DUET_QUESTION, // v3.256: 원문은 utils/lyricsPrompt 공용 상수
     choices: DUET_OPTIONS,
   },
   {
@@ -117,8 +121,11 @@ const DURATION_LABEL_BY_SEC: Record<number, string> = {
   30: '30초', 60: '1분', 120: '2분', 180: '3분', 240: '4분', 300: '5분',
 };
 
-export default function LyricsInputScreen({ navigation }: Props) {
+export default function LyricsInputScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.256 [MakeLike]: 차트 시트 '이 곡 느낌으로 만들기' 직행 진입 — 프리셋(장르·분위기 선답)은
+  // utils/makeLike가 v3.219 draft로 store에 심어두고, 이 파라미터는 안내 문구·재수화 키(nonce)만 담당.
+  const makeLike = (route?.params as any)?.makeLike as { title?: string; nonce?: string } | undefined;
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
   // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
   const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
@@ -137,7 +144,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
     hasResumableDraft
       ? (initialStore.draftChat as ChatMessage[])
-      : [{ type: 'director', text: '어떤 장르의 곡을 만들까요?' }]
+      : [{ type: 'director', text: GENRE_QUESTION }]
   );
   const [customInput, setCustomInput] = useState('');
   const scrollRef = useRef<ScrollView>(null);
@@ -162,6 +169,25 @@ export default function LyricsInputScreen({ navigation }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // v3.256 [MakeLike]: 이미 떠 있는 LyricsInput 위로 프리셋 진입 — navigate는 params만 갱신하고
+  // 재마운트하지 않으므로, nonce 변화를 감지해 로컬 대화를 store draft 기준으로 재수화
+  // (마운트 hydrate와 동일 규칙 — 미러링 effect가 같은 값을 되쓰므로 draft 훼손 없음).
+  const mountMakeLikeNonce = useRef(makeLike?.nonce).current;
+  useEffect(() => {
+    const nonce = makeLike?.nonce;
+    if (!nonce || nonce === mountMakeLikeNonce) return; // 마운트 hydrate가 이미 반영한 진입
+    const s = useLyricsStore.getState();
+    const resumable = isLyricsDraftResumable(s);
+    if (__DEV__) console.info('[MakeLike] 기마운트 화면 재수화', { nonce, draftStep: s.draftStep, resumable });
+    setStep(resumable ? s.draftStep : 0);
+    setChatHistory(resumable ? (s.draftChat as ChatMessage[]) : [{ type: 'director', text: GENRE_QUESTION }]);
+    setDurationLabel('');
+    setCustomInput('');
+    setReselectStep(null);
+    setShowResumeNotice(resumable);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [makeLike?.nonce]);
 
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
   // v3.219 [LyricsDraft]: draft 복원 진입에서는 스킵(진행 중 대화의 store 상태 훼손 금지)
@@ -272,7 +298,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
     // Get next question
     let nextQuestion = STEPS[nextStep].question;
     if (nextStep === 1) {
-      nextQuestion = `좋아요! ${answer}(으)로 갈게요. 분위기는 어떻게 할까요?`;
+      nextQuestion = buildMoodQuestion(answer); // v3.256: 원문 공용화(내용 동일)
     }
 
     const newHistory: ChatMessage[] = [
@@ -442,7 +468,10 @@ export default function LyricsInputScreen({ navigation }: Props) {
             </View>
             <View style={[styles.messageBubble, styles.directorBubble]}>
               <AppText style={[styles.messageText, styles.directorText]}>
-                {resumeCreationMode === 'copyright'
+                {/* v3.256 [MakeLike]: 프리셋 직행 진입은 "이어서" 문구 대신 프리셋 안내 — 선답 버블 탭=재선택 안내 */}
+                {makeLike
+                  ? `${makeLike.title ? `'${makeLike.title}' 느낌으로` : '이 곡 느낌으로'} 시작할게요! 곡에서 가져온 답은 미리 채워뒀어요. 위 답변을 탭하면 바꿀 수 있어요.`
+                  : resumeCreationMode === 'copyright'
                   ? '진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.\n저작권 등록 모드로 이어서 해요.'
                   : '진행하던 작사를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.'}
               </AppText>
