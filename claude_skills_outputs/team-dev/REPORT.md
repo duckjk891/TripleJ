@@ -3684,3 +3684,20 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 플랫폼 사실관계: 모바일 웹(사파리·크롬)은 브라우저 보안상 **저장 위치 지정·서브폴더 생성 불가**(다운로드 폴더 고정). 데스크톱 크롬·엣지는 위치 선택 API 지원. 네이티브 앱만 기본경로(MAIDOL 폴더/앨범) 구현 가능.
 - 반영: downloadWebFile 개편 — ① 데스크톱 크롬·엣지 = showSaveFilePicker로 **원하는 위치·파일명 저장**(취소 시 강제 다운로드 안 함) ② 그 외 = a[download] + **"MAIDOL_" 파일명 접두어**(다운로드 폴더에서 모아보기) ③ 완료·위치 안내를 유틸로 일원화(호출부 10곳의 중복·모순 알림 제거).
 - 백로그(v1.3.1 네이티브): 영상·이미지 = 사진앱 'MAIDOL' 앨범, 음원 = Android SAF Downloads/MAIDOL · iOS 파일앱 공유시트 — 기본경로 설계 확정.
+
+---
+
+## v1.3.1 네이티브 빌드 — 2026-09-29 — 백그라운드 재생(expo-audio 이관) + MAIDOL 저장 기본경로 (EAS 빌드 진행)
+
+### 엔진 결정
+- RNTP 대신 **expo-audio(SDK 54, 1.1.1 기설치)** 채택 — 백그라운드 재생(shouldPlayInBackground)·잠금화면/미디어 알림(setActiveForLockScreen·MediaSession)을 공식 지원, Expo 생태계 무이탈·통합 비용 최소. 설치본 d.ts로 API 실재 확인(createAudioPlayer·AudioStatus.didJustFinish/currentTime/duration·setActiveForLockScreen).
+### 구현
+- `services/nativeAudioShim.ts` 신설 — **expo-av Sound 호환 심**: 엔진(playback.ts·PlayerScreen·프리로드 스왑)이 쓰는 표면 전수(createAsync·playAsync·pauseAsync·unloadAsync·setPositionAsync·getStatusAsync·setOnPlaybackStatusUpdate)를 expo-audio로 구현, 상태 콜백 셰이프(ms 단위) 동일 → **엔진 로직 무변경 치환**. 활성 심 레지스트리로 잠금화면 Now Playing(제목·아티스트·커버) 동기화(웹 mediaSession 구독과 동형).
+- playback.ts: createTrackSound·프리로드 로컬 로드의 네이티브 분기만 심으로 교체(+네이티브 트랙 구독 → 잠금화면 sync). audioMode.ts: 네이티브 = expo-audio setAudioModeAsync(playsInSilentMode·shouldPlayInBackground·doNotMix).
+- 저장 기본경로: `utils/nativeSave.ts` — 영상 = 사진 앱 **'MAIDOL' 앨범** 자동 생성·수집(실패 시 라이브러리 저장 유지), Android 파일(mp3) = **SAF 폴더 1회 지정(다운로드/MAIDOL 권장) 후 직접 저장**(권한 영속·소실 시 재요청, 거부·실패 = 기존 공유 시트 폴백), iOS 파일 = 공유 시트 유지(플랫폼 제약).
+- app.json: version 1.3.0→**1.3.1**, android POST_NOTIFICATIONS(미디어 알림). iOS UIBackgroundModes audio 기존재.
+### 게이트
+- 심 하니스 11/11 PASS(ms 매핑·duration0→undefined·shouldPlay·콜백 셰이프·잠금화면 적용/승계·seek 초 변환·unload 멱등·프리로드 무자동재생). tsc 0. 웹 번들 무회귀 배포.
+- EAS 빌드: android preview APK 접수 — build f96b8080(expo.dev/accounts/lovvepearl/projects/triplej-studio). 
+### 한계(정직 기재)
+- Android 장시간 백그라운드는 MediaSession 기반(전용 포그라운드 서비스 아님) — 실기기 검증 후 미흡하면 RNTP 2차 이관. iOS는 표준 경로(UIBackgroundModes+shouldPlayInBackground). 시뮬레이터 부재로 런타임 검증은 실기기 APK 설치 후.
