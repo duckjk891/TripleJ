@@ -3701,3 +3701,10 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - EAS 빌드: android preview APK 접수 — build f96b8080(expo.dev/accounts/lovvepearl/projects/triplej-studio). 
 ### 한계(정직 기재)
 - Android 장시간 백그라운드는 MediaSession 기반(전용 포그라운드 서비스 아님) — 실기기 검증 후 미흡하면 RNTP 2차 이관. iOS는 표준 경로(UIBackgroundModes+shouldPlayInBackground). 시뮬레이터 부재로 런타임 검증은 실기기 APK 설치 후.
+
+---
+
+## iOS 대응 현황 감사 — 2026-09-29 (대표 질의, 분석 전용 — 코드 무변경)
+
+- 산출물: `iOS대응현황_감사보고서_20260929.md` (app.json·플러그인·Platform 분기 전수·심사 요건·광고/권한 실사).
+- 결론: 기능 코드 = 사실상 100% 공유(단일 Expo 코드, v1.3.1 백그라운드 오디오는 iOS 우선 설계). 출시 게이트 잔여 = **①애플 법인 계정 승인 대기(유일 하드 블로커, 외부)** ②Sign in with Apple 미구현(심사 4.8 — 계정 승인 후 1~2일) ③AdMob iOS 보상형 단위 미설정(30분) ④ATS 전면 해제 축소(30분) ⑤마이크 권한 한국어 문구(5분) ⑥TestFlight 실기기 검증 목록. ③④⑤는 계정 없이 지금 선처리 가능.
