@@ -1055,7 +1055,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setMode('loading');
     setTrackNotice({
       text: '이미 만들고 있는 이미지가 있어요',
-      note: '그 이미지가 완성되면 바로 보여드릴게요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+      note: '그 이미지가 완성되면 바로 보여드릴게요.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.',
     });
     viewJob(key);
     applyTrackedImage(key, await trackImageJob(key));
@@ -1087,7 +1087,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       setErrorMsg(null);
       setTrackNotice({
         text: job.kind === 'cover_refine' ? '요청하신 부분을 다듬는 중이에요' : '커버 이미지를 만들고 있어요',
-        note: '작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+        note: '다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.',
       });
       viewJob(key);
       void (async () => applyTrackedImage(key, await trackImageJob(key)))();
@@ -2443,7 +2443,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 ? '연결이 잠시 불안정했어요. 서버에서 완성된 이미지를 확인하고 있어요.\n추가 비용 없이 그대로 가져올게요.'
                 : trackNotice
                   ? trackNotice.note
-                  : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+                  : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
             </AppText>
           </View>
         </View>
@@ -2480,7 +2480,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 {errorMsg
                   ? '앗, 문제가 생겼어요. 다시 시도해볼까요?'
                   : refining
-                    ? '요청하신 부분을 다듬는 중이에요. 작업이 끝날 때까지 이 화면을 벗어나지 마세요.'
+                    ? '요청하신 부분을 다듬는 중이에요. 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.'
                     : canRefine
                       ? '커버 이미지가 완성됐어요! 마음에 안 드는 부분이 있나요? 말해주시면 바로 다듬어 드릴게요.'
                       : '커버 이미지가 완성됐어요!'}

@@ -872,7 +872,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         meta: { track_id: track.id, title: track.title, format: params.format, style: params, video_url: filePath },
       });
       viewGenJob(genKey);
-      pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+      pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.');
       setStep('making');
       console.info('[VideoDirector] share-video 생성', { trackId: track.id, rid: requestId.slice(0, 8), ...params });
       try {
@@ -905,7 +905,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           const adoptedKey = adoptGenJob(inProgress, { replaceKey: genKey });
           if (!mountedRef.current) return;
           viewGenJob(adoptedKey);
-          pushDirector('이미 만들고 있는 영상이 있어요. 그 영상이 완성되면 바로 보여드릴게요. 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+          pushDirector('이미 만들고 있는 영상이 있어요. 그 영상이 완성되면 바로 보여드릴게요. 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.');
           const metaPath = inProgress.meta?.video_url;
           const outcome = await trackVideoJob({
             key: adoptedKey, requestId: inProgress.requestId ?? null, serverJobId: inProgress.jobId,
@@ -925,7 +925,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             endGenRequest(genKey); // 화면 이탈 — 원장 추적(추적기 도착 알림)으로 전환, 모듈 기록은 기한까지 유지
             return;
           }
-          pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.');
+          pushDirector('영상이 평소보다 오래 걸리고 있어요. 완성됐는지 확인하는 중이에요… 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.');
           // endGenRequest 는 화면 추적이 끝난 뒤 호출 — 구서버(원장 404)에서 추적기가 파일 확인 중인 레코드를
           // 먼저 정리·안내하지 않게(신서버는 원장이 processing 을 답하므로 순서 무관). done 은 markGenJobDone 이 해제.
           const outcome = await trackVideoJob({ key: genKey, requestId, fileUrl, startedAt, moduleJob: job, ownRequest: true });
@@ -1010,7 +1010,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     }
     busyRef.current = true;
     setChat([INITIAL_VIDEO_GREETING, {
-      type: 'director', text: '영상을 만들고 있어요. 커버와 가사를 엮는 중… 작업이 끝날 때까지 이 화면을 벗어나지 마세요.',
+      type: 'director', text: '영상을 만들고 있어요. 커버와 가사를 엮는 중… 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.',
     }]);
     setStep('making');
     viewGenJob(key);

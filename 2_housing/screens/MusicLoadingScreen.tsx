@@ -540,7 +540,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         messageIndex={messageIndex}
         progress={progress}
         portrait={portrait}
-        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n${isSlow ? '평소보다 오래 걸리고 있어요. 조금만 더 기다려 주세요.' : '1~3분 정도 소요될 수 있어요.'}\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n${isSlow ? '평소보다 오래 걸리고 있어요. 조금만 더 기다려 주세요.' : '1~3분 정도 소요될 수 있어요.'}\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
       />
     </AppScreenLayout>
   );

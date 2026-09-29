@@ -41,10 +41,9 @@ import {
   // clubRecognition import 는 삭제(실적 축적 배선은 유지 — 멤버 혜택 정산 원천).
   recordClubPlaylistPlayStart,
   // v3.261 크루 홍보(owner 전용 시트) + 멤버 창 외부 익명 모드 상수
-  promoteClub, promoteErrorMessage, PROMO_KEYWORD_MAX, PROMO_MESSAGE_MAX,
+  promoteClub, promoteErrorMessage, PROMO_MESSAGE_MAX, PROMO_KEYWORD_MIN_LEN, PROMO_KEYWORD_LEN_MAX,
 } from '../services/clubService';
 // v3.261 홍보 키워드 칩 — 작사 대화와 같은 선택지 재사용(장르·분위기, 합계 1~5개)
-import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
 
 // v3.252: 채팅 탭 신설(첫 탭) — 채팅|게시판|플레이리스트|정보 4탭
 type ClubTab = 'chat' | 'board' | 'playlists' | 'info';
@@ -120,7 +119,8 @@ export default function ClubHomeScreen() {
 
   // v3.261 크루 홍보 — owner 전용 시트(키워드 칩 합계 1~5 + 한 줄 메시지 100자)
   const [promoOpen, setPromoOpen] = useState(false);
-  const [promoSel, setPromoSel] = useState<string[]>([]);
+  // v3.266 — 자유 키워드 타겟(장르·분위기 칩 폐지, 대표 확정)
+  const [promoKeyword, setPromoKeyword] = useState('');
   const [promoMsg, setPromoMsg] = useState('');
   const [promoBusy, setPromoBusy] = useState(false);
 
@@ -494,43 +494,28 @@ export default function ClubHomeScreen() {
     navigation.navigate('UserChannel', { authorId: m.user_id, name: m.nickname || undefined });
   };
 
-  // ── v3.261 크루 홍보 — owner 전용. 키워드 칩(장르·분위기 합계 1~5) + 한 줄 메시지(선택 100자) ──
+  // ── v3.266 크루 홍보 — owner 전용. 자유 키워드(예: 고양이) + 한 줄 메시지(선택 100자) ──
   const openPromoSheet = () => {
     if (__DEV__) console.info('[Club] 홍보 시트 열기', { clubId });
-    setPromoSel([]);
+    setPromoKeyword('');
     setPromoMsg('');
     setPromoOpen(true);
-  };
-
-  const togglePromoKeyword = (k: string) => {
-    if (promoBusy) return;
-    if (!promoSel.includes(k) && promoSel.length >= PROMO_KEYWORD_MAX) {
-      showAlert('알림', `키워드는 최대 ${PROMO_KEYWORD_MAX}개까지 선택할 수 있어요.`);
-      return;
-    }
-    // 함수형 갱신 — 같은 프레임 연속 탭에서도 선택 유실 없이 상한(1~5) 유지
-    setPromoSel((prev) => (prev.includes(k)
-      ? prev.filter((x) => x !== k)
-      : prev.length >= PROMO_KEYWORD_MAX ? prev : [...prev, k]));
   };
 
   const doPromote = async () => {
     if (promoBusy) return;
     setPromoBusy(true);
-    // 선택 순서와 무관하게 장르/분위기로 분리 전송(계약: {genres?, moods?, message?})
-    const genres = promoSel.filter((k) => GENRE_OPTIONS.includes(k));
-    const moods = promoSel.filter((k) => MOOD_OPTIONS.includes(k));
+    const keyword = promoKeyword.trim();
     const message = promoMsg.trim();
     try {
       const res = await promoteClub(String(clubId), {
-        ...(genres.length ? { genres } : {}),
-        ...(moods.length ? { moods } : {}),
+        keyword,
         ...(message ? { message } : {}),
       });
       console.info('[Club] 크루 홍보 발송', { clubId, targeted: res.targeted });
       setPromoOpen(false);
-      if (res.targeted > 0) showAlert('홍보 완료', `취향이 맞는 ${res.targeted}명에게 ${CLUB_LABEL}를 알렸어요!`);
-      else showAlert('알림', '지금은 맞는 유저를 찾지 못했어요. 다음에 다시 시도해주세요.');
+      if (res.targeted > 0) showAlert('홍보 완료', `'${keyword}' 곡을 만든 ${res.targeted}명에게 ${CLUB_LABEL}를 알렸어요!`);
+      else showAlert('알림', res.note || '이 키워드로 곡을 만든 유저를 찾지 못했어요. 다른 키워드로 시도해보세요.');
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[Club] 크루 홍보 실패', { clubId, status, code: getClubErrorCode(err) });
@@ -544,13 +529,14 @@ export default function ClubHomeScreen() {
 
   const handlePromoSend = () => {
     if (promoBusy) return;
-    if (promoSel.length === 0) {
-      showAlert('알림', '장르나 분위기 키워드를 1개 이상 선택해주세요.');
+    const kw = promoKeyword.trim();
+    if (kw.length < PROMO_KEYWORD_MIN_LEN) {
+      showAlert('알림', `홍보 키워드를 ${PROMO_KEYWORD_MIN_LEN}자 이상 입력해주세요. (예: 고양이)`);
       return;
     }
     showAlert(
       `${CLUB_LABEL} 홍보`,
-      `선택한 취향의 유저들에게 ${CLUB_LABEL} 알림을 보낼까요? 7일에 한 번만 보낼 수 있어요.`,
+      `'${kw}' 관련 곡을 만든 유저들에게 ${CLUB_LABEL} 알림을 보낼까요? 7일에 한 번만 보낼 수 있어요.`,
       [
         { text: '취소', style: 'cancel' },
         { text: '보내기', onPress: doPromote },
@@ -1238,45 +1224,22 @@ export default function ClubHomeScreen() {
           <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: spacing.xs }}>{`${CLUB_LABEL} 홍보하기`}</AppText>
             <AppText variant="footnote" tone="secondary" style={{ marginBottom: spacing.md }}>
-              선택한 장르·분위기로 곡을 만든 유저에게 알림이 가요. 7일에 한 번 보낼 수 있어요.
+              키워드와 관련된 곡을 만든 적 있는 유저에게만 알림이 가요. 7일에 한 번 보낼 수 있어요.
             </AppText>
             <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
-              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>
-                {`장르 (선택 ${promoSel.length}/${PROMO_KEYWORD_MAX})`}
+              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>홍보 키워드</AppText>
+              <TextInput
+                style={styles.modalInput}
+                value={promoKeyword}
+                onChangeText={(t) => setPromoKeyword(t.slice(0, PROMO_KEYWORD_LEN_MAX))}
+                placeholder="예: 고양이, 퇴근길, 크리스마스"
+                placeholderTextColor={colors.text.muted}
+                maxLength={PROMO_KEYWORD_LEN_MAX}
+                editable={!promoBusy}
+              />
+              <AppText variant="caption" tone="muted" style={styles.promoCounter}>
+                검색보다 깐깐하게 골라요 — 관련성이 확실한 유저에게만 보내져요.
               </AppText>
-              <View style={styles.promoChipWrap}>
-                {GENRE_OPTIONS.map((k) => {
-                  const on = promoSel.includes(k);
-                  return (
-                    <TouchableOpacity
-                      key={k}
-                      style={[styles.promoChip, on && styles.promoChipOn]}
-                      activeOpacity={0.7}
-                      onPress={() => togglePromoKeyword(k)}
-                      accessibilityLabel={`홍보 키워드 ${k}`}
-                    >
-                      <AppText variant="footnote" style={{ color: on ? colors.accent.primary : colors.text.secondary }}>{k}</AppText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>분위기</AppText>
-              <View style={styles.promoChipWrap}>
-                {MOOD_OPTIONS.map((k) => {
-                  const on = promoSel.includes(k);
-                  return (
-                    <TouchableOpacity
-                      key={k}
-                      style={[styles.promoChip, on && styles.promoChipOn]}
-                      activeOpacity={0.7}
-                      onPress={() => togglePromoKeyword(k)}
-                      accessibilityLabel={`홍보 키워드 ${k}`}
-                    >
-                      <AppText variant="footnote" style={{ color: on ? colors.accent.primary : colors.text.secondary }}>{k}</AppText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
               <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>한 줄 메시지 (선택)</AppText>
               <TextInput
                 style={styles.modalInput}

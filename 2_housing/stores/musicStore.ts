@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GenerationStatus, LyricsSourceSnapshot } from '../types';
 
 // ── v3.202(H-⑤): 커버 디렉터 대화 영속 타입 — CoverGenerationScreen의 ChatMessage/coverExtras와
@@ -292,7 +294,12 @@ const initialState = {
   error: null,
 };
 
-export const useMusicStore = create<MusicState>((set) => ({
+// v3.266 [P0 자동저장]: composeDraft·videoDraft만 AsyncStorage 영속(partialize).
+// 배경(피드백2 [31]·[35]): iOS 사파리가 무거운 화면(옷 꾸미기 등) 경유 후 탭을 리로드하면
+// 메모리 전용 draft가 통째로 유실 — 작사 결과(answers.editedLyrics 동봉)까지 날아가
+// 재결제 사고로 이어졌다. lyricsStore(v3.219)와 동일한 영속 관행으로 정렬.
+// 나머지 런타임 상태(status/isLoading/결과 등)는 의도적으로 비영속 — 재시작 시 초기화가 정답.
+export const useMusicStore = create<MusicState>()(persist((set) => ({
   ...initialState,
   setSelectedModel: (selectedModel) => set({ selectedModel }),
   setLyrics: (lyrics) => set({ lyrics }),
@@ -365,4 +372,9 @@ export const useMusicStore = create<MusicState>((set) => ({
   setIsLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   reset: () => set(initialState),
+}), {
+  name: 'music-drafts',
+  storage: createJSONStorage(() => AsyncStorage),
+  // draft 2종만 영속 — 그 외 상태는 세션 전용
+  partialize: (s) => ({ composeDraft: s.composeDraft, videoDraft: s.videoDraft }),
 }));

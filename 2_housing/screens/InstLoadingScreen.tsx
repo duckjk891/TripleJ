@@ -295,7 +295,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
           steps={INST_STEPS}
           messageIndex={messageIndex}
           portrait={COMPOSER_PORTRAIT}
-          noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, INST_STEPS.length)}/${INST_STEPS.length} 단계를 진행 중이에요.\n완료되면 "${instTitle}" 트랙이 내 곡에 추가돼요.\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+          noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, INST_STEPS.length)}/${INST_STEPS.length} 단계를 진행 중이에요.\n완료되면 "${instTitle}" 트랙이 내 곡에 추가돼요.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
         />
       )}
 

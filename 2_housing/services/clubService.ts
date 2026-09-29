@@ -438,24 +438,35 @@ export async function recordClubPlaylistPlayStart(
 //   target_type='club_promo' 로 발송(취향 매칭 유저 대상).
 export const PROMO_KEYWORD_MAX = 5;
 export const PROMO_MESSAGE_MAX = 100;
+// v3.266 — 자유 키워드 타겟(대표 확정): 예) "고양이" → 그 주제로 곡을 만든 유저에게만.
+// 서버가 ES 관련도 + 정확도 컷(절대 하한·상대 컷)으로 저관련 유저를 걸러낸다.
+export const PROMO_KEYWORD_MIN_LEN = 2;
+export const PROMO_KEYWORD_LEN_MAX = 30;
 
 export interface PromoteResult {
   targeted: number;
   next_at?: string | null;
+  /** v3.266 — targeted=0일 때 서버 안내(예: "이 키워드로 곡을 만든 유저를 찾지 못했어요") */
+  note?: string | null;
 }
 
 export async function promoteClub(
   clubId: string,
-  payload: { genres?: string[]; moods?: string[]; message?: string },
+  payload: { keyword?: string; genres?: string[]; moods?: string[]; message?: string },
 ): Promise<PromoteResult> {
   if (__DEV__) console.info('[Club] promoteClub', {
     clubId,
+    kwLen: payload.keyword?.length ?? 0,
     genres: payload.genres?.length ?? 0,
     moods: payload.moods?.length ?? 0,
     msgLen: payload.message?.length ?? 0,
   });
   const res = await api.post(`/clubs/${clubId}/promote`, payload);
-  return { targeted: Number(res.data?.targeted) || 0, next_at: res.data?.next_at ?? null };
+  return {
+    targeted: Number(res.data?.targeted) || 0,
+    next_at: res.data?.next_at ?? null,
+    note: res.data?.note ?? null,
+  };
 }
 
 /** v3.261: next_at ISO → 'YYYY.MM.DD' (파싱 불가/부재 시 null — 문구에서 날짜 병기 생략) */

@@ -44,7 +44,7 @@ import { isChildNow, isChildRestrictedError, KIDS_TEXT } from '../utils/kidsMode
 // v3.230 A1-2: 요청(POST) 전에 화면을 떠나면 요청을 보내지 않는다 — 이 경우 과금 요청 자체가 없다
 const LEFT_BEFORE_REQUEST_MSG = '시작 전에 나가서 만들지 않았어요. ⭐은 쓰이지 않았어요. 입력한 내용은 유지돼요.';
 const PRE_REQUEST_GUARD_BODY =
-  '작업이 끝날 때까지 이 화면을 벗어나지 마세요.\n아직 요청을 보내기 전이에요. 지금 나가면 만들지 않아요.';
+  '아직 요청을 보내기 전이에요 — 지금 나가면 만들지 않아요.\n요청이 접수될 때까지만 잠시 기다려주세요.';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
@@ -752,7 +752,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
                   ? '아티스트가 완성됐어요. 저장을 다시 시도해주세요.'
                   : tracked.lastStatus === 'done'
                     ? '아티스트가 완성됐어요. 저장하고 있어요...'
-                    : `${elapsedMin >= 5 ? '아직 만드는 중이에요' : `아티스트 디렉터가 ${meta.taskName} 만드는 중이에요`} · 경과 ${elapsedMin}분\n작업이 끝날 때까지 이 화면을 벗어나지 마세요.`}
+                    : `${elapsedMin >= 5 ? '아직 만드는 중이에요' : `아티스트 디렉터가 ${meta.taskName} 만드는 중이에요`} · 경과 ${elapsedMin}분\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
               </AppText>
             </View>
             {saveFailed && (
@@ -769,7 +769,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         ) : (
           <View style={styles.noteContainer}>
             <AppText style={styles.noteText}>
-              아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}작업이 끝날 때까지 이 화면을 벗어나지 마세요.
+              아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.
             </AppText>
           </View>
         )}

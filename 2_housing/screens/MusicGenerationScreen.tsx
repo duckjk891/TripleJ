@@ -1139,7 +1139,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       }
       showAlert(
         '목소리 연결이 필요해요',
-        `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
+        `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.\n지금까지 진행한 대화는 자동 저장돼요 — 다녀와서 이어서 하면 돼요.`
       );
       return;
     }
@@ -1211,8 +1211,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     showAlert(
       reason === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
       reason === 'expired'
-        ? `${who}에 연결된 목소리가 만료됐어요. 보관함의 샘플로 다시 학습해서 연결해주세요 — 파일을 다시 올릴 필요는 없어요. (재학습 ⭐${getPointCostSync('voice_clone')})`
-        : `${who}에 연결된 목소리를 지금 사용할 수 없어요. 다시 학습해서 연결하거나, 아티스트 없이 진행할 수 있어요. (재학습 ⭐${getPointCostSync('voice_clone')})`,
+        ? `${who}에 연결된 목소리가 만료됐어요. 보관함의 샘플로 다시 학습해서 연결해주세요 — 파일을 다시 올릴 필요는 없어요. (재학습 ⭐${getPointCostSync('voice_clone')})\n지금까지 진행한 대화는 자동 저장돼요.`
+        : `${who}에 연결된 목소리를 지금 사용할 수 없어요. 다시 학습해서 연결하거나, 아티스트 없이 진행할 수 있어요. (재학습 ⭐${getPointCostSync('voice_clone')})\n지금까지 진행한 대화는 자동 저장돼요 — 다녀와서 이어서 하면 돼요.`,
       [
         {
           text: '닫기',
