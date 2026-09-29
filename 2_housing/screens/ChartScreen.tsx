@@ -25,6 +25,8 @@ import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
 import { showAlert } from '../utils/appAlert';
 import { chartCriteriaText, isChartCriteriaTab } from '../utils/chartCriteria';
+// v3.260 [MakeLike]: '이 곡 느낌으로 만들기' 차트 노출 — ⋯시트 항목과 같은 공용 흐름(utils/makeLike) 재사용
+import { startMakeLikeFlow } from '../utils/makeLike';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 2스텝 — 비로그인 시에만 노출(enabled=!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
@@ -197,6 +199,14 @@ export default function ChartScreen() {
     navigation.navigate('Player', { track });
   };
 
+  // v3.260 [MakeLike]: 차트 행 인라인 칩 탭 — CEO "점 세개 말고 차트에 보였으면".
+  // 로그인 게이트는 시트 관행과 동일(호출측 담당), 이후 흐름은 startMakeLikeFlow 공용(중복 구현 금지).
+  const handleMakeLike = (track: ChartTrack) => {
+    if (!requireLogin()) return;
+    if (__DEV__) console.info('[MakeLike] 차트 행 칩 탭', { id: track.id, tab: activeTab });
+    startMakeLikeFlow(navigation, track);
+  };
+
   // 행 디자인은 공용 TrackRow (검색 등 다른 목록 화면과 동일) — 좌측 슬롯만 탭별로 다르다
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
@@ -211,6 +221,30 @@ export default function ChartScreen() {
 
     // v3.207 ②: 신곡 탭 발매일 footer (created_at 상대 표기 — 필드 없으면 미표기)
     const releasedText = activeTab === 'new' ? formatReleasedAgo(item.created_at) : null;
+
+    // v3.260 [MakeLike]: 차트 메인 리스트(신곡·TOP100·일간·주간·월간) 행에만 인라인 칩 노출 —
+    // '내 재생목록' 탭·미니 차트 변형·앨범 섹션은 미적용(범위 한정). 행 우측(통계+⋮)은 공용 TrackRow
+    // 소관이라 footer 슬롯에 배치 — 행 탭(재생)과 터치 영역이 겹치지 않고 hitSlop만 소폭 확장.
+    const makeLikeChip = activeTab !== 'queue' ? (
+      <TouchableOpacity
+        style={styles.makeLikeChip}
+        onPress={() => handleMakeLike(item)}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        accessibilityRole="button"
+        accessibilityLabel={`'${item.title}' 느낌으로 만들기`}
+      >
+        <Feather name="feather" size={13} color={colors.accent.primary} />
+        <AppText variant="caption" tone="secondary">이 곡 느낌</AppText>
+      </TouchableOpacity>
+    ) : null;
+    const footer = makeLikeChip ? (
+      <View style={styles.footerRow}>
+        {makeLikeChip}
+        {releasedText ? <AppText variant="caption" tone="muted">{releasedText}</AppText> : null}
+      </View>
+    ) : (releasedText
+      ? <AppText variant="caption" tone="muted" style={styles.releasedFooter}>{releasedText}</AppText>
+      : undefined);
     return (
       <TrackRow
         track={item}
@@ -218,9 +252,7 @@ export default function ChartScreen() {
         liked={!!likedMap[item.id]}
         onPress={() => handleTrackPress(item)}
         onMore={() => setActionTrack(item)}
-        footer={releasedText
-          ? <AppText variant="caption" tone="muted" style={styles.releasedFooter}>{releasedText}</AppText>
-          : undefined}
+        footer={footer}
         // v3.207 ①: 튜토리얼 '곡 담기' 스포트라이트 — 첫 행 ⋮만 anchor 등록
         moreAnchorKey={index === 0 ? 'chart-row-more' : undefined}
       />
@@ -409,6 +441,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   releasedFooter: { marginTop: 3 }, // v3.207 ②: 신곡 탭 발매일 footer
+  // v3.260 [MakeLike]: 차트 행 인라인 칩 — criteriaBtn(Feather 13 + caption) 소형 텍스트 버튼 규격 준수,
+  // 배경 pill 로 탭 가능함을 시각화. 발매일 footer(신곡 탭)와 한 줄 병치.
+  footerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  makeLikeChip: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start',
+    paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border.subtle,
+  },
   statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
   statLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   action: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
