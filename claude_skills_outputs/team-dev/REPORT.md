@@ -3514,3 +3514,17 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 소급: 라이브 스캔 결과 동종 1곡뿐 확인 → '미칠거같아' 스냅샷 채움(백업 로그 저장) → 실측 visible=True reason=cover_artist items=3, artist_name=DDui(기획사명) 유지.
 - Wave 판정: 버그 아님 — 나시=캐릭터 기본 의상(상품 아님), 운동화=커버 AI 임의 추가(시트는 맨발). '기본 스타일 표기'·'커버 AI 착용물 제어'는 백로그.
 - 듀엣 기획 공백 기록: 메인=아티스트+서브=간편 조합은 현 플로우상 불가(아티스트 선택 시 서브 스텝 스킵), duet 필드 미전송 — 정식 듀엣 기능은 별도 기획 필요.
+
+---
+
+## v3.253 — 2026-09-29 — 크루 플리 혜택 (서버·웹 배포 완료)
+
+### 반영 (앱 5951493, 서버 charts/clubs/recognition 3파일)
+- 크루 RP·레벨: clubs.recognition {rp, level 1~5, label} — 신생→떠오르는→인기→대세→전설 크루(임계 0/100/500/2,000/8,000), 목록·상세·mine 동봉(구 크루 폴백 Lv1).
+- 재생 +2: record-play source(club_playlist) 검증 체인(로그인·플리 소속·비멤버·30초 dedup) 통과분만, 유저·크루·일 상한 +30(Redis). 응답 shape 불변(조용한 적립), 쓰레기 source 무해(실측 200).
+- 담기 +10: POST /clubs/{c}/playlists/{p}/play-start — 비멤버 인증 사용자, 유저·플리·KST일 1회(Mongo crew_rp_events 유니크 — 감사 추적 잔존).
+- 앱: queueSource(큐 교체 시 설정·소스 밖 곡 재생 시 해제·비영속 — v3.36 큐 정책 정합), ClubHome·PlaylistScreen 귀속 배선, 비멤버만 play-start, 커뮤니티 '인기 크루' 상위 5(실패 시 섹션 숨김)+정렬 3토글, CrewLevelBadge(카드·홈).
+### 검증·배포
+- 서버 89×3 + 회귀 275×3 = 825판정 + 앱 107 + 회귀 전 스위트 green, tsc 0. ROUTES 388→389(+play-start만).
+- 가드 3종 md5 → .bak_pre_v3253 → pre-v3253-live 태그 → nice 빌드 → INFLIGHT 0 → 재생성 → 인덱스 2종 → 스모크(popular 정렬 실측·401·record-play 불변) → Traceback 0 → 웹 마커 확인.
+- 남은 알려진 한계: 게스트 재생 미적립(MVP 보수), granted:10 연출 없음(조용한 적립 — 원하면 토스트 추가 가능), ⭐ 분배는 별도 승인 대기.
