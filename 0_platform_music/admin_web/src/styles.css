@@ -58,7 +58,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 }
 .btn-logout:hover { background: #232839; }
 
-.content { margin-left: 220px; flex: 1; padding: 28px 32px; min-height: 100vh; }
+.content { margin-left: 220px; flex: 1; min-width: 0; padding: 28px 32px; min-height: 100vh; }
 
 .page-title { font-size: 1.35rem; font-weight: 700; margin-bottom: 20px; }
 
