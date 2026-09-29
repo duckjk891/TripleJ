@@ -104,14 +104,38 @@ export const getVoiceClone = async (cloneId: string): Promise<VoiceClone> => {
   }
 };
 
+/** v3.263 — 샘플 보관함 항목 (서버 GET /voice-clone/samples) */
+export interface VoiceSample {
+  object_name: string;
+  voice_name: string;
+  duration_s: number;
+  size_bytes?: number;
+  created_at?: string;
+}
+
+/** GET /voice-clone/samples — 이전에 업로드한 원음 목록 (S3 실존 검증 통과분만) */
+export const listVoiceSamples = async (): Promise<VoiceSample[]> => {
+  try {
+    const response = await api.get('/voice-clone/samples');
+    const samples = response.data?.samples ?? [];
+    if (__DEV__) console.log('[voiceService] listVoiceSamples:', samples.length);
+    return Array.isArray(samples) ? samples : [];
+  } catch (err: any) {
+    console.error('[voiceService] listVoiceSamples 실패:', err?.response?.status, err?.message);
+    return []; // 보관함 실패는 업로드 흐름을 막지 않는다
+  }
+};
+
 /**
  * POST /voice-clone/create — 노래 샘플 + 보컬 구간으로 클로닝 시작.
  * 업로드 + Suno validate 대기 가능성 → timeout 180초.
  * 응답: { clone_id, validate_task_id, status }
  */
 export const createVoiceClone = async (params: {
-  fileUri: string;
-  fileName: string;
+  fileUri?: string;
+  fileName?: string;
+  /** v3.263 — 샘플 보관함 재학습: 파일 대신 기존 샘플 경로 전송 */
+  sampleObjectName?: string;
   voiceName: string;
   description?: string;
   vocalStartS: number;
@@ -120,7 +144,13 @@ export const createVoiceClone = async (params: {
   styleMode?: string; // sing | speak | rap (서버 ALLOWED_STYLE_MODES)
 }): Promise<{ clone_id: string; validate_task_id?: string; status?: string }> => {
   const formData = new FormData();
-  await appendAudioFile(formData, 'source_file', params.fileUri, params.fileName);
+  if (params.sampleObjectName) {
+    formData.append('sample_object_name', params.sampleObjectName);
+  } else if (params.fileUri && params.fileName) {
+    await appendAudioFile(formData, 'source_file', params.fileUri, params.fileName);
+  } else {
+    throw new Error('source file or sampleObjectName required');
+  }
   formData.append('voice_name', params.voiceName);
   formData.append('description', params.description ?? '');
   formData.append('vocal_start_s', String(params.vocalStartS));
@@ -131,6 +161,7 @@ export const createVoiceClone = async (params: {
   if (__DEV__) {
     console.log('[voiceService] createVoiceClone 요청:', {
       fileName: params.fileName,
+      sampleObjectName: params.sampleObjectName,
       voiceName: params.voiceName,
       vocalStartS: params.vocalStartS,
       vocalEndS: params.vocalEndS,

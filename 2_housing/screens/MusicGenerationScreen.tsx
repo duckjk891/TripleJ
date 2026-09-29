@@ -1211,7 +1211,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     showAlert(
       reason === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
       reason === 'expired'
-        ? `${who}에 연결된 목소리가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
+        ? `${who}에 연결된 목소리가 만료됐어요. 보관함의 샘플로 다시 학습해서 연결해주세요 — 파일을 다시 올릴 필요는 없어요. (재학습 ⭐${getPointCostSync('voice_clone')})`
         : `${who}에 연결된 목소리를 지금 사용할 수 없어요. 다시 학습해서 연결하거나, 아티스트 없이 진행할 수 있어요. (재학습 ⭐${getPointCostSync('voice_clone')})`,
       [
         {

@@ -1072,10 +1072,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               {personaMissing
                 ? '연결했던 목소리가 삭제되어 연결이 해제됐어요. 다른 목소리를 다시 연결해주세요.'
                 : personaExpired
-                  ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 목소리는 만든 후 2시간까지만 사용할 수 있어요 — 다시 학습해서 새 목소리를 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
+                  ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 보관함의 샘플로 다시 학습해 새 목소리를 연결해주세요. (재학습 ⭐${getPointCostSync('voice_clone')})`
                   : personaConnected
-                  // v3.156(대표): 외부 AI 보이스 수명 안내 — 최대 2시간 이내 사용 권장
-                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.\n⏱️ 목소리는 만든 후 2시간 동안 사용할 수 있어요 — 그 전에 작곡에 사용해 주세요. 만료되면 다시 학습하면 돼요. (재학습 ⭐${getPointCostSync('voice_clone')})`
+                  // v3.263(대표 확정 2026-09-29): 2시간 타이머 폐지 — 생존확인 기반 안내로 교체
+                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.\n⏱️ AI 목소리는 외부 사정으로 언젠가 만료될 수 있어요 — 되도록 학습한 날 바로 작곡에 사용해 주세요. 만료돼도 샘플 보관함에서 다시 학습하면 돼요. (재학습 ⭐${getPointCostSync('voice_clone')})`
                   : serverPreset
                     ? `간편 목소리(${serverPreset.gender} · ${serverPreset.style})가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`
                     : '목소리 연결은 필수예요! 간편 목소리 또는 내 목소리를 연결하면, 같은 아티스트는 항상 같은 목소리로 노래해요.'}

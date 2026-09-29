@@ -34,6 +34,8 @@ import {
   regenerateClonePhrase,
   verifyVoiceClone,
   cloneValidatePhrase,
+  listVoiceSamples,
+  type VoiceSample,
 } from '../services/voiceService';
 // v3.254: 작곡 복귀 시 새 클론 자동 연결 — ArtistResultScreen v3.103(B-3)과 동일 계약
 // (PATCH persona_id=clone_id, ready 클론만).
@@ -107,6 +109,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   // STEP 1
   const [voiceName, setVoiceName] = useState('');
   const [sampleSrc, setSampleSrc] = useState<AudioSrc>(null);
+  // v3.263 — 샘플 보관함: 이전 업로드 원음 재사용 (서버 GET /voice-clone/samples)
+  const [voiceSamples, setVoiceSamples] = useState<VoiceSample[]>([]);
+  const [selectedSample, setSelectedSample] = useState<VoiceSample | null>(null);
   // v3.246 T1: 샘플 길이(초) — 녹음=타이머 실측, 업로드=미리듣기 로더 프로브(실패 시 null=서버 검증에 위임).
   // 서버 최소 15초 미만을 ⭐ 확인 전에 차단(422 왕복·혼란 방지 — 차감은 서버도 검증 후라 이중 안전).
   const [sampleDurationS, setSampleDurationS] = useState<number | null>(null);
@@ -160,6 +165,17 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       }
     })();
     usePointsStore.getState().fetchBalance();
+    return () => { alive = false; };
+  }, []);
+
+  // v3.263 — 샘플 보관함 로드 (실패해도 업로드 흐름 무영향: listVoiceSamples가 [] 반환)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const samples = await listVoiceSamples();
+      if (alive) setVoiceSamples(samples);
+      if (__DEV__) console.info('[VoiceCloneWizard] 보관함 샘플', samples.length, '개');
+    })();
     return () => { alive = false; };
   }, []);
 
@@ -398,6 +414,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         await stopPreview();
         if (target === 'sample') {
           setSampleSrc({ uri: file.uri, name: file.name });
+          setSelectedSample(null); // v3.263 — 새 파일 선택 = 보관함 선택 해제
           // v3.246 T1: 길이 프로브 — 15초 미만 조기 안내용(모르면 null=서버 검증 위임)
           setSampleDurationS(null);
           probeAudioDurationS(file.uri).then((d) => {
@@ -482,6 +499,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         await stopPreview();
         if (target === 'sample') {
           setSampleSrc({ uri, name: recName });
+          setSelectedSample(null); // v3.263 — 새 녹음 = 보관함 선택 해제
           setSampleDurationS(recordingDuration > 0 ? recordingDuration : null);
           // 녹음 길이로 구간 끝 기본값 보정 (5초~120초)
           if (recordingDuration > 0) {
@@ -519,12 +537,17 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       showAlert('입력 필요', '목소리 이름을 입력해주세요.');
       return;
     }
-    if (!sampleSrc) {
-      showAlert('입력 필요', '노래 샘플을 녹음하거나 업로드해주세요.');
+    if (!sampleSrc && !selectedSample) {
+      showAlert('입력 필요', '노래 샘플을 녹음·업로드하거나 보관함에서 선택해주세요.');
+      return;
+    }
+    // v3.263 — 보관함 샘플은 이미 서버 정규화·검증을 통과한 원음 (길이 아는 경우만 조기 차단)
+    if (selectedSample && selectedSample.duration_s > 0 && isSampleTooShort(selectedSample.duration_s)) {
+      showAlert('샘플이 너무 짧아요', `노래 샘플은 최소 ${MIN_SAMPLE_DURATION_S}초 이상이어야 해요.`);
       return;
     }
     // v3.246 T1: 서버 최소 15초 — 길이를 아는 샘플은 ⭐ 확인 전에 차단(422 왕복 방지)
-    if (isSampleTooShort(sampleDurationS)) {
+    if (!selectedSample && isSampleTooShort(sampleDurationS)) {
       showAlert(
         '샘플이 너무 짧아요',
         `노래 샘플은 최소 ${MIN_SAMPLE_DURATION_S}초 이상이어야 해요.\n(지금 샘플은 약 ${Math.round(sampleDurationS as number)}초)\n조금 더 길게 녹음하거나 긴 파일을 올려주세요.`
@@ -557,16 +580,20 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     await startCloneCreate(name, startS, endS);
   };
 
-  // 실제 생성 호출 (confirm 이후 진입 — sampleSrc는 handleStep1Next에서 검증됨)
+  // 실제 생성 호출 (confirm 이후 진입 — 샘플 유무는 handleStep1Next에서 검증됨)
   const startCloneCreate = async (name: string, startS: number, endS: number) => {
-    if (!sampleSrc) return;
+    if (!sampleSrc && !selectedSample) return;
     setBusy(true);
     setErrText('');
     try {
-      console.log('[VoiceCloneWizard] step1 createVoiceClone:', { name, startS, endS, styleMode });
+      console.log('[VoiceCloneWizard] step1 createVoiceClone:', {
+        name, startS, endS, styleMode, fromSample: !!selectedSample,
+      });
       const res = await createVoiceClone({
-        fileUri: sampleSrc.uri,
-        fileName: sampleSrc.name,
+        // v3.263 — 보관함 샘플 재학습: 파일 재업로드 없이 서버 보관 원음 사용
+        ...(selectedSample
+          ? { sampleObjectName: selectedSample.object_name }
+          : { fileUri: sampleSrc!.uri, fileName: sampleSrc!.name }),
         voiceName: name,
         vocalStartS: startS,
         vocalEndS: endS,
@@ -834,6 +861,45 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 setSampleDurationS(null); // v3.246 T1
               })}
 
+              {/* v3.263 — 샘플 보관함: 이전 업로드 원음 재사용 (재녹음/재업로드 불필요) */}
+              {voiceSamples.length > 0 && (
+                <View>
+                  <AppText style={styles.fieldLabel}>이전에 올린 샘플</AppText>
+                  <AppText style={styles.stepHint}>
+                    선택하면 파일을 다시 올리지 않고 그 샘플로 학습해요.
+                  </AppText>
+                  {voiceSamples.slice(0, 5).map((s) => {
+                    const selected = selectedSample?.object_name === s.object_name;
+                    return (
+                      <TouchableOpacity
+                        key={s.object_name}
+                        style={[styles.chip, { marginBottom: 6 }, selected && styles.chipSelected]}
+                        onPress={() => {
+                          if (selected) {
+                            setSelectedSample(null);
+                            return;
+                          }
+                          setSelectedSample(s);
+                          setSampleSrc(null);
+                          setSampleDurationS(null);
+                          if (s.duration_s > 0) {
+                            setVocalStartS('0');
+                            setVocalEndS(String(Math.min(120, Math.max(5, Math.floor(s.duration_s)))));
+                          }
+                          if (__DEV__) console.info('[VoiceCloneWizard] 보관함 샘플 선택', s.object_name);
+                        }}
+                      >
+                        <AppText style={[styles.chipText, selected && styles.chipTextSelected]}>
+                          {selected ? '✓ ' : ''}🎵 {s.voice_name || '이름 없는 샘플'}
+                          {s.duration_s > 0 ? ` · ${formatDuration(Math.round(s.duration_s))}` : ''}
+                          {s.created_at ? ` · ${String(s.created_at).slice(0, 10)}` : ''}
+                        </AppText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
 
               <AppText style={styles.fieldLabel}>보컬 구간 (초) *</AppText>
               <AppText style={styles.stepHint}>
@@ -868,7 +934,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
               <TouchableOpacity
                 style={[
                   styles.primaryBtn,
-                  (!voiceName.trim() || !sampleSrc || busy) && { opacity: 0.4 },
+                  (!voiceName.trim() || (!sampleSrc && !selectedSample) || busy) && { opacity: 0.4 },
                 ]}
                 onPress={handleStep1Next}
                 // 미충족 시에도 탭 가능 — handleStep1Next의 showAlert가 무엇이 빠졌는지 안내 (무반응 방지)
@@ -970,14 +1036,15 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 {genStatus === 'ready' ? (
                   <>
                     <AppText style={styles.doneTitle}>학습이 끝났어요</AppText>
-                    {/* v3.156(대표): 외부 AI 보이스는 수명이 짧다(실측 2~6시간, 편차 큼) —
-                        "최대 2시간 이내 사용" 기준으로 안내해 만료 전 작곡을 유도 */}
+                    {/* v3.263(대표 확정 2026-09-29): 자체 2시간 타이머 폐지 — 실측 수명 16~40h,
+                        만료는 서버 생존확인(check-voice)으로만 판정. 시한 문구 제거. */}
                     <AppText style={styles.doneDesc}>
                       이제 목소리 목록에서 "사용 가능"으로 표시돼요.{'\n'}
                       아티스트 목소리로 설정해 곡을 만들어보세요.{'\n\n'}
-                      ⏱️ 목소리는 만든 후 2시간 동안 사용할 수 있어요.{'\n'}
-                      2시간이 지나면 만료돼요 — 그 전에 작곡에 사용해 주세요!{'\n'}
-                      (만료되면 다시 학습해서 쓰면 돼요 — 재학습 ⭐{voiceCloneCost ?? getPointCostSync('voice_clone')})
+                      ⏱️ AI 목소리는 외부 시스템 사정으로 언젠가 만료될 수 있어요.{'\n'}
+                      되도록 학습한 날 바로 작곡에 사용하는 걸 추천해요!{'\n'}
+                      (만료돼도 업로드한 샘플은 보관함에 남아 있어서{'\n'}
+                      파일 재업로드 없이 다시 학습할 수 있어요 — 재학습 ⭐{voiceCloneCost ?? getPointCostSync('voice_clone')})
                     </AppText>
                     <AppText style={styles.doneStatus}>{STATUS_LABEL.ready}</AppText>
                   </>
