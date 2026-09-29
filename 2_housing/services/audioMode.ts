@@ -9,6 +9,18 @@ import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 /** 재생 직전에 호출 — 타 앱 소리를 끊고 우리 재생이 전면에 서는 오디오 모드 */
 export async function applyPlaybackAudioMode(): Promise<void> {
   try {
+    if (Platform.OS !== 'web') {
+      // v1.3.1 [BGAudio]: 재생 엔진이 expo-audio 심으로 이관 — 세션 모드도 expo-audio 로.
+      // shouldPlayInBackground = 백그라운드 연속재생 핵심(iOS UIBackgroundModes audio 병행).
+      const { setAudioModeAsync } = require('expo-audio');
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+        interruptionMode: 'doNotMix',
+      });
+      if (__DEV__) console.info('[audioMode] expo-audio 모드 적용(백그라운드 재생 on)');
+      return;
+    }
     await Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
       staysActiveInBackground: true,

@@ -8,6 +8,7 @@
 //   반드시 console.warn 레벨 고정(민감정보 금지 — trackId·상태만).
 // v3.205: 프리로드를 원격 스트림 → 로컬 파일 풀 다운로드로 교체(다운로드·수명 관리는
 //   아래 "프리로드 로컬 파일화" 블록 참조). 실패 시 원격 스트림 폴백 경로는 불변.
+import { NativeShimSound, syncNativeLockScreen } from './nativeAudioShim';
 import { AppState, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 // v3.205: 다음 곡 로컬 프리다운로드 — expo-file-system v19+는 신 API에서
@@ -162,6 +163,19 @@ usePlayerStore.subscribe((s: any) => {
   const src = `${Platform.OS === 'web' ? 'web' : 'native'}:${prEngineTrackId ? 'engine' : 'player-cb'}:${s.isPlayerScreenOpen ? 'player-open' : 'player-closed'}`;
   notePlayProgress(tid, pos, dur, src);
 });
+
+if (Platform.OS !== 'web') {
+  // v1.3.1 [BGAudio]: 잠금화면 Now Playing sync — 웹 mediaSession 구독과 동형(단일 지점)
+  let nsTrackId: string | null = null;
+  usePlayerStore.subscribe((s: any) => {
+    const t = s.track;
+    const tid = t?.id != null ? String(t.id) : null;
+    if (tid && tid !== nsTrackId) {
+      nsTrackId = tid;
+      syncNativeLockScreen(t);
+    }
+  });
+}
 
 if (Platform.OS === 'web') {
   // v3.217 ①(a): mediaSession 트랙 sync 일원화 — store.track 변경 구독 단일 지점.
@@ -449,7 +463,9 @@ export function maybePreloadNext(
         console.warn('[BTDebug] preload stale discard', { trackId: next.id });
         return;
       }
-      const { sound } = await Audio.Sound.createAsync({ uri: fileUri }, { shouldPlay: false });
+      // v1.3.1 [BGAudio]: 프리로드 사운드도 동일 엔진(expo-audio 심)으로 — 스왑 후 세션 일관
+      const { sound: _shim } = await NativeShimSound.createAsync({ uri: fileUri }, { shouldPlay: false });
+      const sound = _shim as unknown as Audio.Sound;
       if (stale()) {
         // 로컬 로드 도중 닫힘/전환 — 폐기 (실패 아님 — 백오프 카운트 비대상)
         try { await sound.unloadAsync(); } catch {}
@@ -770,7 +786,9 @@ export async function createTrackSound(
   opts?: { owner?: 'playback' | 'external' },
 ): Promise<{ sound: Audio.Sound }> {
   if (Platform.OS !== 'web') {
-    return Audio.Sound.createAsync(source, initialStatus, onStatus);
+    // v1.3.1 [BGAudio]: expo-av → expo-audio 심 — 백그라운드 재생·잠금화면(콜백 셰이프 동일)
+    const { sound } = await NativeShimSound.createAsync(source, initialStatus, onStatus);
+    return { sound: sound as unknown as Audio.Sound };
   }
   const sound = createWebTrackSound(
     source.uri,

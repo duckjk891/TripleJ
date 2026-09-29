@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import * as FileSystem from 'expo-file-system/legacy';
+import { saveFileToMaidolFolder } from '../utils/nativeSave';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
@@ -81,6 +82,17 @@ export async function saveTrackFileToDevice(url: string, filename: string): Prom
     const dest = `${FileSystem.cacheDirectory}${filename}`;
     if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
     const res = await FileSystem.downloadAsync(url, dest);
+    // v1.3.1 [NativeSave]: Android = 다운로드/MAIDOL 폴더 직접 저장(최초 1회 폴더 권한),
+    // 거부·실패 시 아래 기존 공유 시트 폴백. iOS 는 공유 시트("파일에 저장") 유지.
+    const isMp3Name = /\.mp3$/i.test(filename);
+    const saved = await saveFileToMaidolFolder(
+      res.uri, filename.startsWith('MAIDOL_') ? filename : `MAIDOL_${filename}`,
+      isMp3Name ? 'audio/mpeg' : 'video/mp4',
+    );
+    if (saved) {
+      showAlert('저장 완료', '지정한 MAIDOL 폴더에 저장했어요.');
+      return;
+    }
     if (await Sharing.isAvailableAsync()) {
       const isMp3 = /\.mp3$/i.test(filename);
       await Sharing.shareAsync(res.uri, {

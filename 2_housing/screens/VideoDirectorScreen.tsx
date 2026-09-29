@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import { saveMediaToMaidolAlbum } from '../utils/nativeSave';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
 import { Feather } from '@expo/vector-icons';
@@ -1093,8 +1094,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         }
         const uri = await downloadToCache();
         if (!uri) throw new Error('download failed');
-        await MediaLibrary.saveToLibraryAsync(uri);
-        showAlert('저장 완료', '영상이 사진 앨범에 저장됐어요.');
+        // v1.3.1 [NativeSave]: 사진 앱 'MAIDOL' 앨범에 모아 저장(대표 확정 기본경로)
+        const where = await saveMediaToMaidolAlbum(uri);
+        showAlert('저장 완료', where === 'album'
+          ? "사진 앱의 'MAIDOL' 앨범에 저장됐어요."
+          : '영상이 사진 앨범에 저장됐어요.');
       }
       // v3.219 [VideoDraft]: 저장 완료 = 완주 — 선곡/step/대화 draft 클리어(스타일 sticky는 유지)
       useMusicStore.getState().clearVideoDraft();
