@@ -5,6 +5,24 @@ import { Audio } from 'expo-av';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
+// ── v3.253 [CrewRecog] 큐 귀속 메타 — "이 큐는 어느 크루 플리에서 시작됐나" ──
+// 수명: 크루 플리를 큐 교체(setQueue+source)로 재생 시작하면 그 큐 세션 동안 유지.
+//  · 같은 플리 소속 곡으로 넘어가면(자동/수동) 유지 — track_ids 스냅샷이 소속 판정 기준.
+//  · 소스 플리 밖 곡이 재생 세션을 시작하면 해제 — services/playRecord.ts 가 단일 지점에서 수행.
+//  · 큐를 소스 없이 교체(개인 플리·앨범·playTrackNow replace)하면 즉시 해제(setQueue 기본값 null).
+// 영속: 비영속(아래 partialize 화이트리스트라 자동 제외) — 작업 큐(queue/track) 자체가 비영속이라
+//  앱 재시작·계정 보관함(savedQueues) 복원 큐에는 귀속이 없다(v3.36 큐 정책과 정합, 복원 재생=무귀속).
+export interface QueueSource {
+  type: 'club_playlist';
+  playlist_id: string;
+  club_id: string;
+  /** 큐 교체 시점 플리 곡 id 스냅샷 — 이후 append(관련곡·직접 담기)된 곡은 소속 아님 */
+  track_ids: string[];
+}
+
+/** setQueue 두 번째 인자 — track_ids 는 스토어가 tracks 에서 파생한다 */
+export type QueueSourceInput = Omit<QueueSource, 'track_ids'>;
+
 interface PlayerState {
   sound: Audio.Sound | null;
   track: any | null;
@@ -18,6 +36,8 @@ interface PlayerState {
   repeat: RepeatMode;
   /** 현재 재생목록의 소유자 user.id. 비회원이 담은 큐는 null → 앱을 새로 켜면 사라진다. */
   queueOwnerId: string | null;
+  /** v3.253 [CrewRecog]: 현재 큐의 귀속 메타(크루 플리 큐 교체 시에만 non-null, 비영속) */
+  queueSource: QueueSource | null;
   /** 계정별 재생목록 보관함(영속) — 로그인하면 그 계정이 쓰던 재생목록을 여기서 복원한다. */
   savedQueues: Record<string, { queue: any[]; currentIndex: number; track: any | null }>;
   /** 비회원 담기 안내 팝업을 이미 확인했는지(영속) — 한 번 '계속 담기'를 고르면 다시 뜨지 않는다 */
@@ -35,7 +55,10 @@ interface PlayerState {
   setIsPlaying: (v: boolean) => void;
   setPosition: (v: number) => void;
   setDuration: (v: number) => void;
-  setQueue: (tracks: any[]) => void;
+  /** v3.253: source 지정 = 크루 플리 큐 교체(귀속 시작). 미지정(기존 호출부 전부)은 귀속 해제. */
+  setQueue: (tracks: any[], source?: QueueSourceInput | null) => void;
+  /** v3.253 [CrewRecog]: 귀속 해제 전용 — playRecord 가 소스 밖 곡 재생 세션 시작 시 호출 */
+  setQueueSource: (source: QueueSource | null) => void;
   addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
   removeFromQueue: (index: number) => void;
   reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
@@ -123,6 +146,7 @@ export const usePlayerStore = create<PlayerState>()(
       currentIndex: -1,
       isPlayerScreenOpen: false,
       queueOwnerId: null,
+      queueSource: null, // v3.253 [CrewRecog]
       savedQueues: {},
       guestNoticeAck: false,
       miniHidden: false,
@@ -136,7 +160,17 @@ export const usePlayerStore = create<PlayerState>()(
       setIsPlaying: (isPlaying) => set({ isPlaying }),
       setPosition: (position) => set({ position }),
       setDuration: (duration) => set({ duration }),
-      setQueue: (queue) => { set({ queue }); saveOwnerQueue(); },
+      // v3.253 [CrewRecog]: 큐 교체 = 귀속 재설정 지점 — source 있으면 곡 id 스냅샷과 함께 설정,
+      // 없으면(기존 호출부: 개인 플리·앨범·playTrackNow replace) 이전 귀속 해제.
+      setQueue: (queue, source) => {
+        const queueSource: QueueSource | null = source
+          ? { ...source, track_ids: queue.map((t: any) => String(t?.id ?? t?.track_id ?? '')).filter(Boolean) }
+          : null;
+        if (__DEV__ && source) console.info('[CrewRecog] 큐 귀속 설정', { playlistId: source.playlist_id, clubId: source.club_id, tracks: queueSource?.track_ids.length ?? 0 });
+        set({ queue, queueSource });
+        saveOwnerQueue();
+      },
+      setQueueSource: (queueSource) => set({ queueSource }),
       addToQueue: (track) => {
         if (!track?.id) return false;
         const { queue } = get();
@@ -180,6 +214,7 @@ export const usePlayerStore = create<PlayerState>()(
           sound: null, track: null, isPlaying: false, position: 0, duration: 0,
           // guestNoticeAck은 유지 — 한 번 확인한 안내를 로그아웃했다고 다시 띄우지 않는다
           queue: [], currentIndex: -1, queueOwnerId: null,
+          queueSource: null, // v3.253: 큐가 사라지므로 귀속도 해제
           sessionActive: false, // v3.198: 다음 로그인의 복원 큐가 미니로 뜨지 않도록 리셋
         });
       },
@@ -201,6 +236,7 @@ export const usePlayerStore = create<PlayerState>()(
             currentIndex: saved.currentIndex ?? -1,
             track: saved.track ?? null,
             queueOwnerId: userId,
+            queueSource: null, // v3.253: 복원 큐는 무귀속(보관함에 귀속 미저장 — 상단 주석 정책)
             isPlaying: false, position: 0, duration: 0,
             sessionActive: false, // v3.198: 복원 큐는 재생 전까지 미니플레이어 미노출
           });

@@ -16,17 +16,21 @@ import LoginPrompt from '../components/LoginPrompt';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAuthStore } from '../stores/authStore';
 import { useIsChild } from '../utils/kidsMode';
-import { CLUB_LABEL, Club, ClubSort, listClubs, getMyClubs } from '../services/clubService';
+import { CLUB_LABEL, Club, ClubSort, listClubs, getMyClubs, clubRecognition } from '../services/clubService';
 // v3.252: 크루 채팅 unread 뱃지 — 소켓 club_chat 수신 시 화면 내 즉시 증가(재조회는 focus 관행 그대로)
 import { dmSocketSubscribeClubChat } from '../services/dmSocket';
+// v3.253: 크루 인지도 레벨 배지 — 카드(목록·내 크루·인기)에 label 과 함께 노출
+import CrewLevelBadge from '../components/CrewLevelBadge';
 
 const LIST_LIMIT = 20;
+const POPULAR_LIMIT = 5; // v3.253 — 인기 크루 가로 카드 수(순위 1~5)
 
-// 정렬 토글 — 계약 GET /clubs?sort=new|members
+// 정렬 토글 — 계약 GET /clubs?sort=new|members(+v3.253 popular, 구서버 미지원 시 토글 숨김)
 const SORTS: { key: ClubSort; label: string }[] = [
   { key: 'new', label: '최신' },
   { key: 'members', label: '멤버순' },
 ];
+const POPULAR_SORT: { key: ClubSort; label: string } = { key: 'popular', label: '인기' };
 
 export default function CommunityScreen() {
   const navigation = useNavigation<any>();
@@ -45,19 +49,35 @@ export default function CommunityScreen() {
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [ctaVisible, setCtaVisible] = useState(false); // 비로그인 개설 시 로그인 오버레이
+  // v3.253: 인기 크루(sort=popular 별도 fetch, 순위 1~5) — null = 미로드/구서버 미지원/실패
+  // → 섹션·'인기' 정렬 토글 함께 숨김(조용한 강등, 크래시 금지)
+  const [popular, setPopular] = useState<Club[] | null>(null);
 
   const fetchAll = useCallback(async (s: ClubSort) => {
     if (__DEV__) console.info('[Club] Community fetchAll', { sort: s, loggedIn: !!user });
     try {
       setLoading(true);
-      const [listRes, mineRes] = await Promise.allSettled([
+      const [listRes, mineRes, popRes] = await Promise.allSettled([
         listClubs({ sort: s, limit: LIST_LIMIT }),
         user ? getMyClubs() : Promise.resolve([] as Club[]),
+        listClubs({ sort: 'popular', limit: POPULAR_LIMIT }), // v3.253 인기 섹션
       ]);
+      // v3.253: 인기 섹션 — 실패(구서버 400/404·네트워크)는 null 로 조용히 숨김
+      if (popRes.status === 'fulfilled') {
+        setPopular(popRes.value.clubs.slice(0, POPULAR_LIMIT));
+      } else {
+        if (__DEV__) console.info('[CrewRecog] 인기 크루 조회 실패 — 섹션·토글 숨김', { status: (popRes.reason as any)?.response?.status ?? null });
+        setPopular(null);
+      }
       if (listRes.status === 'fulfilled') {
         setClubs(listRes.value.clubs);
         setNextBefore(listRes.value.next_before);
         setLoadFailed(false);
+      } else if (s === 'popular') {
+        // v3.253: 구서버 sort=popular 미지원(400 등) — 최신순으로 조용히 폴백
+        // (setSort → focus 이펙트가 fetchAll('new') 재수행, '인기' 토글은 popular=null 로 숨김)
+        if (__DEV__) console.info('[CrewRecog] sort=popular 실패 → new 폴백', { status: (listRes.reason as any)?.response?.status ?? null });
+        setSort('new');
       } else {
         // 서버 미배포(404)·네트워크 오류 — 목록만 안내 상태로 강등
         console.error('[Club] 목록 조회 실패', { status: (listRes.reason as any)?.response?.status ?? null });
@@ -125,23 +145,28 @@ export default function CommunityScreen() {
 
   // 크루 카드 — 이름(목록 행 제목 관행 16/600)·소개 1줄·멤버 수(Feather users 소형)
   // v3.252: join_status 'pending'(승인제 신서버) → '승인 대기 중' 칩
-  const renderClubCard = useCallback(({ item }: { item: Club }) => (
-    <TouchableOpacity style={styles.clubCard} activeOpacity={0.75} onPress={() => openClub(item)} accessibilityLabel={`${CLUB_LABEL} ${item.name}`}>
-      <View style={{ flex: 1 }}>
-        <AppText variant="callout" numberOfLines={1}>{item.name}</AppText>
-        {item.description
-          ? <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.clubDesc}>{item.description}</AppText>
-          : null}
-        <View style={styles.clubMetaRow}>
-          <Feather name="users" size={12} color={colors.text.muted} />
-          <AppText variant="caption" tone="muted">{`멤버 ${item.member_count ?? 0}명`}</AppText>
-          {item.is_member ? <AppText variant="caption" tone="accent">가입됨</AppText>
-            : item.join_status === 'pending' ? <AppText variant="caption" tone="muted">승인 대기 중</AppText> : null}
+  // v3.253: 인지도 레벨 배지+라벨(구서버 recognition 부재 = Lv1 '신생 크루' 폴백)
+  const renderClubCard = useCallback(({ item }: { item: Club }) => {
+    const recog = clubRecognition(item);
+    return (
+      <TouchableOpacity style={styles.clubCard} activeOpacity={0.75} onPress={() => openClub(item)} accessibilityLabel={`${CLUB_LABEL} ${item.name}`}>
+        <View style={{ flex: 1 }}>
+          <AppText variant="callout" numberOfLines={1}>{item.name}</AppText>
+          {item.description
+            ? <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.clubDesc}>{item.description}</AppText>
+            : null}
+          <View style={styles.clubMetaRow}>
+            <CrewLevelBadge level={recog.level} label={recog.label} size="sm" />
+            <Feather name="users" size={12} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted">{`멤버 ${item.member_count ?? 0}명`}</AppText>
+            {item.is_member ? <AppText variant="caption" tone="accent">가입됨</AppText>
+              : item.join_status === 'pending' ? <AppText variant="caption" tone="muted">승인 대기 중</AppText> : null}
+          </View>
         </View>
-      </View>
-      <Feather name="chevron-right" size={18} color={colors.text.muted} />
-    </TouchableOpacity>
-  ), []);
+        <Feather name="chevron-right" size={18} color={colors.text.muted} />
+      </TouchableOpacity>
+    );
+  }, []);
 
   // 상단 — 컴팩트 히어로 + 내 클럽 가로 카드 + 정렬 토글(사이즈는 파일 상단 감사 표 기준)
   const header = (
@@ -195,6 +220,10 @@ export default function CommunityScreen() {
                   </View>
                 ) : null}
                 <AppText variant="bodyStrong" numberOfLines={1} style={{ marginTop: spacing.sm }}>{c.name}</AppText>
+                {/* v3.253: 내 크루 카드에도 레벨 배지+라벨 */}
+                <View style={styles.clubMetaRow}>
+                  <CrewLevelBadge level={clubRecognition(c).level} label={clubRecognition(c).label} size="sm" />
+                </View>
                 <View style={styles.clubMetaRow}>
                   <Feather name="users" size={12} color={colors.text.muted} />
                   <AppText variant="caption" tone="muted">{`${c.member_count ?? 0}명`}</AppText>
@@ -205,10 +234,43 @@ export default function CommunityScreen() {
         </View>
       ) : null}
 
+      {/* v3.253: 인기 크루 — sort=popular 상위 5, 순위 1~5 + 레벨 배지 + 멤버 수(실패 시 섹션 숨김) */}
+      {popular && popular.length > 0 ? (
+        <View style={styles.myClubSection}>
+          <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`인기 ${CLUB_LABEL}`}</AppText>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.myClubRow}>
+            {popular.map((c, i) => {
+              const recog = clubRecognition(c);
+              return (
+                <TouchableOpacity
+                  key={c.id}
+                  style={styles.popularCard}
+                  activeOpacity={0.75}
+                  onPress={() => openClub(c)}
+                  accessibilityLabel={`인기 ${CLUB_LABEL} ${i + 1}위 ${c.name}`}
+                >
+                  <View style={styles.popularTopRow}>
+                    <AppText variant="subtitle" tone="accent" style={styles.popularRank}>{String(i + 1)}</AppText>
+                    <CrewLevelBadge level={recog.level} size="sm" />
+                  </View>
+                  <AppText variant="bodyStrong" numberOfLines={1} style={{ marginTop: spacing.xs }}>{c.name}</AppText>
+                  <AppText variant="caption" tone="muted" numberOfLines={1} style={{ marginTop: 2 }}>{recog.label}</AppText>
+                  <View style={styles.clubMetaRow}>
+                    <Feather name="users" size={12} color={colors.text.muted} />
+                    <AppText variant="caption" tone="muted">{`${c.member_count ?? 0}명`}</AppText>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
       <View style={styles.listLabelRow}>
         <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`${CLUB_LABEL} 목록`}</AppText>
         <View style={styles.sortRow}>
-          {SORTS.map((s) => (
+          {/* v3.253: '인기' 토글 — 서버 지원 확인(popular 섹션 fetch 성공) 시에만 노출 */}
+          {(popular === null ? SORTS : [...SORTS, POPULAR_SORT]).map((s) => (
             <Tag
               key={s.key}
               label={s.label}
@@ -318,6 +380,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2,
     alignItems: 'center', justifyContent: 'center',
   },
+  // v3.253: 인기 크루 가로 카드 — myClubCard 관행 + 좌상단 순위 숫자(accent)
+  popularCard: {
+    width: 150, padding: spacing.md, borderRadius: radius.lg,
+    backgroundColor: colors.bg.surface1,
+  },
+  popularTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  popularRank: { fontWeight: '800' },
   // v3.252: 크루 채팅 unread 뱃지 — 카드 우상단(알림 뱃지 관행: accent 원형 + 흰 숫자)
   unreadBadge: {
     position: 'absolute', top: spacing.sm, right: spacing.sm,

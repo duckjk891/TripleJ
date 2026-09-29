@@ -19,6 +19,7 @@ import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import TrackRow from '../components/TrackRow';
 import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
+import CrewLevelBadge from '../components/CrewLevelBadge'; // v3.253 — 크루 인지도 레벨 배지
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -33,6 +34,8 @@ import {
   listClubMembers, kickClubMember, memberMenuActions, kickErrorMessage,
   // v3.252 가입 승인제 — join 202/200 분기·pending 파생·owner 신청 목록(승인/거절)
   clubJoinStatus, JoinRequest, listJoinRequests, approveJoinRequest, rejectJoinRequest,
+  // v3.253 크루 플리 혜택 — 인지도 폴백·비멤버 재생 시작 보고(401/404 침묵)
+  clubRecognition, recordClubPlaylistPlayStart,
 } from '../services/clubService';
 
 // v3.252: 채팅 탭 신설(첫 탭) — 채팅|게시판|플레이리스트|정보 4탭
@@ -506,12 +509,22 @@ export default function ClubHomeScreen() {
     navigation.navigate('ClubChat', { clubId: String(clubId), name: detail?.name ?? name, isOwner });
   };
 
-  // 클럽 플리 재생 — 플레이리스트 재생 = 큐 교체(PlaylistScreen.playTrack :201-208 관행 그대로)
+  // 클럽 플리 재생 — 플레이리스트 재생 = 큐 교체(PlaylistScreen.playTrack 관행 그대로).
+  // v3.253 [CrewRecog]: 큐 교체에 귀속 메타(queueSource)를 함께 실어 record-play 가 크루 플리
+  // 소속 재생임을 보고하게 하고, 인증 비멤버(승인 대기 포함)의 재생 시작이면 play-start 를
+  // 1회 보고한다(내 크루=멤버·owner 는 절대 미호출, 비로그인은 미호출 — 401/404 는 서비스가 침묵).
   const playTrack = (item: any) => {
     const idx = plTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
-    usePlayerStore.getState().setQueue(plTracks);
+    const playlistId = selectedPl ? String(selectedPl.id) : '';
+    usePlayerStore.getState().setQueue(
+      plTracks,
+      playlistId ? { type: 'club_playlist', playlist_id: playlistId, club_id: String(clubId) } : null,
+    );
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
-    if (__DEV__) console.info('[Club] 클럽 플리 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: plTracks.length });
+    if (__DEV__) console.info('[CrewRecog] 크루 플리 재생(큐 교체·귀속 설정)', { playlistId, clubId, playIndex: idx >= 0 ? idx : 0, len: plTracks.length, nonMember: !!user && !isMember && !isOwner });
+    if (user && !isMember && !isOwner && playlistId) {
+      recordClubPlaylistPlayStart(String(clubId), playlistId); // fire & forget — 실패 침묵
+    }
     navigation.navigate('Player', { track: item });
   };
 
@@ -787,6 +800,14 @@ export default function ClubHomeScreen() {
           <View style={{ flex: 1 }}>
             <AppText variant="subtitle" numberOfLines={1}>{detail?.name ?? name ?? CLUB_LABEL}</AppText>
             <View style={styles.metaRow}>
+              {/* v3.253: 크루 인지도 레벨 배지 + 라벨(구서버 recognition 부재 = Lv1 '신생 크루' 폴백) */}
+              {detail ? (
+                <CrewLevelBadge
+                  level={clubRecognition(detail).level}
+                  label={clubRecognition(detail).label}
+                  size="sm"
+                />
+              ) : null}
               <Feather name="users" size={12} color={colors.text.muted} />
               <AppText variant="caption" tone="muted">{`멤버 ${detail?.member_count ?? 0}명`}</AppText>
               {isOwner ? <AppText variant="caption" tone="accent">내가 운영</AppText>

@@ -22,6 +22,10 @@
 //  · 일시정지·재개·시크·앱 복귀 재동기화·프리로드 스왑·콜백 재부착·같은 곡 재로드(복구)는 세션을 바꾸지 않는다.
 import api from './api';
 import { usePointsStore } from '../stores/pointsStore';
+// v3.253 [CrewRecog]: 크루 플리 귀속 — record-play 에 큐 소스 메타를 싣는 단일 지점.
+// playerStore.queueSource(크루 플리 큐 교체 시 설정)를 읽고, 소스 플리 밖 곡이 재생 세션을
+// 시작하면 여기서 귀속을 해제한다(모든 재생 경로가 이 트래커를 지나므로 전 경로 커버).
+import { usePlayerStore } from '../stores/playerStore';
 
 export const PLAY_RECORD_RATIO = 0.7;
 
@@ -55,7 +59,34 @@ function beginSession(trackId: string, reason: string): PlaySession {
     startedAt: clock(), firstPos: null,
   };
   if (__DEV__) console.info('[PlayRecord] 세션 시작', { trackId, seq: seqCounter, reason });
+  syncQueueSourceForSession(trackId); // v3.253: 소스 플리 밖 곡 세션 시작 = 귀속 해제
   return session;
+}
+
+// ── v3.253 [CrewRecog] 큐 귀속 헬퍼 ─────────────────────────────────────────
+// 세션 시작 곡이 큐 소스(크루 플리) 스냅샷 밖이면 귀속 해제 — "다른 곡을 직접 재생하면 해제"의
+// 전 경로 단일 지점(관련곡 자동 이어듣기 등 append 곡으로의 전환도 플리 세션 종료로 간주).
+// 같은 플리 소속 곡 전환(자동/수동 스킵)은 유지. 방어: 구 스토어/하니스 모킹에 필드가 없어도 무해.
+function syncQueueSourceForSession(trackId: string): void {
+  try {
+    const store: any = usePlayerStore.getState();
+    const qs = store?.queueSource;
+    if (!qs || typeof store.setQueueSource !== 'function') return;
+    if (Array.isArray(qs.track_ids) && qs.track_ids.includes(trackId)) return; // 소속 곡 — 유지
+    store.setQueueSource(null);
+    if (__DEV__) console.info('[CrewRecog] 귀속 해제 — 소스 플리 밖 곡 재생 세션', { trackId, playlistId: qs.playlist_id });
+  } catch {}
+}
+
+/** 현재 세션 곡의 record-play 귀속 메타 — 소스 플리 소속 곡일 때만 {type,playlist_id,club_id} */
+function currentPlaySource(trackId: string): { type: 'club_playlist'; playlist_id: string; club_id: string } | null {
+  try {
+    const qs: any = usePlayerStore.getState()?.queueSource;
+    if (!qs || !Array.isArray(qs.track_ids) || !qs.track_ids.includes(trackId)) return null;
+    return { type: 'club_playlist', playlist_id: String(qs.playlist_id), club_id: String(qs.club_id) };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -106,8 +137,10 @@ export function notePlayProgress(
 
   s.recorded = true;
   const seq = s.seq;
-  console.info('[PlayRecord] record-play', { trackId: tid, seq, src });
-  api.post('/charts/record-play', { track_id: tid })
+  // v3.253 [CrewRecog]: 크루 플리 귀속 메타(선택 필드) — 구서버는 source 를 무시하므로 무해
+  const source = currentPlaySource(tid);
+  console.info('[PlayRecord] record-play', { trackId: tid, seq, src, ...(source ? { source: source.playlist_id } : {}) });
+  api.post('/charts/record-play', { track_id: tid, ...(source ? { source } : {}) })
     .then(() => { usePointsStore.getState().fetchBalance(); }) // 별 배지 갱신
     .catch((err: any) => console.error('[PlayRecord] record-play 실패', { trackId: tid, seq, status: err?.response?.status }));
 }

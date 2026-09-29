@@ -16,7 +16,27 @@ import api from './api';
 // 서버가 내려주는 메시지는 서버(v3.252 병행)가 바꾼다 — 앱 자체 문구만 이 상수/직접 문구로 교체.
 export const CLUB_LABEL = '크루';
 
-export type ClubSort = 'new' | 'members';
+// v3.253: 'popular' = 인지도(rp) 순 — 구서버는 미지원(400 가능) → 호출자가 sort=new 로 조용히 폴백
+export type ClubSort = 'new' | 'members' | 'popular';
+
+// ── v3.253 크루 인지도 — 서버 병행 스테이징 계약(clubs list/detail/mine 항목 확장 필드):
+//   recognition { rp, level:1..5, label } · 구서버 부재 → Lv1 '신생 크루' rp0 폴백(clubRecognition)
+export interface ClubRecognition {
+  rp: number;
+  /** 1..5 (그레이/브론즈/실버/골드/보라) */
+  level: number;
+  label: string;
+}
+
+/** v3.253: recognition 폴백 단일화 — 필드 부재(구서버)·이상값 전부 Lv1 '신생 크루' rp0 으로 방어 */
+export function clubRecognition(club?: { recognition?: any } | null): ClubRecognition {
+  const r = club?.recognition;
+  const levelRaw = Number(r?.level);
+  const level = Number.isFinite(levelRaw) ? Math.min(5, Math.max(1, Math.round(levelRaw))) : 1;
+  const rp = Number.isFinite(Number(r?.rp)) ? Math.max(0, Number(r.rp)) : 0;
+  const label = typeof r?.label === 'string' && r.label ? r.label : `신생 ${CLUB_LABEL}`;
+  return { rp, level, label };
+}
 
 export interface Club {
   id: string;
@@ -32,6 +52,8 @@ export interface Club {
   join_status?: string | null;
   /** v3.252 크루 채팅 — GET /clubs/mine 확장 필드(없으면 뱃지 숨김) */
   unread_chat?: number;
+  /** v3.253 크루 인지도 — 신서버 확장 필드(구서버 부재 → clubRecognition 이 Lv1 폴백) */
+  recognition?: ClubRecognition | null;
 }
 
 /** v3.252: 가입 상태 파생 — join_status(신서버) 우선, 구서버는 is_member/role 로 폴백 */
@@ -363,6 +385,27 @@ export async function deleteClubChatMessage(clubId: string, messageId: string): 
 export function markClubChatRead(clubId: string): void {
   if (__DEV__) console.info('[Club] markClubChatRead', { clubId });
   api.post(`/clubs/${clubId}/chat/read`).catch(() => {});
+}
+
+// ── v3.253 크루 플리 혜택 — 재생 시작 보고(서버 병행 스테이징, 계약 fixed):
+//   POST /clubs/{club_id}/playlists/{playlist_id}/play-start → {granted:10|0, recognition?}
+//   호출 조건(호출자 책임): 인증 사용자이면서 그 크루의 비멤버가 크루 플리를 전체 재생(큐 교체)으로
+//   시작하는 시점 1회. 내 크루(멤버·owner)는 절대 호출하지 않는다. 401/404(구서버)·네트워크는
+//   전부 침묵 스킵(null 반환) — 재생 흐름에 영향 금지.
+export async function recordClubPlaylistPlayStart(
+  clubId: string,
+  playlistId: string,
+): Promise<{ granted: number; recognition?: ClubRecognition | null } | null> {
+  try {
+    const res = await api.post(`/clubs/${clubId}/playlists/${playlistId}/play-start`);
+    const granted = Number(res.data?.granted) || 0;
+    if (__DEV__) console.info('[Club] CrewRecog play-start 보고', { clubId, playlistId, granted });
+    return { granted, recognition: res.data?.recognition ?? null };
+  } catch (err: any) {
+    // 401(비로그인 방어)·404(구서버 미배포)·네트워크 — 조용히 스킵
+    if (__DEV__) console.info('[Club] CrewRecog play-start 스킵(무시)', { clubId, playlistId, status: err?.response?.status });
+    return null;
+  }
 }
 
 /** 채팅 송신 실패 문구(계약 fixed 오류 분기) — child_restricted 403 은 api 인터셉터가 서버 문구로 안내 */

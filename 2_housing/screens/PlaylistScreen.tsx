@@ -210,9 +210,14 @@ export default function PlaylistScreen({ navigation }: any) {
   const playTrack = (item: any) => {
     // 플레이리스트에서 재생 → 그 플레이리스트가 곧 재생목록이 된다(큐 교체).
     const idx = playlistTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
-    usePlayerStore.getState().setQueue(playlistTracks);
+    // v3.253 [CrewRecog]: 내 목록의 크루 공유 플리(club_id 있음) 재생 = 귀속 태그만 설정.
+    // 내 목록에 있는 크루 플리 = 내가 그 크루의 멤버 — play-start(비멤버 전용)는 호출하지 않는다.
+    const src = selectedPlaylist?.club_id
+      ? { type: 'club_playlist' as const, playlist_id: String(selectedPlaylist.id), club_id: String(selectedPlaylist.club_id) }
+      : null;
+    usePlayerStore.getState().setQueue(playlistTracks, src);
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
-    if (__DEV__) console.info('[PlaylistScreen] 플레이리스트 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: playlistTracks.length });
+    if (__DEV__) console.info('[PlaylistScreen] 플레이리스트 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: playlistTracks.length, crewSource: src ? src.playlist_id : null });
     navigation.navigate('Player', { track: item });
   };
 
