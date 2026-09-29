@@ -3,7 +3,8 @@
 //   1막-b: 서비스 가치 말풍선 6개가 속사포로 팝(대표: "와라라라랄라 속도감있게")
 //   2막:   전부 퇴장 → MAIDOL 로고만 딱(하단 태그라인 제거)
 //   사운드: 대표 지시(2026-09-29)로 보류 — assets/sounds/brand_sting.wav 자산은 보존,
-//   재생 배선은 나중에. 말풍선은 흰색 반투명·수평(회전 없음) — 대표 확정.
+//   재생 배선은 나중에. 말풍선 = 흰색 반투명·수평·꼬리 없음(모서리 각짐), 속도는
+//   워드 빠르게·말풍선 천천히(가독) — 대표 확정 2026-09-29.
 import { useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -51,15 +52,15 @@ export default function SplashScreen({ navigation }: Props) {
   useEffect(() => {
     Animated.sequence([
       // 1막-a: 세 줄 순차 등장 (위→아래)
-      Animated.stagger(260, lineAnims.map((v) =>
-        Animated.timing(v, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+      Animated.stagger(170, lineAnims.map((v) =>
+        Animated.timing(v, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true })
       )),
-      Animated.delay(180),
+      Animated.delay(120),
       // 1막-b: 말풍선 속사포 — 110ms 간격 스프링 팝
-      Animated.stagger(110, bubbleAnims.map((v) =>
-        Animated.spring(v, { toValue: 1, friction: 6, tension: 160, useNativeDriver: true })
+      Animated.stagger(200, bubbleAnims.map((v) =>
+        Animated.spring(v, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true })
       )),
-      Animated.delay(650),
+      Animated.delay(950),
       // 1막 퇴장 (워드+말풍선 함께)
       Animated.timing(act1Opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
       // 2막: MAIDOL 단독 임팩트
@@ -117,7 +118,6 @@ export default function SplashScreen({ navigation }: Props) {
             ]}
           >
             <AppText style={styles.bubbleText}>{b.text}</AppText>
-            <View style={[styles.bubbleTail, b.side === 'left' ? styles.tailLeft : styles.tailRight]} />
           </Animated.View>
         ))}
       </Animated.View>
@@ -172,17 +172,8 @@ const styles = StyleSheet.create({
     color: '#241A3E', // 흰 풍선 위 다크 텍스트(브랜드 딥퍼플 계열)
     letterSpacing: 0.2,
   },
-  // 꼬리(작은 사각 회전) — 좌/우 하단, 풍선과 동일한 흰 반투명
-  bubbleTail: {
-    position: 'absolute',
-    bottom: -4,
-    width: 10,
-    height: 10,
-    backgroundColor: 'rgba(255,255,255,0.88)',
-    transform: [{ rotate: '45deg' }],
-  },
-  tailLeft: { left: 10 },
-  tailRight: { right: 10 },
+  // v3.265c: 별도 꼬리 뷰 제거 — 반투명 배경과 겹쳐 마름모가 비침(대표 지적).
+  // 한쪽 모서리 각진 라운드(bubbleLeft/Right)만으로 말풍선 느낌을 낸다.
   logoRow: { flexDirection: 'row', alignItems: 'center' },
   title: {
     fontSize: 44, // v3.265: 36→44 — 태그라인 제거 후 로고 단독 임팩트 강화
