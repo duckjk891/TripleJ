@@ -14,6 +14,7 @@ import AnalyticsPage from './pages/Analytics';
 import AcquisitionPage from './pages/Acquisition';
 import StarsPage from './pages/Stars';
 import MessagesPage from './pages/Messages';
+import FeedsPage from './pages/Feeds';
 
 function Protected({ children }) {
   const { isAuthed } = useAuth();
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/acquisition" element={<Protected><AcquisitionPage /></Protected>} />
           <Route path="/stars" element={<Protected><StarsPage /></Protected>} />
           <Route path="/messages" element={<Protected><MessagesPage /></Protected>} />
+          <Route path="/feeds" element={<Protected><FeedsPage /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>

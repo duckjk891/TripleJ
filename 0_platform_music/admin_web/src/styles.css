@@ -226,3 +226,10 @@ tr:hover td { background: #fafbfd; }
 .thread-input { display: flex; gap: 8px; align-items: flex-end; }
 .thread-input textarea { flex: 1; resize: vertical; }
 @media (max-width: 900px) { .inbox { grid-template-columns: 1fr; } }
+
+/* ---------- feeds ---------- */
+.feed-body { background: #fafbfe; border-radius: 8px; padding: 12px; }
+.feed-img { width: 110px; height: 110px; }
+.comment { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.comment--reply { margin-left: 28px; padding-left: 10px; border-left: 2px solid var(--border); }
+.comment--official { background: var(--primary-light); border-radius: 6px; padding-left: 10px; padding-right: 10px; }

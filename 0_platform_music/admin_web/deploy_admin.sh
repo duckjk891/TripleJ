@@ -17,12 +17,13 @@ REMOTE=/home/ubuntu/maidol/backend_9004
 
 [ -d dist ] || { echo "dist/ 없음 — 먼저 npm run build"; exit 1; }
 
-echo '== 1/5 admin_items.py · admin_stats.py · analytics.py 업로드 (서버 선변경 감지)'
+BACKEND_FILES="admin_items.py admin_stats.py analytics.py admin_feeds.py"
+echo "== 1/5 $BACKEND_FILES 업로드 (서버 선변경 감지)"
 # 다른 세션이 서버에서 직접 고친 파일을 옛 로컬본으로 덮어쓰지 않도록:
 # 서버 md5 가 (로컬본도, 마지막 배포본도) 아니면 중단 — 서버본을 로컬로 가져와 병합 후 재실행.
 MD5_LOG=.deployed_md5
 touch $MD5_LOG
-for f in admin_items.py admin_stats.py analytics.py; do
+for f in $BACKEND_FILES; do
   LOCAL=$(md5 -q ../backend/app/routes/$f 2>/dev/null || md5sum ../backend/app/routes/$f | cut -d' ' -f1)
   SERVER=$(ssh $HOST "md5sum $REMOTE/app/routes/$f 2>/dev/null | cut -d' ' -f1")
   LAST=$(grep "^$f " $MD5_LOG | cut -d" " -f2 || true)
@@ -32,9 +33,9 @@ for f in admin_items.py admin_stats.py analytics.py; do
     exit 1
   fi
 done
-scp ../backend/app/routes/admin_items.py ../backend/app/routes/admin_stats.py ../backend/app/routes/analytics.py $HOST:$REMOTE/app/routes/
+scp $(for f in $BACKEND_FILES; do echo ../backend/app/routes/$f; done) $HOST:$REMOTE/app/routes/
 : > $MD5_LOG
-for f in admin_items.py admin_stats.py analytics.py; do
+for f in $BACKEND_FILES; do
   echo "$f $(md5 -q ../backend/app/routes/$f 2>/dev/null || md5sum ../backend/app/routes/$f | cut -d' ' -f1)" >> $MD5_LOG
 done
 
@@ -60,6 +61,10 @@ if 'admin_stats' not in src:
 if 'analytics.router' not in src:
     src = src.replace('from .routes import admin, admin_ads, admin_items, admin_stats,', 'from .routes import admin, admin_ads, admin_items, admin_stats, analytics,', 1)
     src = src.replace('app.include_router(admin_stats.router)', 'app.include_router(admin_stats.router)\napp.include_router(analytics.router)', 1)
+    changed = True
+if 'admin_feeds.router' not in src:
+    src = src.replace('from .routes import admin, admin_ads, admin_items, admin_stats, analytics,', 'from .routes import admin, admin_ads, admin_items, admin_stats, analytics, admin_feeds,', 1)
+    src = src.replace('app.include_router(analytics.router)', 'app.include_router(analytics.router)\\napp.include_router(admin_feeds.router)', 1)
     changed = True
 if 'admin_static' not in src:
     src += '''

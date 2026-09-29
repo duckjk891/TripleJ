@@ -75,6 +75,21 @@ export const broadcastCs = (audience, text) => API.post('/admin/cs/broadcast', {
 export const getNotices = (params) => API.get('/admin/notices', { params });
 export const getNotice = (id) => API.get(`/admin/notices/${id}`);
 
+// ---- 피드 (MAIDOL 공식 계정 명의) ----
+export const getAdminFeeds = (params) => API.get('/admin/feeds', { params });
+export const getPendingComments = () => API.get('/admin/feeds/pending-comments');
+export const createOfficialFeed = ({ title, text, images }) => {
+  const form = new FormData();
+  form.append('title', title || '');
+  form.append('text', text || '');
+  (images || []).forEach((f) => form.append('images', f));
+  return API.post('/admin/feeds', form);
+};
+export const deleteOfficialFeed = (id) => API.delete(`/admin/feeds/${id}`);
+export const getFeedComments = (id) => API.get(`/admin/feeds/${id}/comments`);
+export const addOfficialComment = (id, text, parent_id = null) => API.post(`/admin/feeds/${id}/comments`, { text, parent_id });
+export const deleteOfficialComment = (commentId) => API.delete(`/admin/feeds/comments/${commentId}`);
+
 // ---- stars (별 = points) ----
 export const getPointSummary = () => API.get('/admin/points/summary');
 export const getPointBalance = (userId) => API.get(`/admin/points/users/${userId}/balance`);
