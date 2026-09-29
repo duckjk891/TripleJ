@@ -420,7 +420,9 @@ export default function DialogueScreen({ route, navigation }: Props) {
           />
         </View>
 
-        {/* Director name */}
+        {/* Director name — v3.262: 절대좌표(bottom 145) 라벨이 말풍선 lift(v3.248 marginBottom 8→78)·
+            박스 높이 증가(첫 진입 인사+선택지)를 따라가지 못해 겹치던 버그. in-flow로 말풍선과
+            한 블록으로 묶어 미니 플레이어 유무·박스 높이와 무관하게 항상 말풍선 바로 위에 위치. */}
         <View style={styles.nameContainer}>
           <AppText style={styles.nameText}>{directorName}</AppText>
         </View>
@@ -591,10 +593,11 @@ const styles = StyleSheet.create({
     height: 320,
   },
   nameContainer: {
-    position: 'absolute',
-    bottom: 145,
-    left: 16,
-    zIndex: 21,
+    // v3.262: absolute(bottom 145) → in-flow — tapArea(flex-end) 흐름에서 dialogueBox 바로 위 형제로
+    // 렌더되어 라벨+말풍선이 한 블록으로 함께 lift(미니 플레이어 marginBottom 0/+70 양쪽 겹침 0).
+    marginHorizontal: 16,
+    marginBottom: 6,
+    zIndex: 21, // 초상(portraitContainer zIndex 10) 위 유지
   },
   nameText: {
     fontSize: 20,

@@ -110,6 +110,11 @@ export default function NotificationsScreen() {
       navigation.navigate('UserChannel', { authorId: n.actor_id, name: n.actor_nickname });
     } else if (n.type === 'star') {
       navigation.navigate('StarHistory');
+    } else if (n.target_type === 'club_promo' && n.target_id) {
+      // v3.261: 크루 홍보 알림 → 해당 크루 홈(기존 target_type 분기 관행 그대로 1분기 추가 —
+      // 렌더는 기존 preview 경로 무수정)
+      if (__DEV__) console.info('[Notifications] open club_promo', { clubId: n.target_id });
+      navigation.navigate('ClubHome', { clubId: n.target_id });
     } else if (n.target_type === 'track' && n.target_id) {
       // v3.177: 곡 댓글 알림 → 해당 곡 플레이어(상세시트 댓글 탭에서 확인)
       if (__DEV__) console.info('[Notifications] open track', { trackId: n.target_id });

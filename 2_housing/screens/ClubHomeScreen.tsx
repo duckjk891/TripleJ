@@ -3,10 +3,12 @@
 // 게시판: 기존 FeedCard 재사용 + before 커서 무한스크롤(GET /feeds/club/{id}) — 공개 읽기, 글쓰기는 멤버만.
 // 플레이리스트: 클럽 공유 플리(GET /clubs/{id}/playlists) — 곡 목록 탭 시 재생은 큐 교체(PlaylistScreen.playTrack 관행).
 // 서버 미배포(404/네트워크) → 전 탭 안내 상태로 강등(크래시 금지). 팝업은 전부 앱 내 다이얼로그(showAlert).
+// v3.261: 멤버 창 외부 공개(비멤버=익명 행 '크루 멤버'/'운영자'+가입일, 멤버=실명 행 탭→유저 채널) +
+//   owner 전용 '크루 홍보하기' 시트(장르·분위기 칩 합계 1~5 + 한 줄 메시지 → POST /clubs/{id}/promote).
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl,
-  StyleSheet, Modal, TextInput, KeyboardAvoidingView,
+  StyleSheet, Modal, TextInput, KeyboardAvoidingView, ScrollView,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -38,7 +40,11 @@ import {
   // v3.253 크루 플리 혜택 — 비멤버 재생 시작 보고(401/404 침묵). v3.257: 레벨 배지 제거로
   // clubRecognition import 는 삭제(실적 축적 배선은 유지 — 멤버 혜택 정산 원천).
   recordClubPlaylistPlayStart,
+  // v3.261 크루 홍보(owner 전용 시트) + 멤버 창 외부 익명 모드 상수
+  promoteClub, promoteErrorMessage, PROMO_KEYWORD_MAX, PROMO_MESSAGE_MAX,
 } from '../services/clubService';
+// v3.261 홍보 키워드 칩 — 작사 대화와 같은 선택지 재사용(장르·분위기, 합계 1~5개)
+import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
 
 // v3.252: 채팅 탭 신설(첫 탭) — 채팅|게시판|플레이리스트|정보 4탭
 type ClubTab = 'chat' | 'board' | 'playlists' | 'info';
@@ -108,6 +114,15 @@ export default function ClubHomeScreen() {
   const [membersMore, setMembersMore] = useState(false);
   const [kickBusy, setKickBusy] = useState(false);
   const [reportTarget, setReportTarget] = useState<ClubMember | null>(null);
+  // v3.261 멤버 창 외부 공개 — 익명 모드(비멤버 200 {anonymous:true}) + 동봉 멤버 수(라벨 폴백)
+  const [membersAnon, setMembersAnon] = useState(false);
+  const [membersTotal, setMembersTotal] = useState<number | null>(null);
+
+  // v3.261 크루 홍보 — owner 전용 시트(키워드 칩 합계 1~5 + 한 줄 메시지 100자)
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [promoSel, setPromoSel] = useState<string[]>([]);
+  const [promoMsg, setPromoMsg] = useState('');
+  const [promoBusy, setPromoBusy] = useState(false);
 
   // v3.252 가입 승인제 — owner 신청 목록 시트(null=미로드, 구서버 404 는 빈 목록 강등 → 뱃지 숨김)
   const [joinReqs, setJoinReqs] = useState<JoinRequest[] | null>(null);
@@ -163,17 +178,23 @@ export default function ClubHomeScreen() {
     }
   }, [clubId]);
 
-  // v3.249 — 멤버 목록(멤버 전용). 구서버(신규 라우트 404)·비멤버(403)·네트워크 전부 안내 강등(크래시 0)
+  // v3.249 — 멤버 목록. 구서버(신규 라우트 404)·네트워크 전부 안내 강등(크래시 0).
+  // v3.261: 비멤버도 신서버는 200 익명 모드({anonymous:true} — 닉네임·user_id 없음)로 열람 가능,
+  //   구서버 403 은 기존 '멤버만' 폴백 무회귀.
   const fetchMembers = useCallback(async () => {
     try {
       const page = await listClubMembers(String(clubId), { limit: MEMBERS_LIMIT });
       setMembers(page.members);
       setMembersBefore(page.next_before);
+      setMembersAnon(page.anonymous);
+      setMembersTotal(typeof page.member_count === 'number' ? page.member_count : null);
       setMembersError(null);
     } catch (err: any) {
       console.error('[Club] 멤버 목록 조회 실패', { clubId, status: err?.response?.status });
       setMembers([]);
       setMembersBefore(null);
+      setMembersAnon(false);
+      setMembersTotal(null);
       setMembersError(classifyMembersError(err));
     }
   }, [clubId]);
@@ -466,6 +487,77 @@ export default function ClubHomeScreen() {
     showAlert('멤버 관리', `"${m.nickname || '멤버'}"님`, buttons);
   };
 
+  // v3.261 멤버 행 탭 → 유저 채널(멤버 viewer 전용 — 익명 모드는 행 탭 없음, ⋯ 메뉴와 터치 영역 분리)
+  const openMemberChannel = (m: ClubMember) => {
+    if (membersAnon || !m.user_id) return;
+    if (__DEV__) console.info('[Club] 멤버 채널 이동', { clubId, userId: m.user_id });
+    navigation.navigate('UserChannel', { authorId: m.user_id, name: m.nickname || undefined });
+  };
+
+  // ── v3.261 크루 홍보 — owner 전용. 키워드 칩(장르·분위기 합계 1~5) + 한 줄 메시지(선택 100자) ──
+  const openPromoSheet = () => {
+    if (__DEV__) console.info('[Club] 홍보 시트 열기', { clubId });
+    setPromoSel([]);
+    setPromoMsg('');
+    setPromoOpen(true);
+  };
+
+  const togglePromoKeyword = (k: string) => {
+    if (promoBusy) return;
+    if (!promoSel.includes(k) && promoSel.length >= PROMO_KEYWORD_MAX) {
+      showAlert('알림', `키워드는 최대 ${PROMO_KEYWORD_MAX}개까지 선택할 수 있어요.`);
+      return;
+    }
+    // 함수형 갱신 — 같은 프레임 연속 탭에서도 선택 유실 없이 상한(1~5) 유지
+    setPromoSel((prev) => (prev.includes(k)
+      ? prev.filter((x) => x !== k)
+      : prev.length >= PROMO_KEYWORD_MAX ? prev : [...prev, k]));
+  };
+
+  const doPromote = async () => {
+    if (promoBusy) return;
+    setPromoBusy(true);
+    // 선택 순서와 무관하게 장르/분위기로 분리 전송(계약: {genres?, moods?, message?})
+    const genres = promoSel.filter((k) => GENRE_OPTIONS.includes(k));
+    const moods = promoSel.filter((k) => MOOD_OPTIONS.includes(k));
+    const message = promoMsg.trim();
+    try {
+      const res = await promoteClub(String(clubId), {
+        ...(genres.length ? { genres } : {}),
+        ...(moods.length ? { moods } : {}),
+        ...(message ? { message } : {}),
+      });
+      console.info('[Club] 크루 홍보 발송', { clubId, targeted: res.targeted });
+      setPromoOpen(false);
+      if (res.targeted > 0) showAlert('홍보 완료', `취향이 맞는 ${res.targeted}명에게 ${CLUB_LABEL}를 알렸어요!`);
+      else showAlert('알림', '지금은 맞는 유저를 찾지 못했어요. 다음에 다시 시도해주세요.');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.error('[Club] 크루 홍보 실패', { clubId, status, code: getClubErrorCode(err) });
+      showAlert('알림', promoteErrorMessage(err));
+      // 429(쿨다운)·404(구서버 미배포)·403(비owner)은 재시도 무의미 — 시트 닫기
+      if (status === 429 || status === 404 || status === 403) setPromoOpen(false);
+    } finally {
+      setPromoBusy(false);
+    }
+  };
+
+  const handlePromoSend = () => {
+    if (promoBusy) return;
+    if (promoSel.length === 0) {
+      showAlert('알림', '장르나 분위기 키워드를 1개 이상 선택해주세요.');
+      return;
+    }
+    showAlert(
+      `${CLUB_LABEL} 홍보`,
+      `선택한 취향의 유저들에게 ${CLUB_LABEL} 알림을 보낼까요? 7일에 한 번만 보낼 수 있어요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '보내기', onPress: doPromote },
+      ],
+    );
+  };
+
   const handleMembershipPress = () => {
     if (!requireLogin() || joinBusy) return;
     if (isPending) return; // v3.252: 승인 대기 — 버튼 비활성(철회는 별도 '신청 취소' 행)
@@ -670,15 +762,39 @@ export default function ClubHomeScreen() {
   );
 
   // ── v3.249 멤버 행 — 닉네임·role 뱃지·가입일 + ⋯ 메뉴(본인·owner 행 제외) ──
+  // v3.261: 익명 모드(비멤버 열람)는 '크루 멤버'/'운영자' + 가입일만(행 탭·⋯ 없음),
+  //   멤버 viewer 는 행 탭 → 유저 채널(⋯ 메뉴는 별도 터치 영역이라 충돌 없음).
   const renderMemberRow = ({ item }: { item: ClubMember }) => {
     const isRowOwner = (item.role || 'member') === 'owner';
+    const joined = fmtDate(item.joined_at);
+    if (membersAnon) {
+      return (
+        <View style={styles.memberRow}>
+          <View style={styles.memberAvatar}>
+            <Feather name="user" size={16} color={colors.text.muted} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="callout" numberOfLines={1}>
+              {isRowOwner ? '운영자' : `${CLUB_LABEL} 멤버`}
+            </AppText>
+            {joined ? (
+              <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>{`${joined} 가입`}</AppText>
+            ) : null}
+          </View>
+        </View>
+      );
+    }
     const isMe = !!user && String(item.user_id) === String(user.id);
     const canMenu = memberMenuActions(
       { id: user?.id != null ? String(user.id) : null, isMember, isOwner }, item,
     ).length > 0;
-    const joined = fmtDate(item.joined_at);
     return (
-      <View style={styles.memberRow}>
+      <TouchableOpacity
+        style={styles.memberRow}
+        activeOpacity={0.7}
+        onPress={() => openMemberChannel(item)}
+        accessibilityLabel={`멤버 채널 ${item.nickname || '멤버'}`}
+      >
         <View style={styles.memberAvatar}>
           <Feather name="user" size={16} color={colors.text.muted} />
         </View>
@@ -705,7 +821,7 @@ export default function ClubHomeScreen() {
             <Feather name="more-horizontal" size={18} color={colors.text.muted} />
           </TouchableOpacity>
         ) : null}
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -724,6 +840,14 @@ export default function ClubHomeScreen() {
       <AppText variant="body" tone="secondary" style={styles.infoValue}>
         {(detail as any)?.owner_nickname || (isOwner ? (user as any)?.nickname || '나' : `${CLUB_LABEL} 운영자`)}
       </AppText>
+      {/* v3.261: 크루 홍보하기 — owner 전용 행(취향 매칭 유저에게 알림, 7일 1회) */}
+      {isOwner ? (
+        <TouchableOpacity style={styles.promoRow} activeOpacity={0.7} onPress={openPromoSheet} accessibilityLabel={`${CLUB_LABEL} 홍보하기`}>
+          <Feather name="volume-2" size={16} color={colors.accent.primary} />
+          <AppText variant="body" tone="accent" style={{ flex: 1 }}>{`${CLUB_LABEL} 홍보하기`}</AppText>
+          <Feather name="chevron-right" size={16} color={colors.text.muted} />
+        </TouchableOpacity>
+      ) : null}
       {/* v3.247: 크루 삭제 요청 — owner 전용 행(삭제는 운영팀 처리, DM 요청 진입) */}
       {isOwner ? (
         <TouchableOpacity style={styles.deleteReqRow} activeOpacity={0.7} onPress={handleDeleteRequest} accessibilityLabel={`${CLUB_LABEL} 삭제 요청`}>
@@ -742,8 +866,14 @@ export default function ClubHomeScreen() {
       ) : null}
       {/* v3.249: 멤버 섹션 라벨 — 목록 행은 FlatList 데이터(무한스크롤) */}
       <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>
-        {`멤버 ${detail?.member_count ?? members.length}명`}
+        {`멤버 ${detail?.member_count ?? membersTotal ?? members.length}명`}
       </AppText>
+      {/* v3.261: 익명 모드(비멤버 열람) 안내 — 닉네임은 가입 후 공개 */}
+      {membersAnon ? (
+        <AppText variant="caption" tone="muted" style={{ marginTop: spacing.xs }}>
+          가입하면 멤버 닉네임을 볼 수 있어요
+        </AppText>
+      ) : null}
     </View>
   );
 
@@ -1102,6 +1232,77 @@ export default function ClubHomeScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* v3.261 크루 홍보 — owner 전용 바텀시트(키워드 칩 합계 1~5 + 한 줄 메시지 100자) */}
+      <Modal visible={promoOpen} transparent animationType="slide" onRequestClose={() => setPromoOpen(false)}>
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setPromoOpen(false)}>
+          <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
+            <AppText variant="title3" style={{ marginBottom: spacing.xs }}>{`${CLUB_LABEL} 홍보하기`}</AppText>
+            <AppText variant="footnote" tone="secondary" style={{ marginBottom: spacing.md }}>
+              선택한 장르·분위기로 곡을 만든 유저에게 알림이 가요. 7일에 한 번 보낼 수 있어요.
+            </AppText>
+            <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>
+                {`장르 (선택 ${promoSel.length}/${PROMO_KEYWORD_MAX})`}
+              </AppText>
+              <View style={styles.promoChipWrap}>
+                {GENRE_OPTIONS.map((k) => {
+                  const on = promoSel.includes(k);
+                  return (
+                    <TouchableOpacity
+                      key={k}
+                      style={[styles.promoChip, on && styles.promoChipOn]}
+                      activeOpacity={0.7}
+                      onPress={() => togglePromoKeyword(k)}
+                      accessibilityLabel={`홍보 키워드 ${k}`}
+                    >
+                      <AppText variant="footnote" style={{ color: on ? colors.accent.primary : colors.text.secondary }}>{k}</AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>분위기</AppText>
+              <View style={styles.promoChipWrap}>
+                {MOOD_OPTIONS.map((k) => {
+                  const on = promoSel.includes(k);
+                  return (
+                    <TouchableOpacity
+                      key={k}
+                      style={[styles.promoChip, on && styles.promoChipOn]}
+                      activeOpacity={0.7}
+                      onPress={() => togglePromoKeyword(k)}
+                      accessibilityLabel={`홍보 키워드 ${k}`}
+                    >
+                      <AppText variant="footnote" style={{ color: on ? colors.accent.primary : colors.text.secondary }}>{k}</AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <AppText variant="footnote" tone="secondary" style={styles.promoSectionLabel}>한 줄 메시지 (선택)</AppText>
+              <TextInput
+                style={styles.modalInput}
+                value={promoMsg}
+                onChangeText={(t) => setPromoMsg(t.slice(0, PROMO_MESSAGE_MAX))}
+                placeholder={`우리 ${CLUB_LABEL}를 한 줄로 소개해보세요`}
+                placeholderTextColor={colors.text.muted}
+                maxLength={PROMO_MESSAGE_MAX}
+                editable={!promoBusy}
+              />
+              <AppText variant="caption" tone="muted" style={styles.promoCounter}>
+                {`${promoMsg.length}/${PROMO_MESSAGE_MAX}`}
+              </AppText>
+            </ScrollView>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              <View style={{ flex: 1 }}>
+                <Button label="닫기" variant="tonal" fullWidth disabled={promoBusy} onPress={() => setPromoOpen(false)} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button label="보내기" fullWidth loading={promoBusy} onPress={handlePromoSend} />
+              </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* v3.249 멤버 신고 — 기존 ReportModal 재사용(targetType 'club_member' + 크루 컨텍스트) */}
       <ReportModal
         visible={!!reportTarget}
@@ -1181,6 +1382,23 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
+  // v3.261: 크루 홍보하기 행(정보 탭 owner 전용) — joinReqRow 관행(accent 톤)
+  promoRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.xxl, paddingVertical: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  // v3.261: 홍보 시트 — 키워드 칩(선택 시 액센트 테두리)·섹션 라벨·글자수 카운터
+  promoSectionLabel: { fontWeight: '700', letterSpacing: 0.3, marginTop: spacing.md, marginBottom: spacing.sm },
+  promoChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  promoChip: {
+    paddingHorizontal: spacing.md, paddingVertical: 7,
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.surface2,
+  },
+  promoChipOn: { borderColor: colors.accent.primary, backgroundColor: colors.bg.deepest },
+  promoCounter: { alignSelf: 'flex-end', marginTop: spacing.xs },
   // v3.247: 크루 삭제 요청 행(정보 탭 owner 전용) — 목록 행 관행 + error 톤
   deleteReqRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

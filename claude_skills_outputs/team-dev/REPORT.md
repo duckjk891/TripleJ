@@ -3565,3 +3565,31 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 ### v3.260 (앱 d690140, 웹 배포)
 - 차트 목록(신곡·TOP100·일간·주간·월간) 곡마다 '이 곡 느낌' 칩 상시 노출(행 footer, 재생 탭·⋮와 무충돌) → 공용 makeLike 흐름 직행. '내 재생목록' 탭·타 화면 목록은 미적용(⋯ 시트 항목 존치). 하니스 37 + 회귀 green, 라이브 번들 마커 확인.
 - 참고: 행 높이 ~20px 증가(footer 줄) — 실기기 밀도 확인 권장. '행 우측 아이콘' 배치 원하면 공용 TrackRow 옵션 슬롯 후속.
+
+---
+
+## v3.261 · v3.262 — 2026-09-29 — 크루 홍보·멤버 창 + 디렉터 라벨 겹침 수정 (커밋 완료, 서버·웹 배포는 심야 합본 대기)
+
+### v3.261 크루 홍보 + 멤버 창 (서버 clubs.py 0b2d1312 · notifications.py d9a9d600 스테이징 /private/tmp/server_staging_v3261)
+- 멤버 창: GET /clubs/{id}/members 이중 모드 — 멤버=실명(닉네임+user_id), 비멤버=익명(role·joined_at만). 앱 ClubHomeScreen 멤버 시트.
+- 크루 홍보: POST /clubs/{id}/promote {genres,moods,message} — 관심사(만든 곡의 장르·무드) 일치 유저 타겟 알림(type=club_promo), 쿨다운 429. NotificationsScreen 탭 시 크루 홈 이동.
+- ROUTES 389→390(+promote), CLUB_ROUTES 19→20. 게이트: 서버·앱 하니스 green, tsc 0.
+### v3.262 디렉터 진입 라벨 겹침 (앱 DialogueScreen.tsx :595-601)
+- 원인: v3.248 미니플레이어 회피로 dialogueBox marginBottom 8→78 — 말풍선만 올라가고 '작사 디렉터' 라벨은 absolute(bottom:145) 고정 → 겹침. 라벨을 in-flow(marginBottom:6, zIndex:21)로 전환. 공용 진입 화면이라 아티스트·작사·작곡·영상 디렉터 동시 해결.
+
+---
+
+## v3.263 · v3.264 — 2026-09-29 — 보이스 TTL 완전 폐지+샘플 보관함 / 검색 카테고리 단절 수정 (코드 완료 — 배포·백필 승인 대기)
+
+### 진단 확정 (대표 질문 2건)
+- **보이스 2시간 만료**: 서드파티 아님 — **우리 자체 2h 하드 타이머**(v242, 09-09 V5.5 사고 기반 과보수). 실측 게이트웨이 수명 ≈ 16~40h. 업로드 원음은 S3에 전부 보존돼 있었음.
+- **"슬픔" 검색에 최신곡 없음**: ES·하이브리드 검색은 정상("슬픔" → 너 없는 밤 1위 실측). 진짜 원인은 SearchScreen v3.231 A5 '느낌 검색 바로 가기' — 칩 이름과 같은 검색어("슬픔")를 `/charts/category/슬픔`으로 우회시키는데, **categories가 09-23 이후 전곡 빈 배열**(앱이 발매 body에 categories를 싣지 않게 된 뒤 서버 폴백 부재). search_logs에 "슬픔" 기록이 아예 없는 것으로 교차 확인.
+
+### v3.263 보이스 (스테이징 /private/tmp/server_staging_v3264: voice_clone_service.py·voice_clone.py·generate.py + 앱 voiceService.ts·VoiceCloneWizardScreen.tsx·ArtistResultScreen.tsx·MusicGenerationScreen.tsx)
+- ① TTL 완전 제거: VOICE_TTL_HOURS·voice_ttl_anchor 삭제, 작곡 선체크·목록 갱신 모두 **check-voice 생존확인만**(목록 lazy check는 ready 전체 대상, 10분 스로틀·요청당 3개 유지). 만료 무환불 정책 불변.
+- ② 샘플 보관함: voice_samples 컬렉션(+레거시 클론 source union·S3 실존 검증) — GET /voice-clone/samples, create에 sample_object_name(재업로드 없이 재학습). 클론 삭제 시 source.mp3 보존(verify만 정리). 위저드에 '이전에 올린 샘플' 선택 UI, 2시간 시한 문구 3곳 → 생존확인·보관함 안내로 교체.
+### v3.264 검색 카테고리 (category_infer.py 신설 + tracks.py 발매 2경로·lyrics_assets.py·generate.py)
+- 발매 시 categories 비면 서버가 채움: 1순위 가사 자산의 LLM 선택 categories(이번에 영속화 신설), 2순위 무드/장르 결정적 매핑(고정 무드 8종 한/영 — 유닛 16/16 PASS).
+- 기존 무분류 공개곡 백필: dry-run 실측 57건 중 56 매핑·1 스킵(무드 없는 곡). **Mongo 일괄 쓰기+ES 재색인은 분류기 차단 — 대표 승인 대기.**
+### 게이트
+- 서버 5파일 py_compile OK, 라우트 AST 검사(/samples가 /{clone_id}보다 선행 확인), 매핑 유닛 16/16, 앱 tsc 0.

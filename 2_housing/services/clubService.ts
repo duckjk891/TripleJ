@@ -243,9 +243,18 @@ export interface ClubMember {
   joined_at?: string;
 }
 
+// v3.261 멤버 창 외부 공개(병행 스테이징) — 응답에 anonymous:boolean 추가.
+//   멤버 viewer: 기존 실명 셰이프 + user_id(채널 이동용) 그대로.
+//   비멤버/비로그인: 200 {anonymous:true, member_count, members:[{role, joined_at}], next_before}
+//   (닉네임·user_id 없음 → 행 키는 앱이 페이지 커서 기반으로 합성해 무한스크롤 병합과 충돌 0).
+//   구서버는 여전히 403 'club_members_only' — 호출자 폴백(기존 '멤버만' 안내) 무회귀.
 export interface ClubMemberPage {
   members: ClubMember[];
   next_before: string | null;
+  /** v3.261: true = 익명 모드(비멤버 열람 — 닉네임·user_id 미제공) */
+  anonymous: boolean;
+  /** v3.261: 익명 응답 동봉 멤버 수(있을 때만) — 라벨 폴백용 */
+  member_count?: number;
 }
 
 export async function listClubMembers(
@@ -256,10 +265,21 @@ export async function listClubMembers(
   if (opts.before) params.before = opts.before;
   if (__DEV__) console.info('[Club] listClubMembers', { clubId, ...params });
   const res = await api.get(`/clubs/${clubId}/members`, { params });
+  const anonymous = res.data?.anonymous === true;
   const members: ClubMember[] = Array.isArray(res.data?.members)
-    ? res.data.members.map((m: any) => ({ ...m, user_id: String(m?.user_id ?? '') }))
+    ? res.data.members.map((m: any, i: number) => (anonymous
+      // v3.261 익명 행 — user_id 미제공: 페이지 커서+인덱스로 행 키 합성(loadMore dedupe 안전)
+      ? { ...m, user_id: `anon-${opts.before || 'p0'}-${i}`, nickname: null }
+      : { ...m, user_id: String(m?.user_id ?? '') }))
     : [];
-  return { members, next_before: res.data?.next_before ?? null };
+  const rawCount = Number(res.data?.member_count);
+  if (__DEV__ && anonymous) console.info('[Club] listClubMembers 익명 모드', { clubId, count: members.length, member_count: rawCount });
+  return {
+    members,
+    next_before: res.data?.next_before ?? null,
+    anonymous,
+    member_count: Number.isFinite(rawCount) ? rawCount : undefined,
+  };
 }
 
 export async function kickClubMember(clubId: string, userId: string): Promise<{ member_count?: number }> {
@@ -409,6 +429,59 @@ export async function recordClubPlaylistPlayStart(
     if (__DEV__) console.info('[Club] CrewRecog play-start 스킵(무시)', { clubId, playlistId, status: err?.response?.status });
     return null;
   }
+}
+
+// ── v3.261 크루 홍보 — 서버 계약 fixed(병행 스테이징, 구서버 404 → '곧 열려요' 안내):
+//   POST /clubs/{id}/promote {genres?, moods?, message?} → 200 {targeted:N, next_at}
+//   429 {code:'promo_cooldown', next_at}(7일 쿨다운) · 400(키워드 합계 1~5 위반) · 403(비owner)
+//   키워드는 utils/lyricsPrompt GENRE_OPTIONS/MOOD_OPTIONS 재사용(합계 1~5) — 알림은 서버가
+//   target_type='club_promo' 로 발송(취향 매칭 유저 대상).
+export const PROMO_KEYWORD_MAX = 5;
+export const PROMO_MESSAGE_MAX = 100;
+
+export interface PromoteResult {
+  targeted: number;
+  next_at?: string | null;
+}
+
+export async function promoteClub(
+  clubId: string,
+  payload: { genres?: string[]; moods?: string[]; message?: string },
+): Promise<PromoteResult> {
+  if (__DEV__) console.info('[Club] promoteClub', {
+    clubId,
+    genres: payload.genres?.length ?? 0,
+    moods: payload.moods?.length ?? 0,
+    msgLen: payload.message?.length ?? 0,
+  });
+  const res = await api.post(`/clubs/${clubId}/promote`, payload);
+  return { targeted: Number(res.data?.targeted) || 0, next_at: res.data?.next_at ?? null };
+}
+
+/** v3.261: next_at ISO → 'YYYY.MM.DD' (파싱 불가/부재 시 null — 문구에서 날짜 병기 생략) */
+const fmtPromoDate = (iso?: string | null): string | null => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const d = new Date(t);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** v3.261 홍보 실패 문구(계약 fixed 오류 분기) — 429 는 next_at 있으면 날짜 병기, 구서버 404 는 '곧 열려요' */
+export function promoteErrorMessage(err: any): string {
+  const status = err?.response?.status;
+  const code = getClubErrorCode(err);
+  if (status === 429 || code === 'promo_cooldown') {
+    const data = err?.response?.data;
+    const next = fmtPromoDate(data?.next_at ?? data?.detail?.next_at);
+    return next
+      ? `아직 다음 홍보까지 기다려야 해요. ${next} 이후에 다시 보낼 수 있어요.`
+      : '아직 다음 홍보까지 기다려야 해요.';
+  }
+  if (status === 400) return '장르·분위기 키워드는 1~5개 선택해야 해요.';
+  if (status === 403) return `${CLUB_LABEL} 운영자만 홍보를 보낼 수 있어요.`;
+  if (status === 404) return `${CLUB_LABEL} 홍보 기능이 곧 열려요. 조금만 기다려주세요.`;
+  return '홍보를 보내지 못했어요. 잠시 후 다시 시도해주세요.';
 }
 
 /** 채팅 송신 실패 문구(계약 fixed 오류 분기) — child_restricted 403 은 api 인터셉터가 서버 문구로 안내 */
