@@ -1,9 +1,9 @@
 // [Splash] v3.265(대표) — 3비트 브랜드 인트로:
 //   1막-a: "MY / AI / IDOL" 세 줄 순차 등장
 //   1막-b: 서비스 가치 말풍선 6개가 속사포로 팝(대표: "와라라라랄라 속도감있게")
-//   2막:   전부 퇴장 → MAIDOL 로고만 딱(하단 태그라인 제거) + 브랜드 스팅(터둠풍 자체 합성)
-//   사운드: assets/sounds/brand_sting.wav — 웹은 첫 로드시 브라우저 자동재생 정책으로
-//   무음일 수 있음(실패 무해 처리). 네이티브는 정상 재생.
+//   2막:   전부 퇴장 → MAIDOL 로고만 딱(하단 태그라인 제거)
+//   사운드: 대표 지시(2026-09-29)로 보류 — assets/sounds/brand_sting.wav 자산은 보존,
+//   재생 배선은 나중에. 말풍선은 흰색 반투명·수평(회전 없음) — 대표 확정.
 import { useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -11,7 +11,6 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import { Audio } from 'expo-av';
 import { AppText } from '../components/ui';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -29,14 +28,13 @@ const BUBBLES: {
   text: string;
   top: `${number}%`;
   side: 'left' | 'right';
-  rotate: string;
 }[] = [
-  { text: '내 마음에 딱 맞는 곡', top: '13%', side: 'left', rotate: '-4deg' },
-  { text: '이럴땐 이런 음악', top: '21%', side: 'right', rotate: '3deg' },
-  { text: '크루들과 함께 완성하는 플리', top: '29%', side: 'left', rotate: '2deg' },
-  { text: '나만의 아티스트 키우기', top: '64%', side: 'right', rotate: '-3deg' },
-  { text: '당신만의 1인 기획사', top: '72%', side: 'left', rotate: '3deg' },
-  { text: '내 음악으로 수익창출까지', top: '80%', side: 'right', rotate: '-2deg' },
+  { text: '내 마음에 딱 맞는 곡', top: '13%', side: 'left' },
+  { text: '이럴땐 이런 음악', top: '21%', side: 'right' },
+  { text: '크루들과 함께 완성하는 플리', top: '29%', side: 'left' },
+  { text: '나만의 아티스트 키우기', top: '64%', side: 'right' },
+  { text: '당신만의 1인 기획사', top: '72%', side: 'left' },
+  { text: '내 음악으로 수익창출까지', top: '80%', side: 'right' },
 ];
 
 export default function SplashScreen({ navigation }: Props) {
@@ -49,22 +47,6 @@ export default function SplashScreen({ navigation }: Props) {
   // 2막 — MAIDOL 등장
   const act2Opacity = useRef(new Animated.Value(0)).current;
   const act2Scale = useRef(new Animated.Value(0.88)).current;
-
-  // 브랜드 스팅 — 2막 등장에 맞춰 1회 재생(실패 무해: 웹 자동재생 차단 등)
-  const stingRef = useRef<Audio.Sound | null>(null);
-  const playSting = async () => {
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        require('../assets/sounds/brand_sting.wav'),
-        { shouldPlay: true, volume: 0.9 }
-      );
-      stingRef.current = sound;
-      if (__DEV__) console.info('[Splash] 브랜드 스팅 재생');
-    } catch (err: any) {
-      // 웹 첫 로드는 사용자 제스처 전 재생이 정책상 거부될 수 있다 — 조용히 스킵
-      if (__DEV__) console.info('[Splash] 스팅 재생 스킵', { message: err?.message });
-    }
-  };
 
   useEffect(() => {
     Animated.sequence([
@@ -87,16 +69,10 @@ export default function SplashScreen({ navigation }: Props) {
       ]),
     ]).start();
 
-    // 스팅은 2막 등장 시점(1막 시퀀스 합산 ≈ 3.0s)에 맞춰 발사
-    const stingTimer = setTimeout(() => { playSting(); }, 3000);
     const timer = setTimeout(() => {
       navigation.replace('MainTabs');
     }, 5000);
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(stingTimer);
-      stingRef.current?.unloadAsync().catch(() => {});
-    };
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -136,7 +112,6 @@ export default function SplashScreen({ navigation }: Props) {
                 opacity: bubbleAnims[i],
                 transform: [
                   { scale: bubbleAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) },
-                  { rotate: b.rotate },
                 ],
               },
             ]}
@@ -180,37 +155,34 @@ const styles = StyleSheet.create({
     lineHeight: 54, // v3.193: 74→54 (비례)
   },
   wordAi: { color: colors.accent.primary },
-  // 말풍선 — 다크 글래스 + 액센트 보더, 채팅 팝
+  // 말풍선 — 흰색 살짝 반투명·수평(대표 확정), 채팅 팝
   bubble: {
     position: 'absolute',
     maxWidth: 240,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 18,
-    backgroundColor: colors.bg.surface2,
-    borderWidth: 1,
-    borderColor: colors.accent.primary,
+    backgroundColor: 'rgba(255,255,255,0.88)',
   },
   bubbleLeft: { left: 24, borderBottomLeftRadius: 4 },
   bubbleRight: { right: 24, borderBottomRightRadius: 4 },
   bubbleText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: colors.text.primary,
+    fontWeight: '700',
+    color: '#241A3E', // 흰 풍선 위 다크 텍스트(브랜드 딥퍼플 계열)
     letterSpacing: 0.2,
   },
-  // 꼬리(작은 사각 회전) — 좌/우 하단
+  // 꼬리(작은 사각 회전) — 좌/우 하단, 풍선과 동일한 흰 반투명
   bubbleTail: {
     position: 'absolute',
     bottom: -4,
     width: 10,
     height: 10,
-    backgroundColor: colors.bg.surface2,
-    borderColor: colors.accent.primary,
+    backgroundColor: 'rgba(255,255,255,0.88)',
     transform: [{ rotate: '45deg' }],
   },
-  tailLeft: { left: 10, borderLeftWidth: 1, borderBottomWidth: 1 },
-  tailRight: { right: 10, borderRightWidth: 1, borderBottomWidth: 1 },
+  tailLeft: { left: 10 },
+  tailRight: { right: 10 },
   logoRow: { flexDirection: 'row', alignItems: 'center' },
   title: {
     fontSize: 44, // v3.265: 36→44 — 태그라인 제거 후 로고 단독 임팩트 강화
