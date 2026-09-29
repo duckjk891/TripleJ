@@ -55,21 +55,14 @@ export async function saveTrackFileToDevice(url: string, filename: string): Prom
       const media = await fetchWebMediaFile(url, filename, isMp3 ? 'audio/mpeg' : 'video/mp4');
       if (canShareWebFile(media)) {
         showAlert('파일 준비 완료', '저장하거나 다른 앱으로 공유할 수 있어요.', [
-          {
-            text: '기기에 저장',
-            onPress: () => {
-              downloadWebFile(media);
-              // v3.269 [피드백2-28c/36]: 저장 위치를 모른다는 피드백 — 위치 안내 1회
-              showAlert('저장 완료', '아이폰은 파일 앱 > 다운로드, 안드로이드는 다운로드 폴더에서 확인할 수 있어요.');
-            },
-          },
+          // v3.270: 완료·위치 안내는 downloadWebFile이 일원화(위치 선택 지원 브라우저 포함)
+          { text: '기기에 저장', onPress: () => downloadWebFile(media) },
           {
             text: '공유하기',
             onPress: async () => {
               const ok = await shareWebFile(media, filename);
               if (!ok) {
-                downloadWebFile(media);
-                showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+                downloadWebFile(media); // v3.270: 완료 안내는 유틸이 담당
               }
             },
           },

@@ -1079,8 +1079,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         // v3.248 B5(A-12): window.open([보기] 확인창) → Blob 받아 a[download] — 활성화 불요라 fetch 뒤에도 안전
         try {
           const { media } = await getWebMedia();
-          downloadWebFile(media);
-          showAlert('저장 시작', '브라우저 다운로드로 저장을 시작했어요. 파일 앱(다운로드)에서 확인할 수 있어요.');
+          downloadWebFile(media); // v3.270: 위치 선택(지원 브라우저)·완료 안내는 유틸이 담당
         } catch (werr: any) {
           // Blob 실패(CORS 등) — 기존 새 창 열기로 폴백(최소한 보기·수동 저장 가능)
           console.warn('[VideoDirector] 웹 Blob 저장 실패 — openURL 폴백', { message: werr?.message });
@@ -1120,16 +1119,14 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         try {
           const { media, fromCache } = await getWebMedia();
           if (!canShareWebFile(media)) {
-            downloadWebFile(media);
-            showAlert('안내', '이 브라우저는 파일 공유를 지원하지 않아 다운로드로 저장했어요.');
+            downloadWebFile(media); // v3.270: 완료 안내는 유틸이 담당
           } else if (fromCache) {
             const ok = await shareWebFile(media, selected?.title || undefined);
             if (ok) {
               useMusicStore.getState().clearVideoDraft();
               if (__DEV__) console.info('[VideoDraft] 공유 완료(웹) — draft 클리어(스타일 sticky 유지)');
             } else {
-              downloadWebFile(media);
-              showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+              downloadWebFile(media); // v3.270: 완료 안내는 유틸이 담당
             }
           } else {
             showAlert('영상 준비 완료', '영상 파일이 준비됐어요. 공유 시트를 열려면 아래 버튼을 눌러주세요.', [
@@ -1139,8 +1136,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
                 onPress: async () => {
                   const ok = await shareWebFile(media, selected?.title || undefined);
                   if (!ok) {
-                    downloadWebFile(media);
-                    showAlert('안내', '공유 시트를 열지 못해 다운로드로 저장했어요.');
+                    downloadWebFile(media); // v3.270: 완료 안내는 유틸이 담당
                     return;
                   }
                   useMusicStore.getState().clearVideoDraft();
