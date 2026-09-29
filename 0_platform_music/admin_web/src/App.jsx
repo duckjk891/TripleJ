@@ -13,6 +13,7 @@ import HealthPage from './pages/Health';
 import AnalyticsPage from './pages/Analytics';
 import AcquisitionPage from './pages/Acquisition';
 import StarsPage from './pages/Stars';
+import MessagesPage from './pages/Messages';
 
 function Protected({ children }) {
   const { isAuthed } = useAuth();
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="/analytics" element={<Protected><AnalyticsPage /></Protected>} />
           <Route path="/acquisition" element={<Protected><AcquisitionPage /></Protected>} />
           <Route path="/stars" element={<Protected><StarsPage /></Protected>} />
+          <Route path="/messages" element={<Protected><MessagesPage /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>

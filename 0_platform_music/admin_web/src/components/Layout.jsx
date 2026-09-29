@@ -1,10 +1,13 @@
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
+import { getCsUnreadCount } from '../api';
 
 const MENU = [
   { to: '/', label: '대시보드', icon: '📊', end: true },
   { to: '/analytics', label: '사용 분석', icon: '📈' },
   { to: '/acquisition', label: '가입·유입', icon: '🚪' },
+  { to: '/messages', label: 'DM · 공지', icon: '💬', badge: 'cs' },
   { to: '/reports', label: '신고 처리', icon: '🚨' },
   { to: '/tracks', label: '곡 관리', icon: '🎵' },
   { to: '/users', label: '사용자 관리', icon: '👥' },
@@ -17,6 +20,16 @@ const MENU = [
 export default function Layout({ children }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const [csUnread, setCsUnread] = useState(0);
+
+  // 공식 계정으로 온 미읽음 문의 — 사이드바 배지 (1분 폴링)
+  useEffect(() => {
+    let alive = true;
+    const tick = () => getCsUnreadCount().then((r) => { if (alive) setCsUnread(r.data.count || 0); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   const handleLogout = () => {
     signOut();
@@ -39,6 +52,7 @@ export default function Layout({ children }) {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               <span>{m.icon}</span> {m.label}
+              {m.badge === "cs" && csUnread > 0 && <span className="nav-badge">{csUnread}</span>}
             </NavLink>
           ))}
         </nav>

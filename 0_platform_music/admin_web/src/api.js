@@ -64,6 +64,17 @@ export const banUser = (id, is_banned, reason) => API.put(`/admin/users/${id}/ba
 export const liftRestriction = (id) => API.post(`/admin/users/${id}/restriction/lift`);
 export const resetStrikes = (id) => API.post(`/admin/users/${id}/strikes/reset`);
 
+// ---- DM · 공지 (MAIDOL 공식 계정) ----
+export const getCsConversations = (params) => API.get('/admin/cs/conversations', { params });
+export const getCsMessages = (cid, params) => API.get(`/admin/cs/conversations/${cid}/messages`, { params });
+export const replyCs = (cid, text) => API.post(`/admin/cs/conversations/${cid}/reply`, { text });
+export const markCsRead = (cid) => API.post(`/admin/cs/conversations/${cid}/read`);
+export const getCsUnreadCount = () => API.get('/admin/cs/unread-count');
+export const sendCs = (user_ids, text) => API.post('/admin/cs/send', { user_ids, text });
+export const broadcastCs = (audience, text) => API.post('/admin/cs/broadcast', { audience, text });
+export const getNotices = (params) => API.get('/admin/notices', { params });
+export const getNotice = (id) => API.get(`/admin/notices/${id}`);
+
 // ---- stars (별 = points) ----
 export const getPointSummary = () => API.get('/admin/points/summary');
 export const getPointBalance = (userId) => API.get(`/admin/points/users/${userId}/balance`);
