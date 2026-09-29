@@ -60,6 +60,9 @@ interface PlayerState {
   /** v3.253 [CrewRecog]: 귀속 해제 전용 — playRecord 가 소스 밖 곡 재생 세션 시작 시 호출 */
   setQueueSource: (source: QueueSource | null) => void;
   addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
+  /** v3.267 [추천 이어듣기]: afterIndex 바로 뒤에 곡들 삽입(큐 내 중복 제거·현재 인덱스 불변).
+   *  차트 곡 탭 시 관련곡 5곡을 선택곡 뒤에 심어 "다음 곡 = 추천"을 만든다. 반환: 실제 삽입 수 */
+  insertIntoQueueAfter: (afterIndex: number, tracks: any[]) => number;
   removeFromQueue: (index: number) => void;
   reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
   /** 로그아웃 시 현재 재생목록을 그 계정 보관함에 저장한 뒤 큐·재생상태를 초기화 */
@@ -179,6 +182,19 @@ export const usePlayerStore = create<PlayerState>()(
         set({ queue: [...queue, track] });
         saveOwnerQueue();
         return true;
+      },
+      insertIntoQueueAfter: (afterIndex, tracks) => {
+        const { queue, currentIndex } = get();
+        const have = new Set(queue.map((t) => String(t?.id)));
+        const fresh = (tracks || []).filter((t) => t?.id && !have.has(String(t.id)));
+        if (!fresh.length) return 0;
+        const at = Math.max(-1, Math.min(afterIndex, queue.length - 1));
+        const next = [...queue.slice(0, at + 1), ...fresh, ...queue.slice(at + 1)];
+        // 삽입 지점이 현재 재생 앞이면 인덱스 보정(뒤 삽입은 불변)
+        const nextIndex = at < currentIndex ? currentIndex + fresh.length : currentIndex;
+        set({ queue: next, currentIndex: nextIndex });
+        saveOwnerQueue();
+        return fresh.length;
       },
       removeFromQueue: (index) => {
         const { queue, currentIndex } = get();

@@ -196,7 +196,40 @@ export default function ChartScreen() {
     const idx = q.findIndex((t: any) => String(t?.id) === String(track.id)); // v3.223 O-1 정규화(addToQueue와 동일 판정)
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
     if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
+    // v3.267 [추천 이어듣기](대표 지시 + 피드백2 [34]): 차트에서 곡을 "직접 고른" 순간은
+    // 그 곡 중심의 감상 시작 — ① 잔존 셔플 해제(다음 곡이 랜덤으로 튀던 [34] 근본 원인),
+    // ② 관련곡 5곡을 선택곡 바로 뒤에 삽입해 다음 곡부터 추천이 흐르게 한다.
+    // 큐 소진 시엔 기존 v3.91 이어듣기(1곡씩)가 체인을 계속 잇는다. 실패 무해(fire-and-forget).
+    if (usePlayerStore.getState().shuffle) {
+      usePlayerStore.getState().toggleShuffle();
+      if (__DEV__) console.info('[ChartScreen] [추천] 잔존 셔플 해제 — 선택곡 기준 추천 순차 재생');
+    }
+    seedRelatedIntoQueue(track);
     navigation.navigate('Player', { track });
+  };
+
+  // v3.267 [추천 이어듣기]: 선택곡 관련곡을 큐의 선택곡 뒤에 심는다(무인증 API·중복 자동 제거).
+  const seedRelatedIntoQueue = async (track: ChartTrack) => {
+    try {
+      const st = usePlayerStore.getState();
+      const excludeIds = st.queue.map((t: any) => String(t?.id)).filter(Boolean);
+      const res = await api.get(`/tracks/${track.id}/related`, {
+        params: { limit: 5, exclude: excludeIds.join(',') },
+      });
+      const rel: any[] = Array.isArray(res.data?.tracks) ? res.data.tracks : [];
+      if (!rel.length) {
+        if (__DEV__) console.info('[ChartScreen] [추천] 관련곡 없음', { id: track.id });
+        return;
+      }
+      const now = usePlayerStore.getState();
+      const anchor = now.queue.findIndex((t: any) => String(t?.id) === String(track.id));
+      const inserted = now.insertIntoQueueAfter(anchor, rel);
+      console.info('[ChartScreen] [추천] 관련곡 삽입', {
+        id: track.id, source: res.data?.source, fetched: rel.length, inserted,
+      });
+    } catch (err: any) {
+      console.error('[ChartScreen] [추천] 관련곡 조회 실패(무해)', { id: track.id, status: err?.response?.status });
+    }
   };
 
   // v3.260 [MakeLike]: 차트 행 인라인 칩 탭 — CEO "점 세개 말고 차트에 보였으면".
