@@ -17,8 +17,26 @@ REMOTE=/home/ubuntu/maidol/backend_9004
 
 [ -d dist ] || { echo "dist/ 없음 — 먼저 npm run build"; exit 1; }
 
-echo '== 1/5 admin_items.py · admin_stats.py · analytics.py 업로드'
+echo '== 1/5 admin_items.py · admin_stats.py · analytics.py 업로드 (서버 선변경 감지)'
+# 다른 세션이 서버에서 직접 고친 파일을 옛 로컬본으로 덮어쓰지 않도록:
+# 서버 md5 가 (로컬본도, 마지막 배포본도) 아니면 중단 — 서버본을 로컬로 가져와 병합 후 재실행.
+MD5_LOG=.deployed_md5
+touch $MD5_LOG
+for f in admin_items.py admin_stats.py analytics.py; do
+  LOCAL=$(md5 -q ../backend/app/routes/$f 2>/dev/null || md5sum ../backend/app/routes/$f | cut -d' ' -f1)
+  SERVER=$(ssh $HOST "md5sum $REMOTE/app/routes/$f 2>/dev/null | cut -d' ' -f1")
+  LAST=$(grep "^$f " $MD5_LOG | cut -d" " -f2 || true)
+  if [ -n "$SERVER" ] && [ "$SERVER" != "$LOCAL" ] && [ "$SERVER" != "$LAST" ]; then
+    echo "!! 서버의 $f 가 마지막 배포 이후 다른 곳에서 수정됨 — 중단. 서버본을 받아 병합하세요:"
+    echo "   scp $HOST:$REMOTE/app/routes/$f ../backend/app/routes/$f"
+    exit 1
+  fi
+done
 scp ../backend/app/routes/admin_items.py ../backend/app/routes/admin_stats.py ../backend/app/routes/analytics.py $HOST:$REMOTE/app/routes/
+: > $MD5_LOG
+for f in admin_items.py admin_stats.py analytics.py; do
+  echo "$f $(md5 -q ../backend/app/routes/$f 2>/dev/null || md5sum ../backend/app/routes/$f | cut -d' ' -f1)" >> $MD5_LOG
+done
 
 echo "== 2/5 SPA 정적 파일 업로드"
 ssh $HOST "rm -rf /tmp/admin_static_new"
