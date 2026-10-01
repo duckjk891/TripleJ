@@ -3726,3 +3726,15 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 ### ④ 비밀번호 재설정 메일 — 진단(연동 안 된 것 맞음)
 - 코드 완비(v3.207: SES 어댑터·6자리 코드·dev 폴백) but `MAIL_ENABLED` 미설정(기본 false) = 실발송 OFF + **EC2 IAM 롤(maidol-ec2)에 SES 권한 없음 실측(AccessDenied)**. 활성화 요건(대표 AWS 콘솔 액션): ① IAM 롤에 ses:SendEmail ② SES 발신자(maidol.ai.kr 도메인 또는 no-reply@) 검증 ③ 샌드박스 해제. 완료 통보 시 .env(MAIL_ENABLED/MAIL_FROM/SES_REGION) 설정+재기동은 이쪽에서.
 ### ⑤ 피드백2 적용 여부 — 전 항목 종결 재확인(v3.266 P0 자동저장 · v3.267 [34] · v3.268 [29][32a] · v3.269 [28][30][33][36]).
+
+---
+
+## v3.272 — 2026-10-01 — 안드로이드 웹 백그라운드 끊김 속행: presigned 간헐 code 4 → proxy 동기 복구 (웹 배포·검증 완료)
+
+- 재진단(대표 "안드로이드인데도 끊겨"): 안드로이드 세션 원격 로그 실측 — ended 동기 스왑 후 **MediaError code 4**("no supported source") 3건, 해당 3곡 서버 상태는 전부 정상(public·S3 음원 존재·presign TTL 24h 유효) → presigned S3 로드의 간헐 실패가 원인. 포그라운드는 기존 비동기 스킵이 받지만 **백그라운드에선 JS 타이머가 얼어 영구 멈춤**이 됨.
+- 수정 (`services/webAudioElement.ts`·`services/playback.ts`):
+  1) **ended 자동 스왑 소스를 항상 결정적 proxy**(`/api/tracks/stream-proxy/{id}`)로 — presigned 간헐 실패 노출면 제거(프리페치 webNextUrl 폐기). PlayerScreen 수동 로드는 seek 품질 위해 presigned 유지.
+  2) **media error 동기 1회 복구 훅**: error 이벤트 콜스택(백그라운드 유일 실행 기회)에서 현재 곡 proxy로 src 교체+play(). 같은 src 재시도 1회 가드, play 성공 시 가드 리셋.
+  3) **복귀 복구 보강**: webResumeIfStalled가 에러 상태로 깨어나면 proxy 재로드.
+- 검증: 운영(app.maidol.ai.kr)에서 재생 중 src를 404로 강제 교체 → 콘솔 `media error → proxy 동기 복구 시도 {code: 4}` → src가 stream-proxy로 교체·재생 재개(readyState 4, buffered 157s) 실측. tsc 통과. 웹 배포 완료(라이브 번들 마커 확인).
+- 참고 실측: stream-proxy 열린 Range(bytes=0-) TTFB 0.1~5.2s 변동(단일 워커 경합 추정 — server-perf-diagnosis 참조). 곡 간 전환 체감 지연로 재발 시 proxy 선두 구간 캐시/워커 증설 검토.

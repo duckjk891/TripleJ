@@ -32,6 +32,7 @@ import {
   createWebTrackSound,
   getWebStatusCbOwner,
   setWebEndedHandler,
+  setWebErrorRecoveryProvider,
   webResumeIfStalled,
   setWebStatusCb,
   webSwapSrcAndPlay,
@@ -189,6 +190,12 @@ if (Platform.OS !== 'web') {
 }
 
 if (Platform.OS === 'web') {
+  // v3.272 [BGWeb-Android]: 미디어 에러 동기 복구 URL 공급자 — 현재 곡의 결정적 proxy
+  setWebErrorRecoveryProvider(() => {
+    const t = usePlayerStore.getState().track;
+    return t?.id ? `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${String(t.id)}` : null;
+  });
+
   // v3.271 [BGWeb]: 탭 복귀 시 멈춘 재생 복구 — 얼림 중 놓친 곡 종료(다음 곡 체인)·일시정지 재개
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
@@ -222,10 +229,10 @@ if (Platform.OS === 'web') {
     const next = idx >= 0 ? s.queue[idx] : null;
     if (!next?.id) return false;
     const nid = String(next.id);
-    const url =
-      webNextUrl?.trackId === nid
-        ? webNextUrl.url
-        : `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`; // 프리페치 미스 — 결정적 proxy로 동기 교체
+    // v3.272 [BGWeb-Android]: 자동 스왑은 **항상 결정적 proxy** — presigned 간헐 code 4
+    // (10-01 실측 3건, 곡·음원 정상인데 로드 실패)의 노출면 자체를 제거. seek 품질이 필요한
+    // PlayerScreen 수동 로드는 기존 presigned 유지. 프리페치(webNextUrl)는 폐기.
+    const url = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`;
     webNextUrl = null;
     if (!webSwapSrcAndPlay(url)) return false;
     s.playTrackAtIndex(idx); // track 갱신 → 위 구독이 mediaSession 메타 동기화

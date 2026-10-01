@@ -17,6 +17,16 @@ let statusCb: StatusCallback = null;
 let statusCbOwner: WebStatusCbOwner = 'playback';
 /** ended 시 동기 이어재생 훅(playback.ts가 등록) — true 반환 = 처리됨(didJustFinish 미전파) */
 let endedHandler: (() => boolean) | null = null;
+// v3.272 [BGWeb-Android]: 미디어 에러(code 4 등) 동기 복구 — 같은 곡의 결정적 proxy URL 1회 재시도.
+// 실측(10-01): 안드로이드에서 스왑 직후 code 4 "no supported source" 간헐 발생 — 포그라운드는
+// 비동기 스킵 경로가 받지만 백그라운드에선 그 경로가 돌지 못해 영구 멈춤이 됐다.
+// 복구 URL 공급자(playback.ts 등록): 현재 스토어 트랙의 proxy URL 반환(없으면 null).
+let errorRecoveryUrlProvider: (() => string | null) | null = null;
+let lastErrorRecoveredSrc: string | null = null; // 같은 src 무한 재시도 방지(1회)
+
+export function setWebErrorRecoveryProvider(fn: (() => string | null) | null): void {
+  errorRecoveryUrlProvider = fn;
+}
 
 // ── v3.235 B6: 자동재생 차단 상태 — 링크 진입(사용자 활성화 없음) 초기 play() 가 NotAllowedError 로
 // 거부되면 true. 구독자(PlayerScreen)가 '탭해서 듣기' 오버레이를 띄우고, 탭 핸들러 안에서
@@ -126,6 +136,7 @@ function ensureElement(): HTMLAudioElement {
   audio.addEventListener('timeupdate', () => dispatch());
   audio.addEventListener('durationchange', () => dispatch());
   audio.addEventListener('play', () => {
+    lastErrorRecoveredSrc = null; // v3.272 — 재생 성공 = 복구 가드 리셋
     setAutoplayBlocked(false); // v3.235 B6: 어떤 경로로든 재생 시작 = 차단 해제(오버레이 닫힘)
     dispatch();
   });
@@ -146,6 +157,24 @@ function ensureElement(): HTMLAudioElement {
     if (!audio.src) return; // unload로 src를 비운 직후의 무해 이벤트
     const code = (audio.error as any)?.code;
     console.warn('[WebAudio] media error', { code });
+    // v3.272 [BGWeb-Android]: 동기 1회 복구 — 같은 곡 proxy로 src 교체 후 즉시 play().
+    // (백그라운드에선 이 콜스택이 유일한 실행 기회 — 비동기 스킵 경로에 못 미룬다)
+    try {
+      const recover = errorRecoveryUrlProvider ? errorRecoveryUrlProvider() : null;
+      if (recover && audio.src !== recover && lastErrorRecoveredSrc !== recover) {
+        lastErrorRecoveredSrc = recover;
+        console.warn('[WebAudio] media error → proxy 동기 복구 시도', { code });
+        audio.src = recover;
+        const p = audio.play();
+        if (p && typeof (p as any).catch === 'function') {
+          (p as any).catch((e: any) =>
+            console.warn('[WebAudio] 복구 play 거부', { name: e?.name, message: e?.message }));
+        }
+        return; // 복구 시도 중 — 에러 상태 전파 보류(성공 시 play 이벤트가 상태 갱신)
+      }
+    } catch (e: any) {
+      console.warn('[WebAudio] 복구 시도 실패', { message: e?.message });
+    }
     if (statusCb) {
       try {
         statusCb({ isLoaded: false, error: `MediaError code=${code ?? 'unknown'}` });
@@ -207,6 +236,19 @@ export function webResumeIfStalled(wantPlaying: boolean): 'advanced' | 'resumed'
     if (handled) return 'advanced';
     dispatch({ didJustFinish: true, isPlaying: false, shouldPlay: false });
     return 'advanced';
+  }
+  if (el.error && wantPlaying) {
+    // v3.272 — 에러 상태로 깨어남(백그라운드 중 복구도 실패) → proxy 재로드
+    const recover = errorRecoveryUrlProvider ? errorRecoveryUrlProvider() : null;
+    if (recover) {
+      console.warn('[WebAudio] 복귀 — 에러 상태 proxy 재로드');
+      el.src = recover;
+      el.play().catch((e: any) => {
+        console.warn('[WebAudio] 복귀 재로드 거부', { name: e?.name });
+        dispatch();
+      });
+      return 'resumed';
+    }
   }
   if (wantPlaying && el.paused) {
     const p = el.play();
