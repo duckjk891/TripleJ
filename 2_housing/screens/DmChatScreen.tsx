@@ -42,8 +42,12 @@ interface DmMessage {
 // v3.207(⑥): 첨부 선검증 — 백엔드 /upload/dm-image 계약(feed-image 복제: jpg/png/webp ≤15MB)과 짝
 const DM_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const DM_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
+// v3.273: 다중 첨부 — 한 번에 최대 5장 선택. 서버 계약(메시지당 image 1장)은 불변:
+// 전송 시 첫 메시지에 텍스트+1장, 나머지는 이미지 단독 메시지로 연속 발송.
+const DM_MAX_IMAGES = 5;
 
 interface AttachedImage {
+  key: string;
   localUri: string;
   name: string;
   mime: string;
@@ -96,7 +100,7 @@ export default function DmChatScreen() {
   const [text, setText] = useState<string>(route.params?.prefill ?? '');
   const [sending, setSending] = useState(false);
   // v3.207(⑥): 이미지 첨부 — 1장 첨부 → 업로드(상태 칩) → 전송 시 image_object_name 동봉
-  const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -154,74 +158,91 @@ export default function DmChatScreen() {
       const objectName = res.data?.object_name;
       if (!objectName) throw new Error('object_name 누락');
       console.info('[DmChat] 이미지 업로드 성공', { objectName });
-      setAttachedImage((prev) => (prev && prev.localUri === entry.localUri ? { ...prev, status: 'done', objectName } : prev));
+      setAttachedImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'done', objectName } : i)));
     } catch (err: any) {
       console.error('[DmChat] 이미지 업로드 실패', { status: err?.response?.status, message: err?.message });
-      setAttachedImage((prev) => (prev && prev.localUri === entry.localUri ? { ...prev, status: 'failed' } : prev));
+      setAttachedImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'failed' } : i)));
       showAlert('오류', err?.response?.data?.error || '이미지 업로드에 실패했습니다. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
     }
   };
 
   const pickImage = async () => {
-    if (attachedImage) {
-      showAlert('안내', '이미지는 한 번에 1장씩 보낼 수 있어요.');
+    if (attachedImages.length >= DM_MAX_IMAGES) {
+      showAlert('안내', `이미지는 최대 ${DM_MAX_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
     // expo-image-picker 미설치 — 기존 이미지 선택 관행(FeedCompose DocumentPicker image/*) 재사용
-    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
-    if (res.canceled || !res.assets || !res.assets[0]) return;
-    const f = res.assets[0];
-    const mime = f.mimeType || '';
-    if (mime && !DM_IMAGE_TYPES.includes(mime)) {
-      showAlert('안내', '지원하지 않는 이미지 형식입니다. (jpg/png/webp)');
-      return;
-    }
-    if (typeof f.size === 'number' && f.size > DM_IMAGE_MAX_BYTES) {
-      showAlert('안내', '이미지 크기는 15MB 이하여야 합니다.');
-      return;
-    }
-    const entry: AttachedImage = {
-      localUri: f.uri, name: f.name || 'image.jpg', mime: mime || 'image/jpeg',
+    // v3.273: multiple — 남은 슬롯만큼 수용, 초과·형식/용량 불량은 묶어서 1회 안내
+    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    if (res.canceled || !res.assets?.length) return;
+    const room = DM_MAX_IMAGES - attachedImages.length;
+    const skipped: string[] = [];
+    const valid = res.assets.filter((f) => {
+      const mime = f.mimeType || '';
+      if (mime && !DM_IMAGE_TYPES.includes(mime)) { skipped.push(`${f.name || '파일'}(형식)`); return false; }
+      if (typeof f.size === 'number' && f.size > DM_IMAGE_MAX_BYTES) { skipped.push(`${f.name || '파일'}(15MB 초과)`); return false; }
+      return true;
+    });
+    const accepted = valid.slice(0, room);
+    if (__DEV__) console.info('[DmChat] 이미지 선택', { picked: res.assets.length, accepted: accepted.length, skipped: skipped.length });
+    const notice: string[] = [];
+    if (skipped.length) notice.push(`제외: ${skipped.join(', ')} — jpg/png/webp, 15MB 이하만 첨부돼요.`);
+    if (valid.length > room) notice.push(`이미지는 최대 ${DM_MAX_IMAGES}장까지라 ${valid.length - room}장은 제외했어요.`);
+    if (notice.length) showAlert('안내', notice.join('\n'));
+    if (!accepted.length) return;
+    const entries: AttachedImage[] = accepted.map((f, i) => ({
+      key: `${Date.now()}-${attachedImages.length + i}-${i}`,
+      localUri: f.uri, name: f.name || 'image.jpg', mime: f.mimeType || 'image/jpeg',
       status: 'uploading',
-    };
-    setAttachedImage(entry);
-    uploadImage(entry);
+    }));
+    setAttachedImages((prev) => [...prev, ...entries]);
+    entries.forEach((e) => uploadImage(e));
   };
 
-  const retryImage = () => {
-    if (!attachedImage || attachedImage.status !== 'failed') return;
-    if (__DEV__) console.info('[DmChat] 이미지 업로드 재시도', { name: attachedImage.name });
-    const entry: AttachedImage = { ...attachedImage, status: 'uploading' };
-    setAttachedImage(entry);
-    uploadImage(entry);
+  const retryImage = (entry: AttachedImage) => {
+    if (entry.status !== 'failed') return;
+    if (__DEV__) console.info('[DmChat] 이미지 업로드 재시도', { name: entry.name });
+    setAttachedImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'uploading' } : i)));
+    uploadImage({ ...entry, status: 'uploading' });
   };
 
   const send = async () => {
     const t = text.trim();
     // v3.207(⑥): 서버 계약 — text 또는 image 필수(둘 다 동봉 가능)
-    if ((!t && !attachedImage) || sending) return;
-    if (attachedImage && attachedImage.status === 'uploading') {
+    if ((!t && !attachedImages.length) || sending) return;
+    if (attachedImages.some((i) => i.status === 'uploading')) {
       showAlert('안내', '이미지 업로드가 끝난 뒤 보낼 수 있어요.');
       return;
     }
-    if (attachedImage && attachedImage.status === 'failed') {
-      showAlert('안내', '이미지 업로드에 실패했어요. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
+    if (attachedImages.some((i) => i.status === 'failed')) {
+      showAlert('안내', '업로드에 실패한 이미지가 있어요. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
       return;
     }
-    const imageObjectName = attachedImage?.status === 'done' ? attachedImage.objectName : undefined;
-    if (!t && !imageObjectName) return;
+    // v3.273: 서버 계약(메시지당 image 1장) 유지 — 1번째 메시지 = 텍스트+1장, 나머지는 이미지 단독 연속 발송
+    const objectNames = attachedImages.filter((i) => i.status === 'done' && i.objectName).map((i) => i.objectName!);
+    if (!t && !objectNames.length) return;
     setSending(true);
-    if (__DEV__) console.info('[DmChat] 전송', { cid, len: t.length, hasImage: !!imageObjectName });
+    if (__DEV__) console.info('[DmChat] 전송', { cid, len: t.length, images: objectNames.length });
+    let sent = 0;
     try {
-      const res = await api.post(`/dm/conversations/${cid}/messages`, {
-        ...(t ? { text: t } : {}),
-        ...(imageObjectName ? { image_object_name: imageObjectName } : {}),
-      });
-      const m = res.data?.message;
-      if (m) setMessages((prev) => [...prev, m]);
+      const count = Math.max(1, objectNames.length);
+      for (let i = 0; i < count; i++) {
+        const res = await api.post(`/dm/conversations/${cid}/messages`, {
+          ...(i === 0 && t ? { text: t } : {}),
+          ...(objectNames[i] ? { image_object_name: objectNames[i] } : {}),
+        });
+        const m = res.data?.message;
+        if (m) setMessages((prev) => [...prev, m]);
+        sent++;
+      }
       setText('');
-      setAttachedImage(null);
+      setAttachedImages([]);
     } catch (err: any) {
+      // 중간 실패 — 보낸 분량은 제거하고 남은 이미지만 보존(텍스트는 1번째에 이미 나감)
+      if (sent > 0) {
+        setText('');
+        setAttachedImages((prev) => prev.filter((i) => i.status === 'done').slice(sent));
+      }
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
       // v3.232 B2: 서버 403 child_restricted(본문 또는 detail 안의 code)는 api 인터셉터가 이미 안내 — 자체 팝업 생략
@@ -367,30 +388,37 @@ export default function DmChatScreen() {
       {/* 입력바 — 수신 pending은 수락 전 답장 불가(백엔드 403과 일치) */}
       {!isPendingReceived ? (
         <View>
-          {/* v3.207(⑥): 첨부 이미지 미리보기 칩 — 업로드 상태(스피너/실패 재시도) + X 제거 */}
-          {attachedImage ? (
+          {/* v3.207(⑥)→v3.273: 첨부 이미지 미리보기 스트립(최대 5장) — 업로드 상태(스피너/실패 재시도) + 장별 X 제거 */}
+          {attachedImages.length ? (
             <View style={styles.attachRow}>
-              <TouchableOpacity
-                onPress={retryImage}
-                disabled={attachedImage.status !== 'failed'}
-                accessibilityLabel={attachedImage.status === 'failed' ? '이미지 업로드 재시도' : '첨부 이미지'}
-              >
-                <Image source={{ uri: attachedImage.localUri }} style={styles.attachThumb} />
-                {attachedImage.status === 'uploading' ? (
-                  <View style={styles.attachOverlay}><ActivityIndicator size="small" color="#fff" /></View>
-                ) : attachedImage.status === 'failed' ? (
-                  <View style={styles.attachOverlay}><Feather name="refresh-cw" size={16} color={colors.status.error} /></View>
-                ) : null}
-              </TouchableOpacity>
-              <AppText variant="caption" tone={attachedImage.status === 'failed' ? undefined : 'muted'}
-                style={[{ flex: 1 }, attachedImage.status === 'failed' ? { color: colors.status.error } : null]} numberOfLines={1}>
-                {attachedImage.status === 'uploading' ? '업로드 중...'
-                  : attachedImage.status === 'failed' ? '업로드 실패 — 썸네일을 눌러 재시도'
-                  : attachedImage.name}
+              {attachedImages.map((img) => (
+                <View key={img.key} style={{ position: 'relative' }}>
+                  <TouchableOpacity
+                    onPress={() => retryImage(img)}
+                    disabled={img.status !== 'failed'}
+                    accessibilityLabel={img.status === 'failed' ? '이미지 업로드 재시도' : '첨부 이미지'}
+                  >
+                    <Image source={{ uri: img.localUri }} style={styles.attachThumb} />
+                    {img.status === 'uploading' ? (
+                      <View style={styles.attachOverlay}><ActivityIndicator size="small" color="#fff" /></View>
+                    ) : img.status === 'failed' ? (
+                      <View style={styles.attachOverlay}><Feather name="refresh-cw" size={16} color={colors.status.error} /></View>
+                    ) : null}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setAttachedImages((prev) => prev.filter((i) => i.key !== img.key))}
+                    accessibilityLabel="첨부 제거" style={styles.attachRemove}
+                  >
+                    <Feather name="x" size={12} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <AppText variant="caption" tone={attachedImages.some((i) => i.status === 'failed') ? undefined : 'muted'}
+                style={[{ flex: 1 }, attachedImages.some((i) => i.status === 'failed') ? { color: colors.status.error } : null]} numberOfLines={2}>
+                {attachedImages.some((i) => i.status === 'uploading') ? '업로드 중...'
+                  : attachedImages.some((i) => i.status === 'failed') ? '실패한 이미지가 있어요 — 썸네일을 눌러 재시도'
+                  : `${attachedImages.length}장 첨부됨`}
               </AppText>
-              <TouchableOpacity onPress={() => setAttachedImage(null)} accessibilityLabel="첨부 제거" style={{ padding: 4 }}>
-                <Feather name="x" size={16} color={colors.text.muted} />
-              </TouchableOpacity>
             </View>
           ) : null}
           {/* v3.207(⑤): 수동 리프트(marginBottom+kbLift) 제거 — keyboard-controller KAV padding이 담당 */}
@@ -398,7 +426,7 @@ export default function DmChatScreen() {
             {/* v3.232 K7(B3): 어린이는 사진 첨부 없음(서버 /upload/dm-image 도 403) */}
             {!isChild && (
             <TouchableOpacity onPress={pickImage} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
-              <Feather name="image" size={20} color={attachedImage ? colors.text.muted : colors.text.secondary} />
+              <Feather name="image" size={20} color={attachedImages.length >= DM_MAX_IMAGES ? colors.text.muted : colors.text.secondary} />
             </TouchableOpacity>
             )}
             <TextInput
@@ -412,14 +440,14 @@ export default function DmChatScreen() {
             />
             <TouchableOpacity
               onPress={send}
-              disabled={sending || (!text.trim() && attachedImage?.status !== 'done')}
+              disabled={sending || (!text.trim() && !attachedImages.some((i) => i.status === 'done'))}
               accessibilityLabel="보내기"
               style={{ padding: 6 }}
             >
               <Feather
                 name="send"
                 size={20}
-                color={text.trim() || attachedImage?.status === 'done' ? colors.accent.primary : colors.text.muted}
+                color={text.trim() || attachedImages.some((i) => i.status === 'done') ? colors.accent.primary : colors.text.muted}
               />
             </TouchableOpacity>
           </View>
@@ -469,6 +497,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.border.subtle,
   },
   attachThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.bg.surface2 },
+  // v3.273: 장별 제거 버튼 — 썸네일 우상단 배지
+  attachRemove: {
+    position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center',
+  },
   attachOverlay: {
     ...StyleSheet.absoluteFillObject, borderRadius: radius.sm,
     backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',

@@ -1,7 +1,8 @@
 // [FeedCompose] 피드 작성 — v3.61 신설(기존엔 작성 UI 부재, 읽기·댓글만 가능했음).
 // 제목(선택)·내용 입력 + 음악 첨부(내 곡 목록 — 차트와 동일한 공용 TrackRow 디자인) → POST /feeds/.
 // 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}|{type:'image',object_name}], is_public, kind:'feed' }
-// v3.111: 사진 첨부 — DocumentPicker image/* → POST /upload/feed-image(서버 재인코딩·15MB) → image 블록, 최대 4장.
+// v3.111: 사진 첨부 — DocumentPicker image/* → POST /upload/feed-image(서버 재인코딩·15MB) → image 블록.
+// v3.273: 다중 선택(한 번에 최대 5장, 총 5장 — 서버 MAX_IMAGE_BLOCKS=5와 짝) — 각 파일 개별 검증·병렬 업로드.
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
@@ -25,7 +26,7 @@ import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 —
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const FEED_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
-const MAX_FEED_IMAGES = 4;
+const MAX_FEED_IMAGES = 5;
 
 interface AttachedImage {
   key: string;
@@ -199,25 +200,31 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       return;
     }
     // expo-image-picker 미설치 — 기존 이미지 선택 관행(SettingsScreen DocumentPicker image/*) 재사용
-    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
-    if (res.canceled || !res.assets || !res.assets[0]) return;
-    const f = res.assets[0];
-    const mime = f.mimeType || '';
-    if (mime && !FEED_IMAGE_TYPES.includes(mime)) {
-      showAlert('안내', '지원하지 않는 이미지 형식입니다. (jpg/png/webp)');
-      return;
-    }
-    if (typeof f.size === 'number' && f.size > FEED_IMAGE_MAX_BYTES) {
-      showAlert('안내', '이미지 크기는 15MB 이하여야 합니다.');
-      return;
-    }
-    const entry: AttachedImage = {
-      key: `${Date.now()}-${images.length}`,
-      localUri: f.uri, name: f.name || 'image.jpg', mime: mime || 'image/jpeg',
+    // v3.273: multiple — OS 피커에서 한 번에 여러 장(남은 슬롯만큼 수용, 초과분은 안내 후 버림)
+    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    if (res.canceled || !res.assets?.length) return;
+    const room = MAX_FEED_IMAGES - images.length;
+    const skipped: string[] = [];
+    const valid = res.assets.filter((f) => {
+      const mime = f.mimeType || '';
+      if (mime && !FEED_IMAGE_TYPES.includes(mime)) { skipped.push(`${f.name || '파일'}(형식)`); return false; }
+      if (typeof f.size === 'number' && f.size > FEED_IMAGE_MAX_BYTES) { skipped.push(`${f.name || '파일'}(15MB 초과)`); return false; }
+      return true;
+    });
+    const accepted = valid.slice(0, room);
+    if (__DEV__) console.info('[FeedCompose] 사진 선택', { picked: res.assets.length, accepted: accepted.length, skipped: skipped.length });
+    const notice: string[] = [];
+    if (skipped.length) notice.push(`제외: ${skipped.join(', ')} — jpg/png/webp, 15MB 이하만 첨부돼요.`);
+    if (valid.length > room) notice.push(`사진은 최대 ${MAX_FEED_IMAGES}장까지라 ${valid.length - room}장은 제외했어요.`);
+    if (notice.length) showAlert('안내', notice.join('\n'));
+    if (!accepted.length) return;
+    const entries: AttachedImage[] = accepted.map((f, i) => ({
+      key: `${Date.now()}-${images.length + i}-${i}`,
+      localUri: f.uri, name: f.name || 'image.jpg', mime: f.mimeType || 'image/jpeg',
       status: 'uploading',
-    };
-    setImages((prev) => [...prev, entry]);
-    uploadImage(entry);
+    }));
+    setImages((prev) => [...prev, ...entries]);
+    entries.forEach((e) => uploadImage(e));
   };
 
   const retryImage = (entry: AttachedImage) => {
@@ -380,7 +387,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </TouchableOpacity>
         )}
 
-        {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 4장.
+        {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 5장(v3.273).
             v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
         {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
         {!isCommunity && !isChild ? (
