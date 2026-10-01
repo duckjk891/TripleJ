@@ -3709,3 +3709,20 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 산출물: `iOS대응현황_감사보고서_20260929.md` (app.json·플러그인·Platform 분기 전수·심사 요건·광고/권한 실사).
 - 결론: 기능 코드 = 사실상 100% 공유(단일 Expo 코드, v1.3.1 백그라운드 오디오는 iOS 우선 설계). 출시 게이트 잔여 = **①애플 법인 계정 승인 대기(유일 하드 블로커, 외부)** ②Sign in with Apple 미구현(심사 4.8 — 계정 승인 후 1~2일) ③AdMob iOS 보상형 단위 미설정(30분) ④ATS 전면 해제 축소(30분) ⑤마이크 권한 한국어 문구(5분) ⑥TestFlight 실기기 검증 목록. ③④⑤는 계정 없이 지금 선처리 가능.
 - **v1.3.1 안드로이드 APK 빌드 완료(EAS)**: build f96b8080 FINISHED — 아티팩트 https://expo.dev/artifacts/eas/NtqmHQrPdreQ02_O_eZgfR2Knc9PjhCUs6VwZhMIZM0.apk (실기기 검증 항목: 백그라운드 연속재생·잠금화면 컨트롤·MAIDOL 앨범/SAF 폴더 저장).
+
+---
+
+## v3.271 — 2026-10-01 — 추천 다양화·Inst 스킵·웹 복귀 재생 복구·얼굴인증 촬영 전용·비번 메일 진단 (서버·웹 배포 완료)
+
+### ① 추천 반복(대표 질의 "어떻게 짠 거야")
+- 현행: vector NN(결정적 상위) → 같은 장르 play_count DESC → 전체 play_count DESC — 세 단계 전부 **같은 입력=같은 출력**이라 74곡 카탈로그에서 반복 체감 필연 + exclude가 큐 한정이라 큐에서 빠진 곡 재추천.
+- 수정: vector 후보 **rank-가중 샘플링**(w=1/(rank+3) — 유사도 우선 유지·조합 다변), genre/popular 폴백 **상위 풀(need×5) 무작위 추출**, 앱에 **최근 재생 이력 40곡 영속**(recentlyPlayedIds) 신설 → related exclude에 큐+이력 합산(차트 시드·이어듣기 양쪽). 샘플러 하니스 PASS(비복원·경계·상위쏠림 확인), 라이브 3회 호출 상이 조합 실측.
+### ③ Inst 자동재생 스킵 (대표 확정 — 직접 탭·수동 다음은 재생 유지)
+- 마커 실측: inst 곡은 title "(Inst.)" 서픽스뿐(track_type=standard). 서버 related 3단계 전부 `title $not /(Inst\.)$/` 제외 + 앱 `getNextAutoIndex()`(자동 진행 전용 — 곡종료·프리로드 핀·URL프리페치·오류스킵·PlayerScreen 6개 지점) — 전곡 Inst면 관련곡 경로로. 라이브 Inst 유입 0 확인.
+### ② 웹 백그라운드 끊김 (재조사 + 완화)
+- 재확인: iOS 사파리 페이지 동결이 본질(멈춤 시점 원격 로그 무에러 — 9/29 진단 유지, 근본 해결 = v1.3.1 네이티브). 웹 완화 2종 추가: **visibilitychange 복귀 훅**(얼림 중 곡이 끝나 있으면 ended 체인 수동 트리거로 다음 곡, 재생 의도인데 멈췄으면 같은 element play() 재시도 — webResumeIfStalled) + **swap AbortError 1회 재시도**(load 경합 실사 1건 봉합).
+### ⑥ 얼굴인증 촬영 전용 (대표 확정 — 업로드 우회 차단)
+- 기존 DocumentPicker(갤러리/파일) 제거 → 웹 `<input capture="user">`(전면 카메라 직행), 네이티브 expo-image-picker launchCameraAsync(카메라 전용, 설치 완료 — 차기 네이티브 빌드 반영, 구빌드는 안내 폴백). 안내 문구 "갤러리 업로드는 쓸 수 없어요" 명시.
+### ④ 비밀번호 재설정 메일 — 진단(연동 안 된 것 맞음)
+- 코드 완비(v3.207: SES 어댑터·6자리 코드·dev 폴백) but `MAIL_ENABLED` 미설정(기본 false) = 실발송 OFF + **EC2 IAM 롤(maidol-ec2)에 SES 권한 없음 실측(AccessDenied)**. 활성화 요건(대표 AWS 콘솔 액션): ① IAM 롤에 ses:SendEmail ② SES 발신자(maidol.ai.kr 도메인 또는 no-reply@) 검증 ③ 샌드박스 해제. 완료 통보 시 .env(MAIL_ENABLED/MAIL_FROM/SES_REGION) 설정+재기동은 이쪽에서.
+### ⑤ 피드백2 적용 여부 — 전 항목 종결 재확인(v3.266 P0 자동저장 · v3.267 [34] · v3.268 [29][32a] · v3.269 [28][30][33][36]).
