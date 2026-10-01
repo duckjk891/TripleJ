@@ -519,7 +519,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             }
           })();
         } else {
-          const nextIdx = store.getNextIndex();
+          const nextIdx = store.getNextAutoIndex(); // v3.271 [InstSkip] — 자동 진행은 Inst 건너뜀
           console.warn('[BTDebug] didJustFinish', { src: 'Player', trackId: (liveTrack ?? track)?.id, nextIdx, appState: AppState.currentState, preloadHit: false });
           if (nextIdx >= 0 && store.queue[nextIdx]) {
             const nextTrack = store.queue[nextIdx];

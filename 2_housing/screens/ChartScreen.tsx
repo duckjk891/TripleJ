@@ -212,7 +212,11 @@ export default function ChartScreen() {
   const seedRelatedIntoQueue = async (track: ChartTrack) => {
     try {
       const st = usePlayerStore.getState();
-      const excludeIds = st.queue.map((t: any) => String(t?.id)).filter(Boolean);
+      // v3.271 [RelatedVariety]: 큐 + 최근 재생 이력 합산 exclude
+      const excludeIds = Array.from(new Set([
+        ...st.queue.map((t: any) => String(t?.id)).filter(Boolean),
+        ...((st.recentlyPlayedIds as string[]) || []),
+      ]));
       const res = await api.get(`/tracks/${track.id}/related`, {
         params: { limit: 5, exclude: excludeIds.join(',') },
       });

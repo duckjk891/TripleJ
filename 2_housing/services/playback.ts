@@ -32,6 +32,7 @@ import {
   createWebTrackSound,
   getWebStatusCbOwner,
   setWebEndedHandler,
+  webResumeIfStalled,
   setWebStatusCb,
   webSwapSrcAndPlay,
 } from './webAudioElement';
@@ -120,7 +121,7 @@ let webNextUrl: { trackId: string; url: string } | null = null;
 function prefetchNextWebUrl(): void {
   if (Platform.OS !== 'web') return;
   const s = usePlayerStore.getState();
-  const idx = s.getNextIndex();
+  const idx = s.getNextAutoIndex(); // v3.271 [InstSkip] — 자동 진행 대상과 동일 기준
   const next = idx >= 0 ? s.queue[idx] : null;
   if (!next?.id) {
     webNextUrl = null;
@@ -150,6 +151,16 @@ function prefetchNextWebUrl(): void {
 // 트래커로 들어가고, 콜백이 몇 개든 기록은 재생 세션당 1회다(PlayerScreen은 기록 호출을 하지 않는다).
 // 곡 귀속: 엔진 콜백이 쓰는 동안은 그 콜백에 묶인 곡 id(정확), 그 외(PlayerScreen 콜백)는 store.track.
 // ─────────────────────────────────────────────────────────────────────────────
+// v3.271 [RelatedVariety]: 최근 재생 이력 기록 — 현재 곡 변경 전역 구독(웹·네이티브 공용)
+let rpLastTrackId: string | null = null;
+usePlayerStore.subscribe((s: any) => {
+  const tid = s.track?.id != null ? String(s.track.id) : null;
+  if (tid && tid !== rpLastTrackId) {
+    rpLastTrackId = tid;
+    s.noteRecentlyPlayed?.(tid);
+  }
+});
+
 let prEngineTrackId: string | null = null;
 let prLastKey = '';
 usePlayerStore.subscribe((s: any) => {
@@ -178,6 +189,17 @@ if (Platform.OS !== 'web') {
 }
 
 if (Platform.OS === 'web') {
+  // v3.271 [BGWeb]: 탭 복귀 시 멈춘 재생 복구 — 얼림 중 놓친 곡 종료(다음 곡 체인)·일시정지 재개
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      const st = usePlayerStore.getState();
+      if (!st.track) return;
+      const r = webResumeIfStalled(!!st.isPlaying);
+      if (r !== 'noop') console.warn('[playback] [BGWeb] visibility 복구', { result: r });
+    });
+  }
+
   // v3.217 ①(a): mediaSession 트랙 sync 일원화 — store.track 변경 구독 단일 지점.
   // PlayerScreen 전환 경로 5곳(자동 다음곡·프리로드 스왑·관련곡·수동 스킵·routeTrack 교체)의
   // 개별 호출 누락으로 잠금화면 메타가 이전 곡에 잔존하던 결함(F1)을 구독으로 일괄 해소한다.
@@ -196,7 +218,7 @@ if (Platform.OS === 'web') {
   // 큐 소진(next 없음)만 false → didJustFinish 전파 → 기존 관련곡 이어듣기 경로.
   setWebEndedHandler(() => {
     const s = usePlayerStore.getState();
-    const idx = s.getNextIndex();
+    const idx = s.getNextAutoIndex(); // v3.271 [InstSkip]
     const next = idx >= 0 ? s.queue[idx] : null;
     if (!next?.id) return false;
     const nid = String(next.id);
@@ -428,7 +450,7 @@ export function maybePreloadNext(
     if (Date.now() - preloadFail.lastAt < PRELOAD_RETRY_INTERVAL_MS) return;
   }
   const s = usePlayerStore.getState();
-  const pinnedIdx = s.getNextIndex(); // 지금 핀 — didJustFinish에서 재호출 금지
+  const pinnedIdx = s.getNextAutoIndex(); // v3.271 [InstSkip] — 지금 핀, didJustFinish에서 재호출 금지
   const next = pinnedIdx >= 0 ? s.queue[pinnedIdx] : null;
   if (!next?.id) return; // 큐 소진 — related 프리페치는 v3.197 보류(계획서 판정)
   discardPreloaded('re-pin'); // 이전 곡 기준의 잔존 프리로드 정리(+ 진행 중 다운로드 취소)
@@ -542,7 +564,11 @@ export async function autoContinueWithRelated(
     return;
   }
   fetchingRelated = true;
-  const excludeIds = s.queue.map((t: any) => t?.id).filter(Boolean);
+  // v3.271 [RelatedVariety]: 큐 + 최근 재생 이력(40캡) 합산 — "방금 들은 곡 재추천" 차단
+  const excludeIds = Array.from(new Set([
+    ...s.queue.map((t: any) => t?.id).filter(Boolean).map(String),
+    ...((s.recentlyPlayedIds as string[]) || []),
+  ]));
   console.info('[playerStore] 관련곡 이어듣기 조회', { track_id: endedTrack.id, exclude_count: excludeIds.length });
   try {
     const res = await api.get(`/tracks/${endedTrack.id}/related`, {
@@ -658,7 +684,7 @@ export async function skipUnplayableOnAutoAdvance(
     if (qi === s.currentIndex) usePlayerStore.getState().setCurrentIndex(qi - 1);
   }
   const cur = usePlayerStore.getState();
-  const nextIdx = cur.getNextIndex();
+  const nextIdx = cur.getNextAutoIndex(); // v3.271 [InstSkip]
   const next = nextIdx >= 0 ? cur.queue[nextIdx] : null;
   console.warn('[BTDebug] auto-skip unplayable', { trackId: fid, status: httpStatus, removed: gone && qi >= 0, nextId: next?.id ?? null, count: autoSkipCount });
   if (next?.id) {
@@ -717,7 +743,7 @@ function makeStatusCallback(newTrack: any): (status: any) => void {
           s.playTrackAtIndex(pre.index);
           playPreloadedSound(pre);
         } else {
-          const nextIdx = s.getNextIndex();
+          const nextIdx = s.getNextAutoIndex(); // v3.271 [InstSkip]
           console.warn('[BTDebug] didJustFinish', { src: 'playback', trackId: newTrack?.id, nextIdx, appState: AppState.currentState, preloadHit: false });
           if (nextIdx >= 0 && s.queue[nextIdx]) {
             s.playTrackAtIndex(nextIdx);

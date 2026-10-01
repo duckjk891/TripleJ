@@ -33,6 +33,11 @@ interface PlayerState {
   currentIndex: number;
   isPlayerScreenOpen: boolean;
   shuffle: boolean;
+  /** v3.271 — 최근 재생 trackId(최신순, 40캡) — 추천 exclude 원천 */
+  recentlyPlayedIds: string[];
+  noteRecentlyPlayed: (trackId: string) => void;
+  /** v3.271 — 자동 진행 전용: Inst 곡 스킵 */
+  getNextAutoIndex: () => number;
   repeat: RepeatMode;
   /** 현재 재생목록의 소유자 user.id. 비회원이 담은 큐는 null → 앱을 새로 켜면 사라진다. */
   queueOwnerId: string | null;
@@ -155,6 +160,7 @@ export const usePlayerStore = create<PlayerState>()(
       miniHidden: false,
       sessionActive: false,
       shuffle: false,
+      recentlyPlayedIds: [] as string[],
       repeat: 'off' as RepeatMode,
       // v3.198: sound가 truthy면 이번 세션에 재생을 시작한 것 — sessionActive를 setter 한 곳에서 일괄 마킹.
       // (null 세팅은 전환/정리 중일 수 있으므로 플래그를 내리지 않는다 — v3.197 재생버튼 1탭 복구 경로 보존)
@@ -282,6 +288,33 @@ export const usePlayerStore = create<PlayerState>()(
           saveOwnerQueue(); // v3.223 ②: 현재곡·인덱스 스냅샷 최신화 — 재시작 복원 시 현재 곡 정확
         }
       },
+      // v3.271 [InstSkip]: "(Inst.)" 곡은 자동 진행(곡 종료·프리로드·오류 스킵)에서 건너뛴다
+      // (대표 확정 — 직접 탭 재생·수동 다음 버튼은 그대로). 전곡 Inst면 getNextIndex 결과 유지.
+      getNextAutoIndex: () => {
+        const { queue, repeat, currentIndex } = get();
+        const isInst = (t: any) => /\(Inst\.\)\s*$/.test(String(t?.title || ''));
+        let idx = get().getNextIndex();
+        if (idx < 0) return idx;
+        if (repeat === 'one') return idx;
+        const tried = new Set<number>();
+        while (idx >= 0 && !tried.has(idx) && isInst(queue[idx])) {
+          tried.add(idx);
+          // 순차 규칙으로 계속 전진(셔플이어도 Inst 재추첨 무한루프 방지 — 다음 자리 탐색)
+          const n = idx < queue.length - 1 ? idx + 1 : (repeat === 'all' ? 0 : -1);
+          if (n === currentIndex && repeat !== 'all') return -1;
+          idx = n;
+        }
+        if (idx >= 0 && isInst(queue[idx])) return -1; // 전부 Inst — 자동 진행 종료(관련곡 경로로)
+        return idx;
+      },
+      // v3.271 [RelatedVariety]: 최근 재생 이력(최대 40곡) — 관련곡 추천 exclude 원천(영속)
+      noteRecentlyPlayed: (trackId: string) => {
+        if (!trackId) return;
+        const prev = get().recentlyPlayedIds || [];
+        if (prev[0] === trackId) return;
+        const next = [trackId, ...prev.filter((x: string) => x !== trackId)].slice(0, 40);
+        set({ recentlyPlayedIds: next });
+      },
       getNextIndex: () => {
         const { queue, currentIndex, shuffle, repeat } = get();
         if (queue.length === 0) return -1;
@@ -407,6 +440,7 @@ export const usePlayerStore = create<PlayerState>()(
       partialize: (state) => ({
         savedQueues: state.savedQueues,
         shuffle: state.shuffle,
+        recentlyPlayedIds: state.recentlyPlayedIds,
         repeat: state.repeat,
         guestNoticeAck: state.guestNoticeAck, // 한 번 확인했으면 앱을 다시 켜도 팝업 재노출 X
       }),

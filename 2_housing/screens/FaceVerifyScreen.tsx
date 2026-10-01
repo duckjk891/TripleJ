@@ -11,10 +11,9 @@
 //   verifying → verified(생성 자동 재개) / stored_mismatch(재촬영) / live_mismatch(blocked) / error
 // 주의: 얼굴 이미지 데이터(바이트·dataURL)는 절대 콘솔에 출력하지 않는다.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as DocumentPicker from 'expo-document-picker';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
@@ -271,16 +270,49 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
     }
   };
 
+  // v3.271(대표 확정 2026-10-01): 얼굴 인증은 **실시간 촬영만** — 갤러리/파일 업로드 제외
+  // (타인 사진 업로드로 인증을 우회하는 구멍 차단).
+  //  · 웹: <input capture="user"> — 모바일 브라우저가 전면 카메라 촬영 UI로 직행(갤러리 선택지 없음).
+  //  · 네이티브: expo-image-picker launchCameraAsync(카메라 전용). 모듈 미탑재 구버전 빌드는 안내.
   const handleSelfiePick = async () => {
+    if (Platform.OS === 'web') {
+      try {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        (input as any).capture = 'user'; // 전면 카메라 직행 — 갤러리 차단
+        input.onchange = () => {
+          const f = input.files && input.files[0];
+          if (!f) return;
+          console.info('[FaceVerify] 셀피 촬영(웹 capture)', { sizeBytes: f.size });
+          runVerify({ uri: URL.createObjectURL(f), name: f.name || 'selfie.jpg', mimeType: f.type || 'image/jpeg' });
+        };
+        input.click();
+      } catch (err: any) {
+        console.error('[FaceVerify] 셀피 촬영 실패(웹)', { message: err?.message });
+        showAlert('오류', '카메라를 열지 못했어요. 다시 시도해주세요.');
+      }
+      return;
+    }
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      const ImagePicker = require('expo-image-picker');
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm?.granted) {
+        showAlert('권한 필요', '얼굴 인증은 실시간 촬영으로만 진행돼요. 카메라 권한을 허용해주세요.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        cameraType: ImagePicker.CameraType?.front ?? undefined,
+        allowsEditing: false,
+        quality: 0.85,
+      });
       if (res.canceled || !res.assets || !res.assets[0]) return;
       const a = res.assets[0];
-      console.info('[FaceVerify] 셀피 선택', { sizeBytes: a.size ?? -1 });
-      runVerify({ uri: a.uri, name: a.name || 'selfie.jpg', mimeType: a.mimeType });
+      console.info('[FaceVerify] 셀피 촬영(네이티브)', { sizeBytes: a.fileSize ?? -1 });
+      runVerify({ uri: a.uri, name: a.fileName || 'selfie.jpg', mimeType: a.mimeType || 'image/jpeg' });
     } catch (err: any) {
-      console.error('[FaceVerify] 셀피 선택 실패', { message: err?.message });
-      showAlert('오류', '셀피를 불러오지 못했어요. 다시 시도해주세요.');
+      console.error('[FaceVerify] 셀피 촬영 실패(네이티브)', { message: err?.message });
+      showAlert('오류', '카메라를 열지 못했어요. 앱을 최신 버전으로 업데이트한 뒤 다시 시도해주세요.');
     }
   };
 
@@ -360,12 +392,12 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
           <View style={styles.card}>
             <AppText style={styles.title}>본인 확인 셀피</AppText>
             <AppText style={styles.hint}>
-              생성에 사용할 사진이 본인인지 확인하기 위해, 지금 얼굴을 촬영하거나 방금 찍은 셀피를 올려주세요.
+              생성에 사용할 사진이 본인인지 확인하기 위해, 지금 얼굴을 직접 촬영해주세요. (갤러리 업로드는 쓸 수 없어요)
               촬영 원본은 대조 처리 후 즉시 파기돼요.
             </AppText>
             {photoUri ? <Image source={{ uri: photoUri }} style={styles.photoPreview} /> : null}
             <TouchableOpacity style={styles.primaryBtn} onPress={handleSelfiePick}>
-              <AppText style={styles.primaryBtnText}>📷 셀피 촬영/선택</AppText>
+              <AppText style={styles.primaryBtnText}>📷 지금 촬영하기</AppText>
             </TouchableOpacity>
           </View>
         );

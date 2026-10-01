@@ -167,15 +167,59 @@ export function webSwapSrcAndPlay(url: string): boolean {
     }
     const p = el.play();
     if (p && typeof (p as any).catch === 'function') {
-      (p as any).catch((err: any) =>
-        console.warn('[WebAudio] swap play 거부', { message: err?.message })
-      );
+      (p as any).catch((err: any) => {
+        console.warn('[WebAudio] swap play 거부', { name: err?.name, message: err?.message });
+        // v3.271 [BGWeb]: AbortError = load/교체 경합 — 의도는 재생이므로 짧게 1회 재시도
+        if (err?.name === 'AbortError' && el) {
+          setTimeout(() => {
+            el?.play().catch((e2: any) =>
+              console.warn('[WebAudio] swap 재시도 실패', { name: e2?.name, message: e2?.message }));
+          }, 120);
+        }
+      });
     }
     return true;
   } catch (err: any) {
     console.warn('[WebAudio] swap 실패', { message: err?.message });
     return false;
   }
+}
+
+/**
+ * v3.271 [BGWeb] — 탭 복귀 시 멈춘 재생 복구(대표 지적 "웹 백그라운드 끊김").
+ * iOS 사파리는 백그라운드에서 페이지 JS를 통째로 얼린다(원격 로그 실측: 멈춤 시점에
+ * 에러 라인조차 없음). 완전 해결은 네이티브(v1.3.1) 영역이고, 웹에서 가능한 복구는
+ * "깨어난 순간"뿐이다: ① 곡이 얼림 중 끝나 있으면(ended) 체인 핸들러를 수동 트리거해
+ * 다음 곡으로, ② 의도는 재생인데 paused 로 깨어났으면 같은 element 에 play() 재시도
+ * (과거 제스처로 활성화된 element — iOS 가 대체로 허용. 거부 시 상태만 전파).
+ * 반환: 'advanced' | 'resumed' | 'denied' | 'noop'.
+ */
+export function webResumeIfStalled(wantPlaying: boolean): 'advanced' | 'resumed' | 'denied' | 'noop' {
+  if (!el || !el.src) return 'noop';
+  if (el.ended) {
+    let handled = false;
+    try {
+      handled = endedHandler ? endedHandler() : false;
+    } catch (err: any) {
+      console.warn('[WebAudio] 복귀 ended 핸들러 오류', { message: err?.message });
+    }
+    console.warn('[WebAudio] 복귀 — 얼림 중 곡 종료 감지', { handled });
+    if (handled) return 'advanced';
+    dispatch({ didJustFinish: true, isPlaying: false, shouldPlay: false });
+    return 'advanced';
+  }
+  if (wantPlaying && el.paused) {
+    const p = el.play();
+    if (p && typeof (p as any).catch === 'function') {
+      (p as any).catch((err: any) => {
+        console.warn('[WebAudio] 복귀 재개 거부', { name: err?.name, message: err?.message });
+        dispatch(); // UI 를 실제 상태(일시정지)로 정합화
+      });
+    }
+    console.warn('[WebAudio] 복귀 — 재생 재개 시도');
+    return 'resumed';
+  }
+  return 'noop';
 }
 
 /** expo-av Audio.Sound 호환 서브셋 — 단일 element 위 얇은 프록시(세대 가드).
