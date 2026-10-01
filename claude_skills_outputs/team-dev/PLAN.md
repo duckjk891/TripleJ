@@ -7975,3 +7975,28 @@ tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2
 - 재생 귀속: playRecord payload source {type:'club_playlist', playlist_id, club_id}(playerStore queueSource — 큐 교체 시 설정·개별 재생 해제). 서버 record-play 검증(플리 소속·비멤버·30초 dedup) 후 +2, 유저·크루·일 상한 +30 RP. 멤버 자기 재생 제외, 게스트 미적립(MVP 보수).
 - 담기 +10: POST /clubs/{cid}/playlists/{pid}/play-start — 비멤버 인증 사용자, 유저·플리·KST일 1회 멱등.
 - 랭킹: GET /clubs/?sort=popular, CommunityScreen '인기 크루' 상위 5 + CrewLevelBadge(카드·홈).
+
+---
+
+## v3.274 — 2026-10-01 — 피드백3(16건)+DM 다중이미지 계약+온보딩·유튜브참조 의견 (팀: MAIDOL-core)
+
+### 요청 원문 요지
+① DM/신고 "메시지당 이미지 1장" 계약 변경(여러 장 한 메시지) ② 온보딩 의견: 비로그인 즉석 가사·작곡 체험→저장 시 정식 로그인, 로그인 간소화 ③ 작곡 디렉터 참고 음원에 유튜브 참조 추가 의견 ④ 피드백3.docx [37]~[52] 분석·조치.
+
+### Plan verification findings (0단계)
+- DM: 서버 dm_service.send_message 단일 image_object_name(keyword), 직렬화 image_url 단일. 관리자 웹은 이미지 필드 미사용. 앱 말풍선 단일 이미지 렌더(DmChatScreen renderMsg).
+- /tracks/my 기본 limit 20·상한 없음(tracks.py:1396) — [40][48][50]의 단일 근본 원인(진단 에이전트 확정). MyMusicScreen limit20·통계=배열길이(:780), VideoDirector 파라미터 없음(:375), FeedCompose·CoverGen limit50.
+- 참고 음원: presigned URL → Suno audio_weight 반영(generate.py reference_audio_url). 유튜브 참조=오디오 추출 필요 → ToS·저작권 리스크(의견으로 보고, 구현 보류).
+- [37] = v3.272(금일 배포: presigned 간헐 code4 → proxy 동기 복구)와 동일 증상 — 배포 후 재검 대상.
+
+### 변경 매트릭스
+| 항목 | 파일 | 내용 | 추적자 |
+|---|---|---|---|
+| ① DM 다중 | server dm.py·dm_service.py | image_object_names[≤5] 수용, 문서 sparse 배열+첫장 단일 유지, 직렬화 배열 동봉 | [dm] |
+| ① DM 다중 | DmChatScreen | 한 메시지 전송·말풍선 세로 스택 | [DmChat] |
+| [40][48] | MyMusicScreen | limit 200 + trackTotal=pagination.total | [MyMusic] |
+| [50] | VideoDirectorScreen | limit 200 | [VideoDirector] |
+| 동근 선제 | FeedCompose·CoverGen | limit 50→200 | — |
+| [39][43][46][47][49] | 진단 에이전트2 결과 따름 | — | — |
+| [45][44][42] | 진단 에이전트3 결과 따름(이중과금 최우선) | — | — |
+| ②③[38][41][51][52] | 의견·백로그 보고(구현은 대표 결정 후) | — | — |

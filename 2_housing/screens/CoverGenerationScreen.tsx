@@ -459,9 +459,17 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   );
   const resumeChatLenRef = useRef(initialStore.coverMessages?.length ?? 0);
 
+  // v3.274 [44]: 저장 전 이탈한 결과 보존본 — 생성 성공 시 store 에 기록(영속), 저장·처음부터에서 비움.
+  // 서버 cover_sessions 는 영구 보존이라 이 포인터만으로 복귀 시 이어서 다듬기 가능.
+  const lastResultAtMount = useRef(
+    !albumMode && !hasPendingGeneration && !recoverAtMount && !attachAtMount && !hasResumableDialogue
+      ? initialStore.coverLastResult
+      : null
+  ).current;
   // 화면 모드: dialogue(대화) / loading(생성중) / result(결과)
   const [mode, setMode] = useState<ScreenMode>(
-    hasPendingGeneration || recoverAtMount || attachAtMount ? 'loading' : 'dialogue'
+    hasPendingGeneration || recoverAtMount || attachAtMount ? 'loading'
+      : lastResultAtMount ? 'result' : 'dialogue'
   );
 
   // 대화 관련 — v3.202(H-⑤): 재진입 시 store 영속본으로 hydrate
@@ -481,7 +489,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     // v3.202(H-⑤): 재진입 시 곡 선택 복원 — coverTrackId는 handleTrackSelect부터 기록됨
     !albumMode && musicStore.coverTrackId
       ? ({ id: musicStore.coverTrackId, title: musicStore.coverTrackTitle || '' } as MyTrack)
-      : null
+      : lastResultAtMount?.trackId
+        ? ({ id: lastResultAtMount.trackId, title: lastResultAtMount.trackTitle || '' } as MyTrack)
+        : null
   );
   const [styleInput, setStyleInput] = useState('');
   const [trackLoading, setTrackLoading] = useState(!hasPendingGeneration);
@@ -546,6 +556,17 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 재진입 자동 재요청(재차감)을 막고, 대화·곡 선택·아티스트 선택은 보존 → 이어서 수정 가능)
   // v3.228 W2: 구현은 모듈 스코프 clearCoverContextStore(화면 밖 요청 완료에서도 1회 수행)
   const clearCoverContext = clearCoverContextStore;
+
+  // v3.274 [44]: 보존본 복귀 — 세션 포인터로 결과 화면 구성 + 전체 버전 이력 재조회
+  useEffect(() => {
+    if (!lastResultAtMount) return;
+    console.info('[Cover] 저장 전 결과 보존본 복귀', { sessionId: lastResultAtMount.sessionId });
+    setCoverSessionId(lastResultAtMount.sessionId);
+    setCoverObjectName(lastResultAtMount.objectName);
+    setCoverImageUrl(coverPreviewUrl(lastResultAtMount.objectName));
+    void refreshCoverHistory(lastResultAtMount.sessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 로딩/결과 관련
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
@@ -668,6 +689,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           }
           console.info('[CoverDraft] 처음부터 — 커버 컨텍스트 청소·새 대화');
           clearCoverContextStore();
+          useMusicStore.getState().setCoverLastResult(null); // v3.274 [44]
           resetCoverExtras();
           setShowResumeNotice(false);
           navigation.replace(route.name as any);
@@ -679,7 +701,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 트랙 조회 (앨범 모드는 곡 선택 단계가 없어 불필요)
   const loadTracks = async () => {
     try {
-      const res = await api.get('/tracks/my', { params: { page: 1, limit: 50, sort: 'created_at' } });
+      const res = await api.get('/tracks/my', { params: { page: 1, limit: 200, sort: 'created_at' } }); // v3.274: 50곡 초과 잘림 선제 해소
       setTracks(res.data.tracks || []);
     } catch { setTracks([]); }
     finally { setTrackLoading(false); }
@@ -773,6 +795,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
     setCurrentVersion(d.version);
     setViewVersion(d.version);
+    // v3.274 [44]: 결과 도달 = 보존본 기록(트랙 모드) — 저장 없이 이탈해도 복귀 시 이어서
+    if (!albumMode && d.sessionId && d.objectName) {
+      useMusicStore.getState().setCoverLastResult({
+        sessionId: d.sessionId, objectName: d.objectName,
+        trackId: selectedTrack?.id ? String(selectedTrack.id) : (useMusicStore.getState().coverTrackId || null),
+        trackTitle: selectedTrack?.title || useMusicStore.getState().coverTrackTitle || null,
+      });
+    }
     setMode('result');
     if (d.recovered && d.sessionId) void refreshCoverHistory(d.sessionId);
   };
@@ -2090,6 +2120,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         // (coverTrackId·대화 스냅샷)가 다음 저장 흐름과 얽혀 "옛 objectName을 다른 곡에
         // 재적용"하던 실사고(9-27 귀여워! 남자애→여자애 롤백, 17초 간격 재PATCH 실측) 차단.
         musicStore.clearCoverContext();
+        musicStore.setCoverLastResult(null); // v3.274 [44]: 저장 확정 = 보존본 소비
       } catch (err: any) {
         console.error('[Cover] 연결 실패:', err?.message);
       }

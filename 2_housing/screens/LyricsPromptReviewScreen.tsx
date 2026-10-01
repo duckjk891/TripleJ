@@ -328,11 +328,16 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
         animationType="slide"
         onRequestClose={() => setEditingField(null)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setEditingField(null)}
-        >
+        {/* v3.274 [49]: 시트가 닫기 터치영역의 자식이라 시트 안 비버튼 영역(제목·여백·웹 입력칸) 탭이
+            닫기로 흡수돼 "창이 그냥 내려가서 입력 불가"가 됐다. AnswerEditModal(v3.246 T2) 패턴대로
+            백드롭을 형제 absoluteFill 로 분리 — 시트 내부 탭은 백드롭에 닿지 않는다. */}
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setEditingField(null)}
+            accessibilityLabel="수정 창 닫기"
+          />
           {/* v3.217 ④: 하단 시트 insets.bottom 반영 — 고정 40이면 iOS 웹(사파리 툴바·홈 인디케이터)
               및 제스처 기기에서 하단이 가려진다(PLAN F4 예외 2곳 중 1) */}
           <View style={[styles.modalContent, { paddingBottom: Math.max(40, insets.bottom + 20) }]}>
@@ -421,7 +426,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
               </>
             )}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </KeyboardAvoidingView>
   );

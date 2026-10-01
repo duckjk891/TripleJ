@@ -187,6 +187,16 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   // v3.93: 생성 이력에서 이미 트랙 확정(발매)된 생성으로 진입 시 재저장(중복 트랙) 방지
   const [isSaved, setIsSaved] = useState(!!route.params?.alreadySaved);
+  // v3.274 [46]: RN7 은 같은 MusicResult 를 재사용(push 안 함) — 발매된 곡을 보던 화면이
+  // "완성 알림 [지금 보기]"로 새 곡을 받으면 isSaved=true 가 잔존해 A/B 비교가 통째로 숨었다.
+  // 곡(generationId)·진입 파라미터가 바뀌면 저장/variant 상태를 재초기화한다.
+  const alreadySavedParam = !!route.params?.alreadySaved;
+  useEffect(() => {
+    if (__DEV__) console.info('[MusicResult] 진입 상태 재초기화', { generationId: store.generationId, alreadySaved: alreadySavedParam });
+    setIsSaved(alreadySavedParam);
+    setVariantCount(1);
+    setSelectedVariant(0);
+  }, [store.generationId, alreadySavedParam]);
   // v3.102: useVoiceConverted(Kits 변환본 발매, v3.98 A-8) 경로 제거 — v216 서버 기능 삭제 확정
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);

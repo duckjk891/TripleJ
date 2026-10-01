@@ -372,7 +372,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     (async () => {
       try {
         console.info('[VideoDirector] calling /tracks/my');
-        const res = await api.get('/tracks/my');
+        // v3.274 [50]: 파라미터 없음 = 서버 기본 20곡 → 최근 곡만 보이던 결함. 전체(200) 수용
+        const res = await api.get('/tracks/my', { params: { page: 1, limit: 200, sort: 'created_at' } });
         const list: MyTrack[] = (res.data?.tracks || res.data || []).map((t: any) => ({
           id: String(t.id), title: t.title, cover_image: t.cover_image,
           cover_image_url: t.cover_image_url, is_public: t.is_public !== false,

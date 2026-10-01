@@ -365,6 +365,16 @@ export default function PlayerScreen({ route, navigation }: any) {
     return () => { alive = false; };
   }, [trackIdForComments]);
 
+  // v3.274 [39]③: 곡 댓글 알림 경유(openComments 파라미터) — 진입 시 댓글 탭 자동 오픈.
+  // 같은 Player 재사용 진입도 param 변화로 재실행되도록 값 자체를 deps 로 둔다.
+  const openCommentsParam = route.params?.openComments;
+  useEffect(() => {
+    if (openCommentsParam) {
+      setDetailTab('comments');
+      setShowDetails(true);
+    }
+  }, [openCommentsParam, trackIdForComments]);
+
   // v3.178(대표): 댓글 액션 → 하단 상세토글을 댓글 탭으로 연다(미니플레이어 축소 형태)
   const openComments = () => {
     if (__DEV__) console.info('[PlayerScreen] openComments', { trackId: trackIdForComments });

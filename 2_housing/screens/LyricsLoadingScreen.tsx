@@ -277,11 +277,23 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
             });
             return;
           }
+          // v3.274 [43]: 402(별 부족)는 오류 화면이 아니라 안내 팝업 후 요청서 복귀 —
+          // 작곡 선차감 뒤 작사 시 잔액 부족이 "앗, 문제가 생겼어요"로 보이던 경로 차단.
+          if (status === 402) {
+            if (isMounted) {
+              showAlert('스타 부족', err?.response?.data?.error || '스타(⭐)가 부족해요. 출석체크·추천으로 스타를 모아보세요.');
+              leaveBack();
+            }
+            return;
+          }
           let errorMsg: string;
           if (status === 401) {
             errorMsg = '로그인이 필요합니다. 설정에서 다시 로그인해주세요.';
           } else {
+            // v3.274 [43]: 서버 4xx 본문 키는 error — detail 만 읽어 "Request failed …" 원문이
+            // 노출되던 결함. error → detail → message 순.
             errorMsg =
+              err?.response?.data?.error ||
               err?.response?.data?.detail ||
               err?.message ||
               '가사 생성에 실패했습니다.';

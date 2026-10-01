@@ -5414,3 +5414,21 @@ ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback
 | 7 | 정적(범위 7파일·Alert/AIDOL/이모지/paddingTop/비밀값 0·[Club] 서버 로그 8자) | PASS |
 | 8 | 회귀 v3243·v3241-tester·v3239 | PASS |
 - **판정: 조건부 FAIL — BUG-1(clubService.ts:63·71 슬래시)·BUG-2(getClub 언랩) 앱 2줄 수정 후 하네스 재실행(t_cross 의 언랩 등가 검증 S3-7·S3-8 이 수정안 유효성 선검증 완료) 시 배포 가능. 서버 스테이징은 결함 0 — 수정은 앱 쪽만.**
+
+---
+
+## v3.274 테스트플랜
+
+### ① DM 다중 이미지
+- [api] 단일 필드만(구 앱 호환): image_object_name 1장 → 200, 문서에 배열 없음, 직렬화 image_urls=1원소. Given 기존 대화 / When 구 계약 전송 / Then 기존과 동일 스키마+배열 동봉.
+- [api] 배열 3장 → 200, 문서 image_object_names=3, image_object_name=첫 장, image_urls=3.
+- [api] 6장 → 400(상한), 타인 prefix 1장 포함 → 400(전체 거부).
+- [api] 어린이 계정 배열 전송 → 403 child_restricted(dm_image).
+- [unit] 앱 dmImageUris: image_urls 배열 우선, 구 서버(단일만) 폴백, null 필터.
+- [e2e] 웹 CS 대화에서 5장 선택→업로드 칩 5개→전송 1회→말풍선 1개에 5장 스택. (로그인 세션 필요 — 운영 크리덴셜 미입력 원칙상 대표 확인 항목)
+### [40][48][50] 목록 상한
+- [api] /tracks/my?limit=200 → 20 초과 사용자 전체 반환, pagination.total=전체 수.
+- [unit] MyMusic 발매곡 지표=pagination.total(배열 길이 아님).
+- [e2e] 27곡 사용자(제보자 데이터)로 마이페이지 목록·지표 27, 영상 디렉터 선택 목록 전체.
+### 회귀
+- [api] DM 텍스트 전용 전송 불변. 피드 이미지 5장 발행(전 라운드 v3.273) 불변. /tracks/my 호출 4화면 렌더 정상(tsc+웹 스모크).

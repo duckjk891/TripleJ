@@ -111,16 +111,22 @@ export default function NotificationsScreen() {
     } else if (n.type === 'star') {
       navigation.navigate('StarHistory');
     } else if (n.target_type === 'club_promo' && n.target_id) {
-      // v3.261: 크루 홍보 알림 → 해당 크루 홈(기존 target_type 분기 관행 그대로 1분기 추가 —
-      // 렌더는 기존 preview 경로 무수정)
+      // v3.261→v3.274 [39]②: ClubHome 은 MainTabs 숨김 탭 — RN7 은 중첩 네비게이션이 기본 꺼져 있어
+      // 최상위 'ClubHome' 직접 navigate 가 조용히 무시됐다(알림 탭 무반응). 탭 경유로 명시.
       if (__DEV__) console.info('[Notifications] open club_promo', { clubId: n.target_id });
-      navigation.navigate('ClubHome', { clubId: n.target_id });
+      navigation.navigate('MainTabs', { screen: 'ClubHome', params: { clubId: n.target_id } });
     } else if (n.target_type === 'track' && n.target_id) {
-      // v3.177: 곡 댓글 알림 → 해당 곡 플레이어(상세시트 댓글 탭에서 확인)
+      // v3.177→v3.274 [39]③: 곡 댓글 알림 — 플레이어만 열리고 댓글이 안 보이던 결함.
+      // openComments 파라미터로 플레이어가 댓글 탭을 바로 연다.
       if (__DEV__) console.info('[Notifications] open track', { trackId: n.target_id });
-      navigation.navigate('Player', { track: { id: n.target_id } });
+      navigation.navigate('Player', { track: { id: n.target_id }, openComments: true });
+    } else if (n.target_id) {
+      // v3.274 [39]①: 피드 댓글·답글·좋아요·새 피드 알림 → 해당 피드 상세(종전: 피드 탭 목록
+      // — 피드 탭에서 열면 "전환 안 됨"으로 보였다). 서버가 target_id 에 피드 id 를 담아 보낸다.
+      if (__DEV__) console.info('[Notifications] open feed', { feedId: n.target_id });
+      navigation.navigate('FeedDetail', { feedId: n.target_id });
     } else {
-      navigation.navigate('MainTabs', { screen: 'Feed' }); // 피드 관련 알림 → 피드 탭
+      navigation.navigate('MainTabs', { screen: 'Feed' }); // id 없는 일반 알림 → 피드 탭
     }
   };
 

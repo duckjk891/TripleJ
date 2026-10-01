@@ -445,8 +445,13 @@ function MainTabs() {
         component={StudioNavigator}
         listeners={({ navigation }) => ({
           // Studio 탭 클릭 시 항상 Map으로 리셋 (Dialogue/ArtistInput 등에 갇혀있어도 Map 복귀)
+          // v3.274 [43]: RN7 navigate 는 기존 Map 으로 "돌아가지 않고" 새 Map 을 쌓는다 —
+          // 진행 화면(MusicLoading 등) 위에 Map 이 중첩돼 스택이 비정상 누적되던 결함. pop 복귀로 교정.
           tabPress: () => {
-            navigation.navigate('Studio', { screen: 'Map' });
+            const studioState = navigation.getState()?.routes?.find((r: any) => r.name === 'Studio')?.state;
+            const hasMapBelow = !!studioState?.routes?.some((r: any) => r.name === 'Map');
+            if (hasMapBelow) navigation.navigate('Studio', { screen: 'Map', pop: true } as any);
+            else navigation.navigate('Studio', { screen: 'Map' });
           },
         })}
         options={({ navigation }) => ({

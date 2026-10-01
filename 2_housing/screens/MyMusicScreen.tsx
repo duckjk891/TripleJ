@@ -101,6 +101,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const [activeTab, setActiveTab] = useState<MyMusicTab>('music');
   const [musicSub, setMusicSub] = useState<MusicSubTab>('tracks'); // v3.115: 곡·앨범 탭 하위 칩
   const [tracks, setTracks] = useState<Track[]>([]);
+  // v3.274 [48]: 발매곡 총수(서버 pagination.total) — 목록 limit과 무관한 정답 숫자
+  const [trackTotal, setTrackTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
@@ -143,10 +145,13 @@ export default function MyMusicScreen({ navigation }: any) {
     }
     try {
       const res = await api.get('/tracks/my', {
-        params: { page: 1, limit: 20, sort: 'created_at' },
+        // v3.274 [40][48]: 기본 20장 잘림 → 목록·통계가 최근 20곡 기준이 되던 결함. 200까지 수용
+        params: { page: 1, limit: 200, sort: 'created_at' },
       });
       const list = res.data.tracks || [];
       setTracks(list);
+      // [48] 발매곡 지표는 잘린 배열 길이 대신 서버 집계(pagination.total — 비공개 포함) 우선
+      if (typeof res.data?.pagination?.total === 'number') setTrackTotal(res.data.pagination.total);
       if (list.length) syncLikes(list.map((t: Track) => String(t.id)));
     } catch (e) {
       console.error('[MyMusic] fetch error', e);
@@ -777,7 +782,7 @@ export default function MyMusicScreen({ navigation }: any) {
           {/* v3.115: 지표 5종 — 발매곡/앨범/재생/팔로워/팔로잉 (레벨 지표 제거). 5열이라 라벨은 짧게 */}
           <View style={styles.growthStatsRow}>
             <TouchableOpacity style={styles.growthStat} activeOpacity={0.6} onPress={() => { setActiveTab('music'); setMusicSub('tracks'); }} accessibilityLabel="발매곡 상세 보기">
-              <AppText style={styles.growthStatValue}>{tracks.length}</AppText>
+              <AppText style={styles.growthStatValue}>{trackTotal ?? tracks.length}</AppText>
               <AppText style={styles.growthStatLabel}>발매곡</AppText>
             </TouchableOpacity>
             <View style={styles.growthStatDivider} />

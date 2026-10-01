@@ -131,7 +131,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       setTracksLoading(true);
       if (__DEV__) console.info('[FeedCompose] 내 곡 목록 조회');
       try {
-        const res = await api.get('/tracks/my', { params: { page: 1, limit: 50 } });
+        const res = await api.get('/tracks/my', { params: { page: 1, limit: 200 } }); // v3.274: 50곡 초과 사용자 잘림 선제 해소
         if (!alive) return;
         setMyTracks(res.data?.tracks || res.data || []);
       } catch (err: any) {

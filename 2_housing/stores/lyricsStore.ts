@@ -32,6 +32,9 @@ interface LyricsState {
   sourceAssetId: string;
   /** v3.219 [LyricsDraft]: 진행 중 작사 대화 스텝(0=시작 전) — 재진입 이어가기 판별 키 */
   draftStep: number;
+  /** v3.274 [42]: draft 출처('makeLike'=느낌 프리셋 자동 생성)와 프리셋 도달 step */
+  draftOrigin: '' | 'makeLike';
+  draftOriginStep: number;
   /** v3.219 [LyricsDraft]: 진행 중 작사 대화 전체(텍스트 답변 포함 — 2026-09-07 정책상 영속) */
   draftChat: LyricsDraftChatMessage[];
   /** v3.229 [LyricsDraft]: draft를 시작할 때의 창작 모드(일반/저작권 등록) — 영속.
@@ -58,6 +61,8 @@ interface LyricsState {
   setSourceAssetId: (v: string) => void;
   setDraftStep: (v: number) => void;
   setDraftChat: (v: LyricsDraftChatMessage[]) => void;
+  /** v3.274 [42]: draft 출처 — 'makeLike'(느낌 프리셋 자동 생성)·''(사용자 작성). originStep=프리셋 도달 step */
+  setDraftOrigin: (origin: '' | 'makeLike', originStep: number) => void;
   setDraftCreationMode: (v: 'standard' | 'copyright' | null) => void;
   setIsLoading: (v: boolean) => void;
   setError: (v: string | null) => void;
@@ -84,6 +89,8 @@ const initialState = {
   sourceAssetId: '',
   draftStep: 0,
   draftChat: [] as LyricsDraftChatMessage[],
+  draftOrigin: '' as '' | 'makeLike',
+  draftOriginStep: 0,
   draftCreationMode: null as 'standard' | 'copyright' | null,
   isLoading: false,
   error: null,
@@ -116,6 +123,7 @@ export const useLyricsStore = create<LyricsState>()(
       setSourceAssetId: (sourceAssetId) => set({ sourceAssetId }),
       setDraftStep: (draftStep) => set({ draftStep }),
       setDraftChat: (draftChat) => set({ draftChat }),
+      setDraftOrigin: (draftOrigin, draftOriginStep) => set({ draftOrigin, draftOriginStep }),
       setDraftCreationMode: (draftCreationMode) => set({ draftCreationMode }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setError: (error) => set({ error }),
@@ -136,6 +144,7 @@ export const useLyricsStore = create<LyricsState>()(
         generatedTitle: s.generatedTitle, generatedLyrics: s.generatedLyrics,
         sourceAssetId: s.sourceAssetId,
         draftStep: s.draftStep, draftChat: s.draftChat,
+        draftOrigin: s.draftOrigin, draftOriginStep: s.draftOriginStep,
         // v3.229: 창작 모드도 draft와 함께 영속(재시작 후 1탭 복귀에서도 모드 유지)
         draftCreationMode: s.draftCreationMode,
       }),

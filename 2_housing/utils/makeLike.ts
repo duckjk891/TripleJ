@@ -43,11 +43,27 @@ export interface MakeLikeTrackLike {
  * 대화 순서상 분위기(step 1)는 장르(step 0) 선답 이후에만 선답 가능 — 장르 폴백 시 분위기도 미지정
  * ("답변 버블 없는 숨은 store 값" 금지 — v3.202 H-⑤ 괴리 차단 원칙).
  */
+// v3.274 [42]: 자유 표기 장르 정규화 — 실측(최근 106곡 중 24곡)에서 'Dance Pop'·'K-Pop'·'하우스' 등
+// 선택지 밖 표기가 24%라 프리셋이 "곡마다 무작위"처럼 실패했다. 소문자·공백/하이픈 제거 후 별칭 매핑.
+const GENRE_ALIASES: Record<string, string> = {
+  dancepop: '댄스', dance: '댄스', kpop: '댄스', pop: '댄스', darkpop: '댄스',
+  hiphop: '힙합', rap: '힙합', rnb: 'R&B', ballad: '발라드', trot: '트로트',
+  indie: '인디', indiepop: '인디팝', lofi: '인디', citypop: '시티팝',
+  rock: '록', folk: '포크', acoustic: '포크', jazz: '재즈',
+  edm: 'EDM', house: 'EDM', 하우스: 'EDM', classical: '클래식', classic: '클래식',
+};
+function normalizeGenreAlias(raw: string, options: string[]): string {
+  if (options.includes(raw)) return raw;
+  const key = raw.toLowerCase().replace(/[\s\-&]/g, '');
+  const mapped = GENRE_ALIASES[key];
+  return mapped && options.includes(mapped) ? mapped : '';
+}
+
 export function resolveMakeLikePreset(track: MakeLikeTrackLike | null | undefined): MakeLikePreset {
   const pick = (v: unknown, options: string[]): string => {
     const first = Array.isArray(v) ? v[0] : v;
     const s = typeof first === 'string' ? first.trim() : '';
-    return s && options.includes(s) ? s : '';
+    return s ? normalizeGenreAlias(s, options) || (options.includes(s) ? s : '') : '';
   };
   const genre = pick(track?.genre, GENRE_OPTIONS);
   const mood = genre ? pick(track?.mood, MOOD_OPTIONS) : '';
@@ -57,8 +73,13 @@ export function resolveMakeLikePreset(track: MakeLikeTrackLike | null | undefine
 /** 진행 중 창작물 존재 여부 — 작사 draft·완성 가사(요청서 포함)·작곡 draft. 덮어쓰기 확인 게이트. */
 export function hasCreationWorkInProgress(): boolean {
   const s = useLyricsStore.getState();
+  // v3.274 [42]: 직전 '이 곡 느낌' 버튼이 만든 프리셋 초안(사용자 미답 — draftStep이 프리셋 도달
+  // step 그대로)은 "진행 중 작업"이 아니다 — 종전엔 이 초안 때문에 다음 곡부터 곡과 무관하게
+  // 덮어쓰기 확인 창이 떠 "두 화면 중 무작위"로 보였다.
+  const untouchedMakeLike =
+    (s as any).draftOrigin === 'makeLike' && s.draftStep <= ((s as any).draftOriginStep ?? 0);
   return (
-    isLyricsDraftResumable(s) ||
+    (!untouchedMakeLike && isLyricsDraftResumable(s)) ||
     !!s.generatedPrompt ||
     !!s.generatedLyrics ||
     !!getResumableComposeDraft()
@@ -72,7 +93,7 @@ export function hasCreationWorkInProgress(): boolean {
 export function applyMakeLikePreset(preset: MakeLikePreset): number {
   const s = useLyricsStore.getState();
   s.reset(); // "느낌"만 가져온다 — 이전 작업본·결과물 전부 비움(호출측이 덮어쓰기 확인 담당)
-  if (!preset.genre) return 0; // 폴백: 프리셋 없이 1번 질문부터(흐름 정상 진행)
+  if (!preset.genre) { s.setDraftOrigin('makeLike', 0); return 0; } // 폴백도 출처 표식(미답 초안 비간주)
   s.setGenre(preset.genre);
   const chat: LyricsDraftChatMessage[] = [
     { type: 'director', text: GENRE_QUESTION },
@@ -88,6 +109,7 @@ export function applyMakeLikePreset(preset: MakeLikePreset): number {
   }
   s.setDraftStep(step);
   s.setDraftChat(chat);
+  s.setDraftOrigin('makeLike', step); // v3.274 [42]: 출처 표식 — 사용자가 답하면 step 증가로 자동 '진행 중' 승격
   // v3.229 관행: draft에는 창작 모드를 함께 저장(복귀 시 모드 선택 스킵) — 현재 sticky 모드 그대로
   s.setDraftCreationMode(useMusicStore.getState().creationMode);
   return step;

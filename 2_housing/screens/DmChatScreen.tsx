@@ -37,6 +37,9 @@ interface DmMessage {
   // proxy 모드면 상대경로·presign 모드면 절대 URL — feed image 블록 관행과 동일)
   image_object_name?: string | null;
   image_url?: string | null;
+  // v3.274: 다중 이미지(서버가 단일도 1원소 배열로 승격 동봉) — 렌더는 배열 단일화
+  image_object_names?: string[] | null;
+  image_urls?: (string | null)[] | null;
 }
 
 // v3.207(⑥): 첨부 선검증 — 백엔드 /upload/dm-image 계약(feed-image 복제: jpg/png/webp ≤15MB)과 짝
@@ -55,11 +58,13 @@ interface AttachedImage {
   objectName?: string;
 }
 
-/** 이미지 메시지 → 표시용 절대 URL (상대경로면 BACKEND_BASE_URL 접두 — feedImageUri 관행) */
-const dmImageUri = (m: Pick<DmMessage, 'image_url'>): string | null => {
-  const u = m?.image_url;
-  if (u) return u.startsWith('http') ? u : `${BACKEND_BASE_URL}${u}`;
-  return null;
+/** 이미지 메시지 → 표시용 절대 URL 목록 (상대경로면 BACKEND_BASE_URL 접두 — feedImageUri 관행).
+ * v3.274: image_urls 배열 우선, 없으면(구 서버) 단일 image_url 1원소 폴백. */
+const dmImageUris = (m: Pick<DmMessage, 'image_url' | 'image_urls'>): string[] => {
+  const raw = m?.image_urls?.length ? m.image_urls : m?.image_url ? [m.image_url] : [];
+  return raw
+    .filter((u): u is string => !!u)
+    .map((u) => (u.startsWith('http') ? u : `${BACKEND_BASE_URL}${u}`));
 };
 
 /** 말풍선 이미지 — 가로폭 고정·비율 유지(getSize, 극단 비율 클램프 — FeedImageBlock 관행 축소판) */
@@ -218,31 +223,21 @@ export default function DmChatScreen() {
       showAlert('안내', '업로드에 실패한 이미지가 있어요. 썸네일을 눌러 다시 시도하거나 X로 제거해주세요.');
       return;
     }
-    // v3.273: 서버 계약(메시지당 image 1장) 유지 — 1번째 메시지 = 텍스트+1장, 나머지는 이미지 단독 연속 발송
+    // v3.274: 서버 계약 확장(메시지당 image_object_names 최대 5장) — 한 메시지로 묶어 전송
     const objectNames = attachedImages.filter((i) => i.status === 'done' && i.objectName).map((i) => i.objectName!);
     if (!t && !objectNames.length) return;
     setSending(true);
     if (__DEV__) console.info('[DmChat] 전송', { cid, len: t.length, images: objectNames.length });
-    let sent = 0;
     try {
-      const count = Math.max(1, objectNames.length);
-      for (let i = 0; i < count; i++) {
-        const res = await api.post(`/dm/conversations/${cid}/messages`, {
-          ...(i === 0 && t ? { text: t } : {}),
-          ...(objectNames[i] ? { image_object_name: objectNames[i] } : {}),
-        });
-        const m = res.data?.message;
-        if (m) setMessages((prev) => [...prev, m]);
-        sent++;
-      }
+      const res = await api.post(`/dm/conversations/${cid}/messages`, {
+        ...(t ? { text: t } : {}),
+        ...(objectNames.length ? { image_object_names: objectNames } : {}),
+      });
+      const m = res.data?.message;
+      if (m) setMessages((prev) => [...prev, m]);
       setText('');
       setAttachedImages([]);
     } catch (err: any) {
-      // 중간 실패 — 보낸 분량은 제거하고 남은 이미지만 보존(텍스트는 1번째에 이미 나감)
-      if (sent > 0) {
-        setText('');
-        setAttachedImages((prev) => prev.filter((i) => i.status === 'done').slice(sent));
-      }
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
       // v3.232 B2: 서버 403 child_restricted(본문 또는 detail 안의 code)는 api 인터셉터가 이미 안내 — 자체 팝업 생략
@@ -291,14 +286,18 @@ export default function DmChatScreen() {
 
   const renderMsg = ({ item }: { item: DmMessage }) => {
     const mine = user && String(item.sender_id) === String(user.id);
-    // v3.207(⑥): 이미지 메시지 — 이미지 위·텍스트 아래(텍스트 없는 이미지 단독 메시지 지원)
-    const imgUri = dmImageUri(item);
+    // v3.207(⑥)→v3.274: 이미지 메시지 — 한 말풍선에 이미지 세로 스택(최대 5장), 텍스트는 아래
+    const imgUris = dmImageUris(item);
     return (
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubblePeer]}>
-          {imgUri ? <DmMessageImage uri={imgUri} /> : null}
+          {imgUris.map((u, i) => (
+            <View key={`${item.id}-img-${i}`} style={i > 0 ? { marginTop: spacing.xs } : null}>
+              <DmMessageImage uri={u} />
+            </View>
+          ))}
           {item.text ? (
-            <AppText variant="footnote" style={[imgUri ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
+            <AppText variant="footnote" style={[imgUris.length ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
               {item.text}
             </AppText>
           ) : null}

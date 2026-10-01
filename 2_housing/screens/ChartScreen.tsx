@@ -32,6 +32,8 @@ import { startMakeLikeFlow } from '../utils/makeLike';
 const TUTORIAL_STEPS: TutorialStep[] = [
   { title: '신곡·차트 탭', desc: '최신 발매된 곡이나 인기곡을 탭하여 확인해보세요.', anchorKey: 'chart-tabs' },
   { title: '곡 더보기', desc: '클릭하여 재생목록에 추가하거나 플레이리스트에 담아보세요.', anchorKey: 'chart-row-more' },
+  // v3.274 [41]: 등급 설명 — anchor 없는 카드형(첫 접속 1회, 피드백3 요청 문안)
+  { title: '아티스트 등급', desc: '아티스트는 연습생 → 신인 → 루키 → 라이징 → 아이돌 순으로 성장해요.\n각 등급 안에서는 5단계에서 시작해 1단계가 정점이에요. (예: 연습생 5 → 연습생 1 → 신인 5)' },
 ];
 
 // v3.213: 상단바 튜토리얼 6스텝 — 차트 화면 호스트, 로그인 시에만(enabled=!!user).
@@ -44,6 +46,8 @@ const TOPBAR_TUTORIAL_STEPS: TutorialStep[] = [
   { title: '알림', desc: '클릭하여 새 피드나 공지를 확인해보세요.', anchorKey: 'topbar-noti' },
   { title: 'DM', desc: '클릭하여 나에게 온 메시지나 요청을 확인하고 다른 사용자 또는 관리자에게 연락할 수 있어요.', anchorKey: 'topbar-dm' },
   { title: '마이페이지', desc: '내 기획사를 관리할 수 있는 페이지로 이동할 수 있어요.', anchorKey: 'topbar-mypage' },
+  // v3.274 [41]: 등급 설명 — 로그인 첫 진입 사용자도 동일 안내(카드형)
+  { title: '아티스트 등급', desc: '아티스트는 연습생 → 신인 → 루키 → 라이징 → 아이돌 순으로 성장해요.\n각 등급 안에서는 5단계에서 시작해 1단계가 정점이에요. (예: 연습생 5 → 연습생 1 → 신인 5)' },
 ];
 
 // v3.207 ②: 신곡 탭 발매일 footer — created_at 상대 표기(서버 무수정, 필드 없으면 미표기)

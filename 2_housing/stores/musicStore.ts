@@ -230,6 +230,10 @@ interface MusicState {
   /** v3.219: 커버 대화 컨텍스트 일괄 청소 — CoverGenerationScreen clearCoverContext와 동일 필드.
    *  성공 확정(화면측)·로그아웃(authStore) 공용. */
   clearCoverContext: () => void;
+  /** v3.274 [44]: 저장 전 커버 결과 보존 — 생성 성공 시 기록, 곡 저장·처음부터에서만 비움(영속).
+   *  서버 cover_sessions 는 영구 보존이므로 이 포인터만 있으면 복귀 시 이어서 다듬기 가능. */
+  coverLastResult: { sessionId: string; objectName: string; trackId: string | null; trackTitle: string | null } | null;
+  setCoverLastResult: (v: { sessionId: string; objectName: string; trackId: string | null; trackTitle: string | null } | null) => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
   setSavedForGenerationId: (id: string | null) => void;
@@ -339,6 +343,8 @@ export const useMusicStore = create<MusicState>()(persist((set) => ({
   setVideoDraft: (videoDraft) => set({ videoDraft }),
   clearVideoDraft: () => set({ videoDraft: null }),
   setVideoStylePrefs: (videoStylePrefs) => set({ videoStylePrefs }),
+  coverLastResult: null,
+  setCoverLastResult: (coverLastResult) => set({ coverLastResult }),
   clearCoverContext: () =>
     set({
       coverTrackId: null,
@@ -376,5 +382,5 @@ export const useMusicStore = create<MusicState>()(persist((set) => ({
   name: 'music-drafts',
   storage: createJSONStorage(() => AsyncStorage),
   // draft 2종만 영속 — 그 외 상태는 세션 전용
-  partialize: (s) => ({ composeDraft: s.composeDraft, videoDraft: s.videoDraft }),
+  partialize: (s) => ({ composeDraft: s.composeDraft, videoDraft: s.videoDraft, coverLastResult: s.coverLastResult }),
 }));

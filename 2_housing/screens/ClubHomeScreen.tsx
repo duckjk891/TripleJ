@@ -1082,7 +1082,9 @@ export default function ClubHomeScreen() {
       {/* 클럽 플레이리스트 만들기 — PlaylistScreen 이름 변경 모달 관행(KAV padding) */}
       <Modal visible={showPlCreate} transparent animationType="fade" onRequestClose={() => setShowPlCreate(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
-          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setShowPlCreate(false)}>
+          {/* v3.274 [49]: 카드 내부 탭 닫힘 결함 — 백드롭을 형제 absoluteFill 로 분리(AnswerEditModal 패턴) */}
+          <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
+            <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setShowPlCreate(false)} accessibilityLabel="만들기 닫기" />
             <View style={styles.modalCard}>
               <AppText style={styles.modalTitle}>{`${CLUB_LABEL} 플레이리스트 만들기`}</AppText>
               <TextInput
@@ -1103,7 +1105,7 @@ export default function ClubHomeScreen() {
                 </View>
               </View>
             </View>
-          </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 

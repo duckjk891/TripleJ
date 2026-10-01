@@ -285,7 +285,9 @@ export default function PlaylistScreen({ navigation }: any) {
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
         {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowRenameModal(false)}>
+        {/* v3.274 [49]: 카드 내부(제목·여백·웹 입력칸) 탭이 닫기로 흡수되던 결함 — 백드롭을 형제 absoluteFill 로 분리(AnswerEditModal 패턴) */}
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setShowRenameModal(false)} accessibilityLabel="이름 변경 닫기" />
           <View style={{ backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 20, width: '80%' }}>
             <AppText style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>플레이리스트 이름 변경</AppText>
             <TextInput
@@ -305,7 +307,7 @@ export default function PlaylistScreen({ navigation }: any) {
               </View>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
         </KeyboardAvoidingView>
       </Modal>
 
