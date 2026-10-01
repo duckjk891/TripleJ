@@ -3738,3 +3738,13 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
   3) **복귀 복구 보강**: webResumeIfStalled가 에러 상태로 깨어나면 proxy 재로드.
 - 검증: 운영(app.maidol.ai.kr)에서 재생 중 src를 404로 강제 교체 → 콘솔 `media error → proxy 동기 복구 시도 {code: 4}` → src가 stream-proxy로 교체·재생 재개(readyState 4, buffered 157s) 실측. tsc 통과. 웹 배포 완료(라이브 번들 마커 확인).
 - 참고 실측: stream-proxy 열린 Range(bytes=0-) TTFB 0.1~5.2s 변동(단일 워커 경합 추정 — server-perf-diagnosis 참조). 곡 간 전환 체감 지연로 재발 시 proxy 선두 구간 캐시/워커 증설 검토.
+
+---
+
+## v3.273 — 2026-10-01 — 이미지 다중 첨부: 한 번에 최대 5장 (서버·웹 배포 완료)
+
+- 대상 4면 실측: 피드·공지 = FeedComposeScreen(공용, POST /upload/feed-image, 총 4장 상한) / DM·신고 증빙 = DmChatScreen(공용, POST /upload/dm-image, 1장 고정). 그 외 피커(프로필·커버·앨범 등)는 단일 이미지가 맞는 용도라 불변.
+- 앱: 두 화면 DocumentPicker `multiple: true` — 남은 슬롯만큼 수용, 형식(jpg/png/webp)·15MB 불량과 초과분은 묶어서 1회 안내, 장별 병렬 업로드.
+  - 피드·공지 MAX_FEED_IMAGES 4→5. DM 단일 상태 → 최대 5장 스트립(장별 재시도·X 제거). **DM 서버 계약(메시지당 image 1장) 불변** — 전송 시 1번째 메시지에 텍스트+1장, 나머지 이미지 단독 연속 발송(중간 실패 시 미발송분 보존). dm_service 레이트리밋 없음 실측.
+- 서버: feeds.py `MAX_IMAGE_BLOCKS` 4→5 (server_staging_v3273, _orig md5 일치 확인 후 docker 재빌드 — daily/tracks 200 헬스 확인).
+- 검증: tsc 통과, 라이브 번들에 두 피커 `multiple` 플래그·신규 문구 확인. 실 파일 다중 선택은 로그인 세션 필요(운영 크리덴셜 미입력 원칙) — 대표 1분 확인 권장. 네이티브(APK/AAB)는 차기 빌드에 포함.
