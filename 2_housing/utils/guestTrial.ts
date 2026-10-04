@@ -193,8 +193,39 @@ export async function guestComposeStreamUrl(genId: string, variant = 0): Promise
 }
 
 // ── 대기 중 게스트 생성 id 영속(웹 소셜 로그인 리로드 대비) ──
-export async function setGuestPendingGen(genId: string): Promise<void> {
+// v3.280(대표): 미가입 체험 곡은 이 기기에 7일 보관 — 작업실 하단 카드로 다시 듣기, 이후 서버도 410.
+export const GUEST_SONG_META_KEY = 'maidol_guest_song_meta_v1';
+export const GUEST_SONG_RETENTION_DAYS = 7;
+export interface GuestSong { genId: string; title: string; createdAt: number; daysLeft: number }
+
+/** 보관 중인 체험 곡(만료·없음 = null). 만료면 기기 기록도 정리한다. */
+export async function getGuestSong(): Promise<GuestSong | null> {
   try {
+    const genId = await getGuestPendingGen();
+    if (!genId) return null;
+    let meta: any = null;
+    try { meta = JSON.parse((await AsyncStorage.getItem(GUEST_SONG_META_KEY)) || 'null'); } catch { meta = null; }
+    if (!meta || meta.genId !== genId || typeof meta.createdAt !== 'number') {
+      // 메타 없는 구버전 기록 — 지금 시각으로 보정(서버가 최종 만료 판정)
+      meta = { genId, title: '', createdAt: Date.now() };
+      await AsyncStorage.setItem(GUEST_SONG_META_KEY, JSON.stringify(meta));
+    }
+    const leftMs = meta.createdAt + GUEST_SONG_RETENTION_DAYS * 86400000 - Date.now();
+    if (leftMs <= 0) {
+      await clearGuestPendingGen('expired');
+      await AsyncStorage.removeItem(GUEST_SONG_META_KEY);
+      return null;
+    }
+    return { genId, title: String(meta.title || ''), createdAt: meta.createdAt, daysLeft: Math.max(1, Math.ceil(leftMs / 86400000)) };
+  } catch (err: any) {
+    console.warn('[GuestCompose] 체험 곡 조회 실패', { message: err?.message });
+    return null;
+  }
+}
+
+export async function setGuestPendingGen(genId: string, title?: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(GUEST_SONG_META_KEY, JSON.stringify({ genId, title: title || '', createdAt: Date.now() }));
     await AsyncStorage.setItem(GUEST_PENDING_GEN_KEY, genId);
     if (__DEV__) console.info('[GuestCompose] 대기 생성 id 저장', { genId });
   } catch (err: any) {
@@ -215,6 +246,7 @@ export async function getGuestPendingGen(): Promise<string | null> {
 export async function clearGuestPendingGen(reason: string): Promise<void> {
   try {
     await AsyncStorage.removeItem(GUEST_PENDING_GEN_KEY);
+    await AsyncStorage.removeItem('maidol_guest_song_meta_v1');
     if (__DEV__) console.info('[GuestCompose] 대기 생성 id 삭제', { reason });
   } catch (err: any) {
     console.warn('[GuestCompose] 대기 생성 id 삭제 실패', { reason, message: err?.message });

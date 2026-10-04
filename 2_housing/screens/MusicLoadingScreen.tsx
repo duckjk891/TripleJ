@@ -604,7 +604,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         if (!genId) throw new Error('guest-compose: id 없음');
         // 화면 이탈과 무관하게 먼저 기록 — 체험 사용 + 대기 생성 id(로그인 시 자동 claim)
         await markGuestComposeUsed('success');
-        await setGuestPendingGen(genId);
+        await setGuestPendingGen(genId, String((useMusicStore.getState() as any).title || useLyricsStore.getState().generatedTitle || ''));
         if (!isMounted) {
           console.info('[GuestCompose] 화면 이탈 후 접수 — 대기 id 만 기록', { genId });
           return;

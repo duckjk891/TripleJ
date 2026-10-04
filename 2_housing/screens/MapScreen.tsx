@@ -58,7 +58,7 @@ import {
   type DirectorResumeTarget,
 } from '../utils/directorResume';
 import { openLoginModal } from '../utils/loginModal';
-import { isGuestTrialUsed } from '../utils/guestTrial';
+import { isGuestTrialUsed, getGuestSong, getGuestComposeStatus, guestComposeStreamUrl, clearGuestPendingGen, type GuestSong } from '../utils/guestTrial';
 import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
 
 const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
@@ -723,6 +723,60 @@ export default function MapScreen({ navigation }: Props) {
     return true;
   };
 
+  // v3.280(대표): 미가입 체험 곡 7일 보관 — 작업실에 들어오면 하단 카드로 보여준다(자동 팝업 아님).
+  // 카드: 제목·남은 일수 + [다시 듣기](결과 화면 A/B) / [가입하고 내 곡으로](로그인 모달 → 자동 가져오기).
+  const [guestSong, setGuestSong] = useState<GuestSong | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      if (user) { setGuestSong(null); return; }
+      (async () => {
+        const g = await getGuestSong();
+        if (alive) setGuestSong(g);
+        if (g) console.info('[Map] guest song card', { daysLeft: g.daysLeft });
+      })();
+      return () => { alive = false; };
+    }, [user])
+  );
+  const openGuestSong = async () => {
+    if (!guestSong) return;
+    console.info('[Map] guest song — 다시 듣기');
+    let doc: any = null;
+    try {
+      // 서버가 최종 판정(7일 만료 410 · 없음 404) — 만료면 기기 기록 정리 후 안내
+      doc = await getGuestComposeStatus(guestSong.genId);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 410 || status === 404) {
+        console.warn('[Map] guest song gone', { status });
+        await clearGuestPendingGen('expired');
+        setGuestSong(null);
+        showAlert('체험 곡이 사라졌어요', '보관 기간(7일)이 지났어요. 가입하면 만든 곡이 계속 보관돼요.', [
+          { text: '닫기', style: 'cancel' },
+          { text: '가입하기', onPress: () => openLoginModal({ reason: 'guest_song_expired' }) },
+        ]);
+        return;
+      }
+      console.error('[Map] guest song 상태 조회 실패', { status, message: err?.message });
+    }
+    // 재접속 후엔 메모리 store 가 비어 있다 — 생성 완료 때(MusicLoading guestPollOnce)와 같은 값으로 채운다
+    const ms = useMusicStore.getState();
+    ms.setGenerationId(guestSong.genId);
+    // 결과 화면 제목은 작사 store 기준 — 비어 있으면(다른 작업으로 바뀜 등) 보관 기록의 제목으로 보강
+    if (guestSong.title && !useLyricsStore.getState().generatedTitle) {
+      useLyricsStore.setState({ generatedTitle: guestSong.title });
+    }
+    if (doc && (doc.status === 'completed' || doc.status === 'complete')) {
+      ms.setResultUrl(await guestComposeStreamUrl(guestSong.genId, 0));
+      ms.setStatus('completed');
+      ms.setIsLoading(false);
+    } else if (doc && (doc.status === 'pending' || doc.status === 'processing')) {
+      showAlert('아직 만드는 중이에요', '잠시 후 다시 눌러주세요.');
+      return;
+    }
+    (navigation as any).navigate('MusicResult', { guest: true });
+  };
+
   // v3.276: 게스트 작업실 탭 — 체험 미사용이면 작사 체험 제안, 사용했으면 로그인 모달 즉시
   const handleGuestTouch = async () => {
     let used = false;
@@ -1081,6 +1135,26 @@ export default function MapScreen({ navigation }: Props) {
         />
       )}
 
+      {/* v3.280: 내 체험 곡 카드(게스트·보관 7일) — 오버레이 위에 떠서 탭 가능 */}
+      {!user && guestSong ? (
+        <View style={styles.guestSongCard}>
+          <View style={{ flex: 1 }}>
+            <AppText style={styles.guestSongLabel}>내 체험 곡 · {guestSong.daysLeft}일 뒤 사라져요</AppText>
+            <AppText style={styles.guestSongTitle} numberOfLines={1}>{guestSong.title || '체험으로 만든 곡'}</AppText>
+          </View>
+          <TouchableOpacity style={styles.guestSongGhostBtn} onPress={openGuestSong} accessibilityLabel="체험 곡 다시 듣기">
+            <AppText style={styles.guestSongGhostText}>다시 듣기</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.guestSongMainBtn}
+            onPress={() => openLoginModal({ reason: 'guest_song_card' })}
+            accessibilityLabel="가입하고 내 곡으로 가져오기"
+          >
+            <AppText style={styles.guestSongMainText}>내 곡으로</AppText>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {/* v3.107: 대기열 단계 팝업·광고 보상 팝업 제거 — 결과는 각 로딩 화면이 즉시 보여줌 */}
 
       {/* 디렉터 선택 모달 (작사 2명 이상 영입 시) */}
@@ -1352,6 +1426,18 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'transparent',
   },
+  guestSongCard: {
+    position: 'absolute', left: 12, right: 12, bottom: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16,
+    backgroundColor: 'rgba(20, 14, 44, 0.96)', borderWidth: 1, borderColor: 'rgba(167,139,250,0.55)',
+  },
+  guestSongLabel: { fontSize: 11, fontWeight: '700', color: '#c4b5fd' },
+  guestSongTitle: { fontSize: 15, fontWeight: '800', color: '#fff', marginTop: 2 },
+  guestSongGhostBtn: { paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(167,139,250,0.6)' },
+  guestSongGhostText: { fontSize: 13, fontWeight: '700', color: '#e9d5ff' },
+  guestSongMainBtn: { paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#8b5cf6' },
+  guestSongMainText: { fontSize: 13, fontWeight: '800', color: '#fff' },
   loginOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
