@@ -31,7 +31,7 @@ const SLIDES = [
     image: require('../assets/welcome/dialogue.jpg'),
     chip: '작사 디렉터',
     title: '몇 마디만 나누면\n나만의 가사 완성',
-    desc: '장르와 분위기만 골라도 충분해요. 지금 바로 체험할 수 있어요.',
+    desc: '장르와 분위기만 골라도 충분해요. 가입 없이 작사부터 작곡까지 체험할 수 있어요.',
   },
   {
     key: 'chart',
@@ -136,10 +136,10 @@ export default function WelcomeGuide() {
 
           <View style={{ paddingHorizontal: spacing.lg, width: '100%' }}>
             <TouchableOpacity
-              style={styles.cta} activeOpacity={0.85} accessibilityLabel="작사 체험하러 가기"
+              style={styles.cta} activeOpacity={0.85} accessibilityLabel="무료로 한 곡 만들어보기"
               onPress={() => { close('trial'); startGuestLyricsTrial('welcome_guide'); }}
             >
-              <AppText style={styles.ctaText}>작사 체험하러 가기</AppText>
+              <AppText style={styles.ctaText}>무료로 한 곡 만들어보기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondary} onPress={() => close('skip')} accessibilityLabel="먼저 둘러보기">
               <AppText variant="footnote" tone="secondary">먼저 둘러볼게요</AppText>

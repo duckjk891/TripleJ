@@ -35,6 +35,24 @@ import { MUSIC_TEXT, MUSIC_SLOW_MS, MUSIC_SLOW_VOICE_MS } from '../services/genJ
 import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
 import { useGenerationLeaveGuard } from '../hooks/useGenerationLeaveGuard';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
+// v3.277 [GuestCompose]: 게스트 작곡 체험 — 게스트 엔드포인트 생성·폴링(전역 추적기·원장·ack 미사용)
+import { buildSunoGenerateBody } from '../services/musicService';
+import {
+  createGuestCompose,
+  getGuestComposeStatus,
+  guestComposeStreamUrl,
+  guestDenyCode,
+  guestComposeDenyText,
+  markGuestComposeUsed,
+  unmarkGuestComposeUsed,
+  setGuestPendingGen,
+  clearGuestPendingGen,
+} from '../utils/guestTrial';
+import { openLoginModal } from '../utils/loginModal';
+
+const GUEST_LEAVE_BODY =
+  '나가도 곡은 계속 만들어져요.\n체험 곡은 가입하면 작업실 > 생성 이력에서 볼 수 있어요 — 지금 나가시겠어요?';
+const GUEST_FAILED_BODY = '체험 곡을 만들지 못했어요. 체험권은 그대로 남아 있어요 — 다시 시도해 주세요.';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -54,6 +72,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
   const lyricsStore = useLyricsStore();
   // v3.93: 생성 이력에서 진행 중 생성을 이어볼 때 — 새 생성 시작 없이 폴링만 재개
   const resumeGenerationId: string | undefined = route.params?.resumeGenerationId;
+  // v3.277 [GuestCompose]: 게스트 작곡 체험(MusicGeneration 이 guest:true 로 진입)
+  const guestMode: boolean = !!route.params?.guest && !resumeGenerationId;
   const [messageIndex, setMessageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
 
@@ -61,7 +81,11 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
 
   // v3.230 A1-1(D1): 진행 중 이탈 가드 — 휴식·중복 안내 다이얼로그가 떠 있는 동안은 비활성(이중 팝업 방지)
   const [guardActive, setGuardActive] = useState(true);
-  const { allowLeave } = useGenerationLeaveGuard(navigation, { screen: 'MusicLoading', active: guardActive });
+  const { allowLeave } = useGenerationLeaveGuard(navigation, {
+    screen: 'MusicLoading',
+    active: guardActive,
+    ...(guestMode ? { message: GUEST_LEAVE_BODY } : {}),
+  });
 
   // v3.228: "평소보다 오래 걸리고 있어요" 안내 — 기준 3분(내 목소리 6분). 경과 기준 시각은
   // 이어보기면 추적 레코드의 접수 시각, 새 생성이면 이 화면 진입 시각. 이탈 권장·과금 문구 없음.
@@ -268,6 +292,43 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       recoverTimer = setInterval(() => { void tryOnce(); }, 3000);
     };
 
+    // v3.277: 생성 파라미터 조립(일반·게스트 공용 — 기존 doGenerate 인라인 객체 그대로 추출)
+    const buildParams = (referenceData: ReferenceUploadResult | null) => ({
+      lyrics: store.lyrics,
+      title: lyricsStore.generatedTitle || undefined,
+      genre: store.genre,
+      mood: store.mood,
+      tempo: store.tempo,
+      // v3.202(J): 연주곡이면 보컬 파라미터 차단 + instrumental 플래그 전달
+      // (musicService가 vocal='instrumental'·연주곡 프롬프트 문장으로 변환)
+      vocal: store.instrumental ? '' : (store.vocal || undefined),
+      vocalStyle: store.instrumental ? undefined : (store.vocalStyle || undefined),
+      instrumental: store.instrumental || undefined,
+      // v3.203: 연주곡 곡 길이(초, step 310 선택) — generateWithSuno가 body.duration으로 전송
+      durationSec: (store.instrumental && store.durationSec) || undefined,
+      referenceFile: store.referenceFile || undefined,
+      isDuet: lyricsStore.isDuet || undefined,
+      subVocal: store.subVocal || undefined,
+      subVocalStyle: store.subVocalStyle || undefined,
+      // BUG-2 픽스: 대화 스텝에서 설정한 상세 파라미터가 실제 생성 요청에 빠져 있었음
+      style: store.style || undefined,
+      referenceStyle: store.referenceStyle || undefined,
+      bpm: store.bpm || undefined,
+      musicalKey: store.musicalKey || undefined,
+      negativeTags: store.negativeTags || undefined,
+      personaModel: store.personaModel || undefined,
+      personaId: store.personaId || undefined,
+      // v3.91: 참고 음악(업로드 응답) + 참고음 세기 — generateWithSuno가 reference_audio_*/audio_weight로 전송
+      referenceData: referenceData || undefined,
+      // v3.229 V1: 참고 음원이 실제로 업로드된 경우에만 세기 전송 — 없으면(미선택·업로드 실패 후
+      // '참고 없이 진행') audio_weight를 싣지 않아 목소리 설정으로 새지 않게 한다(서버 기본/V2에 맡김).
+      audioWeight: referenceData ? (store.audioWeight ?? undefined) : undefined,
+      // v3.102(B-4): 가사 보관함 출처 스냅샷 — generateWithSuno가 lyrics_source로 전송
+      lyricsSource: store.lyricsSource || undefined,
+      // v3.156: 작곡에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 근거
+      characterId: store.artistCharacterId || undefined,
+    });
+
     const doGenerate = async () => {
       // v3.228: 중복 생성 최종 방어(사용자당 진행 중 1곡 — 결정 4, 미확인 완성본은 비차단)
       if (guardGeneration('music', { navigation, where: 'MusicLoading', onDismiss: () => leaveBack() })) {
@@ -310,41 +371,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       }
 
       try {
-        const params = {
-          lyrics: store.lyrics,
-          title: lyricsStore.generatedTitle || undefined,
-          genre: store.genre,
-          mood: store.mood,
-          tempo: store.tempo,
-          // v3.202(J): 연주곡이면 보컬 파라미터 차단 + instrumental 플래그 전달
-          // (musicService가 vocal='instrumental'·연주곡 프롬프트 문장으로 변환)
-          vocal: store.instrumental ? '' : (store.vocal || undefined),
-          vocalStyle: store.instrumental ? undefined : (store.vocalStyle || undefined),
-          instrumental: store.instrumental || undefined,
-          // v3.203: 연주곡 곡 길이(초, step 310 선택) — generateWithSuno가 body.duration으로 전송
-          durationSec: (store.instrumental && store.durationSec) || undefined,
-          referenceFile: store.referenceFile || undefined,
-          isDuet: lyricsStore.isDuet || undefined,
-          subVocal: store.subVocal || undefined,
-          subVocalStyle: store.subVocalStyle || undefined,
-          // BUG-2 픽스: 대화 스텝에서 설정한 상세 파라미터가 실제 생성 요청에 빠져 있었음
-          style: store.style || undefined,
-          referenceStyle: store.referenceStyle || undefined,
-          bpm: store.bpm || undefined,
-          musicalKey: store.musicalKey || undefined,
-          negativeTags: store.negativeTags || undefined,
-          personaModel: store.personaModel || undefined,
-          personaId: store.personaId || undefined,
-          // v3.91: 참고 음악(업로드 응답) + 참고음 세기 — generateWithSuno가 reference_audio_*/audio_weight로 전송
-          referenceData: referenceData || undefined,
-          // v3.229 V1: 참고 음원이 실제로 업로드된 경우에만 세기 전송 — 없으면(미선택·업로드 실패 후
-          // '참고 없이 진행') audio_weight를 싣지 않아 목소리 설정으로 새지 않게 한다(서버 기본/V2에 맡김).
-          audioWeight: referenceData ? (store.audioWeight ?? undefined) : undefined,
-          // v3.102(B-4): 가사 보관함 출처 스냅샷 — generateWithSuno가 lyrics_source로 전송
-          lyricsSource: store.lyricsSource || undefined,
-          // v3.156: 작곡에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 근거
-          characterId: store.artistCharacterId || undefined,
-        };
+        const params = buildParams(referenceData);
         if (!referenceData && store.audioWeight != null) {
           console.info('[MusicGeneration] V1 audio_weight 미전송(참고 음원 없음)', { audioWeight: store.audioWeight });
         }
@@ -509,8 +536,119 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       }
     };
 
+    // ── v3.277 [GuestCompose] 게스트 작곡 체험 — 게스트 엔드포인트로 생성·폴링 ──
+    // 전역 추적기(genJobs)·원장(request id)·ack·피로 429·⭐ 확인은 쓰지 않는다(무과금 1회 체험, 서버도 미적용).
+    // 폴링 주기·진행 표시는 일반 경로와 동일(3초, progress → 단계 표시).
+    let guestDone = false; // 겹친 폴링 응답의 중복 전환 방지
+    const toGuestResult = () => navigation.replace('MusicResult', { guest: true });
+    const guestPollOnce = async (genId: string) => {
+      if (guestDone) return;
+      try {
+        const status = await getGuestComposeStatus(genId);
+        if (!isMounted || guestDone) return;
+        if (status.progress) setProgress(status.progress);
+        if (status.status === 'completed' || status.status === 'complete') {
+          guestDone = true;
+          if (pollInterval) clearInterval(pollInterval);
+          console.info('[GuestCompose] 완성', { genId, variants: Array.isArray(status.variants) ? status.variants.length : 0 });
+          store.setResultUrl(await guestComposeStreamUrl(genId, 0));
+          if (!isMounted) return;
+          store.setStatus('completed');
+          store.setIsLoading(false);
+          toGuestResult();
+        } else if (status.status === 'failed' || status.status === 'error') {
+          guestDone = true;
+          if (pollInterval) clearInterval(pollInterval);
+          const returned = !!status.guest_ticket_returned;
+          console.warn('[GuestCompose] 생성 실패', { genId, ticketReturned: returned });
+          if (returned) {
+            // 서버가 기기 체험권을 돌려줌 → 앱 기록도 되돌려 다시 체험 가능, 가져올 곡 없음
+            await unmarkGuestComposeUsed('generation_failed');
+            await clearGuestPendingGen('generation_failed');
+          }
+          if (!isMounted) return;
+          store.setError(returned ? GUEST_FAILED_BODY : '체험 곡을 만들지 못했어요. 잠시 후 다시 시도해 주세요.');
+          store.setStatus('failed');
+          store.setIsLoading(false);
+          toGuestResult();
+        }
+      } catch (err: any) {
+        const st = err?.response?.status;
+        if ((st === 404 || st === 400) && !guestDone) {
+          guestDone = true;
+          console.error('[GuestCompose] 폴링 중단 — 상태 조회 실패', { status: st });
+          if (pollInterval) clearInterval(pollInterval);
+          await clearGuestPendingGen(`poll-${st}`);
+          if (!isMounted) return;
+          store.setError('체험 곡 정보를 찾을 수 없어요.');
+          store.setStatus('failed');
+          store.setIsLoading(false);
+          toGuestResult();
+        }
+        // 그 외(네트워크 일시 오류)는 다음 폴링에서 재시도
+      }
+    };
+
+    const doGuestGenerate = async () => {
+      if (isMounted) setGuardActive(true);
+      store.beginNewGeneration();
+      store.setIsLoading(true);
+      store.setError(null);
+      store.setStatus('pending');
+      try {
+        // 게스트는 참고 음원·내 목소리·아티스트 없음(작곡 대화에서 숨김 + 서버도 무시) — 방어로 비워 조립
+        const params = { ...buildParams(null), referenceFile: undefined, personaModel: undefined, personaId: undefined, characterId: undefined, lyricsSource: undefined };
+        const body = await buildSunoGenerateBody(params, { guest: true });
+        const res = await createGuestCompose(body);
+        const genId = res?.id ? String(res.id) : '';
+        if (!genId) throw new Error('guest-compose: id 없음');
+        // 화면 이탈과 무관하게 먼저 기록 — 체험 사용 + 대기 생성 id(로그인 시 자동 claim)
+        await markGuestComposeUsed('success');
+        await setGuestPendingGen(genId);
+        if (!isMounted) {
+          console.info('[GuestCompose] 화면 이탈 후 접수 — 대기 id 만 기록', { genId });
+          return;
+        }
+        store.setGenerationId(genId);
+        store.setStatus('processing');
+        void guestPollOnce(genId);
+        pollInterval = setInterval(() => { void guestPollOnce(genId); }, 3000);
+      } catch (err: any) {
+        const code = guestDenyCode(err);
+        if (code) {
+          if (code === 'guest_trial_used') await markGuestComposeUsed('server_429');
+          console.info('[GuestCompose] 서버 거절', { code });
+          if (!isMounted) return;
+          store.setIsLoading(false);
+          store.setStatus('idle');
+          setGuardActive(false);
+          const t = guestComposeDenyText(code);
+          showAlert(t.title, t.body, [
+            { text: '닫기', style: 'cancel', onPress: () => leaveBack() },
+            {
+              text: '가입하고 계속',
+              onPress: () => {
+                leaveBack(); // 작곡 대화로 복귀(입력 보존) — 로그인 후 그 자리에서 일반 작곡
+                openLoginModal({ reason: `guest_compose_${code}` });
+              },
+            },
+          ]);
+          return;
+        }
+        const st = err?.response?.status;
+        console.error('[GuestCompose] 생성 요청 실패', { status: st ?? null, message: err?.message });
+        if (!isMounted) return;
+        store.setError(err?.response?.data?.message || err?.response?.data?.error || '체험 곡 요청에 실패했어요. 잠시 후 다시 시도해 주세요.');
+        store.setStatus('failed');
+        store.setIsLoading(false);
+        toGuestResult();
+      }
+    };
+
     // v3.93: 이어보기 재개 모드 — 새 생성 시작(과금·참고음 업로드) 없이 기존 생성만 폴링
-    if (resumeGenerationId) {
+    if (guestMode) {
+      void doGuestGenerate();
+    } else if (resumeGenerationId) {
       console.log('[MusicLoading] 진행 중 생성 이어보기 재개:', resumeGenerationId);
       store.setIsLoading(true);
       store.setError(null);
@@ -540,7 +678,7 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         messageIndex={messageIndex}
         progress={progress}
         portrait={portrait}
-        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n${isSlow ? '평소보다 오래 걸리고 있어요. 조금만 더 기다려 주세요.' : '1~3분 정도 소요될 수 있어요.'}\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
+        noteText={`작곡 디렉터가 ${Math.min(messageIndex + 1, LOADING_STEPS.length)}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n${isSlow ? '평소보다 오래 걸리고 있어요. 조금만 더 기다려 주세요.' : '1~3분 정도 소요될 수 있어요.'}\n${guestMode ? '이 화면에서 기다리면 완성되자마자 바로 들어볼 수 있어요.' : '다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.'}`}
       />
     </AppScreenLayout>
   );

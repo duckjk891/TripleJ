@@ -39,6 +39,17 @@ import {
 import { useCoverLibraryStore, PickedCover } from '../stores/coverLibraryStore';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
+// v3.277 [GuestCompose]: 게스트 체험 곡 — A/B 청취만 허용, 발매·커버·재생성은 로그인 → claim(소유권 이전) 뒤 원래 동작
+import { openLoginModal } from '../utils/loginModal';
+import {
+  GUEST_TEXT,
+  isGuestNow,
+  isGuestComposeUsed,
+  getGuestComposeStatus,
+  guestComposeStreamUrl,
+  claimGuestCompose,
+  setGuestComposeViewer,
+} from '../utils/guestTrial';
 
 // v3.93: 2-variant 클립 비교 라벨 (버전 A/버전 B — Suno는 요청당 2클립 반환)
 const VARIANT_LABELS = ['버전 A', '버전 B', '버전 C', '버전 D'];
@@ -179,6 +190,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const store = useMusicStore();
   const { token } = useAuthStore();
+  // v3.277 [GuestCompose]: 비로그인(게스트) 체험 곡 여부 — 렌더용(핸들러는 isGuestNow() 로 최신 판정)
+  const isGuest = !useAuthStore((s) => s.user);
   const lyricsStore = useLyricsStore();
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -222,6 +235,45 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const candidateId = (index: number): string | null =>
     store.generationId ? `${store.generationId}:v${index}` : null;
 
+  // v3.277 [GuestCompose]: 이 화면이 게스트 곡을 보는 동안은 로그인 직후 전역 자동 claim 안내 팝업을 생략
+  // (afterLogin 이 claim 후 원래 동작을 이어간다 — 이중 안내 방지)
+  const guestViewRef = useRef(!!route.params?.guest && isGuestNow());
+  useEffect(() => {
+    if (!guestViewRef.current || !store.generationId) return undefined;
+    setGuestComposeViewer(store.generationId);
+    return () => setGuestComposeViewer(null);
+  }, [store.generationId]);
+
+  /**
+   * 게스트면 로그인 모달 → 로그인 성공 시 체험 곡 claim → 원래 동작. 게스트가 아니면 false(호출부가 그대로 진행).
+   * proceedAnyway: claim 실패(실패 곡·가져올 곡 없음)여도 원래 동작을 이어간다(다시 생성 등 곡과 무관한 동작).
+   */
+  const requireLoginForGuest = (reason: string, action: () => void, proceedAnyway = false): boolean => {
+    if (!isGuestNow()) return false;
+    const genId = store.generationId;
+    if (__DEV__) console.info('[MusicResult] [guest] 로그인 필요 액션', { reason, genId });
+    openLoginModal({
+      reason,
+      afterLogin: () => {
+        void (async () => {
+          const r = genId ? await claimGuestCompose(genId) : 'gone';
+          console.info('[GuestCompose] 로그인 후 체험 곡 가져오기', { reason, result: r });
+          if (r === 'claimed' || r === 'already' || proceedAnyway) {
+            action();
+            return;
+          }
+          showAlert(
+            '체험 곡을 가져오지 못했어요',
+            r === 'error'
+              ? '잠시 후 다시 시도해 주세요. 작업실 > 생성 이력에서도 확인할 수 있어요.'
+              : '이 곡은 가져올 수 없어요. 새로 만들어 주세요.'
+          );
+        })();
+      },
+    });
+    return true;
+  };
+
   const logListen = (
     action: 'play' | 'pause' | 'ended' | 'seek',
     index: number,
@@ -229,7 +281,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     seekFromMs?: number
   ) => {
     const cid = candidateId(index);
-    if (!cid) return;
+    if (!cid || isGuestNow()) return; // v3.277: 게스트는 창작 기록 없음(로그인 전용)
     // v3.204(①): 시킹 UI 도입 — seek는 onSlidingComplete에서만 1회 {from_ms, to_ms}로 기록
     // (드래그 중 기록 금지 — 폭주 방지). 서버 sessions.py LISTEN_ACTIONS에 seek 허용,
     // from_ms/to_ms는 음이 아닌 정수 필수(문서 §6.2 정합).
@@ -247,7 +299,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
   const logCandidateSelect = (index: number) => {
     const cid = candidateId(index);
-    if (!cid) return;
+    if (!cid || isGuestNow()) return; // v3.277: 게스트는 창작 기록 없음
     // §6.3: 명시적 선택만 기록 — 비선택 variant의 자동 reject는 기록하지 않는다.
     // rating/favorite/reject_reason은 Phase 2 예약 필드(현 UI 없음 — 미전송).
     // v3.200(X-1): candidate_id는 §5.2 정본대로 target에 — payload에 넣으면 서버 400.
@@ -282,6 +334,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         // v3.241 [P0-1]: 이 생성의 발매만 — 잔존 savedTrackId로 이전 곡을 재생하지 않는다
         audioUrl = await savedTrackStreamUrl(effectiveSavedTrackId);
         if (!mounted) return;
+      } else if (store.generationId && isGuestNow()) {
+        // v3.277 [GuestCompose]: 게스트 체험 곡 — 기기 id 쿼리 스트림(토큰 없음, Range 지원은 서버 기존 구현 재사용)
+        audioUrl = await guestComposeStreamUrl(store.generationId, selectedVariant);
+        if (!mounted) return;
       } else if (store.generationId) {
         // v3.93: variant별 스트림(?variant=N) + expo-av 헤더 미지원 대비 ?token= 쿼리 인증
         audioUrl = generationStreamUrl(store.generationId, selectedVariant);
@@ -293,7 +349,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           audioUrl = audioUrl.replace(/minio:\d+/, '192.168.219.106:5000');
         }
       }
-      // 토큰 쿼리는 로그에 남기지 않음
+      // 토큰·기기 id 쿼리는 로그에 남기지 않음
       console.log('[MusicResult] Loading audio from:', audioUrl.split('?')[0]);
 
       try {
@@ -392,7 +448,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       if (!store.generationId || effectiveSavedTrackIdOf(useMusicStore.getState()) || hasError || isSaved) return;
       try {
         console.log('[MusicResult] variants 조회:', store.generationId);
-        const doc = await getGenerationStatus(store.generationId);
+        // v3.277 [GuestCompose]: 게스트는 게스트 상태 조회(같은 직렬화)
+        const doc = isGuestNow()
+          ? await getGuestComposeStatus(store.generationId)
+          : await getGenerationStatus(store.generationId);
         if (!mounted) return;
         if (doc?.result_track_id) {
           // 이미 트랙 확정된 생성 — 비교 없이 단일 플레이어 유지
@@ -543,7 +602,18 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     }
   };
 
-  const handleRegenerate = () => {
+  const handleRegenerate = async () => {
+    // v3.277 [GuestCompose]: 게스트 — 생성 실패로 체험권이 반환됐으면 다시 체험, 아니면 로그인 후 재생성
+    if (isGuestNow()) {
+      let used = true;
+      try { used = await isGuestComposeUsed(); } catch { used = true; }
+      if (!used) {
+        console.info('[GuestCompose] 체험 재시도(체험권 반환됨)');
+      } else {
+        requireLoginForGuest('guest_compose_regenerate', () => { void handleRegenerate(); }, true);
+        return;
+      }
+    }
     if (soundRef.current) {
       soundRef.current.unloadAsync().catch(() => {});
       soundRef.current = null;
@@ -566,6 +636,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       return;
     }
     if (isSaving || isSaved) return;
+    // v3.277 [GuestCompose]: 게스트 → 로그인 → 체험 곡 claim → 발매(저장)
+    if (requireLoginForGuest('guest_compose_save', () => { void handleSave(); })) return;
 
     setIsSaving(true);
     // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
@@ -659,6 +731,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   };
 
   const handleGenerateCover = async () => {
+    // v3.277 [GuestCompose]: 게스트 → 로그인 → 체험 곡 claim → 커버(저장 경유)
+    if (requireLoginForGuest('guest_compose_cover', () => { void handleGenerateCover(); })) return;
     // 곡이 아직 저장 안 되었으면 먼저 저장
     if (!isSaved && store.generationId) {
       try {
@@ -754,6 +828,22 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             </AppText>
           </View>
         </View>
+
+        {/* v3.277 [GuestCompose]: 게스트 체험 곡 안내 1줄 — 탭하면 가입 후 곡 가져오기 */}
+        {isGuest && !hasError && hasResult && (
+          <TouchableOpacity
+            style={styles.guestBanner}
+            activeOpacity={0.7}
+            onPress={() => {
+              requireLoginForGuest('guest_music_result_banner', () => {
+                showAlert(GUEST_TEXT.claimedTitle, '이제 저장하기로 발매할 수 있어요. 작업실 > 생성 이력에서도 볼 수 있어요.');
+              });
+            }}
+            accessibilityLabel="가입하고 체험 곡 발매하기"
+          >
+            <AppText style={styles.guestBannerText}>{GUEST_TEXT.musicResultBanner}</AppText>
+          </TouchableOpacity>
+        )}
 
         {/* Error display */}
         {hasError && (
@@ -921,7 +1011,12 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           {hasResult && (
             <TouchableOpacity
               style={styles.coverButton}
-              onPress={() => navigation.navigate('CoverLibrary' as any, { select: true })}
+              onPress={() => {
+                const openLibrary = () => navigation.navigate('CoverLibrary' as any, { select: true });
+                // v3.277 [GuestCompose]: 게스트 → 로그인 → claim → 보관함(로그인 전용)
+                if (requireLoginForGuest('guest_compose_cover_library', openLibrary)) return;
+                openLibrary();
+              }}
             >
               <AppText style={styles.coverButtonText}>보관함에서 커버 선택</AppText>
             </TouchableOpacity>
@@ -977,6 +1072,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,
+  },
+  // v3.277 [GuestCompose]: 게스트 체험 곡 안내 1줄(LyricsResult guestBanner 와 동일 규격)
+  guestBanner: {
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  guestBannerText: {
+    color: colors.text.secondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
   scrollView: {
     flex: 1,

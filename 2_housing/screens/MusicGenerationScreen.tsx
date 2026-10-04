@@ -38,6 +38,15 @@ import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { getPointCostSync } from '../services/pointCosts';
 import { useIsChild, isChildNow, KIDS_TEXT } from '../utils/kidsMode';
+// v3.277 [GuestCompose]: 게스트 작곡 체험 — 어린이 계정과 같은 단순화(간편 목소리만) 재사용
+import { useAuthStore } from '../stores/authStore';
+import { isGuestNow, isGuestComposeUsed, guestComposeDenyText } from '../utils/guestTrial';
+import { openLoginModal } from '../utils/loginModal';
+
+/** v3.277: 제한 모드(어린이 계정 또는 비로그인 게스트) — 내 목소리 클론·참고 음원·유튜브 링크·아티스트 목소리 숨김 */
+function isRestrictedNow(): boolean {
+  return isChildNow() || isGuestNow();
+}
 // v3.200: 창작 기록 계층 — 작곡 플로우 진입 시 세션 확보 + 가사 편집 확정 시 버전 커밋(§7.4).
 // 실패 무해(서버 미배포/비로그인 시 no-op) — 작곡 대화·생성을 절대 막지 않는다.
 import { ensureCreationSession, commitLyricsVersion } from '../services/creationLogService';
@@ -163,8 +172,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const artistVoice = useVoiceStore((s) => s.artistVoice);
   const artistPreset = artistVoice?.type === 'preset' ? artistVoice : null;
   // v3.232 K14 [KidsGate]: 어린이 계정 — 내 목소리(클론)·참고 음원 업로드 숨김, 간편 목소리만. 성인은 false(기존 그대로)
-  const isChild = useIsChild();
-  const voiceModePrompt = isChild
+  const isChildAccount = useIsChild();
+  // v3.277 [GuestCompose]: 게스트도 같은 제한 UI(문구는 계정 유형별 — 어린이 전용 안내는 isChildAccount 로만)
+  const isGuestUser = useAuthStore((s) => !s.user);
+  const isRestricted = isChildAccount || isGuestUser;
+  const voiceModePrompt = isRestricted
     ? '목소리는 간편 목소리(보컬 스타일 선택)로 만들어요! 아래에서 골라주세요.'
     : '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!';
 
@@ -414,6 +426,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 시작된 세션이 있으면 그대로 잇는다(같은 곡 흐름). 실패해도 무해 — 생성 요청 시
   // 서버가 세션을 자동 생성한다(구버전 앱 호환, PLAN B2).
   useEffect(() => {
+    if (isGuestNow()) return; // v3.277 [GuestCompose]: 게스트는 창작 기록 세션 없음(로그인 전용 API)
     ensureCreationSession().catch((err: any) => {
       console.error('[CreationLog] 작곡 진입 세션 확보 실패(진행 무영향):', err?.message);
     });
@@ -429,6 +442,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   }, []);
 
   const refreshFatigue = useCallback(async () => {
+    if (isGuestNow()) return; // v3.277 [GuestCompose]: 게스트 체험은 피로 게이트 없음(서버도 미적용)
     try {
       const data = await getFatigueStatus();
       applyFatigueStatus(data);
@@ -554,7 +568,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.84: 아티스트 목소리가 "클론"이면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중).
   // "프리셋"이면 이 스텝은 건너뛰기 기본 — 스타일 태그는 성별/스타일 스텝에서 이미 반영됨.
   useEffect(() => {
-    if (step === 12 && !personaDefaultAppliedRef.current && artistClone && !isChild) {
+    if (step === 12 && !personaDefaultAppliedRef.current && artistClone && !isRestricted) {
       personaDefaultAppliedRef.current = true;
       setSelectedPersonaId(artistClone.voice_id ?? null);
       setPersonaModel('voice'); // 클론은 목소리 적용 고정
@@ -564,7 +578,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.232 K14 [KidsGate]: 어린이 — 초안 복원 등으로 내 목소리 단계(12)·클론 목록(210)에 놓이면 건너뛴다(방어).
   // 복원된 내 목소리 적용값도 해제. 참고 음원(파일)도 비운다(서버가 거부). 성인은 조건 false.
   useEffect(() => {
-    if (!isChild) return;
+    if (!isRestricted) return;
     if (personaModelOn || selectedPersonaId) {
       console.info('[KidsGate] voice hidden — 내 목소리 적용 해제');
       setPersonaModelOn(false);
@@ -592,7 +606,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setStep(220);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isChild, step]);
+  }, [isRestricted, step]);
 
   // v3.135: 아티스트 목소리가 이미 적용된 경우 내 목소리(step 12) 단계 자동 통과
   // v3.202(E/F): 되감기 중에는 자동 통과 금지 — 사용자가 이 스텝을 직접 다시 고르는 중
@@ -761,7 +775,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 100: return [...VOCAL_OPTIONS];
       case 4: return [...VOCAL_STYLES];
       case 101: return [...VOCAL_STYLES];
-      case 220: return isChild ? ['간편 목소리 (보컬 스타일 선택)'] : ['간편 목소리 (보컬 스타일 선택)', '내 목소리 (클로닝한 목소리)'];
+      case 220: return isRestricted ? ['간편 목소리 (보컬 스타일 선택)'] : ['간편 목소리 (보컬 스타일 선택)', '내 목소리 (클로닝한 목소리)'];
       case 300: return [...GENRE_OPTIONS];
       case 301: return [...MOOD_OPTIONS];
       case 310: return [...DURATION_OPTIONS.map((m) => `${m}분`), DURATION_AUTO_LABEL];
@@ -797,11 +811,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         // handleKeyConfirm은 musicalKey state를 읽어 편집 경로에선 stale — 값 명시 재현(동일 시맨틱)
         if (choice === KEY_AUTO_LABEL) {
           setMusicalKeyOn(false);
-          advanceStep('자동 키', musicStore.instrumental || isChild ? 13 : 12); // v3.232: 어린이는 내 목소리(12) 스킵
+          advanceStep('자동 키', musicStore.instrumental || isRestricted ? 13 : 12); // v3.232: 어린이는 내 목소리(12) 스킵
         } else {
           setMusicalKey(choice);
           setMusicalKeyOn(true);
-          advanceStep(`키: ${choice}`, musicStore.instrumental || isChild ? 13 : 12);
+          advanceStep(`키: ${choice}`, musicStore.instrumental || isRestricted ? 13 : 12);
         }
         break;
       }
@@ -1017,6 +1031,19 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 항상 노출한다(0명이면 '아티스트로 만들기' CTA → 아티스트 디렉터 안내). 스텝 번호 체계는
   // 유지하고 조건 분기로만 처리(재선택 idx 매핑 보존).
   const proceedToArtistStep = async (announce: string, originStep?: number) => {
+    // v3.277 [GuestCompose]: 게스트 — 아티스트(로그인 전용)는 '아티스트 없이 진행'과 같은 상태로 건너뛰고 보컬 질문으로
+    if (isGuestNow()) {
+      console.info('[GuestCompose] 아티스트 단계 생략(게스트)');
+      setSelectedArtistId(null);
+      musicStore.setArtistCharacterId(null);
+      musicStore.setArtistExplicitSkip(true);
+      commitExchange(
+        { type: 'user', text: announce, step: originStep },
+        [{ type: 'director', text: musicStore.instrumental ? DIRECTOR_MESSAGES[5] : (lyricsStore.isDuet ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.' : DIRECTOR_MESSAGES[3]) }],
+        musicStore.instrumental ? 5 : 3
+      );
+      return;
+    }
     let list: ServerArtist[] = [];
     try {
       console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
@@ -1162,12 +1189,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const preset = parseVoicePreset(artist.voice_preset);
     // v3.232 K14 [KidsGate]: 어린이는 연결된 내 목소리(클론)를 자동 적용하지 않는다 — 간편 목소리가 있으면 그것으로,
     // 클론만 연결된 아티스트는 선택 안내(성인은 cloneReady 그대로)
-    const hasClone = cloneReady && !isChild;
-    if (isChild && cloneReady && !preset) {
+    const hasClone = cloneReady && !isRestricted;
+    if (isRestricted && cloneReady && !preset) {
       console.info('[KidsGate] voice hidden — 클론 전용 아티스트 선택 차단', { cid: artist.character_id });
       showAlert(
         '간편 목소리가 필요해요',
-        `${KIDS_TEXT.voiceBlocked}\n${artist.name || '이 아티스트'}에게 간편 목소리를 연결하면 선택할 수 있어요.`
+        `${isChildAccount ? KIDS_TEXT.voiceBlocked : '체험에서는 간편 목소리만 쓸 수 있어요.'}\n${artist.name || '이 아티스트'}에게 간편 목소리를 연결하면 선택할 수 있어요.`
       );
       return;
     }
@@ -1317,9 +1344,17 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.139: 성별 선택지의 '내 목소리로 만들기' 진입 → 클론 선택(step 210)
   const handleMyVoiceEntry = () => {
-    if (isChildNow()) {
+    if (isRestrictedNow()) {
       // v3.232 K14: 어린이는 내 목소리 선택지 숨김 — 방어
-      console.info('[KidsGate] voice hidden — 내 목소리 진입 차단');
+      console.info('[KidsGate] voice hidden — 내 목소리 진입 차단', { guest: isGuestNow() });
+      if (isGuestNow()) {
+        // v3.277 [GuestCompose]: 게스트 — 어린이 안내 대신 가입 안내(버튼은 숨김 — 방어 경로)
+        showAlert('가입하면 쓸 수 있어요', '내 목소리로 만들기는 가입 후 이용할 수 있어요.', [
+          { text: '닫기', style: 'cancel' },
+          { text: '가입하기', onPress: () => openLoginModal({ reason: 'guest_compose_my_voice' }) },
+        ]);
+        return;
+      }
       showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.voiceBlocked);
       return;
     }
@@ -1338,7 +1373,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
 
   const handleMyVoicePick = (clone: any) => {
-    if (!clone?.voice_id || isChildNow()) return; // v3.232 K14: 어린이 방어
+    if (!clone?.voice_id || isRestrictedNow()) return; // v3.232 K14: 어린이 방어
     console.info('[MusicGeneration] 내 목소리 선택', { name: clone.voice_name });
     setSelectedPersonaId(clone.voice_id);
     setPersonaModel('voice');
@@ -1502,7 +1537,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setMusicalKeyOn(apply && !!musicalKey);
     // v3.202(J): 연주곡은 내 목소리(step 12) 스킵 — 바로 완료(13). 스텝 번호 체계는 유지.
     // v3.232 K14: 어린이는 내 목소리(step 12)를 쓰지 않는다 — 연주곡과 같은 방식으로 완료(13) 직행
-    advanceStep(apply && musicalKey ? `키: ${musicalKey}` : '자동 키', musicStore.instrumental || isChild ? 13 : 12);
+    advanceStep(apply && musicalKey ? `키: ${musicalKey}` : '자동 키', musicStore.instrumental || isRestricted ? 13 : 12);
   };
   // 참고: handlePersonaConfirm은 위에 정의됨 (case 12에서 호출)
 
@@ -1523,7 +1558,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // Step 6: Reference - file upload
   const handlePickReference = async () => {
-    if (isChildNow()) return; // v3.232 K14: 어린이 — 버튼 숨김(방어)
+    if (isRestrictedNow()) return; // v3.232 K14: 어린이 — 버튼 숨김(방어)
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*' });
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -1604,7 +1639,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // reference_style 에 병합(mergeReferenceStyle). 파일 업로드와 상호 배타(store setter가 보장).
   // 참고음 세기(step 9)는 파일 전용 — 링크만 있으면 hasReferenceFile=false라 기존 V1 로직대로 스킵.
   const handleSubmitReferenceLink = async () => {
-    if (isChildNow()) return; // 어린이 — 버튼 숨김(방어)
+    if (isRestrictedNow()) return; // 어린이 — 버튼 숨김(방어)
     if (refLinkLoading) return;
     const url = refLinkInput.trim();
     if (!url) {
@@ -1682,7 +1717,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setLyrics(instrumentalEntryRef.current ? '' : editedLyrics.trim());
     // v3.276 [RefLink]: 링크 참조 — 어린이는 제외(방어). 장르·분위기가 사용자 미지정일 때만
     // 링크 힌트로 선답(기존 선택지 목록과 정확히 일치할 때만 — 서버도 같은 어휘로 정규화).
-    const refLink = isChildNow() ? null : useMusicStore.getState().referenceLink;
+    const refLink = isRestrictedNow() ? null : useMusicStore.getState().referenceLink;
     const userGenre = lyricsStore.genre || selectedGenre;
     const userMood = lyricsStore.mood || selectedMood;
     const linkGenre = !userGenre && refLink?.genre && GENRE_OPTIONS.includes(refLink.genre) ? refLink.genre : '';
@@ -1710,7 +1745,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // v3.91: 참고음 세기(audio_weight) — "적용"을 골랐을 때만 body에 실림(자동=null)
     // v3.229 V1: 참고 음원이 없으면 세기 값이 목소리 비중으로 새지 않도록 항상 미전송(null)
     // v3.232 K14 [KidsGate]: 어린이 — 참고 음원(업로드)·내 목소리(voice_persona)는 서버가 거부 → 생성 직전 제외(방어)
-    const kidsNow = isChildNow();
+    const kidsNow = isRestrictedNow();
     if (kidsNow && useMusicStore.getState().referenceFile) {
       console.info('[KidsGate] voice hidden — 생성 직전 참고 음원 제외');
       musicStore.setReferenceFile(null, null);
@@ -1746,7 +1781,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // v3.134(대표): 작곡 중 수정한 제목/가사를 가사 DB(자산)에 동기화 — 출처가 내 자산일 때만.
     // best-effort(실패해도 작곡 진행 무영향), track_/로컬 출처는 대상 아님.
     const src = musicStore.lyricsSource;
-    if (src?.lyrics_id && src.is_mine !== false && isLyricsAssetId(src.lyrics_id)) {
+    if (!isGuestNow() && src?.lyrics_id && src.is_mine !== false && isLyricsAssetId(src.lyrics_id)) {
       const syncTitle = (editedTitle || lyricsStore.generatedTitle || '').trim();
       const syncLyrics = editedLyrics.trim();
       console.info('[MusicGeneration] 가사 자산 동기화 PATCH', { lyricsId: src.lyrics_id, titleLen: syncTitle.length, lyricsLen: syncLyrics.length });
@@ -1759,8 +1794,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
     // v3.107: 대기열 타이머 폐지 — 요청 즉시 MusicLoading으로 직행(폴링·진행 표시는 그쪽이 보유).
     // 재요청 제한은 피로도(서버 429 게이트 + 위 fatigueRemainSec 게이트)가 담당한다.
-    console.log('[MusicGeneration] 작곡 생성 시작 — MusicLoading 직행');
-    navigation.navigate('MusicLoading' as any);
+    // v3.277 [GuestCompose]: 게스트는 guest 플래그로 — MusicLoading 이 게스트 엔드포인트·폴링을 쓴다
+    const guest = isGuestNow();
+    console.log('[MusicGeneration] 작곡 생성 시작 — MusicLoading 직행', { guest });
+    navigation.navigate('MusicLoading' as any, guest ? { guest: true } : undefined);
   };
 
   // v3.94: 생성 버튼 — 디렉터 쿨다운 중이면 앱 내 다이얼로그(남은 시간 + ⭐스킵/광고권/취소)로 게이트.
@@ -1790,7 +1827,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 조회 실패 시에는 통과 — 서버 판정에 위임(생성을 막는 오탐 금지).
   const ensureArtistVoiceUsable = async (): Promise<boolean> => {
     const cid = useMusicStore.getState().artistCharacterId;
-    if (!cid || musicStore.instrumental || isChildNow()) return true;
+    if (!cid || musicStore.instrumental || isRestrictedNow()) return true;
     if (!personaModelOn || !selectedPersonaId) return true; // 클론 목소리 미전송 경로
     let artist: ServerArtist | null = null;
     try {
@@ -1809,7 +1846,33 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     return false;
   };
 
+  // v3.277 [GuestCompose]: 게스트 생성 — 별 차감 확인·피로 게이트·진행 중 추적기 없음(무과금 체험 1회).
+  // 체험을 이미 쓴 기기면 로그인 유도(서버 429 가 최종 방어).
+  const guestGeneratingRef = useRef(false);
+  const handleGuestGenerate = async () => {
+    if (guestGeneratingRef.current) return;
+    guestGeneratingRef.current = true;
+    try {
+      if (await isGuestComposeUsed()) {
+        console.info('[GuestCompose] 작곡 체험 사용 완료 — 로그인 유도');
+        const t = guestComposeDenyText('guest_trial_used');
+        showAlert(t.title, t.body, [
+          { text: '닫기', style: 'cancel' },
+          { text: '가입하고 계속', onPress: () => openLoginModal({ reason: 'guest_compose_used' }) },
+        ]);
+        return;
+      }
+      proceedGenerate();
+    } finally {
+      guestGeneratingRef.current = false;
+    }
+  };
+
   const handleGenerate = () => {
+    if (isGuestNow()) {
+      void handleGuestGenerate();
+      return;
+    }
     // v3.228 W1: 사용자당 진행 중 1곡(결정 4) — 과금·피로 게이트보다 먼저. 미확인 완성본은 막지 않음.
     if (guardGeneration('music', { navigation, where: 'MusicGeneration' })) return;
     if (fatigueRemainSec > 0) {
@@ -1925,7 +1988,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 <AppText style={styles.choiceNumber}>1</AppText>
                 <AppText style={styles.choiceText}>간편 목소리 (보컬 스타일 선택)</AppText>
               </TouchableOpacity>
-              {!isChild && (
+              {!isRestricted && (
               <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceEntry}>
                 <AppText style={styles.choiceNumber}>2</AppText>
                 <AppText style={styles.choiceText}>내 목소리 (클로닝한 목소리)</AppText>
@@ -1967,7 +2030,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       <AppText style={styles.choiceText}>{(c.voice_name || '내 목소리') + ' — 생성 중이에요 (완성되면 선택 가능)'}</AppText>
                     </View>
                   ))}
-                  {readyClones.length === 0 && !isChild && (
+                  {readyClones.length === 0 && !isRestricted && (
                     <TouchableOpacity
                       style={styles.choiceButton}
                       onPress={() => {
@@ -2221,7 +2284,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={inputAreaStyle}>
             {/* v3.232 K14: 어린이는 참고 음원 파일 업로드 없음(건너뛰기 유지) */}
-            {!isChild && (
+            {!isRestricted && (
             <TouchableOpacity
               style={styles.uploadButton}
               onPress={handlePickReference}
@@ -2231,7 +2294,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
             )}
             {/* v3.276 [RefLink]: 유튜브 링크 붙여넣기 — 음원은 가져오지 않고 곡 정보(제목·채널명)만 참고.
                 어린이는 파일 업로드와 동일하게 숨김 */}
-            {!isChild && !refLinkOpen && (
+            {!isRestricted && !refLinkOpen && (
               <TouchableOpacity
                 style={[styles.uploadButton, styles.refLinkButton]}
                 onPress={() => {
@@ -2242,7 +2305,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 <AppText style={styles.uploadButtonText}>유튜브 링크 붙여넣기</AppText>
               </TouchableOpacity>
             )}
-            {!isChild && refLinkOpen && (
+            {!isRestricted && refLinkOpen && (
               <View style={styles.refLinkBox}>
                 <TextInput
                   style={styles.advancedInput}
@@ -2287,7 +2350,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 </TouchableOpacity>
               </View>
             )}
-            {!isChild && musicStore.referenceLink && (
+            {!isRestricted && musicStore.referenceLink && (
               <View style={styles.fileInfo}>
                 <AppText style={styles.fileInfoText} numberOfLines={1}>
                   유튜브 참고: {musicStore.referenceLink.title}
@@ -2308,12 +2371,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               onPress={() => {
                 // v3.203: 연주곡은 세부 스타일 질문(6~9) 스킵 — 참고 다음이 BPM(10)
                 if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — 참고 확인/건너뛰기 후 BPM(10) 직행');
-                const linkTitle = !isChild && musicStore.referenceLink ? `유튜브 링크: ${musicStore.referenceLink.title}` : '';
+                const linkTitle = !isRestricted && musicStore.referenceLink ? `유튜브 링크: ${musicStore.referenceLink.title}` : '';
                 advanceStep(musicStore.referenceFileName || linkTitle || '건너뛰기', musicStore.instrumental ? 10 : 6);
               }}
             >
               <AppText style={styles.skipButtonText}>
-                {musicStore.referenceFileName || (!isChild && musicStore.referenceLink) ? '확인' : '건너뛰기'}
+                {musicStore.referenceFileName || (!isRestricted && musicStore.referenceLink) ? '확인' : '건너뛰기'}
               </AppText>
             </TouchableOpacity>
             )}
@@ -2563,7 +2626,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                     아직 사용할 수 있는 내 목소리가 없어요. 새로 만들거나 건너뛸 수 있어요.
                   </AppText>
                 )}
-                {!isChild && (
+                {!isRestricted && (
                 <TouchableOpacity
                   style={styles.personaManageBtn}
                   onPress={() => navigation.navigate('VoiceManage' as any, { mode: 'voices' })}

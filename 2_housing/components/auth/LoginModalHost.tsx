@@ -9,6 +9,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AuthPanel from './AuthPanel';
 import { AppText } from '../ui';
 import { setLoginModalOpener, LoginModalOptions } from '../../utils/loginModal';
+// v3.277 [GuestCompose]: 로그인 확정 시 대기 중인 게스트 작곡 체험 곡을 1회 자동 claim(웹 소셜 리로드 포함)
+import { runGuestClaimIfPending } from '../../utils/guestTrial';
 import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -48,6 +50,13 @@ export default function LoginModalHost() {
     // 모달 닫힘 애니메이션 뒤 후속 동작(네비게이션 충돌 방지)
     if (next) setTimeout(() => { try { next(); } catch (e: any) { console.error('[LoginModal] afterLogin failed', { message: e?.message }); } }, 250);
   }, []);
+
+  // v3.277 [GuestCompose]: user 확정(이메일·소셜 콜백·세션 복원) 시 대기 중 게스트 곡 자동 claim — 이 호스트는 항상 마운트
+  const userId = user?.id ? String(user.id) : null;
+  useEffect(() => {
+    if (!userId) return;
+    void runGuestClaimIfPending('auth_user');
+  }, [userId]);
 
   // 외부 경로(소셜 콜백·다른 화면)로 로그인이 완료되면 자동 닫힘
   useEffect(() => {

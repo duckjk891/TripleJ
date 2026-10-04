@@ -193,6 +193,20 @@ export const uploadReferenceAudio = async (
  * 같은 id 재전송은 진행 중 409·종료 후 201 replayed 무과금). 구서버는 헤더를 무시.
  */
 export const generateWithSuno = async (params: Partial<MusicParams>, opts: { requestId?: string | null } = {}) => {
+  const body = await buildSunoGenerateBody(params);
+  const response = await api.post('/generate/', body, { headers: genRequestHeaders(opts.requestId) });
+  return response.data;
+};
+
+/**
+ * v3.277 [GuestCompose]: generateWithSuno 의 요청 바디 조립부(동작 불변 추출) — 게스트 작곡 체험이 같은 프롬프트·
+ * 영문 태그·보컬 키 규칙을 재사용한다. guest=true 면 로그인 전용 API(translate-tags·창작 기록 세션)를 건너뛴다
+ * (매핑 테이블 밖 한글 태그는 원문 유지 — 기존 번역 실패 폴백과 같음).
+ */
+export const buildSunoGenerateBody = async (
+  params: Partial<MusicParams>,
+  opts: { guest?: boolean } = {}
+): Promise<Record<string, any>> => {
   const promptParts = [];
   if (params.genre) promptParts.push(`${params.genre} 장르의`);
   if (params.mood) promptParts.push(`${params.mood} 분위기로,`);
@@ -223,7 +237,9 @@ export const generateWithSuno = async (params: Partial<MusicParams>, opts: { req
   if (params.genre && !GENRE_EN[params.genre]) { unmappedKeys.push('genre'); unmappedValues.push(params.genre); }
   if (params.mood && !MOOD_EN[params.mood]) { unmappedKeys.push('mood'); unmappedValues.push(params.mood); }
   if (params.style && !STYLE_EN[params.style]) { unmappedKeys.push('style'); unmappedValues.push(params.style); }
-  if (unmappedValues.length > 0) {
+  if (unmappedValues.length > 0 && opts.guest) {
+    console.info('[Suno] [guest] translate-tags 생략(로그인 전용) — 원문 유지', { count: unmappedValues.length });
+  } else if (unmappedValues.length > 0) {
     try {
       console.log('[Suno] translate-tags 요청:', JSON.stringify(unmappedValues));
       const res = await api.post('/generate/translate-tags', { tags: unmappedValues }, { timeout: 30000 });
@@ -286,14 +302,17 @@ export const generateWithSuno = async (params: Partial<MusicParams>, opts: { req
   // 서버 미배포·비로그인·실패 시 둘 다 null → 기존 흐름 그대로(서버가 세션 자동 생성 — PLAN B2).
   let creationSessionId: string | null = null;
   let lyricsVersionId: string | null = null;
-  try {
-    creationSessionId = await ensureCreationSession();
-    if (creationSessionId && (params.lyrics || '').trim()) {
-      lyricsVersionId = await commitLyricsVersion('user_edit', params.lyrics || '');
+  // v3.277: 게스트는 창작 기록 세션 없음(로그인 전용) — 둘 다 null
+  if (!opts.guest) {
+    try {
+      creationSessionId = await ensureCreationSession();
+      if (creationSessionId && (params.lyrics || '').trim()) {
+        lyricsVersionId = await commitLyricsVersion('user_edit', params.lyrics || '');
+      }
+      lyricsVersionId = lyricsVersionId || getLastLyricsVersionId();
+    } catch (err: any) {
+      console.error('[CreationLog] 생성 직전 세션/가사 커밋 실패(생성은 계속):', err?.message);
     }
-    lyricsVersionId = lyricsVersionId || getLastLyricsVersionId();
-  } catch (err: any) {
-    console.error('[CreationLog] 생성 직전 세션/가사 커밋 실패(생성은 계속):', err?.message);
   }
 
   const body = {
@@ -341,11 +360,10 @@ export const generateWithSuno = async (params: Partial<MusicParams>, opts: { req
   };
   console.log('[Suno] API 호출:', JSON.stringify({
     title: body.title, genre: body.genre, mood: body.mood, vocal: body.vocal, style: body.style,
-    duration: body.duration,
+    duration: body.duration, guest: !!opts.guest,
     audio_weight: body.audio_weight, reference_audio_name: body.reference_audio_name,
   }));
-  const response = await api.post('/generate/', body, { headers: genRequestHeaders(opts.requestId) });
-  return response.data;
+  return body;
 };
 
 export const generateWithWondera = async (params: Partial<MusicParams>) => {

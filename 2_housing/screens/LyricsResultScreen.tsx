@@ -31,7 +31,7 @@ import { guardGeneration } from '../services/generationTracker';
 import { colors } from '../theme/colors';
 // v3.276 [GuestLyrics]: 게스트 체험 결과 — 보기·수정·선택 복사만 허용, 저장·작곡·다시 생성은 로그인 모달 후 원래 동작
 import { openLoginModal } from '../utils/loginModal';
-import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
+import { GUEST_TEXT, isGuestNow, isGuestTrialUsed, isGuestComposeUsed } from '../utils/guestTrial';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -97,6 +97,15 @@ export default function LyricsResultScreen({ navigation }: Props) {
     if (user && guestOriginRef.current) void claimGuestResult();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!user]);
+
+  // v3.277 [GuestCompose]: 작곡 체험 사용 여부 — 미사용이면 '작곡하러 가기'가 로그인 없이 작곡 대화로 진입
+  const [guestComposeUsed, setGuestComposeUsed] = useState(false);
+  useEffect(() => {
+    if (!isGuest) return;
+    let alive = true;
+    isGuestComposeUsed().then((used) => { if (alive) setGuestComposeUsed(used); }).catch(() => {});
+    return () => { alive = false; };
+  }, [isGuest]);
 
   /** 게스트면 로그인 모달(성공 시 afterLogin) 후 true — 호출부는 원래 동작을 중단 */
   const requireLoginForGuest = (reason: string, afterLogin: () => void): boolean => {
@@ -171,14 +180,21 @@ export default function LyricsResultScreen({ navigation }: Props) {
     showAlert('보관함 저장 완료', '작사 디렉터 시작 화면의 "가사 보관함"에서 언제든 다시 꺼내 쓸 수 있어요.');
   };
 
-  const handleSaveAndCompose = () => {
-    // v3.276 [GuestLyrics]: 게스트 → 로그인 후 체험 가사 승계(출처 id) 뒤 작곡으로
-    if (requireLoginForGuest('guest_compose', () => {
-      void (async () => {
-        await claimGuestResult();
-        handleSaveAndCompose();
-      })();
-    })) return;
+  const handleSaveAndCompose = async () => {
+    // v3.277 [GuestCompose]: 게스트 — 작곡 체험 미사용이면 로그인 없이 작곡 디렉터 대화로(체험 1회),
+    // 이미 썼으면 기존대로 로그인 모달(v3.276: 로그인 후 체험 가사 승계 뒤 작곡으로)
+    if (isGuestNow()) {
+      let composeUsed = true;
+      try { composeUsed = await isGuestComposeUsed(); } catch { composeUsed = true; }
+      if (!composeUsed) {
+        console.info('[GuestCompose] 가사 결과 → 작곡 체험 진입');
+      } else if (requireLoginForGuest('guest_compose', () => {
+        void (async () => {
+          await claimGuestResult();
+          void handleSaveAndCompose();
+        })();
+      })) return;
+    }
     store.setGeneratedTitle(editedTitle);
     store.setGeneratedLyrics(editedLyrics);
     // v3.200: 작곡 진입 = '적용' 시점 커밋(§7.4) — 편집 중이던 내용까지 확정본으로 기록
@@ -285,7 +301,9 @@ export default function LyricsResultScreen({ navigation }: Props) {
             onPress={() => openLoginModal({ reason: 'guest_result_banner' })}
             accessibilityLabel="가입하고 이어서 하기"
           >
-            <AppText style={styles.guestBannerText}>{GUEST_TEXT.resultBanner}</AppText>
+            <AppText style={styles.guestBannerText}>
+              {guestComposeUsed ? GUEST_TEXT.resultBannerComposeUsed : GUEST_TEXT.resultBanner}
+            </AppText>
           </TouchableOpacity>
         )}
 
@@ -378,7 +396,8 @@ export default function LyricsResultScreen({ navigation }: Props) {
               onPress={handleSaveAndCompose}
             >
               <AppText style={styles.composeButtonText}>
-                저장하고 작곡하러 가기
+                {/* v3.277 [GuestCompose]: 게스트 작곡 체험 미사용이면 저장 없이 작곡 체험으로 */}
+                {isGuest && !guestComposeUsed ? '이 가사로 작곡 체험하기' : '저장하고 작곡하러 가기'}
               </AppText>
             </TouchableOpacity>
           )}

@@ -729,12 +729,13 @@ export default function MapScreen({ navigation }: Props) {
     try { used = await isGuestTrialUsed(); } catch { used = false; }
     console.info('[Map] guest touch', { trialUsed: used });
     if (used) {
-      openLoginModal({ reason: 'map_guest' });
+      // v3.277: 작사는 썼지만 작곡 체험이 남은 게스트는 가사 결과로 복귀(진입 유틸이 판정) — 다 썼으면 가입 유도
+      void startGuestLyricsTrial('map_guest');
       return;
     }
-    showAlert('작사 체험해볼까요?', '가입 없이 작사 디렉터와 가사 한 곡을 무료로 만들어볼 수 있어요.', [
+    showAlert('무료로 한 곡 만들어볼까요?', '가입 없이 작사부터 작곡까지 체험할 수 있어요. 발매는 가입 후에 할 수 있어요.', [
       { text: '로그인', style: 'cancel', onPress: () => openLoginModal({ reason: 'map_guest' }) },
-      { text: '작사 체험하기', onPress: () => { void startGuestLyricsTrial('map_guest'); } },
+      { text: '체험하기', onPress: () => { void startGuestLyricsTrial('map_guest'); } },
     ]);
   };
 
