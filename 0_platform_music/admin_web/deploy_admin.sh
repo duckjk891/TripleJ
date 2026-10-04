@@ -42,7 +42,7 @@ done
 # 서버 원본을 받아 고친 파일(server_staging_*/) — 원본(_orig)과 서버 md5 가 같을 때만 덮어쓴다.
 # 다른 세션이 그 사이 서버본을 고쳤으면 중단 → 서버본을 다시 받아 병합 후 재실행.
 STAGE=server_staging_admin_1004
-STAGED_FILES="admin.py reports.py"
+STAGED_FILES="admin.py reports.py dm.py issues.py"
 _md5() { md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1; }
 for f in $STAGED_FILES; do
   ORIG=$(_md5 $STAGE/_orig/$f); NEW=$(_md5 $STAGE/$f)

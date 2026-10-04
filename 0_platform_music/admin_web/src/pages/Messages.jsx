@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   getCsConversations, getCsMessages, replyCs, markCsRead, sendCs, broadcastCs,
   getNotices, getNotice, getUsers,
@@ -47,6 +48,17 @@ function Inbox({ onUnreadChange }) {
 
   useEffect(() => { loadConvs(); }, [loadConvs]);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [messages]);
+
+  // 오류 신고 화면의 "DM 대화에서 답장" → ?cid= 로 들어오면 그 대화를 바로 연다
+  const [params, setParams] = useSearchParams();
+  const wantCid = params.get('cid');
+  useEffect(() => {
+    if (!wantCid || !convs) return;
+    const c = convs.find((x) => x.conversation_id === wantCid);
+    setParams({}, { replace: true });
+    if (c) open(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantCid, convs]);
 
   const open = async (c) => {
     setActive(c);
@@ -113,9 +125,19 @@ function Inbox({ onUnreadChange }) {
                 return (
                   <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
                     <div className={`bubble ${mine ? 'bubble--mine' : ''}`}>
-                      {m.image_url && <a href={m.image_url} target="_blank" rel="noreferrer">[사진 보기]</a>}
+                      {/* v3.274 다중 이미지(image_urls ≤5) — 없으면 단일 image_url */}
+                      {(m.image_urls?.length ? m.image_urls : (m.image_url ? [m.image_url] : [])).length > 0 && (
+                        <div className="thumb-row" style={{ marginTop: 0, marginBottom: m.text ? 6 : 0 }}>
+                          {(m.image_urls?.length ? m.image_urls : [m.image_url]).map((u) => (
+                            <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="첨부 사진" className="thumb thumb--md" /></a>
+                          ))}
+                        </div>
+                      )}
                       {m.text && <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>}
                     </div>
+                    {!mine && /^\s*\[오류신고/.test(m.text || '') && (
+                      <Link to="/issues" className="badge badge--amber" style={{ marginTop: 3 }}>오류 신고로 접수됨 →</Link>
+                    )}
                     <div className="cell-sub bubble-time">{formatDate(m.created_at)}</div>
                   </div>
                 );

@@ -103,7 +103,7 @@ function IssueModal({ issue, onClose, onSaved }) {
         </div>
         <div className="modal__footer">
           {issue.dm_conversation_id && (
-            <button className="btn" onClick={() => navigate('/messages')}>DM 문의함으로</button>
+            <button className="btn" onClick={() => navigate(`/messages?cid=${issue.dm_conversation_id}`)}>DM 대화에서 답장</button>
           )}
           <button className="btn" onClick={onClose}>닫기</button>
           <button className="btn btn--primary" disabled={saving} onClick={save}>{saving ? '저장 중…' : '저장'}</button>
