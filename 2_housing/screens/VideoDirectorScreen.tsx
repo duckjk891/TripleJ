@@ -98,7 +98,7 @@ const BLUR_LEVELS: { key: string; label: string; radius: number }[] = [
 
 const coverUriOf = (t: MyTrack | null): string | null => {
   const img = t && (t.cover_image || t.cover_image_url);
-  return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
+  return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}?w=320` : null;
 };
 
 // v3.228 W0-1 [VideoDirector] 중복 요청 차단(앱 단독) — share-video 는 캐시 미스마다 ⭐ 과금(비멱등)이라

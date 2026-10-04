@@ -38,6 +38,8 @@ interface PlayerState {
   noteRecentlyPlayed: (trackId: string) => void;
   /** v3.271 — 자동 진행 전용: Inst 곡 스킵 */
   getNextAutoIndex: () => number;
+  /** v3.275: 수동 '다음'(플레이어·미니플레이어·잠금화면) 전용 — Inst 건너뛰기 + 한 곡 반복이어도 다음 곡으로 전진 */
+  getNextManualIndex: () => number;
   repeat: RepeatMode;
   /** 현재 재생목록의 소유자 user.id. 비회원이 담은 큐는 null → 앱을 새로 켜면 사라진다. */
   queueOwnerId: string | null;
@@ -133,6 +135,9 @@ function renameTrackArtist(t: any, cid: string, name: string): any {
     ...(snapNeeds ? { user_character_snapshot: { ...snap, name } } : {}),
   };
 }
+
+/** v3.275: 연주곡(Inst) 판정 공용 — 제목 서픽스 "(Inst.)" (서버 related 제외 규칙 _INST_TITLE_RE 와 동일) */
+export const isInstTrack = (t: any): boolean => /\(Inst\.\)\s*$/.test(String(t?.title || ''));
 
 export const usePlayerStore = create<PlayerState>()(
   persist(
@@ -292,10 +297,12 @@ export const usePlayerStore = create<PlayerState>()(
       // (대표 확정 — 직접 탭 재생·수동 다음 버튼은 그대로). 전곡 Inst면 getNextIndex 결과 유지.
       getNextAutoIndex: () => {
         const { queue, repeat, currentIndex } = get();
-        const isInst = (t: any) => /\(Inst\.\)\s*$/.test(String(t?.title || ''));
+        const isInst = isInstTrack;
         let idx = get().getNextIndex();
         if (idx < 0) return idx;
         if (repeat === 'one') return idx;
+        // v3.275: 큐 전체가 Inst(연주곡만 모은 목록)면 건너뛰지 않는다 — 사용자가 의도한 목록
+        if (queue.length > 0 && queue.every(isInst)) return idx;
         const tried = new Set<number>();
         while (idx >= 0 && !tried.has(idx) && isInst(queue[idx])) {
           tried.add(idx);
@@ -305,6 +312,32 @@ export const usePlayerStore = create<PlayerState>()(
           idx = n;
         }
         if (idx >= 0 && isInst(queue[idx])) return -1; // 전부 Inst — 자동 진행 종료(관련곡 경로로)
+        return idx;
+      },
+      // v3.275 [InstSkip-Manual](대표 2026-10-04): 수동 '다음'도 Inst 를 건너뛴다. 종전엔 수동 경로 3곳이
+      // getNextIndex 를 써서 큐에 Inst 가 연달아 있으면 "계속 Inst만" 재생됐다(10-03·10-04 실측 3연속).
+      // 규칙: 직접 탭한 Inst 는 재생(다른 경로) · 큐 전체가 Inst 면 건너뛰지 않음 · 한 곡 반복이어도 다음 곡으로.
+      // 반환 -1 = 건너뛸 곳 없음(큐 끝/남은 곡 전부 Inst) → 호출부가 관련곡 이어듣기로.
+      getNextManualIndex: () => {
+        const { queue, currentIndex, shuffle, repeat } = get();
+        if (queue.length === 0) return -1;
+        const step = (i: number) => (i < queue.length - 1 ? i + 1 : (repeat === 'off' ? -1 : 0));
+        let idx: number;
+        if (shuffle && queue.length > 1) {
+          idx = Math.floor(Math.random() * queue.length);
+          if (idx === currentIndex) idx = (idx + 1) % queue.length;
+        } else {
+          idx = step(currentIndex);
+        }
+        if (idx < 0) return -1;
+        if (queue.every(isInstTrack)) return idx;
+        const tried = new Set<number>();
+        while (idx >= 0 && !tried.has(idx) && isInstTrack(queue[idx])) {
+          tried.add(idx);
+          idx = step(idx);
+          if (idx === currentIndex) return -1; // 한 바퀴 — 나머지 전부 Inst
+        }
+        if (idx >= 0 && (isInstTrack(queue[idx]) || tried.has(idx))) return -1;
         return idx;
       },
       // v3.271 [RelatedVariety]: 최근 재생 이력(최대 40곡) — 관련곡 추천 exclude 원천(영속)

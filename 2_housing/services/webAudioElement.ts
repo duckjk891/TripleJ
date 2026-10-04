@@ -17,12 +17,123 @@ let statusCb: StatusCallback = null;
 let statusCbOwner: WebStatusCbOwner = 'playback';
 /** ended 시 동기 이어재생 훅(playback.ts가 등록) — true 반환 = 처리됨(didJustFinish 미전파) */
 let endedHandler: (() => boolean) | null = null;
-// v3.272 [BGWeb-Android]: 미디어 에러(code 4 등) 동기 복구 — 같은 곡의 결정적 proxy URL 1회 재시도.
-// 실측(10-01): 안드로이드에서 스왑 직후 code 4 "no supported source" 간헐 발생 — 포그라운드는
-// 비동기 스킵 경로가 받지만 백그라운드에선 그 경로가 돌지 못해 영구 멈춤이 됐다.
-// 복구 URL 공급자(playback.ts 등록): 현재 스토어 트랙의 proxy URL 반환(없으면 null).
+// v3.272 → v3.275 [BGWeb-Net]: 미디어 에러 복구 — 네트워크 단절 내성 재시도.
+// 재진단(10-04, 배포 후 로그): 끊김의 실체는 "곡 경계의 순간 단절"(백그라운드 네트워크 차단·Wi-Fi↔LTE
+// 핸드오버)로 다음 곡 로드가 MediaError code 4 가 되는 것. v3.272 복구 3종은 이 경우 전부 불발이었다:
+//  (a) 자동 스왑이 이미 proxy 라 `src !== recover` 가드에 걸려 복구 0회 실행(실측 code4 5건 전부)
+//  (b) 에러 콜백이 isPlaying=false 로 만들어 복귀(visibility) 재로드 분기 진입 불가
+//  (c) 건너뛰기 판정이 네트워크 실패 시 그대로 정지 / 200 이면 멀쩡한 곡을 건너뜀
+// 조치: 같은 곡을 캐시버스터 붙여 백오프 재시도(즉시→2→5→10→20→30s…, 최대 10분) + online 이벤트 즉시
+// 재시도. 재시도 중에는 에러를 `retrying:true` 로만 전파(일시정지·건너뛰기 금지 — 4xx 확정만 예외).
+// 복구 URL 공급자(playback.ts 등록): 현재 스토어 트랙의 결정적 proxy URL(없으면 null).
 let errorRecoveryUrlProvider: (() => string | null) | null = null;
-let lastErrorRecoveredSrc: string | null = null; // 같은 src 무한 재시도 방지(1회)
+const ERROR_RETRY_DELAYS_MS = [0, 2000, 5000, 10000, 20000, 30000]; // 이후 30s 반복
+const ERROR_RETRY_MAX_MS = 10 * 60 * 1000;
+interface ErrorRetryState { baseUrl: string; expectSrc: string; attempts: number; startedAt: number; timer: any; resumeAt: number }
+let errorRetry: ErrorRetryState | null = null;
+/** 재생 의도 — 로드/스왑/play 로 true, 사용자 일시정지·해제로 false. 복귀 복구가 store.isPlaying 대신 참조 */
+let playIntent = false;
+
+const stripRetryBuster = (u: string) => u.replace(/([?&])r=\d+(&|$)/, (_m, a, b) => (b ? a : '')).replace(/[?&]$/, '');
+
+function cancelErrorRetry(reason: string): void {
+  if (!errorRetry) return;
+  clearTimeout(errorRetry.timer);
+  if (errorRetry.attempts > 0) console.warn('[WebAudio] 재시도 취소', { reason, attempts: errorRetry.attempts });
+  errorRetry = null;
+}
+
+/** 외부(건너뛰기 확정 등)에서 재시도 중단 */
+export function webCancelErrorRetry(reason: string): void {
+  cancelErrorRetry(reason);
+}
+
+export function webIsErrorRetrying(): boolean {
+  return !!errorRetry;
+}
+
+function fireErrorRetry(why: string): void {
+  const st = errorRetry;
+  if (!st || !el) return;
+  clearTimeout(st.timer);
+  // 그 사이 다른 로드/해제가 src 를 바꿨으면 이 재시도는 무효
+  if (el.src !== st.expectSrc) {
+    cancelErrorRetry('src-changed');
+    return;
+  }
+  const url = st.baseUrl + (st.baseUrl.includes('?') ? '&' : '?') + 'r=' + Date.now();
+  console.warn('[WebAudio] 재시도', { why, attempt: st.attempts, online: typeof navigator !== 'undefined' ? navigator.onLine : null });
+  try {
+    el.src = url;
+    st.expectSrc = el.src;
+    if (st.resumeAt > 0) {
+      const at = st.resumeAt;
+      const target = el;
+      const onMeta = () => {
+        target.removeEventListener('loadedmetadata', onMeta);
+        try { if (target.src === st.expectSrc) target.currentTime = at; } catch {}
+      };
+      target.addEventListener('loadedmetadata', onMeta);
+    }
+    const p = el.play();
+    if (p && typeof (p as any).catch === 'function') {
+      (p as any).catch((e: any) => {
+        // NotSupportedError(로드 실패)는 error 이벤트가 다음 재시도를 잡는다 — 그 외만 기록
+        if (e?.name !== 'NotSupportedError' && e?.name !== 'AbortError') {
+          console.warn('[WebAudio] 재시도 play 거부', { name: e?.name, message: e?.message });
+        }
+      });
+    }
+  } catch (e: any) {
+    console.warn('[WebAudio] 재시도 실행 실패', { message: e?.message });
+  }
+}
+
+/** 재시도 대기 중이면 즉시 실행(online 복귀·탭 복귀·재생버튼) — 실행했으면 true */
+export function webRetryNow(why: string): boolean {
+  if (!errorRetry) return false;
+  fireErrorRetry(why);
+  return true;
+}
+
+function handleMediaError(audio: HTMLAudioElement): void {
+  const code = (audio.error as any)?.code;
+  const vis = typeof document !== 'undefined' ? document.visibilityState : null;
+  const online = typeof navigator !== 'undefined' ? navigator.onLine : null;
+  console.warn('[WebAudio] media error', {
+    code, msg: String((audio.error as any)?.message || '').slice(0, 80), vis, online,
+    srcKind: audio.src.includes('/stream-proxy/') ? 'proxy' : 'presigned',
+  });
+  const errText = `MediaError code=${code ?? 'unknown'}`;
+  let target: string | null = null;
+  try { target = errorRecoveryUrlProvider ? errorRecoveryUrlProvider() : null; } catch { target = null; }
+  if (!target) target = stripRetryBuster(audio.src);
+  const now = Date.now();
+  if (!errorRetry || errorRetry.baseUrl !== target) {
+    if (errorRetry) clearTimeout(errorRetry.timer);
+    // 곡 중간 단절(code 2 등)이면 끊긴 위치 기억 — 재시도 성공 시 처음이 아니라 그 자리에서 이어 재생
+    const pos = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    errorRetry = { baseUrl: target, expectSrc: audio.src, attempts: 0, startedAt: now, timer: null, resumeAt: pos > 1 ? pos : 0 };
+  } else {
+    errorRetry.expectSrc = audio.src;
+  }
+  const st = errorRetry;
+  if (!playIntent || now - st.startedAt > ERROR_RETRY_MAX_MS) {
+    // 재생 의도 없음(사용자 정지) 또는 10분 소진 — 최종 에러 전파(기존 정지·건너뛰기 경로)
+    console.warn('[WebAudio] 재시도 종료 — 최종 에러 전파', { attempts: st.attempts, intent: playIntent });
+    cancelErrorRetry('give-up');
+    if (statusCb) { try { statusCb({ isLoaded: false, error: errText }); } catch {} }
+    return;
+  }
+  st.attempts++;
+  const delay = ERROR_RETRY_DELAYS_MS[Math.min(st.attempts - 1, ERROR_RETRY_DELAYS_MS.length - 1)];
+  st.timer = setTimeout(() => fireErrorRetry('timer'), delay);
+  // 즉시 재시도까지 실패한 시점(2회째)에 1회만 통지 — 삭제곡(4xx) 판정·건너뛰기는 앱 쪽이 수행,
+  // 네트워크 문제면 앱은 아무것도 하지 않고 이 재시도 루프가 계속 돈다.
+  if (st.attempts === 2 && statusCb) {
+    try { statusCb({ isLoaded: false, error: errText, retrying: true }); } catch {}
+  }
+}
 
 export function setWebErrorRecoveryProvider(fn: (() => string | null) | null): void {
   errorRecoveryUrlProvider = fn;
@@ -135,8 +246,15 @@ function ensureElement(): HTMLAudioElement {
   audio.setAttribute('playsinline', 'true');
   audio.addEventListener('timeupdate', () => dispatch());
   audio.addEventListener('durationchange', () => dispatch());
+  audio.addEventListener('playing', () => {
+    // v3.275: 실제 재생 시작 = 재시도 성공 종료
+    if (errorRetry) {
+      console.warn('[WebAudio] 재시도 성공 — 재생 재개', { attempts: errorRetry.attempts, tookMs: Date.now() - errorRetry.startedAt });
+      clearTimeout(errorRetry.timer);
+      errorRetry = null;
+    }
+  });
   audio.addEventListener('play', () => {
-    lastErrorRecoveredSrc = null; // v3.272 — 재생 성공 = 복구 가드 리셋
     setAutoplayBlocked(false); // v3.235 B6: 어떤 경로로든 재생 시작 = 차단 해제(오버레이 닫힘)
     dispatch();
   });
@@ -155,32 +273,14 @@ function ensureElement(): HTMLAudioElement {
   });
   audio.addEventListener('error', () => {
     if (!audio.src) return; // unload로 src를 비운 직후의 무해 이벤트
-    const code = (audio.error as any)?.code;
-    console.warn('[WebAudio] media error', { code });
-    // v3.272 [BGWeb-Android]: 동기 1회 복구 — 같은 곡 proxy로 src 교체 후 즉시 play().
-    // (백그라운드에선 이 콜스택이 유일한 실행 기회 — 비동기 스킵 경로에 못 미룬다)
-    try {
-      const recover = errorRecoveryUrlProvider ? errorRecoveryUrlProvider() : null;
-      if (recover && audio.src !== recover && lastErrorRecoveredSrc !== recover) {
-        lastErrorRecoveredSrc = recover;
-        console.warn('[WebAudio] media error → proxy 동기 복구 시도', { code });
-        audio.src = recover;
-        const p = audio.play();
-        if (p && typeof (p as any).catch === 'function') {
-          (p as any).catch((e: any) =>
-            console.warn('[WebAudio] 복구 play 거부', { name: e?.name, message: e?.message }));
-        }
-        return; // 복구 시도 중 — 에러 상태 전파 보류(성공 시 play 이벤트가 상태 갱신)
-      }
-    } catch (e: any) {
-      console.warn('[WebAudio] 복구 시도 실패', { message: e?.message });
-    }
-    if (statusCb) {
-      try {
-        statusCb({ isLoaded: false, error: `MediaError code=${code ?? 'unknown'}` });
-      } catch {}
-    }
+    handleMediaError(audio);
   });
+  // v3.275: 네트워크 복귀 즉시 재시도(백오프 대기 단축) + 수명주기 계측
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+      if (errorRetry) fireErrorRetry('online');
+    });
+  }
   el = audio;
   return audio;
 }
@@ -188,6 +288,8 @@ function ensureElement(): HTMLAudioElement {
 /** ended 핸들러 내부 전용 — 동기 src 교체 + play() (autoplay 정책상 비동기 개입 금지) */
 export function webSwapSrcAndPlay(url: string): boolean {
   if (!el) return false;
+  cancelErrorRetry('swap');
+  playIntent = true;
   try {
     if (el.src === url) {
       el.currentTime = 0; // repeat 'one' 등 동일 소스 — 리로드 없이 처음부터
@@ -237,20 +339,20 @@ export function webResumeIfStalled(wantPlaying: boolean): 'advanced' | 'resumed'
     dispatch({ didJustFinish: true, isPlaying: false, shouldPlay: false });
     return 'advanced';
   }
-  if (el.error && wantPlaying) {
-    // v3.272 — 에러 상태로 깨어남(백그라운드 중 복구도 실패) → proxy 재로드
-    const recover = errorRecoveryUrlProvider ? errorRecoveryUrlProvider() : null;
-    if (recover) {
-      console.warn('[WebAudio] 복귀 — 에러 상태 proxy 재로드');
-      el.src = recover;
-      el.play().catch((e: any) => {
-        console.warn('[WebAudio] 복귀 재로드 거부', { name: e?.name });
-        dispatch();
-      });
-      return 'resumed';
-    }
+  // v3.275: 재시도 대기 중이면 즉시 실행(백그라운드 타이머 지연 보정)
+  if (errorRetry) {
+    fireErrorRetry('visible');
+    return 'resumed';
   }
-  if (wantPlaying && el.paused) {
+  // v3.275: store.isPlaying 은 에러 콜백이 false 로 만들 수 있어(구 (b) 결함) 재생 의도 플래그를 함께 본다
+  const want = wantPlaying || playIntent;
+  if (el.error && want) {
+    // 에러 상태로 깨어남(재시도 소진 등) → 새 재시도 사이클 시작
+    console.warn('[WebAudio] 복귀 — 에러 상태 재시도 재개');
+    handleMediaError(el);
+    return 'resumed';
+  }
+  if (want && el.paused) {
     const p = el.play();
     if (p && typeof (p as any).catch === 'function') {
       (p as any).catch((err: any) => {
@@ -277,6 +379,10 @@ export class WebTrackSound {
 
   async playAsync(): Promise<any> {
     if (!this.current || !el) return { isLoaded: false };
+    playIntent = true;
+    // v3.275: 에러 상태에서의 재생버튼 = 즉시 재시도(대기 중이면 당기고, 소진됐으면 새 사이클)
+    if (errorRetry) { fireErrorRetry('play-button'); return buildStatus(el); }
+    if (el.error && el.src) { handleMediaError(el); return buildStatus(el); }
     try {
       await el.play();
     } catch (err: any) {
@@ -289,6 +395,8 @@ export class WebTrackSound {
 
   async pauseAsync(): Promise<any> {
     if (!this.current || !el) return { isLoaded: false };
+    playIntent = false; // 사용자 일시정지 — 재시도 루프가 뒤늦게 재생을 되살리지 않게
+    cancelErrorRetry('pause');
     el.pause();
     return buildStatus(el);
   }
@@ -321,6 +429,8 @@ export class WebTrackSound {
   async unloadAsync(): Promise<any> {
     if (!this.current || !el) return { isLoaded: false };
     gen++; // 이 래퍼 포함 전 래퍼 무효화 — 다음 로드가 새 세대를 연다
+    playIntent = false;
+    cancelErrorRetry('unload');
     setAutoplayBlocked(false); // v3.235 B6: 곡 해제 — 이전 곡 차단 표시 잔존 방지
     try {
       el.pause();
@@ -349,6 +459,8 @@ export function createWebTrackSound(
   const loadGen = gen;
   setWebStatusCb(cb ?? null, owner);
   setAutoplayBlocked(false); // v3.235 B6: 새 로드 — 판정 초기화
+  cancelErrorRetry('new-load'); // v3.275: 이전 곡 재시도 무효
+  playIntent = !!shouldPlay;
   audio.src = uri;
   if (shouldPlay) {
     const p = audio.play();

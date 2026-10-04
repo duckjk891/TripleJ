@@ -250,6 +250,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       useCharacterTaskStore.getState().reset();
       const music = useMusicStore.getState();
       music.clearComposeDraft();
+      music.clearReferenceLink(); // v3.276 [RefLink]: 계정 전환 오염 방지
       music.clearVideoDraft();
       music.clearCoverContext();
       if (__DEV__) console.info('[DraftKeep] logout — 아티스트/작곡/영상/커버 draft 청소(가사 draft 유지)');

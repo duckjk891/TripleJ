@@ -24,7 +24,7 @@ import ArtistLevelBadge from '../components/ArtistLevelBadge';
 import { normalizeRecognition } from '../data/levels';
 
 const mediaUri = (obj?: string | null): string | null =>
-  obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}` : null;
+  obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}?w=320` : null;
 
 // MyMusicScreen과 동일 — 텍스트 블록의 [item]{JSON} 마커 → 아이템 카드 (파싱 실패 시 일반 텍스트)
 interface FeedItemAttach { name?: string; category?: string; url?: string; img?: string }

@@ -64,9 +64,13 @@ interface AuthPanelProps {
   /** v3.237 B: 첫 화면 — 'register' 면 가입 첫 단계(연령 게이트)로 바로 진입(공유 링크 CTA).
    *  미전달·'login' = 기존 동작 그대로(로그인 화면). 마운트 시 1회만 반영. */
   initialMode?: 'login' | 'register';
+  /** v3.276: 간편가입 우선 배치(로그인 모달) — 로그인 화면에서 소셜 버튼을 맨 위에, 이메일 폼은 접어둔다 */
+  socialFirst?: boolean;
 }
 
-export default function AuthPanel({ onSuccess, onModeChange, initialMode }: AuthPanelProps) {
+export default function AuthPanel({ onSuccess, onModeChange, initialMode, socialFirst }: AuthPanelProps) {
+  // v3.276: socialFirst 에서 이메일 로그인 폼 펼침 여부(기본 접힘 — 소셜 3초 가입이 주 경로)
+  const [emailOpen, setEmailOpen] = useState(!socialFirst);
   const { isLoading, error, login, register, clearError } = useAuthStore();
   const [mode, setModeRaw] = useState<Mode>(() => (initialMode === 'register' ? 'gate' : 'login'));
   // v3.237 B: 가입 직행 진입이면 헤더 타이틀도 '회원가입'으로 맞춘다(부모 onModeChange 통지 1회)
@@ -408,6 +412,15 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode }: Auth
     return (
       <View>
         {showError ? <AppText variant="footnote" style={styles.error}>{showError}</AppText> : null}
+        {/* v3.276: 간편가입 우선 — 소셜 버튼 최상단, 이메일 폼은 "이메일로 로그인" 탭 시 펼침 */}
+        {socialFirst ? <SocialLoginButtons logPrefix="AuthPanel:login" referralCode={referralCode} dividerPosition="bottom" /> : null}
+        {socialFirst && !emailOpen ? (
+          <TouchableOpacity style={styles.forgotLink} onPress={() => { console.info('[AuthPanel] 이메일 로그인 폼 펼침'); setEmailOpen(true); }}>
+            <AppText variant="footnote" tone="secondary">이메일로 로그인</AppText>
+          </TouchableOpacity>
+        ) : null}
+        {emailOpen ? (
+          <>
         <Label>이메일</Label>
         <TextInput style={styles.input} placeholder="이메일을 입력하세요" placeholderTextColor={colors.text.muted}
           value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
@@ -415,7 +428,9 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode }: Auth
         <TextInput style={styles.input} placeholder="비밀번호를 입력하세요" placeholderTextColor={colors.text.muted}
           value={password} onChangeText={setPassword} secureTextEntry />
         <Button label={isLoading ? '로그인 중...' : '로그인'} fullWidth disabled={isLoading} onPress={handleLogin} />
-        <SocialLoginButtons logPrefix="AuthPanel:login" referralCode={referralCode} />
+          </>
+        ) : null}
+        {!socialFirst ? <SocialLoginButtons logPrefix="AuthPanel:login" referralCode={referralCode} /> : null}
         {/* v3.230 A7-1: 추천코드 — 보관 코드가 있으면 칩, 없으면 "추천코드가 있어요" 펼침 입력 */}
         {validReferral && !refInputOpen ? (
           <ReferralChip onEdit={() => setRefInputOpen(true)} />

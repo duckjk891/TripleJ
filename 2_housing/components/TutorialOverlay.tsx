@@ -105,6 +105,9 @@ function useGlobalPopupBlocked(): boolean {
   return dialogOpen || attendanceOpen || inviteOpen || starGuideOpen;
 }
 
+/** v3.276: 화면별 튜토리얼 전역 스위치 — false 면 어떤 화면에서도 노출되지 않는다(수동 리뷰 버튼 포함) */
+export const PER_SCREEN_TUTORIALS_ENABLED = false;
+
 const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
   ({ screenKey, steps, enabled = true, onStepChange, suspended = false, onVisibleChange }, ref) => {
     const insets = useSafeAreaInsets();
@@ -134,6 +137,9 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     }, [visible]);
 
     const show = useCallback(() => {
+      // v3.276(대표 결정 2026-10-04): 화면별 튜토리얼 전면 폐지 — 앱 첫 실행 이미지형 웰컴 팝업
+      // (components/WelcomeGuide)으로 대체. 코드·호출부는 보존하고 전역 스위치로만 차단(복구 용이).
+      if (!PER_SCREEN_TUTORIALS_ENABLED) return;
       if (!enabled) {
         if (__DEV__) console.info('[Tutorial] enabled=false — 노출 차단', { screenKey });
         return;

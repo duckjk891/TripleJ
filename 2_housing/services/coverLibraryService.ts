@@ -47,7 +47,7 @@ export function coverSessionImageUri(c: Pick<CoverSession, 'image_url' | 'cover_
     if (img.startsWith('/')) return `${BACKEND_BASE_URL}${img}`;
   }
   // defensive 폴백 — object_name으로 직접 프록시 조립 (다른 화면들과 동일 관행)
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(c.cover_object_name)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(c.cover_object_name)}?w=320`;
 }
 
 /** GET /upload/cover-sessions — 내 커버 보관함 목록 (updated_at 최신순). */

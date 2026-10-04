@@ -372,7 +372,7 @@ export default function AlbumDetailScreen() {
     ]);
   };
 
-  const coverUri = useMemo(() => albumCoverUri(album?.cover_image), [album?.cover_image]);
+  const coverUri = useMemo(() => albumCoverUri(album?.cover_image, 640), [album?.cover_image]);
 
   if (loading) {
     return (

@@ -65,6 +65,22 @@ export interface ComposeDraftAnswers {
   /** v3.242: 명시적 '아티스트 없이 진행' 여부 — 이어서 하기 복원 시 스킵 곡이
    *  대표 미리선택·발매 대표 폴백으로 되살아나지 않게 draft에도 동봉 */
   artistExplicitSkip: boolean;
+  /** v3.276 [RefLink]: 유튜브 링크 참조(메타데이터 전용) — 이어서 하기 복원 시 디렉터 안내와
+   *  실제 반영이 어긋나지 않게 draft에도 동봉(구 draft엔 없음 → null 취급) */
+  referenceLink?: ReferenceLink | null;
+}
+
+/** v3.276 [RefLink]: 작곡 "참고 음원" 단계의 유튜브 링크 참조 — 음원은 받지 않고
+ *  서버(POST /generate/reference-link)가 oEmbed 제목·채널명에서 뽑은 스타일 힌트만 보관.
+ *  referenceFile(파일 업로드)과 상호 배타(둘 중 하나만). */
+export interface ReferenceLink {
+  url: string;
+  title: string;
+  author: string;
+  genre: string | null;
+  mood: string | null;
+  tempoHint: string | null;
+  styleText: string;
 }
 
 export interface ComposeDraft {
@@ -118,6 +134,8 @@ interface MusicState {
   vocalStyle: string;
   referenceFile: string | null;
   referenceFileName: string | null;
+  /** v3.276 [RefLink]: 유튜브 링크 참조(null=없음). referenceFile과 상호 배타 */
+  referenceLink: ReferenceLink | null;
   /** v3.91: 참고 음원 반영 세기(0.0~1.0). null=미적용(자동) — 생성 body의 audio_weight */
   audioWeight: number | null;
   style: string;
@@ -198,6 +216,9 @@ interface MusicState {
   setVocal: (vocal: string) => void;
   setVocalStyle: (style: string) => void;
   setReferenceFile: (uri: string | null, name: string | null) => void;
+  /** v3.276 [RefLink]: 링크 세팅 시 referenceFile을 비운다(상호 배타) */
+  setReferenceLink: (v: ReferenceLink | null) => void;
+  clearReferenceLink: () => void;
   setAudioWeight: (v: number | null) => void;
   setStyle: (style: string) => void;
   setReferenceStyle: (referenceStyle: string) => void;
@@ -260,6 +281,7 @@ const initialState = {
   vocalStyle: '',
   referenceFile: null,
   referenceFileName: null,
+  referenceLink: null as ReferenceLink | null,
   audioWeight: null,
   style: '',
   referenceStyle: '',
@@ -312,8 +334,12 @@ export const useMusicStore = create<MusicState>()(persist((set) => ({
   setTempo: (tempo) => set({ tempo }),
   setVocal: (vocal) => set({ vocal }),
   setVocalStyle: (vocalStyle) => set({ vocalStyle }),
+  // v3.276 [RefLink]: 파일을 고르면 링크를 비운다(상호 배타 — 해제(null)는 링크 보존)
   setReferenceFile: (referenceFile, referenceFileName) =>
-    set({ referenceFile, referenceFileName }),
+    set(referenceFile ? { referenceFile, referenceFileName, referenceLink: null } : { referenceFile, referenceFileName }),
+  setReferenceLink: (referenceLink) =>
+    set(referenceLink ? { referenceLink, referenceFile: null, referenceFileName: null } : { referenceLink: null }),
+  clearReferenceLink: () => set({ referenceLink: null }),
   setAudioWeight: (audioWeight) => set({ audioWeight }),
   setStyle: (style) => set({ style }),
   setReferenceStyle: (referenceStyle) => set({ referenceStyle }),

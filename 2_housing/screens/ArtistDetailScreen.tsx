@@ -70,7 +70,7 @@ function getProfileImage(image?: string | null): string | null {
 
 function getCoverUrl(img?: string): string | null {
   if (!img) return null;
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}?w=320`;
 }
 
 function getAdImage(item: AdItem): string | null {

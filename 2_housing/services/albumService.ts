@@ -41,11 +41,14 @@ export interface AlbumListResponse {
 }
 
 // 앨범 cover_image는 presigned 풀 URL 또는 '/api/...' 경로로 옴 — UserChannelScreen albumCoverUri 관행 통일
-export function albumCoverUri(img?: string | null): string | null {
+// v3.275 [perf]: 썸네일 폭(기본 320 — 카드·목록). 상세 히어로는 640 을 넘긴다. 경로형('/api/upload/cover-preview/…')도
+// 같은 프록시라 w 를 붙인다(종전: 경로 분기가 원본 6~8MB 를 그대로 받아 차트 앨범 스트립이 무거웠다).
+export function albumCoverUri(img?: string | null, w: 160 | 320 | 640 = 320): string | null {
   if (!img) return null;
-  if (img.startsWith('http')) return img;
-  if (img.startsWith('/')) return `${BACKEND_BASE_URL}${img}`;
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
+  const thumb = (u: string) => (u.includes('/api/upload/cover-preview/') ? `${u}${u.includes('?') ? '&' : '?'}w=${w}` : u);
+  if (img.startsWith('http')) return thumb(img);
+  if (img.startsWith('/')) return thumb(`${BACKEND_BASE_URL}${img}`);
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}?w=${w}`;
 }
 
 /** GET /albums/latest — 홈 최신앨범 섹션(A-20). 비회원도 조회 가능. */

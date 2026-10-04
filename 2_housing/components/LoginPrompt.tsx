@@ -4,16 +4,18 @@ import { ReactNode } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors } from '../theme/colors';
 import LoginStartButton from './LoginStartButton';
+import { openLoginModal } from '../utils/loginModal';
 
 interface Props {
   /** v3.194: 이모지 금지 — 벡터 아이콘(ReactNode) 권장. 문자열도 렌더는 되지만 신규 사용 금지. */
   icon?: ReactNode;
   title?: string;
   desc?: string;
-  onPress: () => void;
+  /** v3.276: 미사용(호환용) — 버튼은 화면 이동 없이 로그인 모달을 바로 연다 */
+  onPress?: () => void;
 }
 
-export default function LoginPrompt({ icon, title, desc, onPress }: Props) {
+export default function LoginPrompt({ icon, title, desc }: Props) {
   return (
     <View style={styles.content}>
       {icon
@@ -21,7 +23,7 @@ export default function LoginPrompt({ icon, title, desc, onPress }: Props) {
         : null}
       {title ? <Text style={styles.title}>{title}</Text> : null}
       {desc ? <Text style={styles.desc}>{desc}</Text> : null}
-      <LoginStartButton onPress={onPress} />
+      <LoginStartButton onPress={() => openLoginModal({ reason: 'login_prompt' })} label="3초 만에 시작하기" />
     </View>
   );
 }

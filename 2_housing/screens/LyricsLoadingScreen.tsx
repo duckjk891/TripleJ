@@ -42,6 +42,16 @@ import { useGenerationJobStore, useTrackedJob } from '../stores/generationJobSto
 import { applyLyricsResult, lyricsTextOf } from '../utils/lyricsHydrate';
 import { useGenerationLeaveGuard } from '../hooks/useGenerationLeaveGuard';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
+// v3.276 [GuestLyrics]: 비로그인 게스트 작사 체험(기기당 1회·무과금) — 원장·피로·⭐ 경로 미사용
+import { useAuthStore } from '../stores/authStore';
+import { openLoginModal } from '../utils/loginModal';
+import {
+  GUEST_TEXT,
+  generateGuestLyrics,
+  guestDenyCode,
+  isGuestNow,
+  markGuestTrialUsed,
+} from '../utils/guestTrial';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -67,7 +77,15 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   // v3.230 A1-1(D1): 진행 중 이탈 가드 — 휴식·중복 안내 다이얼로그가 떠 있는 동안은 비활성(이중 팝업 방지)
   const [guardActive, setGuardActive] = useState(true);
-  const { allowLeave } = useGenerationLeaveGuard(navigation, { screen: 'LyricsLoading', active: guardActive });
+  // v3.276 [GuestLyrics]: 게스트는 서버 원장이 없어 화면을 떠나면 완성 알림이 오지 않는다(결과는 작업본에 남음)
+  const isGuest = !useAuthStore((s) => s.user);
+  const { allowLeave } = useGenerationLeaveGuard(navigation, {
+    screen: 'LyricsLoading',
+    active: guardActive,
+    message: isGuest
+      ? '체험 가사는 완성되면 이 화면에서 바로 보여드려요.\n지금 나가면 결과를 바로 확인할 수 없어요 — 나가시겠어요?'
+      : undefined,
+  });
   const leaveBack = () => {
     allowLeave();
     if (navigation.canGoBack()) navigation.goBack();
@@ -165,7 +183,57 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
       };
     }
 
+    // v3.276 [GuestLyrics]: 게스트 체험 — POST /generate/lyrics/guest(헤더 X-Guest-Device-Id).
+    // 추적기·원장·피로·⭐ 갱신·보상 지급 없음. 결과는 작업본(lyricsStore, 영속)에 반영 — 로그인 후에도 유지.
+    const doGuestGenerate = async () => {
+      store.setIsLoading(true);
+      store.setError(null);
+      try {
+        const payload: any = buildLyricsRequest(useLyricsStore.getState());
+        if (__DEV__) console.info('[LyricsLoading] [guest] 체험 작사 요청', { promptLen: String(payload?.prompt || '').length, genre: payload?.genre ?? null });
+        const result = await generateGuestLyrics(payload);
+        await markGuestTrialUsed('success');
+        // 화면을 벗어났어도 작업본에는 반영(영속) — 체험 1회분을 잃지 않게
+        applyLyricsResult(result);
+        store.setIsLoading(false);
+        if (__DEV__) console.info('[LyricsLoading] [guest] 체험 작사 완료', { mounted: isMounted, hasLyrics: !!lyricsTextOf(result) });
+        if (isMounted) navigation.replace('LyricsResult');
+      } catch (err: any) {
+        const status = err?.response?.status;
+        const deny = guestDenyCode(err);
+        store.setIsLoading(false);
+        if (__DEV__) console.info('[LyricsLoading] [guest] 체험 작사 실패', { status: status ?? null, code: deny ?? err?.response?.data?.error ?? null });
+        if (!isMounted) return;
+        setGuardActive(false);
+        if (deny === 'guest_trial_used') {
+          await markGuestTrialUsed('server_429');
+          showAlert(GUEST_TEXT.usedTitle, GUEST_TEXT.usedBody, [
+            { text: '확인', onPress: () => { leaveBack(); openLoginModal({ reason: 'guest_trial_used' }); } },
+          ]);
+          return;
+        }
+        if (deny === 'guest_daily_cap') {
+          showAlert(GUEST_TEXT.dailyCapTitle, GUEST_TEXT.dailyCapBody, [
+            { text: '확인', onPress: () => { leaveBack(); openLoginModal({ reason: 'guest_daily_cap' }); } },
+          ]);
+          return;
+        }
+        // 그 밖(400 금칙어·5xx·네트워크): 서버가 체험권을 소모하지 않음(5xx는 반환) — 오류 화면에서 다시 시도 가능
+        const errorMsg =
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          (!err?.response ? '네트워크 연결을 확인하고 다시 시도해 주세요.' : null) ||
+          '가사 생성에 실패했습니다.';
+        store.setError(typeof errorMsg === 'string' ? errorMsg : '가사 생성에 실패했습니다.');
+        navigation.replace('LyricsResult');
+      }
+    };
+
     const doGenerate = async () => {
+      if (isGuestNow()) {
+        await doGuestGenerate();
+        return;
+      }
       // v3.228: 중복 생성 최종 방어(사용자당 진행 중 1건 — 미확인 완성본은 비차단)
       if (guardGeneration('lyrics', { navigation, where: 'LyricsLoading', onDismiss: () => leaveBack() })) {
         if (isMounted) setGuardActive(false);
@@ -360,7 +428,10 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
 
         <View style={styles.noteContainer}>
           <AppText style={styles.noteText}>
-            작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.
+            작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}
+            {isGuest
+              ? '무료 체험 가사를 만들고 있어요 — 완성될 때까지 이 화면에서 기다려 주세요.'
+              : '다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.'}
           </AppText>
         </View>
       </View>

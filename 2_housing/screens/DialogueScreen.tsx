@@ -23,6 +23,8 @@ import { DialogueNode } from '../types';
 import lyricistDialogue from '../dialogues/lyricist.json';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+// v3.276 [GuestLyrics]: 게스트 작사 체험 — 창작 모드 토글 숨김(일반 모드 고정)
+import { useAuthStore } from '../stores/authStore';
 // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 import { showAlert } from '../utils/appAlert';
@@ -218,6 +220,15 @@ export default function DialogueScreen({ route, navigation }: Props) {
 
   const dialogue = getDialogue();
   const currentNode = dialogue[currentIndex];
+
+  // v3.276 [GuestLyrics]: 비로그인 게스트는 작사 체험(일반 모드)만 — 저작권 등록 모드 토글 숨김·standard 고정
+  const isGuest = !useAuthStore((s) => s.user);
+  useEffect(() => {
+    if (directorType === 'lyricist' && isGuest && useMusicStore.getState().creationMode !== 'standard') {
+      if (__DEV__) console.info('[Dialogue] [guest] creationMode → standard 고정');
+      useMusicStore.getState().setCreationMode('standard');
+    }
+  }, [directorType, isGuest]);
 
   // v3.200(②): 창작 모드 토글 — 작사 디렉터 대화(새 곡 시작 지점)에서만 노출.
   // 선택은 musicStore.creationMode에 저장 → 발매 track_type('copyright_ready',
@@ -461,7 +472,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
       {/* v3.200(②): 창작 모드 토글 — 작사 디렉터 전용, 헤더 아래·대화 영역 위 상단 고정.
           v3.199(B) 뒤로가기는 부모 스택 헤더(headerLeft)에 있어 간섭 없음.
           % 게이지는 후속(origin 태깅 선행 필요) — 이번엔 상태 칩 1개만. */}
-      {directorType === 'lyricist' && (
+      {directorType === 'lyricist' && !isGuest && (
         <View style={styles.modeBar} pointerEvents="box-none">
           <View style={styles.modeToggle}>
             {([

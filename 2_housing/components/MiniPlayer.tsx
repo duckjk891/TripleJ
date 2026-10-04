@@ -3,7 +3,7 @@ import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePlayerStore, selectMiniPlayerVisible } from '../stores/playerStore';
-import { loadAndPlayTrack, invalidatePlayback, maybeHydrateCover } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
+import { loadAndPlayTrack, invalidatePlayback, maybeHydrateCover, autoContinueWithRelated } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
 import { trackCoverUri } from '../utils/coverUri';
 import { colors } from '../theme/colors';
 
@@ -77,11 +77,16 @@ export default function MiniPlayer() {
   };
 
   const handleNext = async () => {
-    const idx = usePlayerStore.getState().getNextIndex();
-    if (idx >= 0 && queue[idx]) {
+    // v3.275: 수동 '다음'도 Inst 건너뛰기 — 건너뛸 곡이 없으면 관련곡 이어듣기
+    const st = usePlayerStore.getState();
+    const idx = st.getNextManualIndex();
+    console.info('[MiniPlayer] 수동 다음', { idx });
+    if (idx >= 0 && st.queue[idx]) {
       playTrackAtIndex(idx);
-      await loadAndPlayTrack(queue[idx]);
+      await loadAndPlayTrack(st.queue[idx]);
+      return;
     }
+    await autoContinueWithRelated();
   };
 
   const handleClose = async () => {
@@ -93,8 +98,9 @@ export default function MiniPlayer() {
   // 셔플/반복 모드면 항상 prev/next 가능 (큐만 있으면)
   const store = usePlayerStore.getState();
   const hasPrev = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex > 0);
-  const hasNext = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex < queue.length - 1);
-  const coverUri = trackCoverUri(track);
+  // v3.275: 큐 끝에서도 '다음' = 관련곡 이어듣기 — 큐만 있으면 항상 가능
+  const hasNext = queue.length > 0;
+  const coverUri = trackCoverUri(track, 160); // v3.275 [perf]: 미니플레이어 썸네일
   const progress = duration > 0 ? (position / duration) * 100 : 0;
 
   return (

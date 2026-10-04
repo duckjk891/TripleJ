@@ -197,6 +197,26 @@ function RepeatIcon({ mode }: { mode: 'off' | 'all' | 'one' }) {
   );
 }
 
+// v3.275 [perf]: 활성 광고 목록 캐시 — /business/ads/active 는 345KB(아이템 500건 샘플)라 곡 전환마다
+// 재조회하면 체감 지연의 한 축이 된다(10-04 진단). 10분 TTL + in-flight 공유. 실패는 캐시하지 않는다.
+let adsCache: { at: number; items: any[] } | null = null;
+let adsInflight: Promise<any[]> | null = null;
+async function getActiveAdsCached(): Promise<any[]> {
+  if (adsCache && Date.now() - adsCache.at < 10 * 60 * 1000) return adsCache.items;
+  if (adsInflight) return adsInflight;
+  adsInflight = (async () => {
+    try {
+      const res = await api.get('/business/ads/active');
+      const items = res.data?.items || [];
+      adsCache = { at: Date.now(), items };
+      return items;
+    } finally {
+      adsInflight = null;
+    }
+  })();
+  return adsInflight;
+}
+
 export default function PlayerScreen({ route, navigation }: any) {
   const routeTrack: TrackData = route.params?.track;
   // v3.235 B5·B6: 공유 링크 진입(utils/trackLink) — 첫 화면 튜토리얼 생략(D9)·웹 자동재생 차단 시 탭 오버레이
@@ -583,11 +603,14 @@ export default function PlayerScreen({ route, navigation }: any) {
     } else if (status.error) {
       // v3.197: 미디어 에러 상태({isLoaded:false, error}) — 무음 방치 제거(UI 일시정지 정합화) + 원격 계측.
       // 자동 재재생은 하지 않음 — 견고화된 재생버튼 1탭이 복구 경로.
-      console.warn('[BTDebug] sound error', { src: 'Player', trackId: usePlayerStore.getState().track?.id, error: String(status.error) });
-      setIsPlaying(false);
-      playerStore.setIsPlaying(false);
+      console.warn('[BTDebug] sound error', { src: 'Player', trackId: usePlayerStore.getState().track?.id, error: String(status.error), retrying: !!status.retrying });
+      // v3.275: 웹 재시도 중(retrying)이면 정지 표시 금지 — 순간 단절은 element 재시도 루프가 복구한다
+      if (!status.retrying) {
+        setIsPlaying(false);
+        playerStore.setIsPlaying(false);
+      }
       // v3.225: 자동 진행 중 곡의 실패(웹 ended-swap/advanceViaNetwork 404 → MediaError)만 건너뛰기
-      void skipUnplayableOnAutoAdvance(usePlayerStore.getState().track, advanceViaNetwork);
+      void skipUnplayableOnAutoAdvance(usePlayerStore.getState().track, advanceViaNetwork, { retrying: !!status.retrying });
     }
   };
 
@@ -766,8 +789,8 @@ export default function PlayerScreen({ route, navigation }: any) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get('/business/ads/active');
-        const all: AdItem[] = res.data?.items || [];
+        // v3.275 [perf]: 곡이 바뀔 때마다 345KB 응답을 다시 받던 것 → 모듈 캐시 10분(진행 중 요청 공유)
+        const all: AdItem[] = await getActiveAdsCached();
         const filtered = all.filter((a) => a.user_id === uploaderId);
         if (cancelled) return;
         setAds(filtered);
@@ -959,8 +982,12 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   const handleNext = async () => {
-    const idx = usePlayerStore.getState().getNextIndex();
-    if (idx >= 0) await switchToTrack(idx);
+    // v3.275: 수동 '다음'도 Inst 건너뛰기(getNextManualIndex). 건너뛸 곡이 없으면(큐 끝·남은 곡 전부 Inst)
+    // 관련곡 이어듣기로 — 종전엔 큐 끝에서 '다음'이 무반응이었다.
+    const idx = usePlayerStore.getState().getNextManualIndex();
+    console.info('[PlayerScreen] 수동 다음', { idx });
+    if (idx >= 0) { await switchToTrack(idx); return; }
+    await autoContinueWithRelated(advanceViaNetwork);
   };
 
   const handleSeek = async (value: number) => {

@@ -23,6 +23,10 @@ import { useMusicStore } from '../stores/musicStore';
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 // v3.229 [DirectorResume]: 보존 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { isLyricsDraftResumable } from '../utils/directorResume';
+// v3.276 [GuestLyrics]: 비로그인 게스트 작사 체험 — 일반 모드 고정, 보관함은 로그인 후
+import { useAuthStore } from '../stores/authStore';
+import { openLoginModal } from '../utils/loginModal';
+import { isGuestNow } from '../utils/guestTrial';
 import { colors } from '../theme/colors';
 import {
   buildLyricsRequest,
@@ -138,8 +142,10 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
   // 구 draft(null)는 현재 모드 유지.
   const restoredCreationMode = hasResumableDraft ? initialStore.draftCreationMode : null;
   const [resumeCreationMode] = useState<'standard' | 'copyright'>(
-    () => restoredCreationMode ?? useMusicStore.getState().creationMode
+    // v3.276 [GuestLyrics]: 게스트는 저작권 등록 모드 미지원 — 일반 모드 고정
+    () => (isGuestNow() ? 'standard' : restoredCreationMode ?? useMusicStore.getState().creationMode)
   );
+  const isGuest = !useAuthStore((s) => s.user);
   const [step, setStep] = useState(hasResumableDraft ? initialStore.draftStep : 0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>(
     hasResumableDraft
@@ -166,6 +172,11 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
         from: useMusicStore.getState().creationMode, to: restoredCreationMode,
       });
       useMusicStore.getState().setCreationMode(restoredCreationMode);
+    }
+    // v3.276 [GuestLyrics]: 게스트는 일반 모드 고정(저작권 등록 모드 기록은 로그인 기능) — 복원값보다 우선
+    if (isGuestNow() && useMusicStore.getState().creationMode !== 'standard') {
+      if (__DEV__) console.info('[LyricsInput] [guest] creationMode → standard 고정', { from: useMusicStore.getState().creationMode });
+      useMusicStore.getState().setCreationMode('standard');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -398,11 +409,18 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
             style={styles.bookEntryButton}
             onPress={() => {
               if (__DEV__) console.log('[LyricsBook] 보관함 진입 (LyricsInput)');
+              // v3.276 [GuestLyrics]: 보관함은 로그인 기능 — 게스트는 로그인 모달 후 진입
+              if (isGuestNow()) {
+                openLoginModal({ reason: 'guest_lyrics_book', afterLogin: () => navigation.navigate('LyricsBook') });
+                return;
+              }
               navigation.navigate('LyricsBook');
             }}
           >
-            <AppText style={styles.bookEntryText}>가사 보관함</AppText>
-            <AppText style={styles.bookEntrySub}>저장해둔 가사 보기 · 바로 작곡하기</AppText>
+            <AppText style={styles.bookEntryText}>{isGuest ? '무료 체험 중' : '가사 보관함'}</AppText>
+            <AppText style={styles.bookEntrySub}>
+              {isGuest ? '가사 1곡을 무료로 만들어 볼 수 있어요 · 가입하면 저장·작곡까지' : '저장해둔 가사 보기 · 바로 작곡하기'}
+            </AppText>
           </TouchableOpacity>
         </View>
       )}

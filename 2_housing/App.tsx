@@ -105,6 +105,9 @@ import VideoDirectorScreen from './screens/VideoDirectorScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
 import AppDialogHost from './components/AppDialogHost';
+import LoginModalHost from './components/auth/LoginModalHost'; // v3.276: 전역 로그인 모달
+import WelcomeGuide from './components/WelcomeGuide'; // v3.276: 첫 실행 이미지형 웰컴 팝업(화면별 튜토리얼 대체)
+import { notifyBootAuthSettled } from './utils/bootAuth';
 // v3.232 K4(B8): 어린이 계정 첫 로그인 1회 온라인 안전 안내(일반 사용자 무동작)
 import KidsSafetyNotice from './components/kids/KidsSafetyNotice';
 import ArtistInputScreen from './screens/ArtistInputScreen';
@@ -619,6 +622,7 @@ let bootAuthSettled = false;
 function markBootAuthSettled(reason: string) {
   if (bootAuthSettled) return;
   bootAuthSettled = true;
+  notifyBootAuthSettled(); // v3.276: WelcomeGuide 등 "비로그인 전용 첫 실행 UI" 대기 해제
   if (peekPendingTrackLink()) console.info('[TrackLink] auth-settled', { reason });
   tryConsumeTrackLink();
 }
@@ -905,6 +909,9 @@ export default function App() {
           {/* 출석체크·초대 모달 + 최초 로그인 자동 출석 팝업 */}
           <GlobalModals />
           {/* v3.85: 전역 앱 내 다이얼로그 (showAlert → dialogStore) — 시스템 팝업 대체 */}
+          {/* v3.276: 로그인 모달은 다이얼로그(오류 팝업)보다 아래에 — AuthPanel 의 showAlert 가 위로 뜨도록 순서 유지 */}
+          <WelcomeGuide />
+          <LoginModalHost />
           <AppDialogHost />
           {/* v3.232 K4: 어린이 계정 온라인 안전 안내 1회 트리거(렌더 없음) */}
           <KidsSafetyNotice />

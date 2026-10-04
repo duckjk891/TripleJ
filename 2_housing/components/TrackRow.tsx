@@ -22,7 +22,7 @@ export interface RowTrack {
 }
 
 export function getTrackCoverUri(track: RowTrack): string | null {
-  return trackCoverUri(track);
+  return trackCoverUri(track, 160); // v3.275 [perf]: 목록 행 48px — 160 썸네일(원본 6~8MB 금지)
 }
 
 /** left=true면 좌측 슬롯(순번)이 없는 목록 — 앞쪽 여백 없이 커버부터 시작한다 */

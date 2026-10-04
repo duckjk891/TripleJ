@@ -20,7 +20,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMusicStore, type ComposeDraft, type ComposeDraftAnswers } from '../stores/musicStore';
+import { useMusicStore, type ComposeDraft, type ComposeDraftAnswers, type ReferenceLink } from '../stores/musicStore';
+// v3.276 [RefLink]: 유튜브 링크 참조(메타데이터 전용 — 음원 추출 없음)
+import { lookupReferenceLink } from '../services/musicService';
 // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
@@ -81,7 +83,8 @@ const DIRECTOR_MESSAGES = [
   '', // dynamic: 장르/분위기/스타일 안내
   '보컬을 선택해주세요!',
   '보컬 스타일을 선택해주세요!',
-  '참고하고 싶은 아티스트나 곡이 있다면 업로드 해주세요.',
+  // v3.276 [RefLink]: 파일 업로드 + 유튜브 링크(곡 정보만 참고) 선택지 안내
+  '참고하고 싶은 곡이 있다면 음원 파일을 올리거나 유튜브 링크를 붙여넣어 주세요. 없으면 건너뛰어도 괜찮아요.',
   '제외하고 싶은 스타일이 있으시면 얘기해주세요.',
   '설정한 스타일에서 자유도는 얼마나 드릴까요?',
   '대중적인 음악으로 갈까요, 실험적인 음악으로 갈까요?',
@@ -116,6 +119,31 @@ export function artistVoiceBlockReason(
   if (!artist) return null;
   if (!!artist.persona_voice_id && artist.persona_status === 'ready') return null;
   return artist.persona_status === 'expired' ? 'expired' : 'unavailable';
+}
+
+// v3.276 [RefLink]: 유튜브 링크 참조 → reference_style 병합 규칙(순수 함수 — Node 하니스 검증용 export).
+// 기존 값(refStyle) 뒤에 ". "로 이어붙인다. 링크 문장(style_text)이 비면 서버가 고른 고정 어휘
+// (분위기·장르)로 짧은 문장을 만들고, BPM을 직접 정하지 않았을 때만 템포 힌트(느림/빠름)를 덧붙인다.
+// 실명(곡명·채널명)은 절대 넣지 않는다 — Suno가 실존 아티스트·곡명을 거부(서버도 style_text에서 제거).
+export function mergeReferenceStyle(
+  base: string,
+  link: Pick<ReferenceLink, 'styleText' | 'genre' | 'mood' | 'tempoHint'> | null | undefined,
+  bpmSet: boolean
+): string {
+  const head = (base || '').trim();
+  if (!link) return head;
+  let linkText = (link.styleText || '').trim();
+  if (!linkText) {
+    const words = [link.mood, link.genre].filter((w): w is string => !!w && !!w.trim());
+    if (words.length > 0) linkText = `${words.join(' ')} 느낌의 곡`;
+  }
+  if (!bpmSet && (link.tempoHint === '느림' || link.tempoHint === '빠름')) {
+    const tempo = link.tempoHint === '느림' ? '느린 템포' : '빠른 템포';
+    linkText = linkText ? `${linkText.replace(/[.\s]+$/, '')}, ${tempo}` : tempo;
+  }
+  if (!linkText) return head;
+  if (!head) return linkText;
+  return `${head.replace(/[.\s]+$/, '')}. ${linkText}`;
 }
 
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
@@ -231,6 +259,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [bpmOn, setBpmOn] = useState(draftAnswers ? draftAnswers.bpmOn : false);
   const [musicalKey, setMusicalKey] = useState(draftAnswers ? draftAnswers.musicalKey : '');
   const [musicalKeyOn, setMusicalKeyOn] = useState(draftAnswers ? draftAnswers.musicalKeyOn : false);
+  // v3.276 [RefLink]: step 5 유튜브 링크 입력 UI — 입력칸 열림·입력값·조회 중
+  const [refLinkOpen, setRefLinkOpen] = useState(false);
+  const [refLinkInput, setRefLinkInput] = useState('');
+  const [refLinkLoading, setRefLinkLoading] = useState(false);
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -259,6 +291,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // v3.242: 명시적 스킵 복원 — 스킵한 draft가 대표 미리선택·발매 대표 폴백으로 되살아나지 않게
       // (구 draft 스냅샷엔 필드가 없을 수 있음 → false = v3.241 동작 유지)
       music.setArtistExplicitSkip(draftAnswers?.artistExplicitSkip ?? false);
+      // v3.276 [RefLink]: draft에 링크가 있으면 복원(구 draft=필드 없음 → 메모리 값 유지)
+      if (draftAnswers?.referenceLink) music.setReferenceLink(draftAnswers.referenceLink);
       if (__DEV__) {
         console.info('[ComposeDraft] draft 복원 — 이어서 진행', {
           step: resumeDraft.step,
@@ -279,6 +313,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
     music.setArtistCharacterId(null);
     music.setArtistExplicitSkip(false); // v3.242: 새 대화 = 이전 곡의 스킵 선택도 초기화
+    music.clearReferenceLink(); // v3.276 [RefLink]: 새 대화 = 이전 곡의 링크 참조 비움
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -321,10 +356,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         selectedArtistId,
         artistCharacterId: useMusicStore.getState().artistCharacterId,
         artistExplicitSkip: useMusicStore.getState().artistExplicitSkip, // v3.242
+        referenceLink: useMusicStore.getState().referenceLink, // v3.276 [RefLink]
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatHistory, step, editedTitle, editedLyrics]);
+  }, [chatHistory, step, editedTitle, editedLyrics, musicStore.referenceLink]);
 
   // v3.219 [ComposeDraft]: '처음부터' — draft 폐기 + 대화·답변 전부 초기 상태로(새 대화 마운트와 동치)
   const handleRestartCompose = () => {
@@ -333,6 +369,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     music.clearComposeDraft();
     music.setArtistCharacterId(null); // v3.156a 마운트 초기화와 동치(새 대화)
     music.setArtistExplicitSkip(false); // v3.242: 처음부터 = 스킵 선택도 새로(대표 미리선택 복귀)
+    music.clearReferenceLink(); // v3.276 [RefLink]: 처음부터 = 링크 참조도 비움
+    setRefLinkOpen(false);
+    setRefLinkInput('');
     rewindRef.current = null;
     repickRef.current = false;
     personaDefaultAppliedRef.current = false;
@@ -534,6 +573,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (useMusicStore.getState().referenceFile) {
       console.info('[KidsGate] voice hidden — 참고 음원 제외');
       musicStore.setReferenceFile(null, null);
+    }
+    if (useMusicStore.getState().referenceLink) {
+      console.info('[KidsGate] [RefLink] 어린이 — 링크 참조 제외');
+      musicStore.clearReferenceLink();
     }
     if (rewindRef.current) return;
     if (step === 12 && !artistVoiceApplied) {
@@ -1556,6 +1599,69 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     advanceStep('건너뛰기', 9);
   };
 
+  // v3.276 [RefLink]: Step 5 — 유튜브 링크 참조(메타데이터 전용). 대표 결정: 음원은 다운로드하지
+  // 않는다(약관·저작권). 서버가 oEmbed 제목·채널명에서 뽑은 스타일 힌트만 저장 → 생성 직전
+  // reference_style 에 병합(mergeReferenceStyle). 파일 업로드와 상호 배타(store setter가 보장).
+  // 참고음 세기(step 9)는 파일 전용 — 링크만 있으면 hasReferenceFile=false라 기존 V1 로직대로 스킵.
+  const handleSubmitReferenceLink = async () => {
+    if (isChildNow()) return; // 어린이 — 버튼 숨김(방어)
+    if (refLinkLoading) return;
+    const url = refLinkInput.trim();
+    if (!url) {
+      showAlert('유튜브 링크', '참고할 유튜브 영상 링크를 붙여넣어 주세요.');
+      return;
+    }
+    setRefLinkLoading(true);
+    try {
+      const r = await lookupReferenceLink(url);
+      const link: ReferenceLink = {
+        url,
+        title: (r.title || '').trim(),
+        author: (r.author || '').trim(),
+        genre: r.genre || null,
+        mood: r.mood || null,
+        tempoHint: r.tempo_hint || null,
+        styleText: (r.style_text || '').trim(),
+      };
+      musicStore.setReferenceLink(link); // 파일 업로드 선택은 비워진다(상호 배타)
+      setRefLinkOpen(false);
+      setRefLinkInput('');
+      const weak = !link.styleText && !link.genre && !link.mood;
+      console.info('[MusicGeneration] [RefLink] 링크 참조 확정', {
+        titleLen: link.title.length, genre: link.genre, mood: link.mood,
+        styleLen: link.styleText.length, fallback: !!r.fallback,
+      });
+      const nextStep = musicStore.instrumental ? 10 : 6;
+      if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — 링크 참조 후 BPM(10) 직행');
+      const label = `'${link.title}'${link.author ? ` (${link.author})` : ''}`;
+      const notice =
+        `${label} 정보를 참고할게요 — 음원은 가져오지 않고 곡 정보만 참고해요.` +
+        (weak ? ' 다만 이 영상은 곡 정보만으로 스타일을 읽기 어려워서 반영이 약할 수 있어요.' : '');
+      const nextQuestion =
+        nextStep >= DIRECTOR_MESSAGES.length ? '' : DIRECTOR_MESSAGES[nextStep];
+      // 안내+다음 질문을 한 버블로 — 되감기(비파괴 치환)가 에코 1개 기준으로 정확히 맞물리게
+      commitExchange(
+        { type: 'user', text: `유튜브 링크: ${link.title}`, step },
+        [{ type: 'director', text: nextQuestion ? `${notice}\n\n${nextQuestion}` : notice }],
+        nextStep
+      );
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.warn('[MusicGeneration] [RefLink] 링크 조회 실패', { status });
+      const msg =
+        status === 400
+          ? '유튜브 영상 링크만 사용할 수 있어요. 링크를 다시 확인해주세요.'
+          : status === 404
+            ? '영상 정보를 찾을 수 없어요. 공개된 영상 링크인지 확인해주세요.'
+            : status === 429
+              ? '잠시 후 다시 시도해주세요.'
+              : '영상 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.';
+      showAlert('유튜브 링크', msg);
+    } finally {
+      setRefLinkLoading(false);
+    }
+  };
+
   const formatDuration = (sec: number) => {
     const m = Math.floor(sec / 60).toString().padStart(2, '0');
     const s = (sec % 60).toString().padStart(2, '0');
@@ -1574,13 +1680,30 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     //  · Instrumental 선택 곡(가사 유지)은 보컬/페르소나 파라미터만 전부 비운다.
     const instrumental = musicStore.instrumental;
     musicStore.setLyrics(instrumentalEntryRef.current ? '' : editedLyrics.trim());
-    musicStore.setGenre(lyricsStore.genre || selectedGenre);
-    musicStore.setMood(lyricsStore.mood || selectedMood);
+    // v3.276 [RefLink]: 링크 참조 — 어린이는 제외(방어). 장르·분위기가 사용자 미지정일 때만
+    // 링크 힌트로 선답(기존 선택지 목록과 정확히 일치할 때만 — 서버도 같은 어휘로 정규화).
+    const refLink = isChildNow() ? null : useMusicStore.getState().referenceLink;
+    const userGenre = lyricsStore.genre || selectedGenre;
+    const userMood = lyricsStore.mood || selectedMood;
+    const linkGenre = !userGenre && refLink?.genre && GENRE_OPTIONS.includes(refLink.genre) ? refLink.genre : '';
+    const linkMood = !userMood && refLink?.mood && MOOD_OPTIONS.includes(refLink.mood) ? refLink.mood : '';
+    if (linkGenre || linkMood) {
+      console.info('[MusicGeneration] [RefLink] 장르/분위기 미지정 — 링크 힌트로 선답', { linkGenre, linkMood });
+    }
+    musicStore.setGenre(userGenre || linkGenre);
+    musicStore.setMood(userMood || linkMood);
     musicStore.setTempo(lyricsStore.tempo || musicStore.tempo || '보통');
     musicStore.setVocal(instrumental ? '' : (selectedVocalGender || ''));
     musicStore.setVocalStyle(instrumental ? '' : selectedVocalStyle);
     musicStore.setStyle(lyricsStore.style || '');
-    musicStore.setReferenceStyle(refStyle.trim());
+    // v3.276 [RefLink]: 기존 참고 스타일 뒤에 링크 스타일 문장을 ". "로 병합(실명 미포함)
+    const mergedRefStyle = mergeReferenceStyle(refStyle.trim(), refLink, bpmOn);
+    if (refLink) {
+      console.info('[MusicGeneration] [RefLink] reference_style 병합', {
+        baseLen: refStyle.trim().length, mergedLen: mergedRefStyle.length,
+      });
+    }
+    musicStore.setReferenceStyle(mergedRefStyle);
     musicStore.setBpm(bpmOn ? String(bpmValue) : '');
     musicStore.setMusicalKey(musicalKeyOn ? musicalKey : '');
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
@@ -1591,6 +1714,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (kidsNow && useMusicStore.getState().referenceFile) {
       console.info('[KidsGate] voice hidden — 생성 직전 참고 음원 제외');
       musicStore.setReferenceFile(null, null);
+    }
+    if (kidsNow && useMusicStore.getState().referenceLink) {
+      console.info('[KidsGate] [RefLink] 생성 직전 링크 참조 제외');
+      musicStore.clearReferenceLink();
     }
     const hasReferenceAtGen = !!useMusicStore.getState().referenceFile;
     if (audioWeightOn && !hasReferenceAtGen) {
@@ -2102,6 +2229,56 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               <AppText style={styles.uploadButtonText}>파일 업로드</AppText>
             </TouchableOpacity>
             )}
+            {/* v3.276 [RefLink]: 유튜브 링크 붙여넣기 — 음원은 가져오지 않고 곡 정보(제목·채널명)만 참고.
+                어린이는 파일 업로드와 동일하게 숨김 */}
+            {!isChild && !refLinkOpen && (
+              <TouchableOpacity
+                style={[styles.uploadButton, styles.refLinkButton]}
+                onPress={() => {
+                  console.info('[MusicGeneration] [RefLink] 링크 입력 열기');
+                  setRefLinkOpen(true);
+                }}
+              >
+                <AppText style={styles.uploadButtonText}>유튜브 링크 붙여넣기</AppText>
+              </TouchableOpacity>
+            )}
+            {!isChild && refLinkOpen && (
+              <View style={styles.refLinkBox}>
+                <TextInput
+                  style={styles.advancedInput}
+                  value={refLinkInput}
+                  onChangeText={setRefLinkInput}
+                  placeholder="https://youtu.be/... 유튜브 링크를 붙여넣어 주세요"
+                  placeholderTextColor={colors.text.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  editable={!refLinkLoading}
+                  onSubmitEditing={() => { void handleSubmitReferenceLink(); }}
+                />
+                <AppText style={styles.refLinkHint}>음원은 가져오지 않고 곡 정보(제목·채널명)만 참고해요.</AppText>
+                <View style={styles.twoBtnRow}>
+                  <TouchableOpacity
+                    style={styles.skipBtn}
+                    disabled={refLinkLoading}
+                    onPress={() => { setRefLinkOpen(false); setRefLinkInput(''); }}
+                  >
+                    <AppText style={styles.skipBtnText}>취소</AppText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.applyBtn, (!refLinkInput.trim() || refLinkLoading) && { opacity: 0.4 }]}
+                    disabled={!refLinkInput.trim() || refLinkLoading}
+                    onPress={() => { void handleSubmitReferenceLink(); }}
+                  >
+                    {refLinkLoading ? (
+                      <ActivityIndicator size="small" color={colors.text.primary} />
+                    ) : (
+                      <AppText style={styles.applyBtnText}>확인</AppText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
             {musicStore.referenceFileName && (
               <View style={styles.fileInfo}>
                 <AppText style={styles.fileInfoText}>선택됨: {musicStore.referenceFileName}</AppText>
@@ -2110,16 +2287,36 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 </TouchableOpacity>
               </View>
             )}
+            {!isChild && musicStore.referenceLink && (
+              <View style={styles.fileInfo}>
+                <AppText style={styles.fileInfoText} numberOfLines={1}>
+                  유튜브 참고: {musicStore.referenceLink.title}
+                </AppText>
+                <TouchableOpacity
+                  onPress={() => {
+                    console.info('[MusicGeneration] [RefLink] 링크 참조 제거');
+                    musicStore.clearReferenceLink();
+                  }}
+                >
+                  <AppText style={styles.removeFileText}>제거</AppText>
+                </TouchableOpacity>
+              </View>
+            )}
+            {!refLinkOpen && (
             <TouchableOpacity
               style={styles.skipButton}
               onPress={() => {
                 // v3.203: 연주곡은 세부 스타일 질문(6~9) 스킵 — 참고 다음이 BPM(10)
                 if (musicStore.instrumental) console.info('[MusicGeneration] 연주곡 — 참고 확인/건너뛰기 후 BPM(10) 직행');
-                advanceStep(musicStore.referenceFileName || '건너뛰기', musicStore.instrumental ? 10 : 6);
+                const linkTitle = !isChild && musicStore.referenceLink ? `유튜브 링크: ${musicStore.referenceLink.title}` : '';
+                advanceStep(musicStore.referenceFileName || linkTitle || '건너뛰기', musicStore.instrumental ? 10 : 6);
               }}
             >
-              <AppText style={styles.skipButtonText}>{musicStore.referenceFileName ? '확인' : '건너뛰기'}</AppText>
+              <AppText style={styles.skipButtonText}>
+                {musicStore.referenceFileName || (!isChild && musicStore.referenceLink) ? '확인' : '건너뛰기'}
+              </AppText>
             </TouchableOpacity>
+            )}
           </View>
         );
 
@@ -2931,6 +3128,10 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: 14,
   },
+  // v3.276 [RefLink]: 유튜브 링크 버튼·입력 박스
+  refLinkButton: { marginTop: 8, paddingVertical: 14 },
+  refLinkBox: { marginTop: 8 },
+  refLinkHint: { color: colors.text.muted, fontSize: 12, marginTop: 6, paddingHorizontal: 4 },
   recordingActive: {
     borderColor: colors.accent.primary,
     // TODO: 테마화 검토 (녹음 중 표시 배경)

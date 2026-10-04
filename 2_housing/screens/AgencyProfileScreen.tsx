@@ -42,7 +42,7 @@ interface Track {
 
 function getCoverUrl(coverImage?: string): string | null {
   if (!coverImage) return null;
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(coverImage)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(coverImage)}?w=320`;
 }
 
 export default function AgencyProfileScreen({ route, navigation }: any) {

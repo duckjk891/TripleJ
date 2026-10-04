@@ -134,7 +134,8 @@ export default function CodyPickerModal({
       price: priceFacets(applyFilters(baseItems, v, 'prices')),
       brand: v.mode === 'all' ? brandFacets(applyFilters(baseItems, v, 'brands')) : [],
       hasColor: baseItems.some((i) => !!i.color_family),
-      hasPrice: baseItems.some((i) => typeof i.price_krw === 'number' && i.price_krw > 0),
+      // v3.275(대표): 금액 비노출 — 가격 필터 칩도 함께 숨김(카드에 금액이 없는데 가격 필터만 남으면 모순)
+      hasPrice: false,
     };
   }, [baseItems, v, pickerCat]);
   const resetFilters = () => {

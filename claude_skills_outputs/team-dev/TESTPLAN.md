@@ -5432,3 +5432,23 @@ ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback
 - [e2e] 27곡 사용자(제보자 데이터)로 마이페이지 목록·지표 27, 영상 디렉터 선택 목록 전체.
 ### 회귀
 - [api] DM 텍스트 전용 전송 불변. 피드 이미지 5장 발행(전 라운드 v3.273) 불변. /tracks/my 호출 4화면 렌더 정상(tsc+웹 스모크).
+
+---
+
+## v3.275·v3.276 테스트플랜 (실행 결과 포함)
+
+### 재생 복구
+- [e2e] 운영 웹에서 재생 중 src 를 도달 불가 호스트로 교체(단절 모사) → Then `media error(code4, proxy)`→`재시도 attempt1`→`재시도 성공(0.43s)`, 정지·스킵 없음. **PASS**
+- [unit] getNextManualIndex 9케이스(일반·Inst 3연속·잔여 전부 Inst→-1·큐 끝·전곡 Inst·한곡반복·전체반복 2종·Inst 중 다음). **9/9 PASS**
+- [e2e/대표 확인] 실기기 백그라운드 30분 연속 청취(안드로이드 크롬, Wi-Fi↔LTE 전환 포함) — 원격 로그 `[WebAudio] 재시도 성공`/`[BGWeb] 관련곡 선적재` 로 사후 확인.
+### 서버
+- [api] cover-preview: 원본 200+ETag+immutable, If-None-Match 304(0B), ?w=160/320/640 = 4.7KB/15KB/49KB WebP(원본 6.56MB). **PASS**
+- [api] lyrics-timeline: 붕괴 듀엣 트랙 has_timestamps=false, 정상 트랙 60세그먼트 유지. **PASS** / [unit] 붕괴 판정 3케이스 **PASS**
+- [api] guest lyrics: 헤더 없음 400 / 첫 호출 200(guest:true) / 동일 기기 429. **PASS** (테스트 기기 키 정리)
+- [api] reference-link: 비로그인 401 / 정상 200(장르·분위기·스타일, 실명 미포함) / 비유튜브 400 / 없는 영상 404. **PASS**
+### 온보딩 E2E (운영 웹, 모바일 뷰포트)
+- 첫 실행 웰컴 팝업 노출 → CTA → LyricsInput?guestTrial=true("무료 체험 중") **PASS** / 재방문 미노출 **PASS**
+- 작업실 게스트 탭 → 체험 제안 팝업 → [로그인] → 모달 "3초면 간편가입 완료"(구글·카카오 우선, 이메일 접힘) **PASS**
+- 차트 커버 126개 전부 썸네일(원본 0) **PASS**
+### 미실행(로그인 필요 — 운영 크리덴셜 미입력 원칙) → 대표 확인 권장
+- 게스트 가사 완성 후 가입 → 가사 승계·보관함 저장, 작곡 디렉터 유튜브 링크 UI, DM 사진 뷰어, 꾸미기 금액 숨김.

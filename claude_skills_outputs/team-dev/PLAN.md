@@ -8000,3 +8000,36 @@ tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2
 | [39][43][46][47][49] | 진단 에이전트2 결과 따름 | — | — |
 | [45][44][42] | 진단 에이전트3 결과 따름(이중과금 최우선) | — | — |
 | ②③[38][41][51][52] | 의견·백로그 보고(구현은 대표 결정 후) | — | — |
+
+---
+
+## v3.275·v3.276 — 2026-10-04 — 배경재생 재진단·Inst 수동 스킵·웹 속도·자막 붕괴·금액 숨김 + 온보딩 패키지 (팀: MAIDOL-core)
+
+### 요청 원문 요지
+①백그라운드 재생 지속 끊김 원인 확정·해결 ②'다음' 시 Inst 건너뛰기(계속 Inst만 재생) ③웹앱 느려짐 파악 ④NowPlaying 동영상 자막 타임스탬프(A/B 교차 의심) ⑤아티스트 꾸미기 금액 숨김 ⑥관리자 화면 별도 세션 ⑦관리자 접수 신고→피드백4 ⑧게스트 작사 체험·즉시 로그인 모달("3초 간편가입")·본인인증은 필요 시점 ⑨화면별 튜토리얼 폐지→앱 시작 이미지형 팝업(실제 화면 캡처, 작사 체험 CTA) ⑩작곡 디렉터 유튜브 링크 참조 ⑪웹 푸시 가능 여부.
+
+### Plan verification findings (0단계 — 진단 에이전트 4 + 직접 확인)
+- 재생: v3.272 복구 3종이 실장애(곡 경계 순간 단절→proxy 로드 code4)에서 전부 불발 — (a)`src!==recover` 가드로 복구 0회(code4 5건 전부) (b)에러 콜백 isPlaying=false→복귀 재로드 noop (c)건너뛰기 판정: 미도달=정지/200=정상곡 스킵. 패턴 E: 큐 소진 후 related fetch 백그라운드 실패=정지. iOS는 페이지 동결/폐기(로그 유실 — 계측 추가).
+- 운영 결함: 10-01 재배포에서 `-e S3_REGION`·로그 볼륨 누락(컨테이너 내부에만 로그).
+- Inst: 수동 다음 3경로(PlayerScreen·MiniPlayer·mediaSession)가 getNextIndex 사용. 서버 related는 Inst 0 유입 확인.
+- 속도: cover-preview가 트래픽 85~95%(6~8MB 원본 PNG, 캐시 헤더 없음, async 내 동기 S3 read로 이벤트 루프 직렬 차단 — 동시 8장 시 /health 0.0025→1.18s). ads/active 345KB 곡 전환마다 재조회.
+- 자막: A/B 교차 없음(97/97 일치). 원인=Suno 정렬 붕괴(듀엣 12/14, 가사 전체가 2초 구간에 몰림)를 무검증 서빙.
+- 게스트: 작업실 Map 터치만 로그인 게이트. /generate/lyrics/ 는 인증·과금·원장 결합 → 게스트 전용 엔드포인트 분리.
+- 참고 음원: reference_audio_url→Suno. 유튜브는 oEmbed 메타만(음원 추출 금지 — 약관·저작권).
+
+### 변경 매트릭스
+| 항목 | 파일 | 내용 | 추적자 |
+|---|---|---|---|
+| 재생 A | services/webAudioElement.ts | 캐시버스터 백오프 재시도(≤10분)+online 즉시, retrying 전파, 위치 복원, playIntent | [WebAudio] |
+| 재생 A | services/playback.ts·PlayerScreen | retrying 시 정지·스킵 금지(4xx만), 복귀 의도 플래그 | [BTDebug] |
+| 재생 E | services/playback.ts | 마지막 곡 시작 시 관련곡 선적재(헛 프리페치 제거), lifecycle 계측 | [BGWeb] |
+| Inst | stores/playerStore.ts 외 3 | getNextManualIndex, isInstTrack 공용, 전곡 Inst 예외 | [PlayerScreen]/[MiniPlayer] |
+| 속도 | server upload.py·business.py | to_thread·ETag/304·불변/재검증 캐시·?w= WebP 썸네일 | [cover-preview] |
+| 속도 | utils/coverUri.ts 외 목록 화면들 | 목록 160/320, 앨범 320/640 썸네일, ads 10분 캐시 | — |
+| 자막 | server share_video.py | 붕괴 판정→서빙 차단, 듀엣 라벨·=== 제거 | [share-video] |
+| 금액 | components/cody/* | 가격·가격필터 숨김 | — |
+| 게스트 | server generate.py, Lyrics*·Dialogue·Map, utils/guestTrial* | /generate/lyrics/guest(기기 1회·일 300), 로그인 승계 | [GuestLyrics] |
+| 로그인 | utils/loginModal, components/auth/* , LoginPrompt | 전역 모달·소셜 우선·3초 카피 | [LoginModal] |
+| 온보딩 | components/WelcomeGuide, TutorialOverlay, utils/bootAuth | 이미지형 웰컴(1회)·화면별 튜토리얼 전역 OFF | [WelcomeGuide] |
+| 유튜브 | server reference_link.py·main.py, MusicGenerationScreen·musicStore·musicService | 링크→oEmbed→스타일 힌트→reference_style | [RefLink] |
+| 피드백4 [54] | DmChatScreen | DM 사진 원본 뷰어 | [DmChat] |

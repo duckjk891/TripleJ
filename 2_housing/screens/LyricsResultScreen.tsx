@@ -29,6 +29,9 @@ import { commitLyricsVersion } from '../services/creationLogService';
 // v3.228 W3: 작사 중복 생성 가드(전역 추적기)
 import { guardGeneration } from '../services/generationTracker';
 import { colors } from '../theme/colors';
+// v3.276 [GuestLyrics]: 게스트 체험 결과 — 보기·수정·선택 복사만 허용, 저장·작곡·다시 생성은 로그인 모달 후 원래 동작
+import { openLoginModal } from '../utils/loginModal';
+import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -49,6 +52,63 @@ export default function LyricsResultScreen({ navigation }: Props) {
   // 동일 내용 연속 저장 가드 (중복 저장 자체는 허용)
   const lastSavedSignatureRef = useRef<string | null>(null);
 
+  // ── v3.276 [GuestLyrics] 게스트 체험 결과 ──
+  const user = useAuthStore((s) => s.user);
+  const isGuest = !user;
+  // 이 화면을 게스트로 열었고 아직 서버 출처가 없는 결과 = 로그인 직후 서버 가사 자산으로 1회 승계 대상
+  // (로그인 사용자의 작사는 서버가 save:true 로 자동 자산화 — 같은 '작사 DB 자동 축적' 규칙을 맞춘다)
+  const guestOriginRef = useRef(isGuestNow() && !store.error && !store.sourceAssetId);
+  const guestClaimRef = useRef<Promise<string | null> | null>(null);
+  const editedRef = useRef({ title: editedTitle, lyrics: editedLyrics });
+  editedRef.current = { title: editedTitle, lyrics: editedLyrics };
+  const claimGuestResult = (): Promise<string | null> => {
+    if (guestClaimRef.current) return guestClaimRef.current;
+    const title = editedRef.current.title.trim() || '제목 없음';
+    const content = editedRef.current.lyrics.trim();
+    if (!guestOriginRef.current || !content || isGuestNow()) return Promise.resolve(null);
+    guestClaimRef.current = (async () => {
+      try {
+        const res = await saveLyricsAsset({
+          title,
+          content,
+          genre: store.genre || undefined,
+          mood: store.mood || undefined,
+          source: 'ai',
+        });
+        const id = res?.lyrics_id || null;
+        if (id) {
+          // 작업본(영속)·작곡 출처에 기록 — 작곡 중 제목·가사 수정 동기화(v3.134)·발매 lyrics_id 연결
+          useLyricsStore.getState().setSourceAssetId(id);
+          useMusicStore.getState().setLyricsSource({ lyrics_id: id, title, is_mine: true });
+          lastSavedSignatureRef.current = `${title} ${content}`;
+        }
+        if (__DEV__) console.info('[LyricsResult] [guest] 체험 가사 → 로그인 계정 보관함 승계', { saved: !!id });
+        return id;
+      } catch (err: any) {
+        guestClaimRef.current = null; // 다음 시도(저장 버튼)에서 재시도
+        console.error('[LyricsResult] [guest] 체험 가사 승계 실패', { status: err?.response?.status });
+        return null;
+      }
+    })();
+    return guestClaimRef.current;
+  };
+  // 어떤 경로로든(모달·다른 화면) 로그인되면 체험 결과를 1회 승계
+  useEffect(() => {
+    if (user && guestOriginRef.current) void claimGuestResult();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!user]);
+
+  /** 게스트면 로그인 모달(성공 시 afterLogin) 후 true — 호출부는 원래 동작을 중단 */
+  const requireLoginForGuest = (reason: string, afterLogin: () => void): boolean => {
+    if (!isGuestNow()) return false;
+    // 편집 중이던 내용도 작업본(영속)에 남긴다 — 로그인(소셜 리다이렉트 포함) 후 이어서
+    store.setGeneratedTitle(editedRef.current.title);
+    store.setGeneratedLyrics(editedRef.current.lyrics);
+    if (__DEV__) console.info('[LyricsResult] [guest] 로그인 필요 액션', { reason });
+    openLoginModal({ reason, afterLogin });
+    return true;
+  };
+
   // v3.200: 진입 시 AI 초안 버전 커밋(source:'ai_draft') — 초안 원문은 지금 안 남기면 소급 불가.
   // 동일 텍스트 재커밋은 서비스가 중복 제거. 재생성으로 재진입해도 새 초안이면 새 버전이 남는다.
   useEffect(() => {
@@ -67,6 +127,14 @@ export default function LyricsResultScreen({ navigation }: Props) {
     const title = editedTitle.trim() || '제목 없음';
     const lyricsText = editedLyrics.trim();
     if (!lyricsText) return;
+    // v3.276 [GuestLyrics]: 게스트 → 로그인 후 승계 저장(실패 시 기존 저장 경로로 폴백)
+    if (requireLoginForGuest('guest_lyrics_save', () => {
+      void (async () => {
+        const id = await claimGuestResult();
+        if (id) showAlert('보관함 저장 완료', '가사 보관함에 저장했어요. 재설치하거나 기기를 바꿔도 유지돼요.');
+        else await handleSaveToBook();
+      })();
+    })) return;
     const signature = `${title} ${lyricsText}`;
     if (lastSavedSignatureRef.current === signature) {
       showAlert('이미 저장했어요', '방금 저장한 가사와 같은 내용이에요.');
@@ -104,6 +172,13 @@ export default function LyricsResultScreen({ navigation }: Props) {
   };
 
   const handleSaveAndCompose = () => {
+    // v3.276 [GuestLyrics]: 게스트 → 로그인 후 체험 가사 승계(출처 id) 뒤 작곡으로
+    if (requireLoginForGuest('guest_compose', () => {
+      void (async () => {
+        await claimGuestResult();
+        handleSaveAndCompose();
+      })();
+    })) return;
     store.setGeneratedTitle(editedTitle);
     store.setGeneratedLyrics(editedLyrics);
     // v3.200: 작곡 진입 = '적용' 시점 커밋(§7.4) — 편집 중이던 내용까지 확정본으로 기록
@@ -138,6 +213,16 @@ export default function LyricsResultScreen({ navigation }: Props) {
 
   // v3.118: "다시 생성하기" — 작사 디렉터 휴식(쿨다운) 게이트 (대표 방침: 재생성 시 팝업)
   const handleRegenerate = async () => {
+    // v3.276 [GuestLyrics]: 게스트 — 체험권이 남아 있으면(서버 오류·금칙어로 미소모) 다시 체험, 아니면 로그인 후 재생성
+    if (isGuestNow()) {
+      if (hasError && !(await isGuestTrialUsed())) {
+        if (__DEV__) console.info('[LyricsResult] [guest] 체험 재시도(체험권 미소모)');
+        navigation.replace('LyricsLoading');
+        return;
+      }
+      requireLoginForGuest('guest_regenerate', () => { void handleRegenerate(); });
+      return;
+    }
     // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
     if (guardGeneration('lyrics', { navigation, where: 'LyricsResult' })) return;
     if (fatigueCheckingRef.current) return;
@@ -191,6 +276,18 @@ export default function LyricsResultScreen({ navigation }: Props) {
             </AppText>
           </View>
         </View>
+
+        {/* v3.276 [GuestLyrics]: 게스트 체험 안내 1줄 */}
+        {isGuest && !hasError && (
+          <TouchableOpacity
+            style={styles.guestBanner}
+            activeOpacity={0.7}
+            onPress={() => openLoginModal({ reason: 'guest_result_banner' })}
+            accessibilityLabel="가입하고 이어서 하기"
+          >
+            <AppText style={styles.guestBannerText}>{GUEST_TEXT.resultBanner}</AppText>
+          </TouchableOpacity>
+        )}
 
         {/* Error display */}
         {hasError && (
@@ -250,7 +347,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
             />
           ) : (
             <View style={styles.lyricsBox}>
-              <AppText style={styles.lyricsText}>
+              <AppText style={styles.lyricsText} selectable={isGuest}>
                 {hasLyrics ? editedLyrics : '가사가 없습니다.'}
               </AppText>
             </View>
@@ -345,6 +442,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text.primary,
     lineHeight: 20,
+  },
+  guestBanner: {
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  guestBannerText: {
+    color: colors.text.secondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
   errorBox: {
     backgroundColor: colors.bg.surface2,

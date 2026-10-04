@@ -46,8 +46,11 @@ function sanitizeServerMessage(value: unknown): string {
 export default function SocialLoginButtons({
   logPrefix = 'SocialLogin',
   referralCode = '',
+  dividerPosition = 'top',
 }: {
   logPrefix?: string;
+  /** v3.276: "또는" 구분선 위치 — 'top'(기본, 이메일 폼 아래 배치용)·'bottom'(소셜 우선 배치용)·'none' */
+  dividerPosition?: 'top' | 'bottom' | 'none';
   /** v3.224: 초대 추천코드 — 소셜 신규가입 시 서버가 ⭐50×2 추천 보상 적용(형식 검증은 서버) */
   referralCode?: string;
 }) {
@@ -168,13 +171,15 @@ export default function SocialLoginButtons({
   };
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, dividerPosition !== 'top' && { marginTop: 0 }]}>
       {/* 구분선 "또는" */}
-      <View style={styles.divider}>
-        <View style={styles.line} />
-        <AppText variant="caption" tone="muted">또는</AppText>
-        <View style={styles.line} />
-      </View>
+      {dividerPosition === 'top' ? (
+        <View style={styles.divider}>
+          <View style={styles.line} />
+          <AppText variant="caption" tone="muted">또는</AppText>
+          <View style={styles.line} />
+        </View>
+      ) : null}
 
       {PROVIDERS.map((p) => (
         <TouchableOpacity
@@ -189,6 +194,13 @@ export default function SocialLoginButtons({
             : <AppText variant="bodyStrong" style={{ color: p.fg }}>{p.label}</AppText>}
         </TouchableOpacity>
       ))}
+      {dividerPosition === 'bottom' ? (
+        <View style={[styles.divider, { marginTop: spacing.sm, marginBottom: 0 }]}>
+          <View style={styles.line} />
+          <AppText variant="caption" tone="muted">또는</AppText>
+          <View style={styles.line} />
+        </View>
+      ) : null}
     </View>
   );
 }

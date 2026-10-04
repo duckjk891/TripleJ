@@ -36,6 +36,10 @@ import {
 } from '../utils/lyricsPrompt';
 // v3.228 W3: 작사 중복 생성 가드(전역 추적기)
 import { guardGeneration } from '../services/generationTracker';
+// v3.276 [GuestLyrics]: 비로그인 게스트 작사 체험(기기당 1회·무과금) — 피로·⭐ 확인 없이 바로 생성
+import { showAlert } from '../utils/appAlert';
+import { openLoginModal } from '../utils/loginModal';
+import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -93,6 +97,23 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
 
   // v3.118: 작사 디렉터 휴식(쿨다운) 게이트 — 생성 시작 전 사전 확인(429 무과금과 동일 다이얼로그)
   const handleGenerate = async () => {
+    // v3.276 [GuestLyrics]: 게스트 — 체험권 남아 있으면 바로 생성(무과금·피로 없음), 썼으면 가입 안내 → 로그인 후 원래 흐름
+    if (isGuestNow()) {
+      if (await isGuestTrialUsed()) {
+        if (__DEV__) console.info('[LyricsPromptReview] [guest] 체험 사용 완료 — 로그인 안내');
+        showAlert(GUEST_TEXT.usedTitle, GUEST_TEXT.usedBody, [
+          { text: '닫기', style: 'cancel' },
+          {
+            text: '가입하고 계속하기',
+            onPress: () => openLoginModal({ reason: 'guest_trial_used', afterLogin: () => { void handleGenerate(); } }),
+          },
+        ]);
+        return;
+      }
+      if (__DEV__) console.info('[LyricsPromptReview] [guest] 체험 작사 시작');
+      startLyricsLoading();
+      return;
+    }
     // v3.228 W3: 사용자당 진행 중 작사 1건 — 피로·과금 게이트보다 먼저(미확인 완성본은 비차단)
     if (guardGeneration('lyrics', { navigation, where: 'LyricsPromptReview' })) return;
     if (fatigueCheckingRef.current) return;
@@ -314,7 +335,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             style={styles.generateButton}
             onPress={handleGenerate}
           >
-            <AppText style={styles.generateButtonText}>가사 생성 시작</AppText>
+            <AppText style={styles.generateButtonText}>{user ? '가사 생성 시작' : '무료로 가사 만들기'}</AppText>
           </TouchableOpacity>
         </View>
 

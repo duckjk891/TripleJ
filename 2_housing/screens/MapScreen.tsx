@@ -57,6 +57,9 @@ import {
   hasDirectorWorkInProgress,
   type DirectorResumeTarget,
 } from '../utils/directorResume';
+import { openLoginModal } from '../utils/loginModal';
+import { isGuestTrialUsed } from '../utils/guestTrial';
+import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
 
 const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
 
@@ -720,9 +723,24 @@ export default function MapScreen({ navigation }: Props) {
     return true;
   };
 
+  // v3.276: 게스트 작업실 탭 — 체험 미사용이면 작사 체험 제안, 사용했으면 로그인 모달 즉시
+  const handleGuestTouch = async () => {
+    let used = false;
+    try { used = await isGuestTrialUsed(); } catch { used = false; }
+    console.info('[Map] guest touch', { trialUsed: used });
+    if (used) {
+      openLoginModal({ reason: 'map_guest' });
+      return;
+    }
+    showAlert('작사 체험해볼까요?', '가입 없이 작사 디렉터와 가사 한 곡을 무료로 만들어볼 수 있어요.', [
+      { text: '로그인', style: 'cancel', onPress: () => openLoginModal({ reason: 'map_guest' }) },
+      { text: '작사 체험하기', onPress: () => { void startGuestLyricsTrial('map_guest'); } },
+    ]);
+  };
+
   const handleDirectorPress = (type: DirectorType) => {
     if (!user) {
-      setShowLoginOverlay(true);
+      void handleGuestTouch();
       return;
     }
 
@@ -1050,28 +1068,16 @@ export default function MapScreen({ navigation }: Props) {
         </TouchableOpacity>
       )}
 
-      {/* Non-logged-in touch overlay */}
-      {!user && !showLoginOverlay && (
+      {/* Non-logged-in touch overlay
+          v3.276(대표 2026-10-04): "로그인하고 시작하기" 중간 오버레이 폐지 — 게스트 탭 시
+          ① 작사 체험 미사용 기기: 체험 제안(무료 1회) ② 사용한 기기: 로그인 모달 즉시. */}
+      {!user && (
         <TouchableOpacity
           style={styles.guestTouchOverlay}
           activeOpacity={1}
-          onPress={() => setShowLoginOverlay(true)}
+          onPress={handleGuestTouch}
+          accessibilityLabel="작업실 시작하기"
         />
-      )}
-
-      {/* Login overlay modal */}
-      {!user && showLoginOverlay && (
-        <TouchableOpacity
-          style={styles.loginOverlay}
-          activeOpacity={1}
-          onPress={() => setShowLoginOverlay(false)}
-        >
-          <LoginPrompt
-            title="AI 음악 작업실"
-            desc={'나만의 음악을 만들어서\n차트에 올려보세요!'}
-            onPress={() => navigation.getParent()?.navigate('Settings')}
-          />
-        </TouchableOpacity>
       )}
 
       {/* v3.107: 대기열 단계 팝업·광고 보상 팝업 제거 — 결과는 각 로딩 화면이 즉시 보여줌 */}

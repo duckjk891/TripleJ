@@ -85,7 +85,7 @@ function formatDate(dateString: string): string {
 }
 
 function getCoverUrl(coverImage: string): string {
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(coverImage)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(coverImage)}?w=320`;
 }
 
 export default function MyMusicScreen({ navigation }: any) {

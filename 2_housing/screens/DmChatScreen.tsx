@@ -10,7 +10,7 @@
 //   object_name → 메시지 body image_object_name) + 말풍선 이미지 렌더(서버 직렬화 image_url).
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform, Modal } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
 import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError, sanitizeServerText } from '../utils/identityGate';
@@ -106,6 +106,8 @@ export default function DmChatScreen() {
   const [sending, setSending] = useState(false);
   // v3.207(⑥): 이미지 첨부 — 1장 첨부 → 업로드(상태 칩) → 전송 시 image_object_name 동봉
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  // v3.275 [54]: 사진 원본 뷰어(전체 화면) — 탭/닫기
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -292,9 +294,13 @@ export default function DmChatScreen() {
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubblePeer]}>
           {imgUris.map((u, i) => (
-            <View key={`${item.id}-img-${i}`} style={i > 0 ? { marginTop: spacing.xs } : null}>
+            // v3.275 [피드백4-54]: 사진 탭 = 원본 크게 보기(종전: 썸네일 고정 — 스크린샷 글씨 판독 불가)
+            <TouchableOpacity
+              key={`${item.id}-img-${i}`} style={i > 0 ? { marginTop: spacing.xs } : null}
+              activeOpacity={0.85} onPress={() => setViewerUri(u)} accessibilityLabel="사진 크게 보기"
+            >
               <DmMessageImage uri={u} />
-            </View>
+            </TouchableOpacity>
           ))}
           {item.text ? (
             <AppText variant="footnote" style={[imgUris.length ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
@@ -453,6 +459,15 @@ export default function DmChatScreen() {
         </View>
       ) : null}
 
+      {/* v3.275 [54]: 사진 원본 뷰어 — 배경·X 탭으로 닫기, contain 으로 전체 표시(웹은 브라우저 확대 가능) */}
+      <Modal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => setViewerUri(null)}>
+        <TouchableOpacity style={styles.viewerBackdrop} activeOpacity={1} onPress={() => setViewerUri(null)} accessibilityLabel="사진 닫기">
+          {viewerUri ? <Image source={{ uri: viewerUri }} style={styles.viewerImage} resizeMode="contain" /> : null}
+          <View style={[styles.viewerClose, { top: insets.top + 12 }]}>
+            <Feather name="x" size={22} color="#fff" />
+          </View>
+        </TouchableOpacity>
+      </Modal>
       <ReportModal visible={!!reportMsg} targetType="dm_message" targetId={String(reportMsg || '')} onClose={() => setReportMsg(null)} />
       </View>
     </KeyboardAvoidingView>
@@ -494,6 +509,12 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg, marginTop: spacing.sm,
     padding: spacing.sm, backgroundColor: colors.bg.surface1,
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  viewerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', alignItems: 'center', justifyContent: 'center' },
+  viewerImage: { width: '100%', height: '100%' },
+  viewerClose: {
+    position: 'absolute', right: 16, width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center',
   },
   attachThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.bg.surface2 },
   // v3.273: 장별 제거 버튼 — 썸네일 우상단 배지

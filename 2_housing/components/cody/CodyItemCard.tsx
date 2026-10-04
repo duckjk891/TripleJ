@@ -19,6 +19,9 @@ interface Props {
   onOpenLink: (item: { id: string; product_url?: string }) => void;
 }
 
+// v3.275: 금액 노출 스위치 — 대표 결정(2026-10-04) 숨김. 되살릴 때 true.
+const SHOW_ITEM_PRICE = false;
+
 export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick, onWishToggle, onOpenLink }: Props) {
   const url = adImageUrl(item.image_object_name);
   const isSample = item.id.startsWith('sample_');
@@ -76,7 +79,8 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
       {item.color ? (
         <AppText style={styles.itemBrand} numberOfLines={1}>{item.color}</AppText>
       ) : null}
-      {price && !isChild ? (
+      {/* v3.275(대표): 아티스트 꾸미기 카드의 제품 금액 비노출 — 가격은 판매처 링크에서만. 데이터(price_krw)·필터 facet 계산은 불변 */}
+      {price && !isChild && SHOW_ITEM_PRICE ? (
         <AppText style={styles.itemPrice} numberOfLines={1}>{price}</AppText>
       ) : null}
       {/* v3.109: 판매처 링크 — product_url 있는 아이템만 노출 */}

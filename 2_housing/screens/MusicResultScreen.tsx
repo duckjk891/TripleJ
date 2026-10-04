@@ -636,6 +636,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       lyricsStore.reset();
       // v3.219 [ComposeDraft]: 발매 성공 = 작곡 대화 완주 — draft 클리어(다음 곡은 새 대화)
       store.clearComposeDraft();
+      store.clearReferenceLink(); // v3.276 [RefLink]: 작곡 완료 — 링크 참조 비움(다음 곡 오염 차단)
       if (__DEV__) console.info('[ComposeDraft] 발매 성공 — draft 클리어');
       // v3.200: 발매 확정 — 창작 세션 종료(다음 곡은 새 세션)
       endCreationSession();
@@ -708,6 +709,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         lyricsStore.reset();
         // v3.219 [ComposeDraft]: 커버 경유 발매 성공도 동일 — 작곡 draft 클리어
         store.clearComposeDraft();
+        store.clearReferenceLink(); // v3.276 [RefLink]: 작곡 완료 — 링크 참조 비움
         if (__DEV__) console.info('[ComposeDraft] 커버 경유 발매 성공 — draft 클리어');
         // v3.200: 발매 확정 — 창작 세션 종료 (handleSave와 동일)
         endCreationSession();

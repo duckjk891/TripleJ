@@ -81,7 +81,7 @@ const parseItemMarker = (text?: string): FeedItemAttach | null => {
 };
 
 const coverUri = (img?: string): string | null =>
-  img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
+  img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}?w=320` : null;
 
 const fmtDuration = (sec?: number): string => {
   if (!sec || sec <= 0) return '';

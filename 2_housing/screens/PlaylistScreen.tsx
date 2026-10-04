@@ -40,7 +40,7 @@ interface Playlist {
 }
 
 function getCoverUrl(img: string): string {
-  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}?w=320`;
 }
 
 export default function PlaylistScreen({ navigation }: any) {

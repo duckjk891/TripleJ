@@ -120,6 +120,36 @@ function guessAudioMime(fileName: string): string {
   return map[ext] || 'audio/mpeg';
 }
 
+/** v3.276 [RefLink]: 서버 응답(POST /generate/reference-link) */
+export interface ReferenceLinkResult {
+  ok: boolean;
+  title: string;
+  author: string;
+  genre: string | null;
+  mood: string | null;
+  tempo_hint: string | null;
+  style_text: string;
+  fallback: boolean;
+}
+
+/**
+ * v3.276 [RefLink]: 유튜브 링크 참조(메타데이터 전용) — 음원은 받지 않는다(약관·저작권).
+ * 계약(backend_9004 routes/reference_link.py): body { url } →
+ *   200 { ok, title, author, genre|null, mood|null, tempo_hint|null, style_text, fallback }
+ *   400 유튜브 URL 아님 · 404 영상 정보 없음 · 429 분당 10회 초과 — 모두 { error }
+ * genre/mood 는 GENRE_OPTIONS/MOOD_OPTIONS 어휘(아니면 null). style_text 엔 실명 없음(서버 보장).
+ */
+export const lookupReferenceLink = async (url: string): Promise<ReferenceLinkResult> => {
+  console.info('[RefLink] 조회 요청', { len: url.length });
+  const response = await api.post('/generate/reference-link', { url }, { timeout: 60000 });
+  const d = response.data || {};
+  console.info('[RefLink] 조회 완료', {
+    titleLen: (d.title || '').length, genre: d.genre, mood: d.mood,
+    styleLen: (d.style_text || '').length, fallback: !!d.fallback,
+  });
+  return d as ReferenceLinkResult;
+};
+
 /**
  * v3.91: 참고 음악 업로드 — POST /generate/upload-reference/ (multipart 필드명 'file').
  * 계약(backend_9004 generate.py:242 upload_reference_audio):
