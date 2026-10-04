@@ -402,8 +402,8 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
         </View>
       </View>
 
-      {/* 가사 보관함 진입 (작사 시작 전에만 노출) */}
-      {!chatHistory.some((m) => m.type === 'user') && (
+      {/* 가사 보관함 진입 (작사 시작 전에만 노출) — v3.279(대표): 게스트에겐 '무료 체험 중' 배너 없이 바로 대화만 */}
+      {!isGuest && !chatHistory.some((m) => m.type === 'user') && (
         <View style={{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: colors.bg.deepest }}>
           <TouchableOpacity
             style={styles.bookEntryButton}

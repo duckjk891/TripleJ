@@ -27,6 +27,8 @@ import { showAlert } from '../utils/appAlert';
 import { chartCriteriaText, isChartCriteriaTab } from '../utils/chartCriteria';
 // v3.260 [MakeLike]: '이 곡 느낌으로 만들기' 차트 노출 — ⋯시트 항목과 같은 공용 흐름(utils/makeLike) 재사용
 import { startMakeLikeFlow } from '../utils/makeLike';
+import { isGuestTrialUsed } from '../utils/guestTrial';
+import { openLoginModal } from '../utils/loginModal';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 2스텝 — 비로그인 시에만 노출(enabled=!user)
 const TUTORIAL_STEPS: TutorialStep[] = [
@@ -242,7 +244,17 @@ export default function ChartScreen() {
 
   // v3.260 [MakeLike]: 차트 행 인라인 칩 탭 — CEO "점 세개 말고 차트에 보였으면".
   // 로그인 게이트는 시트 관행과 동일(호출측 담당), 이후 흐름은 startMakeLikeFlow 공용(중복 구현 금지).
-  const handleMakeLike = (track: ChartTrack) => {
+  const handleMakeLike = async (track: ChartTrack) => {
+    // v3.279(대표): 비로그인이면 로그인으로 보내지 않고 — 체험 미사용 기기는 이 곡 느낌 프리셋 그대로 게스트 체험,
+    // 이미 체험한 기기만 로그인 모달.
+    if (!user) {
+      let used = false;
+      try { used = await isGuestTrialUsed(); } catch { used = false; }
+      console.info('[MakeLike] 게스트 칩 탭', { trialUsed: used });
+      if (used) { openLoginModal({ reason: 'make_like_guest' }); return; }
+      startMakeLikeFlow(navigation, track);
+      return;
+    }
     if (!requireLogin()) return;
     if (__DEV__) console.info('[MakeLike] 차트 행 칩 탭', { id: track.id, tab: activeTab });
     startMakeLikeFlow(navigation, track);

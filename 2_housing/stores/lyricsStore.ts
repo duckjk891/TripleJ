@@ -151,3 +151,55 @@ export const useLyricsStore = create<LyricsState>()(
     }
   )
 );
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v3.279 [LyricsOwner]: 계정별 작사 작업본 보관 — 로그아웃 후 게스트(체험)에게 이전 계정의
+// 작사 대화가 그대로 보이던 결함(대표 실사용 발견). v3.219 "가사 draft 는 로그아웃에도 유지"는
+// 유실 방지가 목적이었으므로, 지우는 대신 **그 계정 보관함으로 옮기고** 화면에서만 비운다.
+// 다시 로그인하면 복원 — 단 그 사이 게스트로 만든 작업이 있으면 그것을 우선(체험 승계)한다.
+// ─────────────────────────────────────────────────────────────────────────────
+const LYRICS_STASH_PREFIX = 'maidol-lyrics-stash:';
+const STASH_FIELDS = ['genre', 'mood', 'content', 'perspective', 'language', 'structure', 'keywords', 'duration',
+  'hasRap', 'isDuet', 'reference', 'tempo', 'generatedPrompt', 'generatedTitle', 'generatedLyrics', 'sourceAssetId',
+  'draftStep', 'draftChat', 'draftCreationMode', 'draftOrigin', 'draftOriginStep'] as const;
+
+function hasLyricsWork(st: any): boolean {
+  return (st.draftStep > 0 && (st.draftChat?.length ?? 0) > 0) || !!st.generatedLyrics || !!st.generatedPrompt;
+}
+
+/** 로그아웃 직전 호출 — 현재 작업본을 계정 보관함에 저장하고 화면 상태를 비운다 */
+export function stashLyricsOnLogout(userId: string | null | undefined): void {
+  const st: any = useLyricsStore.getState();
+  try {
+    if (userId && hasLyricsWork(st)) {
+      const snap: Record<string, unknown> = {};
+      STASH_FIELDS.forEach((k) => { snap[k] = st[k]; });
+      AsyncStorage.setItem(LYRICS_STASH_PREFIX + userId, JSON.stringify(snap)).catch(() => {});
+    }
+  } catch (err: any) {
+    console.error('[LyricsOwner] stash 실패', { message: err?.message });
+  }
+  st.reset();
+  console.info('[LyricsOwner] logout — 작사 작업본 보관 후 초기화');
+}
+
+/** 로그인 성공 직후 호출 — 보관본 복원(현재 화면에 게스트 작업이 있으면 복원하지 않고 보관본 유지) */
+export async function restoreLyricsOnLogin(userId: string | null | undefined): Promise<void> {
+  if (!userId) return;
+  try {
+    if (hasLyricsWork(useLyricsStore.getState())) {
+      console.info('[LyricsOwner] login — 진행 중(게스트) 작업 우선, 보관본 복원 생략');
+      return;
+    }
+    const raw = await AsyncStorage.getItem(LYRICS_STASH_PREFIX + userId);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    if (hasLyricsWork(useLyricsStore.getState())) return; // 조회 중 작업 생김
+    useLyricsStore.setState(snap);
+    await AsyncStorage.removeItem(LYRICS_STASH_PREFIX + userId);
+    console.info('[LyricsOwner] login — 작사 작업본 복원');
+  } catch (err: any) {
+    console.error('[LyricsOwner] restore 실패', { message: err?.message });
+  }
+}

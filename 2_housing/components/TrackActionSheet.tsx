@@ -17,6 +17,8 @@ import GuestQueueNoticeModal from './GuestQueueNoticeModal';
 import { shareTrack, ShareOutcome } from '../utils/trackShare';
 // v3.256 [MakeLike]: '이 곡 느낌으로 만들기' — 장르·분위기 프리셋 후 작사 디렉터 직행(공용 로직)
 import { startMakeLikeFlow } from '../utils/makeLike';
+import { isGuestTrialUsed } from '../utils/guestTrial';
+import { openLoginModal } from '../utils/loginModal';
 import PlaylistPickerSheet from './PlaylistPickerSheet';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -132,7 +134,17 @@ export default function TrackActionSheet({
   // v3.256 [MakeLike]: 곡의 장르·분위기만 프리셋(제목·가사·주제 비움)해 작사 디렉터로 직행.
   // 로그인 필요(비로그인 → 기존 로그인 유도 관행), 어린이 계정은 기존 작곡 게이트 그대로(별도 차단 없음).
   // 진행 중 작업 확인·프리셋·이동은 utils/makeLike 공용(v3.237 CTA 배선과 같은 집).
-  const handleMakeLike = (t: RowTrack) => {
+  const handleMakeLike = async (t: RowTrack) => {
+    // v3.279(대표): 비로그인 — 체험 미사용이면 이 곡 느낌으로 게스트 체험, 사용했으면 로그인 모달
+    if (!user) {
+      let used = false;
+      try { used = await isGuestTrialUsed(); } catch { used = false; }
+      console.info('[MakeLike] 게스트 시트 탭', { trialUsed: used });
+      onClose();
+      if (used) { openLoginModal({ reason: 'make_like_guest' }); return; }
+      startMakeLikeFlow(navigation, t as any);
+      return;
+    }
     if (!requireLogin()) return;
     if (__DEV__) console.info('[MakeLike] 시트 탭', { id: t.id });
     startMakeLikeFlow(navigation, t as any);

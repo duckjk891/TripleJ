@@ -6,7 +6,10 @@ import { Modal, View, ScrollView, TouchableOpacity, StyleSheet } from 'react-nat
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import AuthPanel from './AuthPanel';
+import { useLyricsStore } from '../../stores/lyricsStore';
+import { whenBootAuthSettled } from '../../utils/bootAuth';
 import { AppText } from '../ui';
 import { setLoginModalOpener, LoginModalOptions } from '../../utils/loginModal';
 // v3.277 [GuestCompose]: 로그인 확정 시 대기 중인 게스트 작곡 체험 곡을 1회 자동 claim(웹 소셜 리로드 포함)
@@ -15,7 +18,25 @@ import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
+// v3.279 [LyricsOwner] 1회 정리 — 이 버전 이전에 로그아웃한 기기에는 이전 계정의 작사 대화가 남아 있다.
+// 부팅 시 비로그인이면 한 번만 비운다(이후엔 로그아웃 시점에 계정 보관함으로 옮기므로 재발 없음).
+const LYRICS_OWNER_MIGRATED_KEY = 'maidol_lyrics_owner_migrated_v1';
+async function migrateLegacyGuestLyricsOnce(): Promise<void> {
+  try {
+    if (await AsyncStorage.getItem(LYRICS_OWNER_MIGRATED_KEY)) return;
+    await whenBootAuthSettled();
+    if (!useAuthStore.getState().user) {
+      useLyricsStore.getState().reset();
+      console.info('[LyricsOwner] 레거시 잔존 작사 작업본 1회 정리(비로그인)');
+    }
+    await AsyncStorage.setItem(LYRICS_OWNER_MIGRATED_KEY, '1');
+  } catch (err: any) {
+    console.warn('[LyricsOwner] 1회 정리 실패', { message: err?.message });
+  }
+}
+
 export default function LoginModalHost() {
+  useEffect(() => { void migrateLegacyGuestLyricsOnce(); }, []);
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const [visible, setVisible] = useState(false);

@@ -1,3 +1,4 @@
+import { stashLyricsOnLogout, restoreLyricsOnLogin } from './lyricsStore';
 import { create } from 'zustand';
 import api, { setAuthToken } from '../services/api';
 import { usePlayerStore } from './playerStore';
@@ -96,6 +97,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       noteKidsMode(user, 'login');
       // 로그인: 이 계정이 쓰던 재생목록을 복원해서 보여준다(보관 목록이 없으면 담아둔 목록 승계)
       try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
+      void restoreLyricsOnLogin(user?.id != null ? String(user.id) : null); // v3.279 [LyricsOwner]
       return true;
     } catch (err: any) {
       // v3.233: 보호자 동의 철회(403 account_suspended) — 서버 문구·코드 대신 앱 고정 안내(그 외 오류는 기존 그대로)
@@ -119,6 +121,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ token, user, isLoading: false });
       noteKidsMode(user, 'me');
       try { usePlayerStore.getState().restoreQueueFor(String(user.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(social)', { err }); }
+      void restoreLyricsOnLogin(String(user.id)); // v3.279 [LyricsOwner]
       return true;
     } catch (err: any) {
       console.error('[authStore] loginWithToken 실패', { status: err?.response?.status });
@@ -237,6 +240,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (patch && 'kids_restricted' in patch) noteKidsMode(useAuthStore.getState().user, 'me');
   },
   logout: () => {
+    // v3.279 [LyricsOwner]: 작사 작업본은 계정 보관함으로 옮기고 화면에서 비운다(user 를 지우기 전에 id 확보)
+    try { const uid = useAuthStore.getState().user?.id; stashLyricsOnLogout(uid != null ? String(uid) : null); } catch (err) { console.error('[authStore] stashLyricsOnLogout 실패', { err }); }
     setAuthToken(null);
     AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
     set({ token: null, user: null });

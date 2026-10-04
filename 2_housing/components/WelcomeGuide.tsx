@@ -23,29 +23,29 @@ const SLIDES = [
     key: 'studio',
     image: require('../assets/welcome/studio.jpg'),
     chip: '작업실',
-    title: '디렉터를 탭하면\n대화로 곡이 만들어져요',
-    desc: '작사·작곡·커버·영상 디렉터가 기다리고 있어요.',
+    title: '편하게 얘기하다 보면\n어느새 내 곡이 완성돼요',
+    desc: '악보도 장비도 필요 없어요. 디렉터들이 다 도와줘요.',
   },
   {
     key: 'dialogue',
     image: require('../assets/welcome/dialogue.jpg'),
     chip: '작사 디렉터',
-    title: '몇 마디만 나누면\n나만의 가사 완성',
-    desc: '장르와 분위기만 골라도 충분해요. 가입 없이 작사부터 작곡까지 체험할 수 있어요.',
+    title: '오늘 있었던 일도\n노래 가사가 될 수 있어요',
+    desc: '떠오르는 한마디면 충분해요. 가입 없이 지금 바로 한 곡 만들어 보세요.',
   },
   {
     key: 'chart',
     image: require('../assets/welcome/chart.jpg'),
     chip: '차트',
-    title: '완성한 곡으로\n차트에 도전',
-    desc: '아티스트는 연습생 → 신인 → 루키 → 라이징 → 아이돌로 성장해요. 각 등급은 5단계에서 1단계까지.',
+    title: '내가 만든 노래를\n다른 사람들이 듣고 있다면?',
+    desc: '발매하면 차트에 올라가요. 연습생에서 아이돌까지, 들을수록 성장해요.',
   },
   {
     key: 'player',
     image: require('../assets/welcome/player.jpg'),
     chip: '플레이어',
-    title: '가사 자막·댓글·공유까지\n한 화면에서',
-    desc: '마음에 드는 곡은 재생목록에 담아 이어서 들어요.',
+    title: '세상에 하나뿐인 내 노래,\n친구에게 들려주세요',
+    desc: '가사 자막과 함께 듣고, 링크 하나로 바로 공유할 수 있어요.',
   },
 ] as const;
 
@@ -56,6 +56,13 @@ export default function WelcomeGuide() {
   const [visible, setVisible] = useState(false);
   const [index, setIndex] = useState(0);
   const checkedRef = useRef(false);
+  // v3.279: 웹 키보드/스크린리더 초점을 체험 버튼에(종전: DOM 첫 요소인 '건너뛰기'에 포커스 링)
+  const ctaRef = useRef<any>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => { try { ctaRef.current?.focus?.(); } catch {} }, 350);
+    return () => clearTimeout(t);
+  }, [visible]);
 
   useEffect(() => {
     if (checkedRef.current) return;
@@ -101,14 +108,11 @@ export default function WelcomeGuide() {
     <Modal visible transparent animationType="fade" onRequestClose={() => close('skip')}>
       <View style={styles.backdrop}>
         <View style={[styles.card, { width: cardW, paddingTop: insets.top + spacing.lg, paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.md) }]}>
+          {/* v3.279(대표): 상단은 앱 상단바와 같은 MAIDOL 로고만 — 상단 '건너뛰기' 제거(시선·포커스는 체험 버튼으로) */}
           <View style={styles.topRow}>
-            <View style={styles.betaChip}>
-              <View style={styles.dot} />
-              <AppText style={styles.betaChipText}>MAIDOL · MY AI IDOL</AppText>
-            </View>
-            <TouchableOpacity onPress={() => close('skip')} accessibilityLabel="둘러보기" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <AppText variant="footnote" tone="secondary">건너뛰기</AppText>
-            </TouchableOpacity>
+            <AppText variant="title2" style={{ letterSpacing: 1 }}>
+              M<AppText variant="title2" tone="accent">AI</AppText>DOL
+            </AppText>
           </View>
 
           <ScrollView
@@ -136,13 +140,14 @@ export default function WelcomeGuide() {
 
           <View style={{ paddingHorizontal: spacing.lg, width: '100%' }}>
             <TouchableOpacity
+              ref={ctaRef}
               style={styles.cta} activeOpacity={0.85} accessibilityLabel="무료로 한 곡 만들어보기"
               onPress={() => { close('trial'); startGuestLyricsTrial('welcome_guide'); }}
             >
               <AppText style={styles.ctaText}>무료로 한 곡 만들어보기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondary} onPress={() => close('skip')} accessibilityLabel="먼저 둘러보기">
-              <AppText variant="footnote" tone="secondary">먼저 둘러볼게요</AppText>
+              <AppText style={styles.secondaryText}>나중에 할게요</AppText>
             </TouchableOpacity>
           </View>
         </View>
@@ -155,7 +160,7 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: '#0a0a1a', alignItems: 'center', justifyContent: 'center' },
   card: { flex: 1, alignItems: 'center', justifyContent: 'space-between' },
   topRow: {
-    width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: spacing.lg, marginBottom: spacing.md,
   },
   betaChip: {
@@ -183,4 +188,5 @@ const styles = StyleSheet.create({
   },
   ctaText: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
   secondary: { alignItems: 'center', paddingVertical: spacing.md },
+  secondaryText: { fontSize: 12, color: colors.text.muted },
 });
