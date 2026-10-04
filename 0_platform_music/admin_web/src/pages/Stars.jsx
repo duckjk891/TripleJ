@@ -5,6 +5,7 @@ import {
 } from '../api';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDate } from './Dashboard';
+import StarsAnalytics from './StarsAnalytics';
 
 const MAX_AMOUNT = 10000;
 
@@ -189,6 +190,7 @@ export default function StarsPage() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [tab, setTab] = useState('ops');
 
   const loadSummary = useCallback(() => {
     getPointSummary().then((r) => setSummary(r.data)).catch(() => {});
@@ -234,6 +236,12 @@ export default function StarsPage() {
         </div>
       )}
 
+      <div className="tabs">
+        <button className={`tab ${tab === 'ops' ? 'active' : ''}`} onClick={() => setTab('ops')}>지급 · 내역</button>
+        <button className={`tab ${tab === 'analytics' ? 'active' : ''}`} onClick={() => setTab('analytics')}>분석</button>
+      </div>
+      {tab === 'analytics' && <StarsAnalytics actionLabel={actionLabel} />}
+      {tab === 'ops' && (<>
       <div className="card">
         <h3 className="section-title">사용자 찾기</h3>
         <form className="search-form" onSubmit={search}>
@@ -283,6 +291,7 @@ export default function StarsPage() {
           })}
         </div>
       )}
+      </>)}
     </div>
   );
 }

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../api';
+import { login, getRemember, errMsg } from '../api';
 import { useAuth } from '../auth';
 
 export default function LoginPage() {
@@ -8,8 +8,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const [remember, setRemember] = useState(getRemember());
+  const { signIn, isAuthed } = useAuth();
   const navigate = useNavigate();
+
+  // 자동 로그인 — 이미 로그인된 상태면 바로 대시보드로
+  useEffect(() => { if (isAuthed) navigate('/', { replace: true }); }, [isAuthed, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,10 +26,10 @@ export default function LoginPage() {
         setError('관리자 권한이 없는 계정입니다.');
         return;
       }
-      signIn(token, user);
+      signIn(token, user, remember);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.error || '로그인에 실패했습니다.');
+      setError(errMsg(err, '로그인에 실패했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -51,6 +55,10 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)} required
           />
         </div>
+        <label className="check-row">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          <span>자동 로그인 <em>이 기기에서 로그인 상태 유지</em></span>
+        </label>
         <button className="btn btn--primary" type="submit" disabled={loading}>
           {loading ? '로그인 중…' : '로그인'}
         </button>

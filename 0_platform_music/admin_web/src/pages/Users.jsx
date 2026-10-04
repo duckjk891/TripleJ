@@ -1,8 +1,119 @@
 import { useState, useEffect, useCallback } from 'react';
+import AuthImage from '../components/AuthImage';
 import { useNavigate } from 'react-router-dom';
-import { getUsers, updateUserRole, banUser } from '../api';
+import {
+  getUsers, updateUserRole, banUser, getUserDetail, getUserRecentContent, liftRestriction, resetStrikes, errMsg,
+} from '../api';
 import { formatDate } from './Dashboard';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
+
+const toObjectName = (path) => {
+  const s = String(path || '');
+  const i = s.indexOf('/admin/media/');
+  return i >= 0 ? s.slice(i + '/admin/media/'.length) : s;
+};
+const isRestricted = (u) => u.restricted_until && new Date(u.restricted_until) > new Date();
+
+function UserModal({ userId, onClose, onChanged }) {
+  const [u, setU] = useState(null);
+  const [content, setContent] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    getUserDetail(userId).then((r) => setU(r.data)).catch(() => {});
+    getUserRecentContent(userId).then((r) => setContent(r.data)).catch(() => setContent({ tracks: [], artists: [] }));
+  }, [userId]);
+  useEffect(() => { load(); }, [load]);
+
+  const run = async (message, fn) => {
+    if (!(await appConfirm(message))) return;
+    setBusy(true);
+    try {
+      await fn();
+      load();
+      onChanged();
+    } catch (e) {
+      await appAlert(errMsg(e, '처리에 실패했습니다.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sheets = content ? [
+    content.character?.original_photo_path && ['원본 사진', content.character.original_photo_path],
+    ...(content.artists || []).map((a) => a.sheet_path && [`${a.name || '아티스트'}`, a.sheet_path]),
+  ].filter(Boolean) : [];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal__title">{u ? u.nickname : '사용자'}</h3>
+        {!u ? <p className="cell-sub">로딩…</p> : (
+          <>
+            <dl className="kv" style={{ marginBottom: 14 }}>
+              <dt>이메일</dt><dd>{u.email}</dd>
+              <dt>가입일</dt><dd>{formatDate(u.created_at)}</dd>
+              <dt>역할 · 요금제</dt><dd>{u.role} · {u.plan || '-'}</dd>
+              <dt>곡 · 재생</dt><dd>{(u.track_count || 0).toLocaleString()}곡 · {(u.total_plays || 0).toLocaleString()}회</dd>
+              <dt>소개</dt><dd>{u.bio || '-'}</dd>
+              <dt>상태</dt>
+              <dd>
+                {u.is_banned ? <span className="badge badge--red">정지</span> : <span className="badge badge--green">정상</span>}{' '}
+                {isRestricted(u) && <span className="badge badge--amber">이용 제한 ~{formatDate(u.restricted_until)}</span>}{' '}
+                <span className={`badge ${u.violation_count > 0 ? 'badge--red' : 'badge--gray'}`}>위반 {u.violation_count}회</span>
+                {u.is_banned && u.ban_reason && <div className="cell-sub">정지 사유: {u.ban_reason}</div>}
+              </dd>
+            </dl>
+            <div className="actions" style={{ marginBottom: 16 }}>
+              {isRestricted(u) && (
+                <button className="btn btn--sm" disabled={busy}
+                  onClick={() => run('이용 제한을 지금 해제합니다.', () => liftRestriction(u.id))}>이용 제한 해제</button>
+              )}
+              {u.violation_count > 0 && (
+                <button className="btn btn--sm btn--danger" disabled={busy}
+                  onClick={() => run(`위반 기록 ${u.violation_count}회를 모두 초기화합니다. 되돌릴 수 없습니다.`, () => resetStrikes(u.id))}>위반 기록 초기화</button>
+              )}
+            </div>
+          </>
+        )}
+        <h4 className="section-title">캐릭터 · 최근 곡</h4>
+        {!content ? <p className="cell-sub">로딩…</p> : (
+          <>
+            {sheets.length > 0 && (
+              <div className="thumb-row" style={{ marginBottom: 10 }}>
+                {sheets.map(([label, path]) => (
+                  <div key={path} style={{ textAlign: 'center' }}>
+                    <AuthImage objectName={toObjectName(path)} className="thumb thumb--md" />
+                    <div className="cell-sub" style={{ maxWidth: 80 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(content.tracks || []).length === 0 ? <p className="cell-sub">등록한 곡이 없습니다.</p> : (
+              <div className="table-wrap">
+                <table>
+                  <tbody>
+                    {content.tracks.map((t) => (
+                      <tr key={t.id}>
+                        <td className="cell-main">{t.title || '(제목 없음)'}</td>
+                        <td>
+                          {t.report_blinded ? <span className="badge badge--amber">블라인드</span>
+                            : <span className={`badge ${t.is_public ? 'badge--green' : 'badge--gray'}`}>{t.is_public ? '공개' : '비공개'}</span>}
+                        </td>
+                        <td className="nowrap cell-sub">{formatDate(t.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+        <div className="modal__footer"><button className="btn" onClick={onClose}>닫기</button></div>
+      </div>
+    </div>
+  );
+}
 
 export default function UsersPage() {
   const navigate = useNavigate();
@@ -13,6 +124,7 @@ export default function UsersPage() {
   const [banned, setBanned] = useState('all');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [detailId, setDetailId] = useState(null);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -95,13 +207,15 @@ export default function UsersPage() {
               <tbody>
                 {users.map((u) => (
                   <tr key={u.id}>
-                    <td className="cell-main">{u.nickname}</td>
+                    <td className="cell-main row-click" onClick={() => setDetailId(u.id)} style={{ textDecoration: 'underline' }}>{u.nickname}</td>
                     <td>{u.email}</td>
                     <td><span className={`badge ${u.role === 'admin' ? 'badge--purple' : 'badge--gray'}`}>{u.role}</span></td>
                     <td>
                       {u.is_banned
                         ? <span className="badge badge--red" title={u.ban_reason || ''}>정지</span>
                         : <span className="badge badge--green">정상</span>}
+                      {isRestricted(u) && <span className="badge badge--amber" style={{ marginLeft: 4 }}>제한</span>}
+                      {u.violation_count > 0 && <span className="badge badge--red" style={{ marginLeft: 4 }}>위반 {u.violation_count}</span>}
                     </td>
                     <td className="nowrap">{formatDate(u.created_at)}</td>
                     <td>
@@ -131,6 +245,7 @@ export default function UsersPage() {
           )}
         </>
       )}
+      {detailId && <UserModal userId={detailId} onClose={() => setDetailId(null)} onChanged={fetchList} />}
     </div>
   );
 }

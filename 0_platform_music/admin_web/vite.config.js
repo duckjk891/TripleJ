@@ -9,7 +9,8 @@ export default defineConfig({
     port: 5199,
     proxy: {
       '/api': {
-        target: 'https://api.maidol.ai.kr',
+        // ADMIN_API_TARGET=http://127.0.0.1:5198 로 로컬 모의 서버 검증 가능
+        target: process.env.ADMIN_API_TARGET || 'https://api.maidol.ai.kr',
         changeOrigin: true,
       },
     },

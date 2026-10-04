@@ -39,6 +39,24 @@ for f in $BACKEND_FILES; do
   echo "$f $(md5 -q ../backend/app/routes/$f 2>/dev/null || md5sum ../backend/app/routes/$f | cut -d' ' -f1)" >> $MD5_LOG
 done
 
+# 서버 원본을 받아 고친 파일(server_staging_*/) — 원본(_orig)과 서버 md5 가 같을 때만 덮어쓴다.
+# 다른 세션이 그 사이 서버본을 고쳤으면 중단 → 서버본을 다시 받아 병합 후 재실행.
+STAGE=server_staging_admin_1004
+STAGED_FILES="admin.py reports.py"
+_md5() { md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1; }
+for f in $STAGED_FILES; do
+  ORIG=$(_md5 $STAGE/_orig/$f); NEW=$(_md5 $STAGE/$f)
+  SERVER=$(ssh $HOST "md5sum $REMOTE/app/routes/$f | cut -d' ' -f1")
+  if [ "$SERVER" != "$ORIG" ] && [ "$SERVER" != "$NEW" ]; then
+    echo "!! 서버의 $f 가 스테이징 원본과 다름(다른 세션이 수정) — 중단. 서버본을 받아 병합하세요."
+    exit 1
+  fi
+done
+for f in $STAGED_FILES; do
+  ssh $HOST "cd $REMOTE/app/routes && [ -f $f.bak_pre_admin1004 ] || cp $f $f.bak_pre_admin1004"
+  scp $STAGE/$f $HOST:$REMOTE/app/routes/$f
+done
+
 echo "== 2/5 SPA 정적 파일 업로드"
 ssh $HOST "rm -rf /tmp/admin_static_new"
 scp -r dist $HOST:/tmp/admin_static_new
@@ -83,7 +101,7 @@ print('patched' if changed else 'already patched')
 EOF"
 
 echo "== 4/5 docker build + 컨테이너 교체"
-ssh $HOST "cd $REMOTE && docker build -t maidol-app:latest . && docker stop maidol-app && docker rm maidol-app && docker run -d --name maidol-app --network host --restart unless-stopped --env-file $REMOTE/.env maidol-app:latest"
+ssh $HOST "cd $REMOTE && nice -n 19 docker build -t maidol-app:latest . && docker stop maidol-app && docker rm maidol-app && docker run -d --name maidol-app --network host --restart unless-stopped --env-file $REMOTE/.env maidol-app:latest"
 
 echo "== 5/5 헬스 체크"
 for i in $(seq 1 30); do

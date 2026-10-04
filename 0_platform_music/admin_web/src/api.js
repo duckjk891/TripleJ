@@ -3,21 +3,44 @@ import axios from 'axios';
 const TOKEN_KEY = 'maidol_admin_token';
 const USER_KEY = 'maidol_admin_user';
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
+const REMEMBER_KEY = 'maidol_admin_remember';
+const ISSUED_KEY = 'maidol_admin_token_at';
+
+// 자동 로그인: 켜면 localStorage(브라우저를 닫아도 유지 + 접속할 때마다 7일 토큰 자동 연장),
+// 끄면 sessionStorage(탭/브라우저를 닫으면 로그아웃). 저장소 접근 실패(사파리 비공개 등)는 무시.
+const safe = (fn, fallback = null) => { try { return fn(); } catch { return fallback; } };
+const stores = () => [safe(() => window.localStorage), safe(() => window.sessionStorage)].filter(Boolean);
+const readKey = (key) => {
+  for (const st of stores()) {
+    const v = safe(() => st.getItem(key));
+    if (v) return v;
+  }
+  return null;
+};
+
+export const getRemember = () => safe(() => window.localStorage.getItem(REMEMBER_KEY)) !== '0';
+export const getToken = () => readKey(TOKEN_KEY);
+export const getTokenIssuedAt = () => Number(readKey(ISSUED_KEY)) || 0;
 export const getStoredUser = () => {
   try {
-    return JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    return JSON.parse(readKey(USER_KEY) || 'null');
   } catch {
     return null;
   }
 };
-export const saveAuth = (token, user) => {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-};
 export const clearAuth = () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  stores().forEach((st) => [TOKEN_KEY, USER_KEY, ISSUED_KEY].forEach((k) => safe(() => st.removeItem(k))));
+};
+export const saveAuth = (token, user, remember = getRemember()) => {
+  clearAuth();
+  safe(() => window.localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'));
+  const st = safe(() => (remember ? window.localStorage : window.sessionStorage));
+  if (!st) return;
+  safe(() => {
+    st.setItem(TOKEN_KEY, token);
+    st.setItem(USER_KEY, JSON.stringify(user));
+    st.setItem(ISSUED_KEY, String(Date.now()));
+  });
 };
 
 const API = axios.create({ baseURL: '/api' });
@@ -28,10 +51,18 @@ API.interceptors.request.use((config) => {
   return config;
 });
 
+// 서버는 세션 만료를 401, 토큰 만료·위조를 403("토큰이 만료…"/"유효하지 않은 토큰…")으로 준다.
+const isAuthFailure = (err) => {
+  const st = err.response?.status;
+  if (st === 401) return true;
+  const detail = String(err.response?.data?.detail || '');
+  return st === 403 && detail.includes('토큰');
+};
+
 API.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (isAuthFailure(err) && !String(err.config?.url || '').includes('/auth/login')) {
       clearAuth();
       if (!window.location.hash.startsWith('#/login')) {
         window.location.hash = '#/login';
@@ -41,10 +72,20 @@ API.interceptors.response.use(
   }
 );
 
+// 서버 오류 메시지 추출 — 라우트마다 {error} 또는 {detail} 을 쓴다.
+export const errMsg = (err, fallback = '요청에 실패했습니다.') => {
+  const d = err?.response?.data;
+  if (d && typeof d.error === 'string') return d.error;
+  if (d && typeof d.detail === 'string') return d.detail;
+  return fallback;
+};
+
 export default API;
 
 // ---- auth ----
 export const login = (email, password) => API.post('/auth/login', { email, password });
+// 자동 로그인 — 유효한 토큰으로 새 7일 토큰 재발급(슬라이딩)
+export const refreshSession = () => API.post('/admin/session/refresh');
 
 // ---- dashboard ----
 export const getDashboard = () => API.get('/admin/dashboard');
@@ -97,6 +138,12 @@ export const getPointEvents = (userId, params) => API.get(`/admin/points/users/$
 export const adjustPoints = (user_id, direction, amount, reason, notify = true, message = '') =>
   API.post('/admin/points/adjust', { user_id, direction, amount, reason, notify, message });
 export const getPointBreakdown = (days = 30) => API.get('/admin/points/analytics/breakdown', { params: { days } });
+export const getPointDaily = (days = 30) => API.get('/admin/points/analytics/daily', { params: { days } });
+export const getPointDemographics = (days = 30, mode = 'earn') => API.get('/admin/points/analytics/demographics', { params: { days, mode } });
+export const getPointTopSpenders = (days = 30) => API.get('/admin/points/analytics/top-spenders', { params: { days } });
+export const getPointBalanceDistribution = () => API.get('/admin/points/analytics/balance-distribution');
+export const getPointSegments = (days = 30, mode = 'earn') => API.get('/admin/points/analytics/segments', { params: { days, mode } });
+export const getPointCohorts = (days = 30) => API.get('/admin/points/analytics/cohorts', { params: { days } });
 
 // ---- tracks ----
 export const getTracks = (params) => API.get('/admin/tracks', { params });
@@ -106,6 +153,10 @@ export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/$
 // ---- reports ----
 export const getReports = (params) => API.get('/admin/reports', { params });
 export const actOnReport = (id, action) => API.post(`/admin/reports/${id}/action`, { action });
+export const getUserRecentContent = (userId) => API.get(`/admin/users/${userId}/recent-content`);
+export const faceSearch = (report_id) => API.post('/admin/moderation/face-search', { report_id });
+export const purgeTargets = (report_id, targets) => API.post('/admin/moderation/purge', { report_id, targets });
+export const blindClub = (clubId) => API.delete(`/admin/clubs/${clubId}`);
 export const fetchEvidenceBlob = (reportId, idx) =>
   API.get(`/admin/reports/${reportId}/evidence/${idx}`, { responseType: 'blob' });
 
@@ -146,3 +197,14 @@ export const getAdminLogs = (params) => API.get('/admin/logs', { params });
 // ---- health (v3.217 [HealthCheck] 시스템 탭) ----
 export const getExternalHealth = (force = false) =>
   API.get('/admin/health/external', { params: force ? { force: true } : {} });
+
+// ---- issues (오류 신고 · 자동 수집 에러) ----
+export const getIssues = (params) => API.get('/admin/issues', { params });
+export const getIssueSummary = () => API.get('/admin/issues/summary');
+export const getIssue = (id) => API.get(`/admin/issues/${id}`);
+export const getIssueRelatedErrors = (id) => API.get(`/admin/issues/${id}/related-errors`);
+export const updateIssueStatus = (id, status, note) => API.patch(`/admin/issues/${id}/status`, { status, note });
+export const getErrorGroups = (days = 7) => API.get('/admin/issues/errors', { params: { days } });
+export const getErrorHistory = (fingerprint, params) =>
+  API.get(`/admin/issues/errors/${encodeURIComponent(fingerprint)}`, { params });
+export const probeError = (body) => API.post('/admin/issues/probe', body);
