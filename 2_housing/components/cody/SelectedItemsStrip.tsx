@@ -3,6 +3,7 @@
 // 탭 = 해당 카테고리 피커로 전환(모자/가방은 악세서리 서브탭). 해제는 기존대로 카테고리 카드·칩 길게 누르기
 // (스트립은 전환만 — 실수로 지우는 것 방지).
 import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { CATEGORIES, type AdItem, type Cat } from '../../utils/codyCatalog';
@@ -13,10 +14,19 @@ interface Props {
   currentCat: Cat | null;
   staleIds: Set<string>;
   onJump: (cat: Cat) => void;
+  /** v3.278: 칸의 × 버튼 = 그 카테고리 선택 해제 */
+  onClear?: (cat: Cat) => void;
 }
 
-export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJump }: Props) {
+export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJump, onClear }: Props) {
+  const count = CATEGORIES.filter((c) => !!selected[c]).length;
   return (
+    <View>
+    {/* v3.278(대표): 내가 고른 옷이 잘 보이게 — 요약 줄 + 큰 썸네일·선택 강조·× 해제 */}
+    <View style={s.summaryRow}>
+      <AppText style={s.summaryText}>내가 고른 아이템 {count}/{CATEGORIES.length}</AppText>
+      <AppText style={s.summaryHint}>{count ? '× 로 해제 · 칸을 누르면 그 종류로 이동' : '아래에서 골라보세요'}</AppText>
+    </View>
     <View style={s.row}>
       {CATEGORIES.map((cat) => {
         const it = selected[cat];
@@ -34,6 +44,7 @@ export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJ
               style={[
                 s.thumb,
                 !it && s.thumbEmpty,
+                !!it && s.thumbSelected,
                 it && !url && s.thumbNoImg,
                 current && s.thumbCurrent,
               ]}
@@ -49,10 +60,20 @@ export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJ
                 </View>
               ) : null}
             </View>
+            {it && onClear ? (
+              <TouchableOpacity
+                style={s.clearBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                onPress={(e: any) => { e?.stopPropagation?.(); onClear(cat); }}
+                accessibilityLabel={`${cat} 선택 해제`}
+              >
+                <Feather name="x" size={11} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
             <AppText style={[s.label, current && s.labelCurrent]} numberOfLines={1}>{cat}</AppText>
           </TouchableOpacity>
         );
       })}
+    </View>
     </View>
   );
 }
@@ -64,8 +85,20 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
   },
   cell: { flex: 1, alignItems: 'center' },
+  summaryRow: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingTop: 10,
+  },
+  summaryText: { color: colors.text.primary, fontSize: 13, fontWeight: '800' },
+  summaryHint: { color: colors.text.muted, fontSize: 10 },
+  thumbSelected: { borderWidth: 2, borderColor: colors.accent.primary },
+  clearBtn: {
+    position: 'absolute', top: -4, right: '50%', marginRight: -34,
+    width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.78)',
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)',
+  },
   thumb: {
-    width: 44, height: 44, borderRadius: 8, overflow: 'hidden',
+    width: 56, height: 56, borderRadius: 10, overflow: 'hidden',
     backgroundColor: '#fff',
     borderWidth: 1, borderColor: colors.border.subtle,
     justifyContent: 'center', alignItems: 'center',

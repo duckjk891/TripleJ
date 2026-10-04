@@ -485,6 +485,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
   const pickItem = (item: AdItem) => {
     if (!pickerCat) return;
+    // v3.278(대표): 이미 선택된 아이템을 다시 누르면 선택 해제(피커는 열린 채 — 다른 아이템을 이어서 고를 수 있게)
+    if (selected[pickerCat]?.id === item.id) {
+      console.info('[ArtistCody] 선택 해제(재탭)', { category: pickerCat });
+      clearItem(pickerCat);
+      return;
+    }
     setSelected((prev) => ({ ...prev, [pickerCat]: item }));
     // v3.248 B3: 아이템을 고르면 그 카테고리의 '착용 안 함'은 해제
     setRemoveCats((prev) => (prev[pickerCat] ? { ...prev, [pickerCat]: false } : prev));
@@ -1105,6 +1111,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
       {/* 카테고리별 아이템 선택 모달 — v3.227: components/cody/CodyPickerModal로 추출(동작 무변경) */}
       <CodyPickerModal
+        onClearItem={clearItem}
         pickerCat={pickerCat}
         accessoryMode={accessoryMode}
         pickerItems={pickerItems}

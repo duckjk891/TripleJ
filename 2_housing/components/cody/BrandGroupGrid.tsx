@@ -148,12 +148,14 @@ export default function BrandGroupGrid({
 
   if (view.mode === 'group' && !inBrand) {
     return (
+      <View style={{ flexShrink: 1 }}>
+      {/* v3.278(대표): 세분류·필터 바 고정 — 목록을 내려도 가려지지 않게 리스트 밖 상단에 둔다 */}
+      {header}
       <FlatList<BrandGroup>
         key="group"
         data={groups}
         keyExtractor={(g) => g.brand}
         numColumns={2}
-        ListHeaderComponent={header}
         ListEmptyComponent={empty}
         keyboardShouldPersistTaps="handled"
         {...LIST_PERF}
@@ -184,16 +186,19 @@ export default function BrandGroupGrid({
         )}
         contentContainerStyle={{ padding: 12 }}
       />
+      </View>
     );
   }
 
   return (
+    <View style={{ flexShrink: 1 }}>
+    {/* v3.278(대표): 세분류·필터 바 고정 */}
+    {header}
     <FlatList<AdItem>
       key={inBrand ? 'brand' : 'all'}
       data={products}
       keyExtractor={(item) => item.id}
       numColumns={2}
-      ListHeaderComponent={header}
       ListEmptyComponent={empty}
       keyboardShouldPersistTaps="handled"
       {...LIST_PERF}
@@ -210,5 +215,6 @@ export default function BrandGroupGrid({
       )}
       contentContainerStyle={{ padding: 12 }}
     />
+    </View>
   );
 }

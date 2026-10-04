@@ -56,6 +56,8 @@ interface Props {
   switchAccessorySub: (sub: Cat) => void;
   jumpToCategory: (cat: Cat) => void;
   pickItem: (item: AdItem) => void;
+  /** v3.278: 선택 해제(스트립 × 버튼) */
+  onClearItem?: (cat: Cat) => void;
   handleWishToggle: (item: { id: string }) => void;
   openItemLink: (item: { id: string; product_url?: string }) => void;
 }
@@ -79,6 +81,7 @@ export default function CodyPickerModal({
   switchAccessorySub,
   jumpToCategory,
   pickItem,
+  onClearItem,
   handleWishToggle,
   openItemLink,
 }: Props) {
@@ -198,6 +201,7 @@ export default function CodyPickerModal({
             currentCat={pickerCat}
             staleIds={staleIds}
             onJump={jumpToCategory}
+            onClear={onClearItem}
           />
           <CodyPickerTabs
             pickerTab={pickerTab}

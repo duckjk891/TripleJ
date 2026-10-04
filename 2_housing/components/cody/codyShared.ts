@@ -67,7 +67,7 @@ export const pickerStyles = StyleSheet.create({
   modalBox: {
     backgroundColor: colors.bg.deepest,
     borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    maxHeight: '80%',
+    maxHeight: '93%', // v3.278(대표): 팝업을 더 위로 — 목록 영역 확대(종전 80%)
     borderTopWidth: 1, borderTopColor: colors.accent.primary,
   },
   modalHeader: {
