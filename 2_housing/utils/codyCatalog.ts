@@ -17,7 +17,9 @@ export type Cat = '상의' | '하의' | '신발' | '모자' | '가방';
 export const CATEGORIES: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
 export const ACCESSORY_SUBCATS: Cat[] = ['모자', '가방'];
 // v3.205(⑤): 성별 데이터가 실재하는 카테고리만 자동 필터. 나머지는 무필터(전량 사라지는 사고 방지).
-export const GENDER_FILTER_CATS: Cat[] = ['상의', '하의', '신발'];
+// v3.281 [62]: 모자·가방도 성별 데이터가 100% 채워져(2026-10-06 실측 결측 0 — 가방 남233/여555/공227,
+// 모자 남323/여431/공294) 필터 대상에 추가. 악세서리 피커에서 남성 선택인데 여성 가방이 전량 뜨던 제보.
+export const GENDER_FILTER_CATS: Cat[] = ['상의', '하의', '신발', '모자', '가방'];
 
 export interface AdItem {
   id: string;
@@ -47,14 +49,85 @@ export const brandNameOf = (i: BrandLike) =>
 export const brandOf = (i: BrandLike) => brandNameOf(i) || '기타';
 export const productOf = (i: AdItem) => i.product_name || i.name || '기타';
 
-// 성별 멤버십: 공용(및 미지정)은 남/여 모두에 포함
+// ── v3.281 [62] 상품 성별 판정 ────────────────────────────────────────────
+// 서버 ad_items.gender 는 결측이 없지만 fashion_brands_csv 시드가 **브랜드 단위**로 성별을 매겨
+// (24개 브랜드 전량 '공용' — 스탠드오일 메리제인·스컬프터 홀터탑 등 여성 전용이 '공용'),
+// 일부는 태그 자체가 반대(핏플랍 "여성 …" → 남성용, 데상트 "… (남성 7인치" → 여성용).
+// → 상품명(name + product_name)의 **명시 성별 표기**와 **여성 전용 품목 키워드**(보수적 목록)로 보정한다.
+// 우선순위: ① 남녀공용 표기 → 공용 ② 명시 성별(한쪽만) → 그 성별 ③ 여성 전용 품목 → 여성용 ④ 데이터 태그.
+// 남성 전용 품목 키워드는 두지 않는다(레깅스·크롭·슬링백(가방) 등은 남성용 실데이터가 있어 오판 위험).
+// 영문 토큰은 단어 경계(lookbehind 대신 (?:^|[^a-z]) — Hermes 호환), 입력은 소문자.
+export type ItemGender = '남성용' | '여성용' | '공용';
+export type ItemGenderReason = 'tag' | 'missing' | 'name-unisex' | 'name-both' | 'name-female' | 'name-male' | 'type-female';
+
+const EN = (alts: string) => `(?:^|[^a-z])(?:${alts})(?![a-z])`;
+const UNISEX_RX = new RegExp(`남녀|남여|공용|유니섹스|${EN("unisex|men ?[&/] ?women|men and women")}`);
+const FEMALE_EXPLICIT_RX = new RegExp(`여성|여자|우먼|위민|레이디|숙녀|${EN("women'?s?|woman'?s?|wmns|ladies|lady")}`);
+// "women"·"woman" 안의 men/man 은 단어 경계로 걸러진다(앞 글자가 영문)
+const MALE_EXPLICIT_RX = new RegExp(`남성|남자|맨즈|멘즈|${EN("men'?s?|mens|man's")}`);
+// 여성 전용 품목 — 전 카테고리(실데이터 남성용 태그 0건 확인한 것만)
+const FEMALE_TYPE_RX = new RegExp([
+  '원피스', '드레스', '스커트', '치마', '블라우스', '뷔스티에', '캐미솔', '홀터', '브라탑', '브라렛',
+  '스포츠 ?브라', '(?:^|[^가-힣])브라(?![가-힣])', '크롭 ?탑', '베이비 ?티',
+  EN('one-?piece|dress(?:es)?(?! ?(?:shirt|shoe))|skirts?|skort|blouses?|bustier|camisole|cami|halter|bra|bralette|bra ?top|crop ?tops?|baby ?tee'),
+].join('|'));
+// 여성 전용 품목 — 신발에서만(가방 '슬링백'=sling bag 은 남성용 실데이터 22건)
+const FEMALE_SHOE_RX = new RegExp([
+  '메리 ?제인', '슬링 ?백', '펌프스', '하이 ?힐', '키튼 ?힐', '미들 ?힐', '킬힐', '발레',
+  EN('mary ?janes?|maryjanes?|sling ?backs?|pumps|heels?|kitten-?heels?|ballet|ballerinas?'),
+].join('|'));
+
+const normalizeTag = (raw?: string | null): ItemGender | null => {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  if (t === '공용' || /unisex|남녀|남여/i.test(t)) return '공용';
+  const g = normalizeArtistGender(t.replace(/용$/, ''));
+  return g === '남' ? '남성용' : g === '여' ? '여성용' : '공용';
+};
+
+/** 상품 실효 성별(순수) — 필터·하니스·서버 보정 스크립트가 같은 규칙을 쓴다 */
+export function resolveItemGender(
+  i: { gender?: string | null; name?: string | null; product_name?: string | null; category?: string | null },
+): { gender: ItemGender; reason: ItemGenderReason } {
+  const text = `${i.name || ''} ${i.product_name || ''}`.toLowerCase();
+  if (UNISEX_RX.test(text)) return { gender: '공용', reason: 'name-unisex' };
+  const f = FEMALE_EXPLICIT_RX.test(text);
+  const m = MALE_EXPLICIT_RX.test(text);
+  if (f && m) return { gender: '공용', reason: 'name-both' };
+  if (f) return { gender: '여성용', reason: 'name-female' };
+  if (m) return { gender: '남성용', reason: 'name-male' };
+  if (FEMALE_TYPE_RX.test(text) || (i.category === '신발' && FEMALE_SHOE_RX.test(text))) {
+    return { gender: '여성용', reason: 'type-female' };
+  }
+  const tag = normalizeTag(i.gender);
+  return tag ? { gender: tag, reason: 'tag' } : { gender: '공용', reason: 'missing' };
+}
+
+// 성별 멤버십: 공용(및 미지정)은 남/여 모두에 포함. v3.281 [62]: 태그 대신 실효 성별(resolveItemGender)
 export const genderMatches = (i: AdItem, g: string) => {
-  const ig = i.gender || '공용';
+  const ig = resolveItemGender(i).gender;
   if (ig === '공용') return true;
   if (g === '남') return ig === '남성용';
   if (g === '여') return ig === '여성용';
   return false;
 };
+
+/** 성별 필터 진단 — 숨김 사유별 개수(__DEV__ 로그·하니스용) */
+export function genderFilterStats(items: AdItem[], g: '남' | '여') {
+  const out = { total: items.length, shown: 0, hiddenByTag: 0, hiddenByName: 0, rescuedByName: 0 };
+  for (const i of items) {
+    const r = resolveItemGender(i);
+    const ok = r.gender === '공용' || (g === '남' ? r.gender === '남성용' : r.gender === '여성용');
+    const tag = normalizeTag(i.gender) ?? '공용';
+    const tagOk = tag === '공용' || (g === '남' ? tag === '남성용' : tag === '여성용');
+    if (ok) {
+      out.shown++;
+      if (!tagOk) out.rescuedByName++;
+    } else if (tagOk) out.hiddenByName++;
+    else out.hiddenByTag++;
+  }
+  return out;
+}
 export const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
 
 // v3.205(⑤): 아티스트 성별 정규화 — '남성'/'남자'/'남' → '남', '여성'/'여자'/'여' → '여'.

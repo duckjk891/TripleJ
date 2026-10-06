@@ -22,6 +22,7 @@ import {
   colorFacets,
   codyFilterGender,
   genderMatches,
+  genderFilterStats,
   pinPicked,
   priceFacets,
   subCategoryFacets,
@@ -111,6 +112,8 @@ export default function CodyPickerModal({
 
   // ── v3.205(⑤) 성별 자동 필터 — 목록에 선적용(대분류·색상 등 패싯 수치도 필터 후 기준) ──
   // genderMatches: 해당 성별용 + '공용'(미지정 포함) 노출, 반대 성별 숨김.
+  // v3.281 [62]: 태그가 아니라 실효 성별(resolveItemGender — 상품명 명시 성별·여성 전용 품목 보정) 기준.
+  //   모자·가방도 대상(GENDER_FILTER_CATS) — 악세서리 서브탭에서도 성별 칩 노출.
   // SAMPLE 폴백은 gender 미지정 → '공용' 취급으로 자연 통과. 위시리스트 탭은 불변.
   // v3.230 A4: 남/여/전체 칩 선택이 곧 필터 성별('all' = 필터 없음)
   const artistGender = codyFilterGender(genderChoice);
@@ -129,14 +132,16 @@ export default function CodyPickerModal({
   );
   useEffect(() => {
     if (__DEV__ && genderFilterActive && !pickerLoading) {
-      console.info('[ArtistCody] 성별 자동 필터', {
+      // v3.281 [62]: 상품명 보정 판정 진단 — hiddenByName(태그는 통과·이름상 반대 성별 전용),
+      // rescuedByName(태그는 반대·이름상 해당 성별/남녀공용)
+      console.info('[ArtistCody] gender filter', {
         gender: artistGender,
         category: pickerCat,
         filtered: baseItems.length,
-        total: pickerItems.length,
+        ...genderFilterStats(sourceItems, artistGender!),
       });
     }
-  }, [genderFilterActive, pickerLoading, artistGender, pickerCat, baseItems.length, pickerItems.length]);
+  }, [genderFilterActive, pickerLoading, artistGender, pickerCat, baseItems.length, sourceItems]);
 
   // ── v3.227(D) 대분류·색상·가격·브랜드 필터(클라이언트) + 패싯 개수(자기 축 제외 기준) ──
   const v = view || DEFAULT_VIEW;

@@ -6,6 +6,7 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { AppText } from '../components/ui';
@@ -14,11 +15,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 // v3.204(①): 후보 재생바 시크 — PlayerScreen 검증 패턴(Slider + isSeekingRef + seekValue 버퍼) 이식
 import Slider from '@react-native-community/slider';
-import { applyPlaybackAudioMode } from '../services/audioMode';
+import {
+  applyPlaybackAudioMode,
+  updateMediaSession,
+  setMediaSessionPlaybackState,
+  setMediaSessionPositionState,
+  clearMediaSession,
+} from '../services/audioMode';
+// v3.281 [63]: A/B 재생 중 전역 곡이 "재생 중"으로 남는 결함 — 진입 시 전역 일시정지·미니 숨김·잠금화면 메타 전환/복귀
+import { syncMediaSessionForTrack } from '../services/playback';
+import { abNowPlayingMeta, shouldPauseGlobal, mediaSessionRestorePlan } from '../utils/abNowPlaying';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
-import { usePlayerStore } from '../stores/playerStore';
+import { usePlayerStore, selectMiniPlayerVisible } from '../stores/playerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
@@ -208,7 +218,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   // v3.277 [GuestCompose]: 비로그인(게스트) 체험 곡 여부 — 렌더용(핸들러는 isGuestNow() 로 최신 판정)
   const isGuest = !useAuthStore((s) => s.user);
   const lyricsStore = useLyricsStore();
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
+  // v3.281 [63]: 이 화면 포커스 중엔 미니를 숨기므로(setMiniHidden) 하단 여백도 실제 노출 판정으로
+  const hasMiniPlayer = usePlayerStore(selectMiniPlayerVisible);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   // v3.239: 현재 로드된 sound 라이브 참조 — 재로드 시 이전 것을 확실히 해제(stale 클로저 unload·유령 sound 방지)
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -418,6 +429,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           if (pendingPlayRef.current) {
             pendingPlayRef.current = false;
             try {
+              void pauseGlobalForAb('ab-autoplay'); // v3.281 [63]
               await newSound.playAsync();
               setIsPlaying(true);
               // v3.200: variant 전환 직후 자동 재생 — 새 후보의 LISTEN play (위치 0부터)
@@ -554,6 +566,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         // v3.200: LISTEN pause — 청취 구간(커버리지) 재구성 근거 (§6.2)
         logListen('pause', selectedVariant, position);
       } else {
+        // v3.281 [63]: 전역 곡과 동시 재생 금지 — await 없이 시작(iOS 웹 제스처 체인 유지: playAsync가 첫 await)
+        void pauseGlobalForAb('ab-play');
         await cur.playAsync();
         setIsPlaying(true);
         // v3.200: LISTEN play — 현재 위치부터 재생 시작
@@ -588,6 +602,104 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     pendingPlayRef.current = isPlaying;
     setSelectedVariant(index);
   };
+
+  // ── v3.281 [63] A/B 재생 ↔ 전역 플레이어 정합 ─────────────────────────────────────
+  // 제보(10-04 iOS 웹): A/B 후보를 듣는 중 잠금화면이 직전 전역 곡("13층", 1:50/2:23 재생 중)을 표시.
+  // 원인: A/B 는 expo-av 자체 Audio(웹은 분리된 new Audio — webAudioElement 단일 element 를 쓰지 않음)라
+  // 전역 재생이 멈추지 않았고, mediaSession 메타는 playback.ts 의 store.track 구독만 갱신해 이전 곡에 고정.
+  // 조치(부작용 최소안): 포커스 시 ① 전역 일시정지(전역 sound.pauseAsync — 웹은 playIntent=false·재시도 취소,
+  // statusCb owner 는 건드리지 않음) ② 미니 숨김(setMiniHidden — ArtistResult 관행) ③ 잠금화면 메타·조작을 A/B 후보로.
+  // 블러 시 A/B 일시정지 + 미니·메타 복귀(전역 곡 정보, 재생 상태 그대로 — 자동 재개는 하지 않음).
+  const pauseGlobalForAb = useCallback(async (why: string) => {
+    const ps = usePlayerStore.getState();
+    const snd: any = ps.sound;
+    if (!snd) return;
+    let statusIsPlaying: boolean | null = null;
+    try {
+      const st: any = await snd.getStatusAsync();
+      statusIsPlaying = st?.isLoaded ? !!st.isPlaying : null;
+    } catch {
+      statusIsPlaying = null;
+    }
+    if (!shouldPauseGlobal({ hasSound: true, storeIsPlaying: !!ps.isPlaying, statusIsPlaying })) return;
+    try {
+      await snd.pauseAsync();
+      usePlayerStore.getState().setIsPlaying(false);
+      console.warn('[MusicResult] ab 전역 재생 일시정지', { why, trackId: ps.track?.id ?? null });
+    } catch (err: any) {
+      console.warn('[MusicResult] ab 전역 일시정지 실패', { why, message: err?.message });
+    }
+  }, []);
+
+  // 블러 정리·잠금화면 조작에서 최신 값 참조(포커스 콜백은 1회 생성 — stale 클로저 방지)
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+  const positionRef = useRef(0);
+  positionRef.current = position;
+  const selectedVariantRef = useRef(0);
+  selectedVariantRef.current = selectedVariant;
+  const logListenRef = useRef(logListen);
+  logListenRef.current = logListen;
+  const abControlsRef = useRef({ play: () => {}, pause: () => {} });
+  abControlsRef.current = {
+    play: () => { if (!isPlayingRef.current) void togglePlay(); },
+    pause: () => { if (isPlayingRef.current) void togglePlay(); },
+  };
+  const [abFocused, setAbFocused] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasResult) return undefined;
+      setAbFocused(true);
+      usePlayerStore.getState().setMiniHidden(true);
+      void pauseGlobalForAb('focus');
+      if (__DEV__) console.info('[MusicResult] ab 포커스 — 미니 숨김·전역 일시정지 확인');
+      return () => {
+        setAbFocused(false);
+        usePlayerStore.getState().setMiniHidden(false);
+        // 다른 화면으로 가면 A/B 후보는 멈춘다(언마운트 시 해제는 기존 soundRef 정리 effect)
+        const cur = soundRef.current;
+        if (cur && isPlayingRef.current) {
+          cur.pauseAsync().catch(() => {});
+          logListenRef.current('pause', selectedVariantRef.current, positionRef.current);
+        }
+        setIsPlaying(false);
+        if (Platform.OS === 'web') {
+          const ps = usePlayerStore.getState();
+          const plan = mediaSessionRestorePlan({ hasTrack: !!ps.track, isPlaying: !!ps.isPlaying });
+          if (plan.kind === 'track') {
+            syncMediaSessionForTrack(ps.track);
+            setMediaSessionPlaybackState(plan.playing ? 'playing' : 'paused');
+            if (ps.duration > 0) setMediaSessionPositionState(ps.position || 0, ps.duration);
+          } else {
+            clearMediaSession();
+          }
+        }
+        if (__DEV__) console.info('[MusicResult] ab 블러 — A/B 정지·미니/잠금화면 복귀');
+      };
+    }, [hasResult, pauseGlobalForAb])
+  );
+
+  // 웹 잠금화면/알림 메타 = 지금 듣는 후보(제목·버전) — 조작(재생/일시정지)도 A/B 플레이어로, 이전/다음 비활성
+  const abMetaTitle = lyricsStore.generatedTitle;
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !abFocused || !hasResult) return;
+    const meta = abNowPlayingMeta({
+      title: abMetaTitle,
+      genre: store.genre,
+      mood: store.mood,
+      variantIndex: selectedVariant,
+      variantCount,
+      labels: VARIANT_LABELS,
+    });
+    updateMediaSession(
+      { title: meta.title, artist: meta.artist, artworkUrl: null },
+      { play: () => abControlsRef.current.play(), pause: () => abControlsRef.current.pause() }
+    );
+    setMediaSessionPlaybackState(isPlaying ? 'playing' : 'paused');
+    if (duration > 0) setMediaSessionPositionState(positionRef.current, duration);
+    if (__DEV__) console.info('[MusicResult] ab 잠금화면 메타', { title: meta.title, isPlaying });
+  }, [abFocused, hasResult, abMetaTitle, store.genre, store.mood, selectedVariant, variantCount, isPlaying, duration]);
 
   const formatTime = (ms: number) => {
     // v3.168(대표): 스트리밍 소스는 duration이 Infinity/NaN으로 오는 경우가 있음 — "Infinity:NaN" 방지

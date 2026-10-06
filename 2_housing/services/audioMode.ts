@@ -73,6 +73,22 @@ export function updateMediaSession(meta: MediaSessionMeta, handlers?: MediaSessi
   }
 }
 
+/** v3.281 [63]: 웹 전용 — 잠금화면 메타·조작 비우기(전역 곡 없이 A/B 화면을 떠날 때). 실패 무해. */
+export function clearMediaSession(): void {
+  if (Platform.OS !== 'web') return;
+  try {
+    const ms: any = (navigator as any)?.mediaSession;
+    if (!ms) return;
+    ms.metadata = null;
+    for (const action of ['play', 'pause', 'nexttrack', 'previoustrack']) {
+      try { ms.setActionHandler(action, null); } catch {}
+    }
+    ms.playbackState = 'none';
+  } catch (err: any) {
+    console.error('[audioMode] mediaSession 비우기 실패', { message: err?.message });
+  }
+}
+
 // v3.216b F10: 안드로이드 크롬 상단 미디어 알림은 metadata만으로는 뜨지 않는다 —
 // mediaSession.playbackState('playing')가 함께 서야 위젯이 노출된다(실측: 'none' 고정이 원인).
 /** 웹 전용 — 미디어 세션 재생 상태. 실패 무해(no-op). */

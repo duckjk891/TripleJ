@@ -152,7 +152,8 @@ export default function CodyFilterBar({
       {/* 필터 행 */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
         {/* v3.205(⑤)→v3.207(⑩)→v3.230(A4): 성별 필터 — 대상 카테고리(상의/하의/신발)에서 남성/여성/전체 칩.
-            기본 선택 = 방금 답한 성별(신규) 또는 대상 아티스트 성별, 없으면 전체. 사용자가 직접 바꿀 수 있다. */}
+            기본 선택 = 방금 답한 성별(신규) 또는 대상 아티스트 성별, 없으면 전체. 사용자가 직접 바꿀 수 있다.
+            v3.281 [62]: 모자·가방(악세서리 서브탭)도 대상 — GENDER_FILTER_CATS 참조. */}
         {GENDER_FILTER_CATS.includes(pickerCat)
           ? GENDER_CHOICES.map(({ key, label }) => {
               const active = genderChoice === key;
