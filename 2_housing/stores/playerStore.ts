@@ -56,7 +56,8 @@ interface PlayerState {
    *  resetOnLogout·restoreQueueFor(복원)·cleanup에서 false. MiniPlayer가 "로그인 복원 큐(track만 있고 재생한 적 없음)"를
    *  숨기면서도, 세션 중 sound가 null이 된 경우(v3.197 BT 전환 실패 복구 경로)는 유지하기 위한 플래그. */
   sessionActive: boolean;
-  setMiniHidden: (v: boolean) => void;
+  /** v3.288: tag = 숨김 요청 주체(화면 인스턴스). 요청이 하나라도 남아 있으면 숨김 — 화면 전환 시 blur/focus 순서 무관 */
+  setMiniHidden: (v: boolean, tag?: string) => void;
   setSound: (sound: Audio.Sound | null) => void;
   setTrack: (track: any | null) => void;
   setIsPlaying: (v: boolean) => void;
@@ -140,6 +141,9 @@ function renameTrackArtist(t: any, cid: string, name: string): any {
 
 /** v3.275: 연주곡(Inst) 판정 공용 — 제목 서픽스 "(Inst.)" (서버 related 제외 규칙 _INST_TITLE_RE 와 동일) */
 export const isInstTrack = (t: any): boolean => /\(Inst\.\)\s*$/.test(String(t?.title || ''));
+
+// v3.288 [MiniHide] 미니플레이어 숨김 요청 주체 집합(비영속)
+const _miniHideTags = new Set<string>();
 
 export const usePlayerStore = create<PlayerState>()(
   persist(
@@ -300,7 +304,15 @@ export const usePlayerStore = create<PlayerState>()(
         return false;
       },
       setGuestNoticeAck: (guestNoticeAck) => set({ guestNoticeAck }),
-      setMiniHidden: (miniHidden) => set({ miniHidden }),
+      // v3.288 [MiniHide] (대표 지적 10-06 "아티스트 생성 때도 미니 플레이어 숨겨야"):
+      // 단일 불리언이라 숨김 화면끼리 전환(꾸미기→로딩 등) 시 앞 화면 blur 의 false 가 새 화면 focus 의
+      // true 를 덮어 미니가 다시 떴다. 화면 인스턴스별 요청 집합으로 바꿔 순서와 무관하게 유지.
+      setMiniHidden: (hidden, tag = 'default') => {
+        if (hidden) _miniHideTags.add(tag);
+        else _miniHideTags.delete(tag);
+        const next = _miniHideTags.size > 0;
+        if (get().miniHidden !== next) set({ miniHidden: next });
+      },
       setCurrentIndex: (currentIndex) => { set({ currentIndex }); saveOwnerQueue(); },
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
       toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),

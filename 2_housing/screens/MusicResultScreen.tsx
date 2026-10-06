@@ -651,12 +651,12 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     useCallback(() => {
       if (!hasResult) return undefined;
       setAbFocused(true);
-      usePlayerStore.getState().setMiniHidden(true);
+      usePlayerStore.getState().setMiniHidden(true, 'MusicResult');
       void pauseGlobalForAb('focus');
       if (__DEV__) console.info('[MusicResult] ab 포커스 — 미니 숨김·전역 일시정지 확인');
       return () => {
         setAbFocused(false);
-        usePlayerStore.getState().setMiniHidden(false);
+        usePlayerStore.getState().setMiniHidden(false, 'MusicResult');
         // 다른 화면으로 가면 A/B 후보는 멈춘다(언마운트 시 해제는 기존 soundRef 정리 effect)
         const cur = soundRef.current;
         if (cur && isPlayingRef.current) {

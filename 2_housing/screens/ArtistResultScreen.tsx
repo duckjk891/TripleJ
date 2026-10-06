@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -184,16 +185,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
 
   // v3.82: 이 화면에서는 미니플레이어 UI 숨김(오디오 재생은 유지 — playerStore 전역 소유)
   // → bottomArea(꾸미기/저장)가 탭바 바로 위에 고정된다. blur 시 반드시 복원.
-  useFocusEffect(
-    useCallback(() => {
-      usePlayerStore.getState().setMiniHidden(true);
-      if (__DEV__) console.info('[ArtistResult] 미니플레이어 숨김(focus)');
-      return () => {
-        usePlayerStore.getState().setMiniHidden(false);
-        if (__DEV__) console.info('[ArtistResult] 미니플레이어 복원(blur)');
-      };
-    }, [])
-  );
+  useHideMiniPlayerOnFocus('ArtistResult'); // v3.288 [MiniHide] 화면별 숨김 요청(전환 순서 무관)
 
   // Tab 헤더 좌측에 ← 버튼 주입.
   // v3.79 UX-1: useLayoutEffect(마운트 기준)이면 VoiceManage 등 다음 화면을 push 해도

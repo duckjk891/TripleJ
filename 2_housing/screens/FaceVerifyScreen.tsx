@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
@@ -36,6 +37,8 @@ type Step =
 type Props = NativeStackScreenProps<any, 'FaceVerify'>;
 
 export default function FaceVerifyScreen({ navigation, route }: Props) {
+  // v3.288 [MiniHide]: 아티스트 생성 흐름(작업실) — 미니플레이어 숨김·백그라운드 재생 유지(v3.105 방침)
+  useHideMiniPlayerOnFocus('FaceVerify');
   const insets = useSafeAreaInsets();
   // v3.163(대표): consentOnly — 사진 업로드 직후 "동의만" 미리 받는 모드.
   // 동의 완료(또는 이미 동의됨)면 셀피/대조 없이 이전 화면으로 복귀한다.

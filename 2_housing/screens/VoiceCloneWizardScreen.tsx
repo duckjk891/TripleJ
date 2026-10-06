@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { AppText } from '../components/ui';
@@ -85,6 +86,8 @@ const GEN_POLL_MAX_TRIES = 240; // 약 20분
 const GEN_SLOW_TRIES = 24; // 약 2분 경과 안내
 
 export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
+  // v3.288 [MiniHide]: 아티스트 생성 흐름(작업실) — 미니플레이어 숨김·백그라운드 재생 유지(v3.105 방침)
+  useHideMiniPlayerOnFocus('VoiceCloneWizard');
   const insets = useSafeAreaInsets();
   const resumeCloneId: string | undefined = (route.params as any)?.resumeCloneId;
   // v3.254: 작곡 만료 다이얼로그 '다시 학습하기' 진입 — 완료 시 자동 연결·작곡 복귀

@@ -3965,3 +3965,12 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 변경 7파일: gen_jobs(재개 등록부·원자 claim·안전망), suno_generator(제출 즉시 taskId 저장·재개 폴링), inst_service(재개 폴링·등록), generate(작곡·작사 재개), upload(커버·다듬기 재개), tracks(영상 재개·연주곡 선로드), main(기동 즉시 sweep).
 - 검증: 격리 컨테이너 단위 20/20 + 실제 작사 핸들러 재개 통합 3/3. 배포: md5 가드 7파일 일치 → 백업·pre-v3287-live → 사전 임포트(재개 6종 등록) → 빌드 → 진행 작업 4종 0건 확인 → stop -t 60 → 재기동 → health·Traceback 0·기동 sweep 실행 확인.
 - 미실행(정직 기재): 실제 생성 도중 재기동 실측 — 사용자 영향 때문에 일부러 재기동하지 않음. 다음 배포 때 `[GenJobs] resume start` 로그로 관측.
+
+---
+
+## v3.288 — 2026-10-06 — 아티스트 생성 흐름 미니플레이어 숨김 일원화 (웹 배포 완료)
+
+대표 요청: "아티스트 생성할 때도 작사·작곡·이미지·영상 디렉터처럼 미니 플레이어를 백그라운드로 숨겨야 할 것 같아."
+- 원인: 아티스트 화면들은 v3.105부터 포커스 시 미니를 숨겼지만 **단일 boolean**(setMiniHidden true/false)이라, 숨김 화면끼리 이동(예: 꾸미기→생성 로딩, 대표 로그 06:57→06:58)할 때 이전 화면의 blur 해제(false)가 새 화면의 숨김(true)을 덮어 미니가 다시 떴음. 얼굴 확인(FaceVerify)·목소리 학습(VoiceCloneWizard)은 숨김 자체가 없었음.
+- 조치: playerStore.setMiniHidden(hidden, tag) — 화면 인스턴스별 숨김 요청 집합, 하나라도 남으면 숨김(전환 순서 무관). 공용 훅 hooks/useHideMiniPlayerOnFocus 신설, ArtistInput·ArtistCody·ArtistLoading·ArtistResult·FaceVerify·VoiceCloneWizard 6화면 적용, MusicResult는 기존 A/B 로직 유지하며 태그만 부여. 재생은 백그라운드로 계속(정지 안 함).
+- 검증: tsc(변경 파일 오류 0), 태그 경합 하네스 4/4(B 포커스 후 A blur → 숨김 유지 등). 웹 배포 후 번들에 7화면 호출 마커 확인.

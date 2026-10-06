@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -170,14 +171,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
   const { allowLeave, waitWhilePrompting } = leaveGuard;
 
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침). blur 시 복원.
-  useFocusEffect(
-    useCallback(() => {
-      usePlayerStore.getState().setMiniHidden(true);
-      return () => {
-        usePlayerStore.getState().setMiniHidden(false);
-      };
-    }, [])
-  );
+  useHideMiniPlayerOnFocus('ArtistLoading'); // v3.288 [MiniHide] 화면별 숨김 요청(전환 순서 무관)
 
   // v3.227: 추적기에 "뷰어가 이 job을 보고 있음"을 알림 — 완성 시 알림 팝업 대신 뷰어가 finalize
   useFocusEffect(

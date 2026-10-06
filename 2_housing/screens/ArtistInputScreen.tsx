@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -518,15 +519,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   }, [navigation]);
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침) —
   // 하단 빈 공간(bottomLift) 대신 ArtistResult 관행(setMiniHidden)으로 통일. blur 시 복원.
-  useFocusEffect(
-    useCallback(() => {
-      usePlayerStore.getState().setMiniHidden(true);
-      if (__DEV__) console.info('[ArtistInput] 미니플레이어 숨김(focus)');
-      return () => {
-        usePlayerStore.getState().setMiniHidden(false);
-      };
-    }, [])
-  );
+  useHideMiniPlayerOnFocus('ArtistInput'); // v3.288 [MiniHide] 화면별 숨김 요청(전환 순서 무관)
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
