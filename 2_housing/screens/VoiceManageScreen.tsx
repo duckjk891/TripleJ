@@ -43,11 +43,13 @@ type Props = NativeStackScreenProps<any, 'VoiceManage'>;
 
 export default function VoiceManageScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
-  const selectMode = (route.params as any)?.select === 'artist';
+  // v3.292 [VoiceLegacy]: 휴대폰 전용 '아티스트 목소리' 설정 폐지 — 항상 순수 '내 목소리' 모드(목록·만들기·검증 재개·삭제).
+  // 아티스트 연결은 ArtistResult [목소리 연결](서버)로만. route 의 select/mode 파라미터는 호환상 받되 무시.
+  const selectMode = false;
   // v3.141(대표): '내 목소리'는 계정 자산 — 아티스트와 무관한 순수 모드.
   // 마이페이지·작곡 중 진입은 mode:'voices' → 아티스트 관련 UI(현재 목소리/간편 만들기/
   // 연결 배지·설정 프롬프트) 전부 숨기고 [내 목소리 목록 + 만들기]만 노출.
-  const voicesMode = (route.params as any)?.mode === 'voices';
+  const voicesMode = true;
   // v3.232 K14 [KidsGate]: 어린이 계정 — 내 목소리 만들기·검증 재개·아티스트 연결 숨김(간편 목소리·목록 삭제는 유지)
   const isChild = useIsChild();
 

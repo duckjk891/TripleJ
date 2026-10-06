@@ -1146,27 +1146,17 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           /* v3.84: (레거시/생성 직후) 아티스트 목소리 — 간편(프리셋)/내 목소리(클론)/미설정 3분기 표기 */
           <View style={styles.voiceBox}>
             <AppText style={styles.voiceBoxLabel}>아티스트 목소리</AppText>
+            {/* v3.292 [VoiceLegacy]: 휴대폰에만 저장되던 '아티스트 목소리'(voiceStore.artistVoice) 폐지 —
+                서버 아티스트에 반영되지 않아 "선택했는데 반영 안 됨" 혼란. 목소리는 아티스트별 [목소리 연결]로 일원화. */}
             <AppText style={styles.voiceBoxDesc}>
-              {artistVoice?.type === 'preset'
-                ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
-                : artistVoice?.type === 'clone'
-                  ? `"${artistVoice.name}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
-                  : isChild
-                    ? '간편 목소리(스타일 프리셋)를 골라 아티스트에 연결해보세요.' // v3.232 K14
-                    : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
+              목소리는 아티스트마다 연결해요. 내 아티스트 목록에서 아티스트를 열어 [목소리 연결]을 눌러주세요.
             </AppText>
             <TouchableOpacity
               style={styles.voiceBtn}
-              onPress={() => navigation.navigate('VoiceManage', { select: 'artist' })}
+              onPress={() => navigation.navigate('MyArtists')}
               activeOpacity={0.7}
             >
-              <AppText style={styles.voiceBtnText}>
-                {artistVoice?.type === 'preset'
-                  ? `간편 목소리: ${artistVoiceLabel(artistVoice)}`
-                  : artistVoice?.type === 'clone'
-                    ? `내 목소리: ${artistVoice.name}`
-                    : '목소리 설정'}
-              </AppText>
+              <AppText style={styles.voiceBtnText}>내 아티스트로 가기</AppText>
             </TouchableOpacity>
           </View>
         )}

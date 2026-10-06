@@ -175,7 +175,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const lyricsStore = useLyricsStore();
 
   // v3.84: 아티스트 목소리(프리셋 XOR 클론) — 프리셋이면 보컬 성별/스타일 기본 선택
-  const artistVoice = useVoiceStore((s) => s.artistVoice);
+  // v3.292 [VoiceLegacy]: 휴대폰 전용 '아티스트 목소리'는 더 이상 읽지 않는다(서버 아티스트 목소리가 정본) —
+  // 남아 있던 옛 값이 보컬 기본값·목소리 순서를 몰래 바꾸던 문제 차단.
+  const artistVoice = null as ReturnType<typeof useVoiceStore.getState>['artistVoice'];
   const artistPreset = artistVoice?.type === 'preset' ? artistVoice : null;
   // v3.232 K14 [KidsGate]: 어린이 계정 — 내 목소리(클론)·참고 음원 업로드 숨김, 간편 목소리만. 성인은 false(기존 그대로)
   const isChildAccount = useIsChild();

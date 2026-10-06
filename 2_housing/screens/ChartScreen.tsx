@@ -437,25 +437,29 @@ export default function ChartScreen() {
                   </AppText>
                 </TouchableOpacity>
               ) : null}
-              {!isQueue ? (
-                <View style={styles.addAllRow}>
-                  <AppText variant="caption" tone="muted">{`${data.length}곡`}</AppText>
-                  <TouchableOpacity
-                    style={styles.addAllBtn}
-                    onPress={handleAddAllToQueue}
-                    activeOpacity={0.75}
-                    accessibilityLabel="이 차트 전체를 재생목록에 담기"
-                  >
-                    <Feather name="plus-circle" size={14} color={colors.accent.primary} />
-                    <AppText variant="footnote" tone="accent" style={{ marginLeft: 4 }}>전체 담기</AppText>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
               <FlatList
                 data={data}
                 keyExtractor={(item, i) => `${item.id}-${i}`}
                 renderItem={renderTrack}
-                ListHeaderComponent={latestAlbumsHeader}
+                ListHeaderComponent={
+                  // v3.292 [ChartAddAll] (대표 10-06): 곡 수 표기 제거, 신곡 탭은 최신 앨범 "아래"(곡 목록 바로 위)에 전체 담기
+                  isQueue ? latestAlbumsHeader : (
+                    <>
+                      {latestAlbumsHeader}
+                      <View style={styles.addAllRow}>
+                        <TouchableOpacity
+                          style={styles.addAllBtn}
+                          onPress={handleAddAllToQueue}
+                          activeOpacity={0.75}
+                          accessibilityLabel="이 차트 전체를 재생목록에 담기"
+                        >
+                          <Feather name="plus-circle" size={14} color={colors.accent.primary} />
+                          <AppText variant="footnote" tone="accent" style={{ marginLeft: 4 }}>전체 담기</AppText>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )
+                }
                 contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
                 refreshControl={isQueue ? undefined :
                   <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
@@ -520,7 +524,7 @@ const styles = StyleSheet.create({
   albumCoverImg: { width: '100%', height: '100%' },
   // v3.286 [ChartAddAll]
   addAllRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
