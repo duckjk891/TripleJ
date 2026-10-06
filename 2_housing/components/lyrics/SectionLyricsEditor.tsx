@@ -5,7 +5,7 @@
 // - 상단 칩 줄 = 곡 구성 순서(벌스 1 · 후렴 · 벌스 2 · 브릿지 · 후렴). 탭 → 해당 카드 펼침 + 스크롤.
 // - 아코디언 카드(한 번에 하나 펼침). 펼친 카드만 TextInput — 입력창이 짧아 키보드에 덜 가린다.
 // - 반복 섹션(같은 내용 = linkedKey)은 "같은 후렴 n곳 함께 수정" 토글(기본 ON) — ON 이면 연결 섹션 동기.
-// - [전체 보기] = 재조립된 전체 가사 읽기 전용(최종 확인) → "전체로 직접 편집" = 기존 단일 TextInput(탈출구).
+// - [전체 편집](편집 가능 시, v3.286) = 단일 TextInput 직행 / [전체 보기](읽기 전용) = 재조립 전체 가사 최종 확인.
 // - 섹션 태그가 하나도 없으면 기존 단일 TextInput 그대로(폴백).
 // - 저장/확정 로직은 화면 소유 — 이 컴포넌트는 value/onChange 만 다룬다(왕복 불변: utils/lyricsSections).
 //
@@ -360,14 +360,17 @@ export default function SectionLyricsEditor({
               구성별 편집
             </AppText>
           </TouchableOpacity>
+          {/* v3.286 [LyricsFullEdit] (대표 요청 10-06 "가사 편집할 때 전체 수정도"): 편집 가능하면 두 번째 탭이
+              곧바로 전체 편집(단일 입력) — 기존엔 '전체 보기 → 전체로 직접 편집' 2단계에 숨어 있어 없는 기능으로 인식됨.
+              읽기 전용일 때만 '전체 보기'(최종 확인). 구성별 ↔ 전체 전환은 같은 value 왕복(utils/lyricsSections 불변식). */}
           <TouchableOpacity
             style={[styles.tab, effectiveMode !== 'sections' && styles.tabActive]}
-            onPress={() => switchMode('preview')}
+            onPress={() => switchMode(editable ? 'raw' : 'preview')}
             accessibilityRole="tab"
             accessibilityState={{ selected: effectiveMode !== 'sections' }}
           >
             <AppText variant="footnote" style={[styles.tabText, effectiveMode !== 'sections' && styles.tabTextActive]}>
-              전체 보기
+              {editable ? '전체 편집' : '전체 보기'}
             </AppText>
           </TouchableOpacity>
         </View>

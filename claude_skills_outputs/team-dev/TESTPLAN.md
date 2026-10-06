@@ -5473,3 +5473,17 @@ ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback
 ### [e2e] (핵심 여정만 — 실행 환경 치환)
 - E1 [e2e] 실 작곡 1회(팀 테스트 계정 test4, ⭐15): `(whisper)` 줄·`[Whispered]` 줄 포함 가사 → 서버 로그 `inline_directions lifted=` · 완성 후 두 버전 타임라인 상태 ok · 자막 세그먼트에 "whisper"/태그 텍스트 없음
 - E2 [e2e] 웹 배포본: 번들 해시 일치 + 번들에 미세조정 단계 문구 포함(웹 빌드 실기 구동 불가 제약 — 화면 조작 E2E 는 대표 실사용 확인으로 이월, 사유 명시)
+
+---
+## v3.286 — 편곡 ver.·꾸미기 후 목록·전체 담기·전체 편집·추천 고갈·TOP100 누적·아티스트 생성 재기동 내성 (2026-10-06)
+- U1 [unit] Given 재생목록 [a,b,c,d] 현재 d When placeNextAfterCurrent(a) Then [b,c,d,a] 현재 d 유지(되감기 없음) / 뒤쪽 곡은 바로 다음으로 / 현재 곡 자신은 -1 — PASS
+- U2 [unit] Given 차트 탭 선택곡 When 추천 [r1,a,r2] 역순 배치 Then 선택곡 뒤 r1,a,r2 순 — PASS
+- U3 [unit] Given 큐 120·최근 40 When buildRelatedExclude Then ≤41개·최근순 앞 — PASS
+- U4 [unit] Given 기동 시 processing job 5종 When resume_dead_character_jobs Then 입력보관·25분내·첫재개만 재개, 입력 없음/25분 초과/재개 1회 초과는 즉시 실패+환불, done 불변 — PASS(가짜 DB, --network none)
+- U5 [unit] Given 러너가 상한 초과 When durable 래퍼 Then failed+환불 — PASS
+- U6 [unit] Given 같은 제작자 후보 When 가중 샘플 Then 감쇠 반영, mults 없으면 종전 동작 — PASS
+- A1 [api] Given 공개곡 전부 exclude When GET /tracks/{id}/related Then source=relaxed 3~5곡(종전 0곡) — PASS(운영)
+- A2 [api] Given 운영 DB When GET /charts/top100 Then 100곡·chart_basis=alltime(종전 8곡 롤링24h) — PASS(운영)
+- E1 [e2e] 차트 신곡 탭 '전체 담기' → 100곡 담김, 재탭 시 "모두 이미 재생목록에 있어요" — PASS(운영 웹, 모바일 뷰)
+- E2 [e2e] TOP100 탭 누적 순위·전체 담기 노출 — PASS
+- 미실행: 꾸미기 실제 완성→목록 착지(실생성 ⭐ 소모 — 코드 경로·타입 검증으로 대체), 아티스트 생성 중 재기동 후 자동 재개 실측(다음 배포 때 관측 로그 `[CharJob] job=… resumed after restart`).

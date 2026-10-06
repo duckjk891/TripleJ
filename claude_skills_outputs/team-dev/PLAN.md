@@ -8092,3 +8092,22 @@ Expo RN 앱(웹 빌드 배포) + FastAPI(EC2 도커). E2E 는 웹 빌드 실기 
 ### 리스크·회귀
 - 실제 코러스 괄호 변경 금지(화이트리스트 완전 일치), 듀엣 정규화·leadin 결과 불변(연출 없으면 바이트 동일), upload-cover 경로 동일 적용.
 - 커버 생성 로딩(3초 페이싱) 불변, 미세조정 비용·화질·요청 계약 불변.
+
+---
+
+## v3.286 — 편곡 ver. 표기 · 꾸미기 저장 후 목록 · 차트 전체 담기 · 가사 전체 편집 + 진단 3건(추천 반복·TOP100·백그라운드·디렉터 백그라운드 생성) (2026-10-06)
+### 요청 원문
+"편곡을 하면 (~ 편곡)이렇게 나오는게 아니라 (~ ver.) 이런느낌으로 나오게 하자. 그리고 아티스트를 꾸미기를 해서 저장하면 내 아티스트 목록이 있는 화면으로넘어가주면 좋을것 같아. 자동재생 추천 알고리즘이 계속 반복되는 곡들이 나오거든? 지금 상황을 명확히 파악해서 알려줘. 그리고 top100은 지금까지의 누적된 전체 곡에 대한게 반영이 되어야하는데 제대로 반영되는건지 확인이 필요할것 같아. 그리고 각 차트마다 전체 담기 버튼이 있어서 재생목록에 담을 수 있는 기능이 있으면 좋을 것 같아. 그리고 아직 백그라운드 수정이 완벽하게 해결되진 않았거든. 그리고 너가 디렉터와 만들기할때 화면을 나가도 만들게 해놧다고 했는데 실제로는 화면을 나가면 무한 대기이고 실제로 화면을 열고 기다려야 생성이 되는 구조아니야? 이렇게 만들면 안되지!. 그리고 가사 편집할때 전체 수정도 할 수 있게 해줘야되."
+### Plan verification findings (0단계)
+- 편곡 제목: 서버 routes/generate.py arrange 핸들러 `suffix = f" ({tag} 편곡)"`(라이브 1곳) — 앱 파싱 없음. 기존 데이터 1곡('떠나자 지금 (록 편곡)').
+- 꾸미기 저장: 일반 저장 버튼(ArtistResult handleSave/handleManualSave)은 v3.281 [58]로 이미 목록 이동. **꾸미기(outfit)는 완성 시 generationTracker.finalizeArtistJob 이 자동 저장 후 ArtistResult 로 착지**(커버 복귀 분기 제외) — 갭.
+- 차트 전체 담기: ChartScreen 은 곡 단위 addToQueue 만 존재. 큐 중복 판정(id 정규화) 재사용 가능.
+- 가사 전체 수정: SectionLyricsEditor 에 raw(단일 입력) 모드가 이미 있으나 '전체 보기(읽기 전용) → 전체로 직접 편집' 2단계 뒤에 숨어 있음 — 발견성 갭.
+- 진단 3건(추천 반복·TOP100·웹 백그라운드·디렉터 백그라운드 생성)은 병렬 조사 — 결과로 수정 범위 확정.
+### 변경 매트릭스(1차)
+| # | 파일 | 변경 | 로그 |
+|---|---|---|---|
+| S1 | server routes/generate.py | 편곡 접미사 "(X ver.)" | 기존 arrange 로그 |
+| A1 | services/generationTracker.ts | outfit finalize → MyArtists(savedNotice, popTo/replace/전역) | `[GenTracker] [OutfitSaved]` |
+| A2 | screens/ChartScreen.tsx | 차트 탭 상단 "N곡 · 전체 담기" — 큐 끝 추가·중복 제외 안내 | `[ChartScreen] [ChartAddAll]` |
+| A3 | components/lyrics/SectionLyricsEditor.tsx | 편집 가능 시 두 번째 탭 = "전체 편집"(raw 직행) | `[SectionLyrics] mode` |

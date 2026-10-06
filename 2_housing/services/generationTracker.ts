@@ -467,6 +467,24 @@ function goArtistResult(params: Record<string, any>, navigation?: any, replace?:
   }
 }
 
+// v3.286 [OutfitSaved] (대표 요청 10-06): 꾸미기(옷 입히기) 완성 = 자동 저장 → 결과 화면 대신
+// 내 아티스트 목록으로 착지(+ 상단 1줄 안내 — v3.281 [58] savedNotice 계약 재사용).
+// 스택에 목록이 있으면 popTo(중복 화면 방지), 없으면 replace/navigate. 화면 밖(전역 알림 [지금 보기])은 탭 경유.
+function goMyArtistsAfterOutfit(navigation?: any, replace?: boolean) {
+  const params = { savedNotice: '꾸미기를 저장했어요. 내 아티스트 목록에 반영됐어요.', savedAt: Date.now() };
+  if (navigation) {
+    const routes: any[] = navigation.getState?.()?.routes ?? [];
+    const inStack = routes.some((r) => r?.name === 'MyArtists');
+    console.info('[GenTracker] [OutfitSaved] 꾸미기 저장 → 내 아티스트 목록', { inStack, replace: !!replace });
+    if (inStack && navigation.popTo) navigation.popTo('MyArtists', params);
+    else if (replace && navigation.replace) navigation.replace('MyArtists', params);
+    else navigation.navigate('MyArtists', params);
+  } else {
+    console.info('[GenTracker] [OutfitSaved] 꾸미기 저장 → 내 아티스트 목록(전역)');
+    navigateGlobal('Studio', { screen: 'MyArtists', params });
+  }
+}
+
 // ── v3.235 [CoverWardrobe]: 옷 입히기 완성 → 커버 대화 복귀(D4) ─────────────────────────
 
 export interface CoverReturnTarget {
@@ -665,6 +683,11 @@ export async function finalizeArtistJob(
           return 'saved';
         }
       }
+    }
+    // v3.286 [OutfitSaved]: 일반 꾸미기(커버 복귀 아님) → 내 아티스트 목록. 생성(sheet)·다듬기는 현행 결과 화면.
+    if (job.mode === 'outfit') {
+      goMyArtistsAfterOutfit(opts.navigation, opts.replace);
+      return 'saved';
     }
     const params: Record<string, any> =
       job.mode === 'sheet'

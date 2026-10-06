@@ -12,6 +12,7 @@ import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { buildRelatedExclude } from '../services/playback';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -185,6 +186,30 @@ export default function ChartScreen() {
     return true;
   };
 
+  // v3.286 [ChartAddAll] (대표 요청 10-06): 차트별 "전체 담기" — 현재 탭 곡 전부를 재생목록(큐) 끝에 추가.
+  // addToQueue 의 중복 판정(id 정규화) 재사용 — 이미 담긴 곡은 건너뛰고 개수만 안내. 재생 상태·순서 불변.
+  const handleAddAllToQueue = () => {
+    const list = tracks || [];
+    if (!list.length) return;
+    const tabLabel = TABS.find((t) => t.key === activeTab)?.label || '차트';
+    let added = 0;
+    for (const t of list) {
+      try {
+        if (usePlayerStore.getState().addToQueue(t)) added += 1;
+      } catch (err: any) {
+        console.error('[ChartScreen] [ChartAddAll] 담기 실패', { id: t?.id, message: err?.message });
+      }
+    }
+    const dup = list.length - added;
+    console.info('[ChartScreen] [ChartAddAll] 전체 담기', { tab: activeTab, total: list.length, added, dup });
+    showAlert(
+      '재생목록에 담았어요',
+      added > 0
+        ? `${tabLabel} ${added}곡을 재생목록에 담았어요.${dup > 0 ? `\n(이미 담긴 ${dup}곡은 제외)` : ''}`
+        : `${tabLabel} 곡이 모두 이미 재생목록에 있어요.`,
+    );
+  };
+
   const handleTrackPress = (track: ChartTrack) => {
     // v3.106: 앨범 소속 곡은 AlbumDetail로 보내 앨범의 다른 곡도 담아 듣게 한다 — 백엔드 준비 대기 골격.
     // TODO(백엔드 요청): 2026-08 실측 기준 트랙 응답(GET /api/charts/*, /api/tracks/*)에 album_id가 없고,
@@ -217,12 +242,8 @@ export default function ChartScreen() {
   // v3.267 [추천 이어듣기]: 선택곡 관련곡을 큐의 선택곡 뒤에 심는다(무인증 API·중복 자동 제거).
   const seedRelatedIntoQueue = async (track: ChartTrack) => {
     try {
-      const st = usePlayerStore.getState();
-      // v3.271 [RelatedVariety]: 큐 + 최근 재생 이력 합산 exclude
-      const excludeIds = Array.from(new Set([
-        ...st.queue.map((t: any) => String(t?.id)).filter(Boolean),
-        ...((st.recentlyPlayedIds as string[]) || []),
-      ]));
+      // v3.286 [RelatedVariety]: 최근 30곡 + 현재 위치 ±5곡만 제외(큐 전체 제외 → 추천 고갈)
+      const excludeIds = buildRelatedExclude();
       const res = await api.get(`/tracks/${track.id}/related`, {
         params: { limit: 5, exclude: excludeIds.join(',') },
       });
@@ -231,9 +252,14 @@ export default function ChartScreen() {
         if (__DEV__) console.info('[ChartScreen] [추천] 관련곡 없음', { id: track.id });
         return;
       }
-      const now = usePlayerStore.getState();
-      const anchor = now.queue.findIndex((t: any) => String(t?.id) === String(track.id));
-      const inserted = now.insertIntoQueueAfter(anchor, rel);
+      // v3.286: 선택곡 뒤에 추천 순서대로 배치 — 이미 큐에 있던 곡은 그 자리에서 옮겨온다(누락·되감기 방지).
+      // 확인 중 사용자가 다른 곡으로 넘어갔으면 배치하지 않는다.
+      const _st = usePlayerStore.getState();
+      if (String(_st.queue[_st.currentIndex]?.id) !== String(track.id)) return;
+      let inserted = 0;
+      for (const t of [...rel].reverse()) {
+        if (usePlayerStore.getState().placeNextAfterCurrent(t) >= 0) inserted += 1;
+      }
       console.info('[ChartScreen] [추천] 관련곡 삽입', {
         id: track.id, source: res.data?.source, fetched: rel.length, inserted,
       });
@@ -411,6 +437,20 @@ export default function ChartScreen() {
                   </AppText>
                 </TouchableOpacity>
               ) : null}
+              {!isQueue ? (
+                <View style={styles.addAllRow}>
+                  <AppText variant="caption" tone="muted">{`${data.length}곡`}</AppText>
+                  <TouchableOpacity
+                    style={styles.addAllBtn}
+                    onPress={handleAddAllToQueue}
+                    activeOpacity={0.75}
+                    accessibilityLabel="이 차트 전체를 재생목록에 담기"
+                  >
+                    <Feather name="plus-circle" size={14} color={colors.accent.primary} />
+                    <AppText variant="footnote" tone="accent" style={{ marginLeft: 4 }}>전체 담기</AppText>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
               <FlatList
                 data={data}
                 keyExtractor={(item, i) => `${item.id}-${i}`}
@@ -478,6 +518,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1, alignItems: 'center', justifyContent: 'center',
   },
   albumCoverImg: { width: '100%', height: '100%' },
+  // v3.286 [ChartAddAll]
+  addAllRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  addAllBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.md, paddingVertical: 6,
+    borderRadius: 999, borderWidth: 1, borderColor: colors.accent.primary,
+  },
   guestBanner: {
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     backgroundColor: colors.bg.surface1,

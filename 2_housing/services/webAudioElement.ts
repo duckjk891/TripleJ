@@ -357,6 +357,16 @@ export function webResumeIfStalled(wantPlaying: boolean): 'advanced' | 'resumed'
     if (p && typeof (p as any).catch === 'function') {
       (p as any).catch((err: any) => {
         console.warn('[WebAudio] 복귀 재개 거부', { name: err?.name, message: err?.message });
+        // v3.286 [BGWeb]: AbortError(로드 경합)는 짧게 1회 재시도 — 조사(10-04 iOS)에서 재시도 없이 정지
+        if (err?.name === 'AbortError' && el) {
+          setTimeout(() => {
+            el?.play().catch((e2: any) => {
+              console.warn('[WebAudio] 복귀 재개 재시도 실패', { name: e2?.name });
+              dispatch();
+            });
+          }, 150);
+          return;
+        }
         dispatch(); // UI 를 실제 상태(일시정지)로 정합화
       });
     }

@@ -73,6 +73,8 @@ export function syncMediaSessionForTrack(track: any): void {
         const s = usePlayerStore.getState();
         const idx = s.getNextManualIndex();
         if (idx >= 0 && s.queue[idx]) {
+          // v3.286 [BGWeb]: 웹은 동기 src 교체(백그라운드에서도 재생 유지), 실패 시 종전 경로
+          if (Platform.OS === 'web' && webSyncAdvance(idx, 'remote-next')) return;
           s.playTrackAtIndex(idx);
           loadAndPlayTrack(s.queue[idx]);
         } else {
@@ -124,6 +126,42 @@ export function applyArtistRenameToPlayback(characterId: string, name: string): 
 // 관련곡 1곡을 미리 큐 뒤에 붙여 둔다 → 곡 종료 시 ended 동기 스왑이 네트워크 fetch 없이 잇는다.
 // (v3.217 URL 프리페치는 v3.272 부터 결과를 쓰지 않아 제거 — 스왑마다 나가던 헛 요청 1건 절감)
 // ─────────────────────────────────────────────────────────────────────────────
+// v3.286 [RelatedVariety] (조사 10-06): 큐 전체를 exclude 로 보내 카탈로그(112곡)를 다 덮어 추천이 빈손 →
+// 자동재생 종료·저장 큐 같은 순서 반복(exclude≥95 의 83% 빈 응답). 최근 30곡 + 현재 위치 ±5곡만 제외하고,
+// 최근 재생 순(앞=최근)으로 보낸다 — 서버는 후보 소진 시 앞쪽 15곡만 유지하고 완화(v3.286 서버).
+export function buildRelatedExclude(): string[] {
+  const s = usePlayerStore.getState();
+  const recent = (((s as any).recentlyPlayedIds as string[]) || []).slice(0, 30);
+  const ci = Math.max(0, s.currentIndex);
+  const win = s.queue.slice(Math.max(0, ci - 5), ci + 6).map((t: any) => t?.id).filter(Boolean).map(String);
+  return Array.from(new Set([...recent, ...win]));
+}
+
+// v3.286 [BGWeb]: 웹 동기 전환 공용 — ended 와 잠금화면/이어폰 '다음'이 같은 경로(동기 src 교체 + play()).
+// 종전 잠금화면 '다음'은 loadAndPlayTrack(await 후 재생)이라 백그라운드에서 재생이 거부·지연될 수 있었다.
+function webSyncAdvance(idx: number, reason: 'ended' | 'remote-next'): boolean {
+  const s = usePlayerStore.getState();
+  const next = idx >= 0 ? s.queue[idx] : null;
+  if (!next?.id) return false;
+  const nid = String(next.id);
+  // v3.272 [BGWeb-Android]: 자동 스왑은 **항상 결정적 proxy** — presigned 간헐 code 4 노출면 제거.
+  const url = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`;
+  if (!webSwapSrcAndPlay(url)) return false;
+  s.playTrackAtIndex(idx); // track 갱신 → 구독이 mediaSession 메타 동기화
+  // v3.225: 자동 진행 표식 — 404 등 MediaError 시 skipUnplayableOnAutoAdvance 가 건너뜀
+  markAutoAdvance(next);
+  s.setPosition(0);
+  s.setIsPlaying(true);
+  if (reason === 'ended') {
+    try { useArtistStore.getState().addExp(1, 'play'); } catch {} // 재생 완료 EXP(PlayerScreen 경로 동등)
+  }
+  // 미니 경로(makeStatusCallback) 콜백은 이전 곡 클로저 — 새 곡 기준으로 재설치(PlayerScreen 콜백은 유지)
+  if (getWebStatusCbOwner() === 'playback') setWebStatusCb(makeStatusCallback(next), 'playback');
+  console.warn('[WebAudio] 동기 src 교체 이어재생', { trackId: nid, idx, reason });
+  preQueueRelatedIfLast(); // v3.275: 이 곡이 마지막이면 관련곡 선적재
+  return true;
+}
+
 let preQueueFor: string | null = null;
 let preQueueTimer: any = null;
 function preQueueRelatedIfLast(attempt = 0): void {
@@ -136,10 +174,7 @@ function preQueueRelatedIfLast(attempt = 0): void {
   if (preQueueFor === cid && attempt === 0) return; // 이 곡에 대해 진행 중/완료
   preQueueFor = cid;
   clearTimeout(preQueueTimer);
-  const excludeIds = Array.from(new Set([
-    ...s.queue.map((t: any) => t?.id).filter(Boolean).map(String),
-    ...((s.recentlyPlayedIds as string[]) || []),
-  ]));
+  const excludeIds = buildRelatedExclude(); // v3.286
   (async () => {
     try {
       const res = await api.get(`/tracks/${cid}/related`, {
@@ -148,11 +183,12 @@ function preQueueRelatedIfLast(attempt = 0): void {
       const t = (res.data?.tracks || [])[0];
       const st = usePlayerStore.getState();
       if (!t?.id || String(st.track?.id) !== cid) return; // 관련곡 없음 / 그 사이 곡 전환
-      const added = st.addToQueue({
+      // v3.286: 이미 큐 앞쪽에 있던 곡이면 현재 곡 뒤로 옮긴다(옛 순서로 되감기 방지)
+      const added = st.placeNextAfterCurrent({
         ...t, id: t.id, title: t.title,
         artist_name: t.artist_name || t.uploader_nickname || 'AI',
         cover_image: t.cover_image || t.cover_image_url,
-      });
+      }) >= 0;
       console.warn('[BGWeb] 관련곡 선적재', { for: cid, next: t.id, added, source: res.data?.source });
     } catch (err: any) {
       // 실패 — 곡이 끝나기 전에 백오프 재시도(5·15·30s, 최대 3회). 그래도 실패면 종전 경로(곡 종료 후 조회)
@@ -265,27 +301,7 @@ if (Platform.OS === 'web') {
   setWebEndedHandler(() => {
     const s = usePlayerStore.getState();
     const idx = s.getNextAutoIndex(); // v3.271 [InstSkip]
-    const next = idx >= 0 ? s.queue[idx] : null;
-    if (!next?.id) return false;
-    const nid = String(next.id);
-    // v3.272 [BGWeb-Android]: 자동 스왑은 **항상 결정적 proxy** — presigned 간헐 code 4
-    // (10-01 실측 3건, 곡·음원 정상인데 로드 실패)의 노출면 자체를 제거. seek 품질이 필요한
-    // PlayerScreen 수동 로드는 기존 presigned 유지. 프리페치(webNextUrl)는 폐기.
-    const url = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`;
-    if (!webSwapSrcAndPlay(url)) return false;
-    s.playTrackAtIndex(idx); // track 갱신 → 위 구독이 mediaSession 메타 동기화
-    // v3.225: 자동 진행 표식 — 이 src가 404 등으로 'error'(MediaError)를 내면 양쪽 상태 콜백의
-    // status.error 분기가 skipUnplayableOnAutoAdvance로 건너뛴다(재생 진척 시 표식 자동 해제).
-    markAutoAdvance(next);
-    s.setPosition(0);
-    s.setIsPlaying(true);
-    try { useArtistStore.getState().addExp(1, 'play'); } catch {} // 재생 완료 EXP(PlayerScreen 경로 동등)
-    // 미니 경로(makeStatusCallback) 콜백은 이전 곡 클로저 — duration 보정이 새 곡 기준이 되게 재설치.
-    // PlayerScreen 콜백(external)은 스토어 라이브 트랙을 참조하므로 유지.
-    if (getWebStatusCbOwner() === 'playback') setWebStatusCb(makeStatusCallback(next), 'playback');
-    console.warn('[WebAudio] ended → 동기 src 교체 이어재생', { trackId: nid, idx });
-    preQueueRelatedIfLast(); // v3.275: 이 곡이 마지막이면 관련곡 선적재
-    return true;
+    return webSyncAdvance(idx, 'ended');
   });
 
   const msLast = { playing: null as boolean | null, duration: 0, position: 0, at: 0 };
@@ -610,10 +626,8 @@ export async function autoContinueWithRelated(
   }
   fetchingRelated = true;
   // v3.271 [RelatedVariety]: 큐 + 최근 재생 이력(40캡) 합산 — "방금 들은 곡 재추천" 차단
-  const excludeIds = Array.from(new Set([
-    ...s.queue.map((t: any) => t?.id).filter(Boolean).map(String),
-    ...((s.recentlyPlayedIds as string[]) || []),
-  ]));
+  // v3.286 [RelatedVariety]: 최근 30곡 + 현재 위치 ±5곡(큐 전체 제외 → 추천 고갈의 주원인이었음)
+  const excludeIds = buildRelatedExclude();
   console.info('[playerStore] 관련곡 이어듣기 조회', { track_id: endedTrack.id, exclude_count: excludeIds.length });
   try {
     const res = await api.get(`/tracks/${endedTrack.id}/related`, {
@@ -637,11 +651,10 @@ export async function autoContinueWithRelated(
       artist_name: t.artist_name || t.uploader_nickname || 'AI',
       cover_image: t.cover_image || t.cover_image_url,
     };
-    const store = usePlayerStore.getState();
-    store.addToQueue(nextTrack);
-    const idx = usePlayerStore.getState().queue.findIndex((x: any) => x?.id === nextTrack.id);
+    // v3.286: 큐에 이미 있던 곡이면 현재 곡 바로 뒤로 옮겨 재생(종전: 앞쪽 옛 위치로 되감겨 같은 순서 반복)
+    const idx = usePlayerStore.getState().placeNextAfterCurrent(nextTrack);
     if (idx < 0) {
-      // addToQueue가 중복으로 거부한 예외 상황 — 이어듣기 중단
+      console.warn('[playerStore] 관련곡 배치 불가 — 이어듣기 중단', { id: nextTrack.id });
       usePlayerStore.getState().setIsPlaying(false);
       return;
     }
@@ -697,6 +710,20 @@ export async function skipUnplayableOnAutoAdvance(
   opts?: { retrying?: boolean },
 ): Promise<boolean> {
   const fid = failedTrack?.id != null ? String(failedTrack.id) : '';
+  if (fid && autoAdvance?.trackId !== fid && opts?.retrying) {
+    // v3.286 (조사: 삭제곡 404 를 직접 재생 시 10분간 18회 재시도) — 직접 재생도 곡 소멸 확정이면 재시도 중단
+    try {
+      await api.get(`/tracks/${fid}`);
+    } catch (err: any) {
+      const st = err?.response?.status;
+      if (st === 400 || st === 403 || st === 404 || st === 410) {
+        console.warn('[BTDebug] direct play — track gone, stop retry', { trackId: fid, status: st });
+        webCancelErrorRetry('track-gone-direct');
+        usePlayerStore.getState().setIsPlaying(false);
+      }
+    }
+    return false;
+  }
   if (!fid || autoAdvance?.trackId !== fid) return false; // 직접 재생 실패 — 현행 유지
   const marked = autoAdvance;
   autoAdvance = null; // 같은 실패의 중복 전파(에러 이벤트·catch)는 1회만 처리
