@@ -1,0 +1,1852 @@
+import asyncio
+import io
+import logging
+import mimetypes
+import os
+import re
+import uuid as uuid_lib
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, UploadFile
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
+
+from ..auth import get_current_user
+from ..config import settings
+from ..database.minio import get_minio
+from ..database.mongodb import get_mongo
+from ..database.postgres import get_pg
+from ..database.redis import get_redis
+from ..services import gen_jobs as gj  # v3.228 — 커버·다듬기 요청 원장·중복 차단·멈춘 작업 환불
+from ..services.media_urls import browser_image_url, browser_video_url, public_presign
+from ..services import kids_policy  # v3.232 F2·F6 — 어린이 사진 업로드 차단(킬 스위치 OFF 면 no-op)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/upload")
+
+
+# v55: image model enum + validator.
+ALLOWED_IMAGE_MODELS = {"nb_pro", "gpt_image_2"}
+
+
+def _normalize_image_model(raw: Optional[str]) -> Optional[str]:
+    """Return validated image_model string, or None if input is invalid.
+
+    Empty/whitespace/None → default ("nb_pro"). Unknown value → None (caller
+    should return HTTP 400).
+    """
+    if raw is None:
+        return "nb_pro"
+    v = raw.strip()
+    if not v:
+        return "nb_pro"
+    if v in ALLOWED_IMAGE_MODELS:
+        return v
+    return None
+
+
+# v57: vocal_gender 정규화 — 커버 생성 라우트 진입부에서 사용.
+# 출력: ("female","male","neutral") 또는 None (빈/없음).
+# 잘못된 값(미정의 enum, "queer" 등) → _INVALID 센티넬 반환 → 라우트에서 400.
+# 한국어 별칭(여자/여성, 남자/남성, 중성/지정 없음) 도 지원.
+_INVALID_VOCAL_GENDER = object()
+_VOCAL_GENDER_ALIASES = {
+    # 영어 enum (자기 자신 — passthrough)
+    "female": "female",
+    "male": "male",
+    "neutral": "neutral",
+    # 한국어 별칭
+    "여자": "female",
+    "여성": "female",
+    "남자": "male",
+    "남성": "male",
+    "중성": "neutral",
+    "지정 없음": "neutral",
+    "지정없음": "neutral",
+}
+
+
+def _normalize_vocal_gender(raw):
+    """Return ("female","male","neutral") | None | _INVALID_VOCAL_GENDER.
+
+    None / "" / 공백 → None (전달 안 함 — 기존 동작 byte-level 유지).
+    정상 enum / 한국어 별칭 → 영어 enum 으로 정규화.
+    그 외 → _INVALID_VOCAL_GENDER (라우트에서 400).
+    """
+    if raw is None:
+        return None
+    v = str(raw).strip()
+    if not v:
+        return None
+    key = v.lower() if v.isascii() else v  # ASCII 만 소문자화 (한국어 보존)
+    if key in _VOCAL_GENDER_ALIASES:
+        return _VOCAL_GENDER_ALIASES[key]
+    return _INVALID_VOCAL_GENDER
+
+
+# v197: /upload/image 의 type 정규화.
+# 'track' 은 구 클라이언트(웹 UploadPage, 앱팀 가능성) 하위호환 별칭 — 폐기 예정.
+ALLOWED_UPLOAD_IMAGE_TYPES = {"cover", "profile"}
+DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES = {"track": "cover"}
+
+
+def _normalize_upload_image_type(raw):
+    """(정규화된 type, 별칭_사용_여부) 반환. 알 수 없는 값 → (None, False)."""
+    v = (raw or "").strip().lower()
+    if v in ALLOWED_UPLOAD_IMAGE_TYPES:
+        return v, False
+    if v in DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES:
+        return DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES[v], True
+    return None, False
+
+
+class GenerateCoverRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    style: Optional[str] = None
+    character_object_name: Optional[str] = None
+    user_prompt: Optional[str] = None  # user's free-form style description
+    prompt_model: Optional[str] = None  # AI model for enhanced prompt (e.g. "claude-opus-4-7")
+    location_id: Optional[str] = None    # v42: user-saved location anchor
+    # v55: 커버 이미지 생성 모델. "nb_pro" (default) | "gpt_image_2".
+    image_model: Optional[str] = "nb_pro"
+    # v57: 보컬 성별 — 커버 이미지 prompt 에 주입. None 이면 미주입 (기존 동작).
+    # 영어 enum ("female","male","neutral") 또는 한국어 별칭(여자/여성/남자/남성/중성/지정 없음).
+    vocal_gender: Optional[str] = None
+    # v215 — 보관함(커버촬영실) 출처 표기: 'coverstudio' | 'coveredit' | 'upload'.
+    # 화이트리스트 외/미전송은 None 저장 (additive — 구 클라이언트 무영향).
+    source: Optional[str] = None
+    # v234(대표 확정) — 이미지 디렉터 대화 보강 (전부 선택사항, None=미주입)
+    shot: Optional[str] = None                    # 구도 (클로즈업/반신/전신/뒷모습/인물 없이 또는 자유)
+    palette: Optional[str] = None                 # 색감·톤
+    background_prompt: Optional[str] = None       # 배경·장소 텍스트 설명 (≤300자)
+    background_object_name: Optional[str] = None  # 배경·장소 참조 사진 (POST /upload/cover-background 결과)
+    lyrics_excerpt: Optional[str] = None          # 가사 발췌 (≤400자) — 장면 영감, LLM 추가 호출 없음
+    # v245(대표) — 인물 표정 (선택, ≤100자)
+    expression: Optional[str] = None
+    # v235(대표 지적) — 캐릭터 종류별 프롬프트 분기: 'real'(기본·기존 동작) | 'virtual'(일러스트 강제)
+    character_kind: Optional[str] = None
+    character_art_style: Optional[str] = None     # 가상 화풍 (프리셋 키/한글/영문 라벨 혼재 허용 — 서버 정규화)
+
+
+# v215 — 보관함 source 화이트리스트
+COVER_SOURCE_WHITELIST = {"coverstudio", "coveredit", "upload"}
+
+# v3.234 S1 — 커버에 쓴 착장 기록(cover_sessions.character_snapshot). 본인 아티스트 permanent 시트만.
+_COVER_PERMANENT_SHEET_RE = re.compile(r"^characters/([^/]+)/([0-9a-f]{32})/sheet\.png$")
+_COVER_NO_PERSON_SHOTS = {"인물 없이"}
+
+
+async def _cover_character_snapshot(user_id: str, body, char_loaded: bool, items_at_load):
+    """v3.234 S1 — 커버 생성 성공 직후 그 커버에 쓴 아티스트 착장 스냅샷(시트 불변 복사).
+
+    반환 (snap|None, state). state 는 세션에 항상 기록(character_snapshot_state) — 곡에 커버를
+    붙일 때 v3.234 이후 세션은 구세션 추정(시트 수정 시각)을 하지 않게 하는 표식.
+    no_character(시트 미지정·로드 실패) · no_person(구도 '인물 없이') · not_permanent(가상 슬롯·
+    스냅샷 경로 등) · outfit_changed(생성 중 옷 변경) · failed · saved. 절대 raise 하지 않는다.
+    """
+    try:
+        cpath = (body.character_object_name or "").strip()
+        if not cpath or not char_loaded:
+            return None, "no_character"
+        if (body.shot or "").strip() in _COVER_NO_PERSON_SHOTS:
+            return None, "no_person"
+        m = _COVER_PERMANENT_SHEET_RE.match(cpath)
+        if not m or m.group(1) != user_id:
+            return None, "not_permanent"
+        from .tracks import _build_character_snapshot
+
+        snap = await _build_character_snapshot(get_mongo(), user_id, m.group(2))
+        if not snap or not snap.get("sheet_object_name_origin"):
+            return None, "failed"  # 시트 불변 복사 실패 — 가변 경로를 곡에 남기지 않는다
+        if items_at_load is not None and (snap.get("used_items") or []) != (items_at_load or []):
+            return None, "outfit_changed"
+        return snap, "saved"
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[CoverOutfitSnap] build failed user=%s err=%s: %s",
+            (user_id or "")[:8], type(e).__name__, str(e)[:160],
+        )
+        return None, "failed"
+
+
+class GenerateMVRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    lyrics: Optional[str] = None
+    cover_object_name: Optional[str] = None  # MinIO object name of cover image
+
+ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+# ── v234(대표 확정): 커버 배경·장소 참조 사진 업로드 ─────────────────────────
+# 이미지 디렉터 대화의 '배경·장소' 질문 — 사진 업로드 답변용. generate-cover 의
+# background_object_name 으로 전달돼 참조 이미지로 동봉된다. 소유 prefix 로 저장.
+@router.post("/cover-background", status_code=201)
+async def upload_cover_background(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    # v3.232 F6 — 어린이 배경 사진 업로드 차단(파일 읽기·저장 전). OFF 면 DB 0회.
+    _kids_block = await kids_policy.kids_guard(current_user["id"], "cover_photo")
+    if _kids_block is not None:
+        return _kids_block
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXT:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"허용되지 않는 이미지 형식입니다. ({', '.join(ALLOWED_IMAGE_EXT)})"},
+        )
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 10MB 이하여야 합니다."})
+    if not contents:
+        return JSONResponse(status_code=400, content={"error": "빈 파일입니다."})
+
+    object_name = "covers/bg/{}/{}{}".format(current_user["id"], uuid_lib.uuid4().hex, ext)
+    content_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    minio_client = get_minio()
+    minio_client.put_object(
+        bucket_name=settings.minio_bucket_images,
+        object_name=object_name,
+        data=io.BytesIO(contents),
+        length=len(contents),
+        content_type=content_type,
+    )
+    logger.info(
+        "[upload] cover-background user=%s obj=%s len=%d",
+        current_user["id"][:8], object_name, len(contents),
+    )
+    return {"object_name": object_name}
+
+
+@router.post("/image", status_code=201)
+async def upload_image(
+    file: UploadFile = File(...),
+    type: str = Form(...),        # "cover" (track cover) or "profile" (user profile)
+    id: str = Form(...),          # track_id (ObjectId string) or user_id (UUID string)
+    current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
+):
+    # v3.232 F6·F7 — 어린이 곡 커버·프로필 직접 사진 업로드 차단(type 무관, 파일 읽기·저장 전). OFF 면 DB 0회.
+    _kids_block = await kids_policy.kids_guard(current_user["id"], "photo", conn)
+    if _kids_block is not None:
+        return _kids_block
+    # v197: 구 클라이언트 별칭('track') 수용 + 알 수 없는 값 계측
+    norm_type, used_alias = _normalize_upload_image_type(type)
+    if norm_type is None:
+        # v197: 실제로 어떤 값이 오는지 회수 — 앱팀 클라이언트 값 파악용 (R1)
+        logger.info("[upload] image type_invalid raw=%s user=%s",
+                    (type or "")[:32], current_user["id"][:8])
+        return JSONResponse(status_code=400, content={"error": "type은 'cover' 또는 'profile'이어야 합니다."})
+    if used_alias:
+        logger.info("[upload] image type_alias_deprecated raw=%s→%s user=%s",
+                    (type or "")[:32], norm_type, current_user["id"][:8])
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXT:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"허용되지 않는 이미지 형식입니다. ({', '.join(ALLOWED_IMAGE_EXT)})"},
+        )
+
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 10MB 이하여야 합니다."})
+
+    minio_client = get_minio()
+    content_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+
+    if norm_type == "cover":
+        # Track cover image -> stored in images bucket
+        if not ObjectId.is_valid(id):
+            return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+        # v197: 소유권 가드 — put_object 이전에 둔다.
+        # 뒤에 두면 인가 실패한 요청이 MinIO 에 객체를 남긴다(저장소 오염 + 대역 낭비).
+        mongo = get_mongo()
+        doc = await mongo.tracks.find_one({"_id": ObjectId(id)}, {"uploader_id": 1})
+        if not doc:
+            logger.info("[upload] image cover_not_found track=%s", id[:8])
+            return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+        if doc.get("uploader_id") != current_user["id"]:
+            logger.info("[upload] image cover_denied track=%s user=%s", id[:8], current_user["id"][:8])
+            return JSONResponse(status_code=403, content={"error": "자신의 트랙만 수정할 수 있습니다."})
+
+        object_name = f"covers/{current_user['id']}/{id}{ext}"
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(contents),
+            length=len(contents),
+            content_type=content_type,
+        )
+
+        # Update MongoDB track's cover_image_url
+        result = await mongo.tracks.update_one(
+            {"_id": ObjectId(id)},
+            {"$set": {"cover_image_url": object_name}},
+        )
+        # v197: update_track(tracks.py:758~761) 과 동일 키. Redis 장애가 커버 업로드를
+        # 500 으로 바꾸면 안 되므로 반드시 삼킨다 — 최악은 최대 600초 표시 지연.
+        # playcount:buffer 는 재생수 유실 방지를 위해 지우지 않는다.
+        try:
+            redis = get_redis()
+            await redis.delete(f"cache:track:{id}")
+            await redis.delete(f"cache:track:v4:{id}")
+        except Exception:
+            logger.warning("[upload] image cover cache_invalidate_failed track=%s", id[:8])
+        logger.info("[upload] image cover_ok track=%s obj=%s matched=%d",
+                    id[:8], object_name, result.matched_count)
+
+        # v173: 즉시 표시용 브라우저 URL — 중앙 헬퍼 (proxy/presign 모드)
+        url = browser_image_url(object_name)
+        return {"file_url": url, "object_name": object_name}
+
+    else:
+        # v197: 정식 경로는 /auth/me/profile-image (크롭·이전 이미지 정리·세션 갱신 포함).
+        # 여기는 그 셋이 없는 레거시 경로 — 동작은 그대로 두고 사용량만 계측한다.
+        logger.info("[upload] image profile_legacy_route user=%s", current_user["id"][:8])
+        # Profile image -> update PostgreSQL users.profile_image
+        object_name = f"profiles/{current_user['id']}{ext}"
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(contents),
+            length=len(contents),
+            content_type=content_type,
+        )
+
+        user_uuid = uuid_lib.UUID(current_user["id"])
+        await conn.execute(
+            "UPDATE users SET profile_image = $1 WHERE id = $2",
+            object_name, user_uuid,
+        )
+
+        # v173: 즉시 표시용 브라우저 URL — 중앙 헬퍼 (proxy/presign 모드)
+        url = browser_image_url(object_name)
+        return {"file_url": url, "object_name": object_name}
+
+
+# v3.227 (H-3) — 원본 얼굴 사진(characters/{uid}/original*, characters/temp/{uid}/original*)은
+# 무인증 범용 프록시(cover-preview·mv-preview)와 범용 presign 으로 내보내지 않는다.
+# 정본 열람 경로 = GET /api/character/preview/... (소유자·관리자 Authorization 헤더 필수).
+def _original_photo_owner(object_name: str) -> Optional[str]:
+    name = (object_name or "").strip()
+    parts = name.split("/")
+    if len(parts) == 3 and parts[0] == "characters" and parts[1] != "temp" and parts[2].startswith("original"):
+        return parts[1]
+    if len(parts) == 4 and parts[0] == "characters" and parts[1] == "temp" and parts[3].startswith("original"):
+        return parts[2]
+    return None
+
+
+def _suspicious_object_path(object_name: str) -> bool:
+    name = object_name or ""
+    if name.startswith("/") or "\\" in name:
+        return True
+    return any(seg in ("", ".", "..") for seg in name.split("/"))
+
+
+@router.get("/presigned-url")
+async def get_presigned_url(
+    bucket: str = "images",
+    object_name: str = "",
+    current_user=Depends(get_current_user),
+):
+    """Get a presigned URL for an object in MinIO."""
+    if not object_name:
+        return JSONResponse(status_code=400, content={"error": "object_name은 필수입니다."})
+    # FaceGuardSquad(v135) — faces/ 는 암호화 얼굴 데이터(백엔드 전용) 경로. presign 노출 금지.
+    # TrustSquad(v138) — evidence/ 는 신고 증거 격리 보존 경로(어드민 전용). 동일 차단.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+    # v3.227 (H-3) — 원본 얼굴 사진 presign 은 소유자·관리자만 (images 버킷).
+    if bucket == "images":
+        if _suspicious_object_path(object_name):
+            return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+        _owner = _original_photo_owner(object_name)
+        if _owner is not None and str(current_user.get("id")) != _owner and current_user.get("role") != "admin":
+            logger.info(
+                "[PreviewGuard] presign original denied viewer=%s owner=%s",
+                str(current_user.get("id"))[:8], _owner[:8],
+            )
+            return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+
+    bucket_name = settings.minio_bucket_images if bucket == "images" else settings.minio_bucket_music
+
+    # v173: 범용 presign 도 public 클라이언트 경유 (외부/https 접근 가능 host 로 서명)
+    url = public_presign(object_name, bucket=bucket_name)
+    if url is None:
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+
+    return {"url": url}
+
+
+def _cover_ref_image(data, obj: str, job) -> Optional[bytes]:
+    """v3.238 — 커버 참조 이미지(착장 제품컷) 정규화: png/jpeg/webp = 그대로, 그 외(GIF 등) = PNG 변환
+    (첫 프레임·RGBA), 변환 실패 = None(호출측이 그 참조만 빼고 커버 생성 계속). 원본 객체(S3)는 건드리지 않는다.
+
+    배경: 광고 제품컷 중 확장자 .jpg 인 실제 GIF 가 image/png 로 표기돼 OpenAI edits 가 400 "Invalid image data"
+    → 아티스트 포함 커버 전체 500(09-25 6건).
+    """
+    from ..services.openai_image import detect_image_mime, sniff_image_mime, to_png_bytes
+
+    if sniff_image_mime(data):
+        return data
+    mime = detect_image_mime(data) or "unknown"
+    jid = str(job["_id"]) if job else "-"
+    try:
+        png = to_png_bytes(data)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[CoverRef] non-standard mime skipped key=%s mime=%s job=%s err=%s",
+            (obj or "")[:80], mime, jid, type(e).__name__,
+        )
+        return None
+    logger.warning(
+        "[CoverRef] non-standard mime converted key=%s mime=%s job=%s bytes=%d→%d",
+        (obj or "")[:80], mime, jid, len(data or b""), len(png),
+    )
+    return png
+
+
+@router.post("/generate-cover")
+async def generate_cover(
+    body: GenerateCoverRequest,
+    current_user=Depends(get_current_user),
+    x_gen_request_id: Optional[str] = Header(None),
+):
+    """Generate AI cover image using Google Gemini or OpenAI GPT Image 2.
+
+    v3.228: 헤더 X-Gen-Request-Id(32hex, 선택) — 요청 원장(gen_jobs kind=cover, 그룹 image).
+    사용자당 이미지(커버+다듬기) 진행 중 1건(과금 전 409). 응답에 gen_job_id·request_id 가산.
+    """
+    # v55: image_model 검증.
+    norm_image_model = _normalize_image_model(body.image_model)
+    if norm_image_model is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+        )
+
+    # v57: vocal_gender 정규화 + 검증. 빈/없음 → None (기존 동작). 영어 enum /
+    # 한국어 별칭 → 정규화. 잘못된 값 → 400.
+    norm_vocal_gender = _normalize_vocal_gender(body.vocal_gender)
+    if norm_vocal_gender is _INVALID_VOCAL_GENDER:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "지원하지 않는 vocal_gender 입니다. (female, male, neutral)"},
+        )
+    if norm_image_model == "nb_pro" and not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+        )
+
+    title = body.title.strip()
+    if not title:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "곡 제목을 입력해주세요."},
+        )
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
+    # v220 — 커버(image) 디렉터 피로 게이트 (⭐5 차감 **전** — 429 무과금).
+    # refine/revert 는 무과금이므로 미게이트·미카운트 (서버-FE 정책 일치).
+    from .fatigue import fatigue_gate_response
+    fatigued = await fatigue_gate_response(current_user["id"], director="image")
+    if fatigued:
+        return fatigued
+
+    # Points — 커버 AI 생성 선차감 (부족 시 402 차단, 실패 시 환불).
+    # StarEcon(v158) — 단가는 POINT_COSTS 단일 소스 (cover: 2 → 5).
+    # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    cover_point_cost = POINT_COSTS["cover"]
+    point_ref = uuid_lib.uuid4().hex
+
+    # v3.228 — 요청 원장 + 이미지 진행 중 409(과금 전). 순서: 피로 429(위) → 409 → 잔액 402.
+    request_id = gj.normalize_request_id(x_gen_request_id)
+    _src_meta = (body.source or "").strip().lower()
+    early, job = await gj.gate_and_begin(
+        current_user["id"], "cover", request_id,
+        meta={"title": title[:100], "image_model": norm_image_model,
+              "source": _src_meta if _src_meta in COVER_SOURCE_WHITELIST else None,
+              "has_character": bool(body.character_object_name)},
+        point_ref=point_ref, point_cost=cover_point_cost,
+    )
+    if early is not None:
+        gj.logger.info("[CoverDedupe] early kind=cover status=%s user=%s req=%s",
+                       getattr(early, "status_code", "?"), gj.u8(current_user["id"]), gj.r8(request_id))
+        return early
+
+    if not await spend_points(current_user["id"], "cover", cover_point_cost, point_ref):
+        await gj.discard(job)
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(cover_point_cost)},
+        )
+    await gj.mark_charged(job)
+
+    # Load character sheet if requested
+    # v67-pre: 디버그 로그 강화 — character_object_name 수신 여부 + MinIO 로드 결과
+    logger.info(
+        "[CoverGenEntry] user=%s character_object_name=%s vocal_gender=%s image_model=%s",
+        current_user["id"],
+        body.character_object_name or "(none)",
+        norm_vocal_gender,
+        norm_image_model,
+    )
+    character_image_bytes = None
+    if body.character_object_name:
+        try:
+            minio_client = get_minio()
+            response = minio_client.get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=body.character_object_name,
+            )
+            character_image_bytes = response.read()
+            response.close()
+            response.release_conn()
+            logger.info(
+                "[CoverGenEntry] character bytes loaded len=%d from %s",
+                len(character_image_bytes), body.character_object_name,
+            )
+        except Exception as e:
+            logger.warning(
+                "[CoverGenEntry] character image LOAD FAILED object=%s err=%s",
+                body.character_object_name, str(e)[:200],
+            )
+    else:
+        logger.info("[CoverGenEntry] no character_object_name in request payload")
+
+    # v239(대표): 착장 아이템 제품컷을 추가 참조로 동봉 — 시트에 작게 보이는 프린트(백프린트 등)의
+    # 고해상 근거. 시트 경로로 캐릭터 문서를 역조회(본인 소유), 실패해도 커버 생성은 계속(best-effort).
+    outfit_item_images: list = []
+    outfit_item_names: list = []
+    _outfit_items_at_load = None  # v3.234 S1 — 커버 참조에 쓴 착장(생성 중 옷 변경 감지용)
+    if character_image_bytes:
+        try:
+            _mongo = get_mongo()
+            char_doc = await _mongo.characters.find_one(
+                {"user_id": current_user["id"], "sheet_object_name": body.character_object_name},
+                {"used_items": 1, "name": 1},
+            )
+            if not char_doc:
+                # 스냅샷 경로(character_snapshots/...) 등 — 경로에서 character_id 추출 폴백
+                _segs = (body.character_object_name or "").split("/")
+                _cid = _segs[2] if len(_segs) >= 4 else None
+                if _cid:
+                    char_doc = await _mongo.characters.find_one(
+                        {"user_id": current_user["id"], "character_id": _cid},
+                        {"used_items": 1, "name": 1},
+                    )
+            _items = (char_doc or {}).get("used_items") or []
+            _outfit_items_at_load = _items if char_doc else None
+            _minio = get_minio()
+            for _it in _items[:3]:
+                _obj = (_it or {}).get("image_object_name")
+                if not _obj:
+                    continue
+                try:
+                    _r = _minio.get_object(
+                        bucket_name=settings.minio_bucket_images, object_name=_obj,
+                    )
+                    _raw = _r.read()
+                    _r.close()
+                    _r.release_conn()
+                    # v3.238 — png/jpeg/webp 가 아닌 제품컷(광고 GIF 등)은 PNG 로 변환, 실패 시 이 참조만 제외
+                    _raw = _cover_ref_image(_raw, _obj, job)
+                    if _raw is None:
+                        continue
+                    outfit_item_images.append(_raw)
+                    outfit_item_names.append((_it.get("name") or "")[:80])
+                except Exception as _e:
+                    logger.warning(
+                        "[CoverGenEntry] outfit item load failed obj=%s err=%s",
+                        _obj[:60], str(_e)[:120],
+                    )
+            logger.info(
+                "[CoverGenEntry] outfit item refs loaded n=%d (char=%s items=%d)",
+                len(outfit_item_images), (char_doc or {}).get("name") or "?", len(_items),
+            )
+        except Exception:
+            logger.exception("[CoverGenEntry] outfit item ref stage failed — continuing without")
+
+    # v42: Load user-saved location anchor (Mode B) if requested.
+    user_location_image_bytes = None
+    user_location_name = None
+    if body.location_id:
+        try:
+            from .character import _load_user_location
+
+            mongo = get_mongo()
+            loc = await _load_user_location(mongo, current_user["id"], body.location_id)
+            if loc:
+                user_location_image_bytes = loc.get("image_bytes")
+                user_location_name = loc.get("name") or None
+            else:
+                logger.info(
+                    "generate_cover: location_id=%s not found for user=%s — proceeding without location anchor",
+                    body.location_id, current_user["id"],
+                )
+        except Exception as e:
+            logger.warning("generate_cover: failed to load user location: %s", e)
+
+    # v234: 배경·장소 참조 사진 로드 (본인 업로드 prefix 만 허용 — 타 사용자 객체 참조 차단)
+    background_image_bytes = None
+    if body.background_object_name:
+        _bg_prefix = "covers/bg/{}/".format(current_user["id"])
+        if not body.background_object_name.startswith(_bg_prefix):
+            logger.warning(
+                "[CoverGenEntry] background object prefix mismatch user=%s obj=%s",
+                current_user["id"][:8], body.background_object_name[:60],
+            )
+        else:
+            try:
+                minio_client = get_minio()
+                _resp = minio_client.get_object(
+                    bucket_name=settings.minio_bucket_images,
+                    object_name=body.background_object_name,
+                )
+                background_image_bytes = _resp.read()
+                _resp.close()
+                _resp.release_conn()
+                logger.info(
+                    "[CoverGenEntry] background bytes loaded len=%d from %s",
+                    len(background_image_bytes), body.background_object_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[CoverGenEntry] background image LOAD FAILED object=%s err=%s",
+                    body.background_object_name, str(e)[:200],
+                )
+
+    # v235: character_kind 정규화 + 가상 화풍 라벨 해석 (프리셋 키/한글/영문 → 영문 라벨)
+    norm_char_kind = (body.character_kind or "").strip().lower()
+    if norm_char_kind not in ("real", "virtual"):
+        norm_char_kind = None
+    char_art_label = None
+    if norm_char_kind == "virtual":
+        raw_style = (body.character_art_style or "").strip()
+        if raw_style:
+            try:
+                from .character import STYLE_PRESETS, _ART_STYLE_TO_PRESET_KEY
+                key = _ART_STYLE_TO_PRESET_KEY.get(raw_style) or _ART_STYLE_TO_PRESET_KEY.get(raw_style.lower())
+                char_art_label = STYLE_PRESETS[key]["art_style_label"] if key else raw_style[:60]
+            except Exception:
+                char_art_label = raw_style[:60]
+        logger.info(
+            "[CoverGenEntry] character_kind=virtual art_style=%s -> label=%s",
+            (body.character_art_style or "(none)")[:30], char_art_label or "(none)",
+        )
+
+    try:
+        from ..services.cover_generator import generate_cover_image
+
+        # v41: LoRA system removed — generate_cover_image returns plain bytes.
+        # v55: image_model 분기. v57: vocal_gender 주입.
+        logger.info(
+            "generate_cover: image_model=%s vocal_gender=%s user=%s",
+            norm_image_model,
+            norm_vocal_gender,
+            current_user["id"],
+        )
+        image_bytes = await generate_cover_image(
+            title=title,
+            genre=body.genre,
+            mood=body.mood,
+            style=body.style,
+            character_image_bytes=character_image_bytes,
+            # v239 — 착장 아이템 제품컷 참조 (의상 프린트 충실도)
+            outfit_item_images=outfit_item_images or None,
+            outfit_item_names=outfit_item_names or None,
+            user_prompt=body.user_prompt,
+            prompt_model=body.prompt_model,
+            user_location_image_bytes=user_location_image_bytes,
+            user_location_name=user_location_name,
+            image_model=norm_image_model,
+            vocal_gender=norm_vocal_gender,
+            # v234 — 대화 보강(전부 선택)
+            shot=body.shot,
+            expression=body.expression,  # v245 — 인물 표정
+            palette=body.palette,
+            background_prompt=body.background_prompt,
+            background_image_bytes=background_image_bytes,
+            lyrics_excerpt=body.lyrics_excerpt,
+            character_kind=norm_char_kind,
+            character_art_style=char_art_label,
+        )
+
+        # Save to MinIO
+        object_name = "covers/generated/{}/{}.png".format(
+            current_user["id"], uuid_lib.uuid4().hex
+        )
+
+        minio_client = get_minio()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(image_bytes),
+            length=len(image_bytes),
+            content_type="image/png",
+        )
+
+        # v3.234 S1 — 이 커버에 쓴 착장 스냅샷(best-effort — 커버 생성은 절대 막지 않음)
+        _cover_char_snap, _cover_char_state = await _cover_character_snapshot(
+            current_user["id"], body, bool(character_image_bytes), _outfit_items_at_load,
+        )
+
+        # v58: 신규 cover_sessions 도큐먼트 insert. 매 [다시 생성] 마다 신규
+        # session 발급 (Q4 a — 옛 history 폐기). v0 entry 1개 + image_model 박제.
+        cover_session_id: Optional[str] = None
+        try:
+            mongo = get_mongo()
+            now_utc = datetime.now(timezone.utc)
+            # v215 — 보관함 카드 라벨·재현 재료 스냅샷 (additive, 신규 생성분만)
+            _src = (body.source or "").strip().lower()
+            session_doc = {
+                "user_id": current_user["id"],
+                "image_model": norm_image_model,
+                "cover_object_name": object_name,
+                "title": title[:100],
+                "gen_params": {
+                    "genre": body.genre,
+                    "mood": body.mood,
+                    "user_prompt": (body.user_prompt or "")[:500],
+                    "prompt_model": body.prompt_model,
+                    "location_id": body.location_id,
+                    "vocal_gender": norm_vocal_gender,
+                    "character_object_name": body.character_object_name,
+                },
+                "source": _src if _src in COVER_SOURCE_WHITELIST else None,
+                "current_version": 0,
+                "cover_refine_history": [
+                    {
+                        "version": 0,
+                        "object_name": object_name,
+                        "refine_prompt": None,
+                        "image_model": norm_image_model,
+                        "created_at": now_utc,
+                    }
+                ],
+                "created_at": now_utc,
+                "updated_at": now_utc,
+                # v3.234 S1 — additive 최상위 필드(보관함·이력 응답 키셋 불변)
+                "character_snapshot_state": _cover_char_state,
+            }
+            if _cover_char_snap:
+                session_doc["character_snapshot"] = _cover_char_snap
+            result = await mongo.cover_sessions.insert_one(session_doc)
+            cover_session_id = str(result.inserted_id)
+            logger.info(
+                "[CoverSession] new session=%s user=%s image_model=%s",
+                cover_session_id,
+                current_user["id"],
+                norm_image_model,
+            )
+            if _cover_char_snap:
+                logger.info(
+                    "[CoverOutfitSnap] session=%s cid=%s items=%d",
+                    cover_session_id, (_cover_char_snap.get("character_id") or "")[:8],
+                    len(_cover_char_snap.get("used_items") or []),
+                )
+            else:
+                logger.info(
+                    "[CoverOutfitSnap] session=%s state=%s", cover_session_id, _cover_char_state,
+                )
+        except Exception as e:  # noqa: BLE001
+            # 세션 insert 실패는 치명적이지 않음 (커버 자체는 이미 MinIO 에 저장됨).
+            # 옛 클라이언트(v57 이하) 와도 호환 — cover_session_id 없이 응답.
+            logger.warning(
+                "[CoverSession] insert failed user=%s err=%s: %s",
+                current_user["id"],
+                type(e).__name__,
+                str(e)[:200],
+            )
+
+        # v220 — 커버 완성 훅: image 디렉터 카운트 +1 + 사다리 쿨다운 시작
+        # (best-effort — on_generation_completed 는 절대 raise 하지 않음)
+        from ..services.fatigue_service import on_generation_completed
+        await on_generation_completed(current_user["id"], director="image")
+
+        response_body = {
+            "image_url": "/api/upload/cover-preview/{}".format(object_name),
+            "object_name": object_name,
+            "image_model": norm_image_model,  # v55 — echo back
+            "message": "커버 이미지가 생성되었습니다.",
+        }
+        if cover_session_id:
+            response_body["cover_session_id"] = cover_session_id
+        if job:
+            response_body["gen_job_id"] = str(job["_id"])
+            response_body["request_id"] = request_id
+            await gj.finish(
+                job,
+                result={"cover_session_id": cover_session_id, "object_name": object_name,
+                        "image_url": response_body["image_url"], "image_model": norm_image_model},
+                response=response_body,
+            )
+            gj.logger.info("[CoverDedupe] done kind=cover user=%s job=%s session=%s",
+                           gj.u8(current_user["id"]), str(job["_id"]), cover_session_id or "-")
+        return response_body
+    except Exception as e:
+        # Points — 생성 실패 시 선차감분 환불.
+        _err = {"error": "커버 생성 실패: {}".format(str(e)[:200])}
+        if job:
+            # v3.228 — 원장 경유 1회 환불(원자 claim — sweep 과 경합해도 중복 없음)
+            _refunded = await gj.fail(job, "cover_failed: {}".format(type(e).__name__), refund=True)
+            gj.logger.info("[CoverDedupe] failed kind=cover user=%s job=%s refunded=%s",
+                           gj.u8(current_user["id"]), str(job["_id"]), _refunded)
+            _err.update({"gen_job_id": str(job["_id"]), "request_id": request_id})
+        else:
+            await refund_points(current_user["id"], "cover", cover_point_cost, point_ref)
+        return JSONResponse(
+            status_code=500,
+            content=_err,
+        )
+
+
+# ── v3.111: 피드 이미지 업로드 ──────────────────────────────────────────────
+# 용량 관리(퀄리티 보존): 긴 변 1600px 초과 시만 LANCZOS 축소, JPEG q85
+# (투명 포함 시 WebP q85), EXIF 회전 반영·메타데이터 제거.
+# 원본이 이미 작으면(축소·회전 불필요 + 1MB 이하) 재인코딩 스킵(무손실 유지).
+# 치수 그대로인 순수 재인코딩 결과가 원본보다 커지면 원본 사용.
+# 저장 경로 feeds/{user_id}/{uuid}.{ext} (images 버킷) — 서빙은 cover-preview 프록시 재사용.
+FEED_IMAGE_MAX_SIZE = 15 * 1024 * 1024   # 수신 최대 15MB
+FEED_IMAGE_MAX_EDGE = 1600               # 긴 변 상한(px)
+FEED_IMAGE_QUALITY = 85
+FEED_IMAGE_SKIP_REENCODE_BYTES = 1 * 1024 * 1024  # 이하 + 무보정이면 원본 그대로
+ALLOWED_FEED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_FEED_IMAGE_FMT_META = {  # PIL format → (content_type, ext)
+    "JPEG": ("image/jpeg", ".jpg"),
+    "PNG": ("image/png", ".png"),
+    "WEBP": ("image/webp", ".webp"),
+}
+
+
+def _process_feed_image(contents: bytes):
+    """피드 이미지 재인코딩. (bytes, content_type, ext, width, height) 반환.
+
+    실패(비이미지 등) 시 예외 전파 — 라우트에서 400 처리.
+    """
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(contents))
+    img.load()
+    fmt_meta = _FEED_IMAGE_FMT_META.get((img.format or "").upper())
+    try:
+        orientation = img.getexif().get(0x0112, 1)
+    except Exception:
+        orientation = 1
+    needs_resize = max(img.size) > FEED_IMAGE_MAX_EDGE
+    needs_rotate = orientation not in (None, 1)
+
+    # 이미 작고(≤1MB) 축소·회전 불필요 + 허용 포맷이면 원본 그대로 (무손실 유지)
+    if fmt_meta and not needs_resize and not needs_rotate \
+            and len(contents) <= FEED_IMAGE_SKIP_REENCODE_BYTES:
+        return contents, fmt_meta[0], fmt_meta[1], img.size[0], img.size[1]
+
+    img = ImageOps.exif_transpose(img)
+    if needs_resize:
+        scale = FEED_IMAGE_MAX_EDGE / float(max(img.size))
+        new_size = (max(1, round(img.size[0] * scale)), max(1, round(img.size[1] * scale)))
+        img = img.resize(new_size, Image.LANCZOS)
+
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    buf = io.BytesIO()
+    if has_alpha:
+        # 투명 보존 — WebP q85 (PNG 대비 대폭 절감, 시각 열화 미미)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        img.save(buf, format="WEBP", quality=FEED_IMAGE_QUALITY)
+        out_type, out_ext = "image/webp", ".webp"
+    else:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=FEED_IMAGE_QUALITY)
+        out_type, out_ext = "image/jpeg", ".jpg"
+    processed = buf.getvalue()
+
+    # 치수·회전 무변경인 순수 재인코딩이 오히려 커졌으면 원본 유지 (퀄리티 보존)
+    if fmt_meta and not needs_resize and not needs_rotate and len(processed) >= len(contents):
+        return contents, fmt_meta[0], fmt_meta[1], img.size[0], img.size[1]
+
+    return processed, out_type, out_ext, img.size[0], img.size[1]
+
+
+@router.post("/feed-image", status_code=201)
+async def upload_feed_image(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """v3.111 — 피드 첨부 이미지 업로드. 반환 object_name 을 피드 image 블록에 사용."""
+    # v3.232 F2 — 어린이 피드 사진 업로드 차단(파일 읽기 전). OFF 면 DB 0회.
+    _kids_block = await kids_policy.kids_guard(current_user["id"], "feed_image")
+    if _kids_block is not None:
+        return _kids_block
+    user_tag = str(current_user["id"])[:8]
+    content_type = (file.content_type or "").lower()
+    ext_in = os.path.splitext(file.filename or "")[1].lower()
+    if content_type not in ALLOWED_FEED_IMAGE_TYPES and ext_in not in ALLOWED_IMAGE_EXT:
+        logger.info("[feed-img] type_invalid user=%s type=%s ext=%s", user_tag, content_type[:32], ext_in[:8])
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 이미지 형식입니다. (jpg/png/webp)"})
+
+    contents = await file.read()
+    if not contents:
+        return JSONResponse(status_code=400, content={"error": "빈 파일입니다."})
+    if len(contents) > FEED_IMAGE_MAX_SIZE:
+        logger.info("[feed-img] too_large user=%s bytes=%d", user_tag, len(contents))
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 15MB 이하여야 합니다."})
+    logger.info("[feed-img] enter user=%s type=%s bytes=%d", user_tag, content_type or ext_in, len(contents))
+
+    try:
+        processed, out_type, out_ext, width, height = _process_feed_image(contents)
+    except Exception as e:
+        logger.warning("[feed-img] process failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=400, content={"error": "이미지를 처리할 수 없습니다."})
+    logger.info(
+        "[feed-img] processed user=%s in=%d out=%d dim=%dx%d type=%s reencoded=%s",
+        user_tag, len(contents), len(processed), width, height, out_type, processed is not contents,
+    )
+
+    object_name = f"feeds/{current_user['id']}/{uuid_lib.uuid4().hex}{out_ext}"
+    try:
+        get_minio().put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(processed),
+            length=len(processed),
+            content_type=out_type,
+        )
+    except Exception as e:
+        logger.error("[feed-img] minio put failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=500, content={"error": "이미지 저장에 실패했습니다."})
+    logger.info("[feed-img] ok user=%s obj=%s bytes=%d", user_tag, object_name, len(processed))
+
+    return {
+        "object_name": object_name,
+        "file_url": browser_image_url(object_name),
+        "width": width,
+        "height": height,
+    }
+
+
+# ── v3.207 ⑥: DM 첨부 이미지 업로드 ────────────────────────────────────────
+# feed-image 계약 복제(동일 타입/15MB 상한/재인코딩 파이프라인) — 저장 경로만
+# dm/{user_id}/{uuid}.{ext} (images 버킷). 반환 object_name 을
+# POST /api/dm/conversations/{cid}/messages 의 image_object_name 에 사용.
+# 서빙은 cover-preview 프록시 재사용(browser_image_url).
+@router.post("/dm-image", status_code=201)
+async def upload_dm_image(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """v3.207 — DM(CS 오류신고 포함) 첨부 이미지 업로드."""
+    # v3.232 F2 — 어린이 DM 사진 업로드 차단(공식 계정 대화 포함, 파일 읽기 전). OFF 면 DB 0회.
+    _kids_block = await kids_policy.kids_guard(current_user["id"], "dm_image")
+    if _kids_block is not None:
+        return _kids_block
+    user_tag = str(current_user["id"])[:8]
+    content_type = (file.content_type or "").lower()
+    ext_in = os.path.splitext(file.filename or "")[1].lower()
+    if content_type not in ALLOWED_FEED_IMAGE_TYPES and ext_in not in ALLOWED_IMAGE_EXT:
+        logger.info("[dm-img] type_invalid user=%s type=%s ext=%s", user_tag, content_type[:32], ext_in[:8])
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 이미지 형식입니다. (jpg/png/webp)"})
+
+    contents = await file.read()
+    if not contents:
+        return JSONResponse(status_code=400, content={"error": "빈 파일입니다."})
+    if len(contents) > FEED_IMAGE_MAX_SIZE:
+        logger.info("[dm-img] too_large user=%s bytes=%d", user_tag, len(contents))
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 15MB 이하여야 합니다."})
+    logger.info("[dm-img] enter user=%s type=%s bytes=%d", user_tag, content_type or ext_in, len(contents))
+
+    try:
+        processed, out_type, out_ext, width, height = _process_feed_image(contents)
+    except Exception as e:
+        logger.warning("[dm-img] process failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=400, content={"error": "이미지를 처리할 수 없습니다."})
+    logger.info(
+        "[dm-img] processed user=%s in=%d out=%d dim=%dx%d type=%s reencoded=%s",
+        user_tag, len(contents), len(processed), width, height, out_type, processed is not contents,
+    )
+
+    object_name = f"dm/{current_user['id']}/{uuid_lib.uuid4().hex}{out_ext}"
+    try:
+        get_minio().put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(processed),
+            length=len(processed),
+            content_type=out_type,
+        )
+    except Exception as e:
+        logger.error("[dm-img] minio put failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=500, content={"error": "이미지 저장에 실패했습니다."})
+    logger.info("[dm-img] ok user=%s obj=%s bytes=%d", user_tag, object_name, len(processed))
+
+    return {
+        "object_name": object_name,
+        "file_url": browser_image_url(object_name),
+        "width": width,
+        "height": height,
+    }
+
+
+# v3.275 [perf] — 커버 프록시 성능 수정.
+# 실측(2026-10-04): 커버가 전체 트래픽의 85~95%(하루 17~38GB, 장당 6~8MB 원본 PNG), 캐시 헤더 없음,
+# async 핸들러 안의 동기 S3 read 가 단일 이벤트 루프를 막아 커버 8장 동시 요청 시 /health 가
+# 0.0025s → 1.18s. 조치: ①S3 read·리사이즈를 to_thread 로 ②불변 캐시 헤더(+ETag/304)
+# ③`?w=` 목록용 WebP 썸네일(최초 1회 생성 후 thumbs/ 에 저장·재사용).
+_COVER_THUMB_WIDTHS = (160, 320, 640)
+# 파일명이 내용과 1:1 인 경로만 불변 캐시: 버전 경로(…/v2.png)·uuid·32hex 파일명.
+# 그 외(profiles/{uid}.png, covers/{uid}/album_{id}.png, covers/{uid}/{trackId}.png 등 **덮어쓰기 가능 키**)는
+# no-cache + ETag 재검증(본문 없는 304) — 교체한 이미지가 즉시 보이면서도 재다운로드는 없다.
+_IMMUTABLE_NAME_RE = re.compile(
+    r"(/v\d+\.(?:png|jpe?g|webp)$)"
+    r"|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpe?g|webp)$)"
+    r"|((?:^|/)[0-9a-f]{32}\.(?:png|jpe?g|webp)$)",
+    re.IGNORECASE,
+)
+
+
+def _cover_cache_control(object_name: str) -> str:
+    # profiles/{user_uuid}.png 는 파일명이 uuid 지만 **덮어쓰기 키**(프로필 교체) — 불변 캐시 금지
+    if object_name.startswith("profiles/"):
+        return "public, no-cache"
+    if _IMMUTABLE_NAME_RE.search(object_name):
+        return "public, max-age=31536000, immutable"
+    return "public, no-cache"
+
+
+def _stat_etag_sync(object_name: str) -> str:
+    st = get_minio().stat_object(bucket_name=settings.minio_bucket_images, object_name=object_name)
+    return str(getattr(st, "etag", "") or "").strip('"')
+
+
+def _read_object_sync(object_name: str) -> bytes:
+    resp = get_minio().get_object(bucket_name=settings.minio_bucket_images, object_name=object_name)
+    try:
+        return resp.read()
+    finally:
+        resp.close()
+        resp.release_conn()
+
+
+def _cover_thumb_sync(object_name: str, w: int, src_etag: str) -> bytes:
+    """썸네일 조회·생성(블로킹 — to_thread 전용). 저장 키에 원본 etag 포함 → 원본 교체 시 자동 무효."""
+    thumb_key = f"thumbs/w{w}/{src_etag[:16] or 'x'}/{object_name}.webp"
+    try:
+        return _read_object_sync(thumb_key)
+    except Exception:
+        pass
+    from PIL import Image, ImageOps
+    src = _read_object_sync(object_name)
+    img = Image.open(io.BytesIO(src))
+    img = ImageOps.exif_transpose(img)
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+    if img.width > w:
+        img = img.resize((w, max(1, round(img.height * w / img.width))), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="WEBP", quality=82, method=4)
+    data = buf.getvalue()
+    try:
+        get_minio().put_object(
+            bucket_name=settings.minio_bucket_images, object_name=thumb_key,
+            data=io.BytesIO(data), length=len(data), content_type="image/webp",
+        )
+        logger.info("[cover-preview] thumb created w=%d bytes=%d src_bytes=%d", w, len(data), len(src))
+    except Exception as e:  # 저장 실패는 무해(다음 요청에 재생성)
+        logger.warning("[cover-preview] thumb save failed w=%d err=%s", w, str(e)[:120])
+    return data
+
+
+@router.get("/cover-preview/{object_name:path}")
+async def cover_preview(object_name: str, w: Optional[int] = None, if_none_match: Optional[str] = Header(None)):
+    """Proxy cover image from MinIO for external access.
+
+    v173: 무인증 유지(비로그인 홈 커버 노출), faces/·evidence/ 차단 유지.
+    보강 — `..` 경로 차단, media_type 확장자 기반 guess (png 고정 → jpg/webp 오헤더 수정).
+    v3.275: 비차단 read + 불변 캐시 + `?w=160|320|640` WebP 썸네일(그 외 값은 원본).
+    """
+    # v135 faces/ + v138 evidence/ — 백엔드 전용 경로 프록시 노출 금지. (v3.275: thumbs/ 직접 접근도 차단)
+    if object_name.startswith(("faces/", "evidence/", "thumbs/")):
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
+    # v173: 경로 탈출(`..`) 차단 — profile/ad 프록시 관행과 정합.
+    if ".." in object_name:
+        logger.info("[cover-preview] blocked path traversal obj=%s", object_name)
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
+    # v3.227 (H-3) — 원본 얼굴 사진은 무인증 커버 프록시로 내보내지 않음.
+    if _suspicious_object_path(object_name) or _original_photo_owner(object_name) is not None:
+        logger.info("[PreviewGuard] cover-preview original/suspicious denied")
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
+    thumb_w = w if w in _COVER_THUMB_WIDTHS else 0
+    try:
+        # 원본 HEAD(본문 없음) — 내용 기반 ETag. 존재 검증도 겸한다(없으면 아래 except → 404).
+        src_etag = await asyncio.to_thread(_stat_etag_sync, object_name)
+        etag = f'"{src_etag}-w{thumb_w}"'
+        headers = {"Cache-Control": _cover_cache_control(object_name), "ETag": etag}
+        if if_none_match and etag in if_none_match:
+            return Response(status_code=304, headers=headers)
+        if thumb_w:
+            try:
+                data = await asyncio.to_thread(_cover_thumb_sync, object_name, thumb_w, src_etag)
+                return Response(content=data, media_type="image/webp", headers=headers)
+            except Exception as e:
+                # 리사이즈 실패(비이미지·손상 등)는 원본으로 폴백
+                logger.warning("[cover-preview] thumb fallback obj=%s err=%s", object_name[-40:], str(e)[:120])
+        data = await asyncio.to_thread(_read_object_sync, object_name)
+        # v173: 확장자 기반 media_type — 알 수 없으면 기존 기본값 png 유지.
+        media_type = mimetypes.guess_type(object_name)[0] or "image/png"
+        return Response(content=data, media_type=media_type, headers=headers)
+    except Exception as e:
+        logger.info("[cover-preview] 404 obj=%s err=%s", object_name, e)
+        return JSONResponse(
+            status_code=404,
+            content={"error": "이미지를 찾을 수 없습니다."},
+        )
+
+
+# ─── v58: cover refine / revert / history routes ───
+#
+# 신규 [추가 수정] 플로우. cover_sessions 컬렉션 기반:
+#  - POST /refine-cover    — 현재 커버를 ref 로 부분 수정 (multi-turn)
+#  - POST /revert-cover    — 이전 버전으로 되돌리기 (history 보존)
+#  - GET  /cover-history   — 이력 조회
+
+REFINE_PROMPT_MAX_LEN = 500
+COVER_REFINE_HISTORY_CAP = 10
+
+
+class RefineCoverRequest(BaseModel):
+    cover_session_id: str
+    refine_prompt: str
+
+
+class RevertCoverRequest(BaseModel):
+    cover_session_id: str
+    target_version: int
+
+
+def _serialize_history_entry(entry: dict) -> dict:
+    """Normalize a history entry for JSON output (datetime → isoformat)."""
+    out = dict(entry)
+    ca = out.get("created_at")
+    if hasattr(ca, "isoformat"):
+        out["created_at"] = ca.isoformat()
+    return out
+
+
+async def _load_cover_session(mongo, cover_session_id: str, user_id: str):
+    """Load + auth check a cover_sessions doc. Returns dict or None."""
+    if not ObjectId.is_valid(cover_session_id):
+        return None
+    doc = await mongo.cover_sessions.find_one({"_id": ObjectId(cover_session_id)})
+    if not doc:
+        return None
+    if doc.get("user_id") != user_id:
+        return None  # 권한 없음 — 보안상 not_found 와 동일 응답
+    return doc
+
+
+_REFINE_SESSION_LOCKS: dict = {}
+
+
+def _refine_session_lock(cover_session_id: str) -> asyncio.Lock:
+    """v3.228 — 세션별 [재조회 → 버전 산정 → 저장] 직렬화(단일 워커). 9/22 버전 경합 해소."""
+    lock = _REFINE_SESSION_LOCKS.get(cover_session_id)
+    if lock is None:
+        if len(_REFINE_SESSION_LOCKS) > 2000:
+            for k in [k for k, v in _REFINE_SESSION_LOCKS.items() if not v.locked()][:1000]:
+                _REFINE_SESSION_LOCKS.pop(k, None)
+        lock = asyncio.Lock()
+        _REFINE_SESSION_LOCKS[cover_session_id] = lock
+    return lock
+
+
+@router.post("/refine-cover")
+async def refine_cover(
+    body: RefineCoverRequest,
+    current_user=Depends(get_current_user),
+    x_gen_request_id: Optional[str] = Header(None),
+):
+    """v58: refine an existing cover image (image-to-image multi-turn).
+
+    Loads the current cover from MinIO, calls refine_cover_image with the user's
+    change request, saves the new PNG to MinIO under
+    ``covers/refined/{user}/{session}/v{N}.png``, and appends a new entry to
+    ``cover_sessions.cover_refine_history``.
+
+    v3.228: 요청 원장(gen_jobs kind=cover_refine, 그룹 image — 커버와 한 슬롯) + 진행 중 409(과금 전).
+    버전 번호는 세션 락 안에서 **세션을 다시 읽어** 산정(경합 덮어쓰기 0). MinIO·Mongo 저장
+    실패도 1회 환불(기존 무환불 버그 수정). 응답에 gen_job_id·request_id 가산.
+    """
+    # 길이 검증
+    rp = (body.refine_prompt or "").strip()
+    if not rp:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "수정 요청을 입력해주세요."},
+        )
+    if len(rp) > REFINE_PROMPT_MAX_LEN:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "수정 요청은 {}자 이하여야 합니다.".format(REFINE_PROMPT_MAX_LEN)
+            },
+        )
+
+    mongo = get_mongo()
+    session = await _load_cover_session(mongo, body.cover_session_id, current_user["id"])
+    if not session:
+        logger.info(
+            "[RefineCover] session=%s not_found user=%s",
+            body.cover_session_id,
+            current_user["id"],
+        )
+        return JSONResponse(
+            status_code=404,
+            content={"error": "커버 세션을 찾을 수 없습니다."},
+        )
+
+    image_model = session.get("image_model") or "nb_pro"
+    current_object_name = session.get("cover_object_name")
+    if not current_object_name:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "커버 세션의 현재 커버가 없습니다."},
+        )
+
+    # API 키 가드
+    if image_model == "nb_pro" and not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+    if image_model == "gpt_image_2" and not settings.openai_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+        )
+
+    # 현재 커버 PNG bytes 로드
+    minio_client = get_minio()
+    try:
+        resp = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=current_object_name,
+        )
+        current_cover_bytes = resp.read()
+        resp.close()
+        resp.release_conn()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[RefineCover] failed to load current cover session=%s err=%s",
+            body.cover_session_id,
+            type(e).__name__,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "현재 커버 이미지를 불러올 수 없습니다."},
+        )
+
+    # v244(대표 확정): 미세조정도 ⭐ 소모 — 모든 사전 검증 통과 후 차감, 생성 실패 시 환불.
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    refine_cost = POINT_COSTS["cover_refine"]
+    refine_point_ref = f"cover_refine:{body.cover_session_id}:{uuid_lib.uuid4().hex[:8]}"
+
+    # v3.228 — 요청 원장 + 이미지 진행 중 409(과금 전 — 다듬기는 피로 게이트 없음: 409 → 402).
+    request_id = gj.normalize_request_id(x_gen_request_id)
+    early, job = await gj.gate_and_begin(
+        current_user["id"], "cover_refine", request_id,
+        meta={"cover_session_id": body.cover_session_id,
+              "base_version": session.get("current_version"), "image_model": image_model},
+        point_ref=refine_point_ref, point_cost=refine_cost,
+    )
+    if early is not None:
+        gj.logger.info("[CoverDedupe] early kind=cover_refine status=%s user=%s session=%s req=%s",
+                       getattr(early, "status_code", "?"), gj.u8(current_user["id"]),
+                       body.cover_session_id, gj.r8(request_id))
+        return early
+
+    async def _refine_fail(status_code: int, err: dict, reason: str):
+        """생성·저장 실패 공통 — 1회 환불(원장 경유 또는 레거시 직접) + 오류 응답."""
+        if job:
+            _refunded = await gj.fail(job, reason, refund=True)
+            gj.logger.info("[CoverDedupe] failed kind=cover_refine user=%s job=%s reason=%s refunded=%s",
+                           gj.u8(current_user["id"]), str(job["_id"]), reason, _refunded)
+            err = dict(err, gen_job_id=str(job["_id"]), request_id=request_id)
+        else:
+            await refund_points(current_user["id"], "cover_refine", refine_cost, refine_point_ref)
+        logger.warning(
+            "[star-econ] cover_refine refund (%s) user=%s ref=%s",
+            reason, current_user["id"][:8], refine_point_ref,
+        )
+        return JSONResponse(status_code=status_code, content=err)
+
+    if not await spend_points(current_user["id"], "cover_refine", refine_cost, refine_point_ref):
+        await gj.discard(job)
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(refine_cost)},
+        )
+    await gj.mark_charged(job)
+    logger.info(
+        "[star-econ] cover_refine spend user=%s -%d ref=%s session=%s",
+        current_user["id"][:8], refine_cost, refine_point_ref, body.cover_session_id,
+    )
+
+    # refine 호출
+    try:
+        from ..services.cover_generator import refine_cover_image
+
+        new_bytes = await refine_cover_image(
+            current_cover_bytes=current_cover_bytes,
+            refine_prompt=rp,
+            image_model=image_model,
+        )
+    except Exception as e:  # noqa: BLE001
+        return await _refine_fail(
+            500, {"error": "커버 수정 실패: {}".format(str(e)[:200])}, "generation failed",
+        )
+
+    # v3.228 — 세션 락 안에서 세션을 **다시 읽어** 버전 산정·저장(경합 시 v{N} 덮어쓰기 방지)
+    async with _refine_session_lock(body.cover_session_id):
+        try:
+            fresh = await _load_cover_session(mongo, body.cover_session_id, current_user["id"])
+        except Exception:  # noqa: BLE001
+            fresh = None
+        if fresh is not None:
+            session = fresh
+
+        # 새 버전 번호 산정 — history 최신 version + 1
+        history = list(session.get("cover_refine_history") or [])
+        max_version = -1
+        for entry in history:
+            v = entry.get("version")
+            if isinstance(v, int) and v > max_version:
+                max_version = v
+        new_version = max_version + 1 if max_version >= 0 else 0
+
+        new_object_name = "covers/refined/{}/{}/v{}.png".format(
+            current_user["id"], body.cover_session_id, new_version
+        )
+
+        # MinIO 저장
+        try:
+            minio_client.put_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=new_object_name,
+                data=io.BytesIO(new_bytes),
+                length=len(new_bytes),
+                content_type="image/png",
+            )
+        except Exception as e:  # noqa: BLE001
+            return await _refine_fail(
+                500, {"error": "이미지 저장 실패: {}".format(str(e)[:200])}, "minio put failed",
+            )
+
+        # history append + cap
+        now_utc = datetime.now(timezone.utc)
+        new_entry = {
+            "version": new_version,
+            "object_name": new_object_name,
+            "refine_prompt": rp,
+            "image_model": image_model,
+            "created_at": now_utc,
+        }
+        history.append(new_entry)
+        # cap 10 — 가장 옛 entry drop. version 번호는 단조 증가 유지.
+        if len(history) > COVER_REFINE_HISTORY_CAP:
+            history = history[-COVER_REFINE_HISTORY_CAP:]
+
+        # Mongo update
+        try:
+            await mongo.cover_sessions.update_one(
+                {"_id": ObjectId(body.cover_session_id)},
+                {
+                    "$set": {
+                        "cover_object_name": new_object_name,
+                        "current_version": new_version,
+                        "cover_refine_history": history,
+                        "updated_at": now_utc,
+                    }
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            return await _refine_fail(
+                500, {"error": "세션 업데이트 실패: {}".format(str(e)[:200])}, "session update failed",
+            )
+
+    logger.info(
+        "[RefineCover] session=%s user=%s prompt_len=%d image_model=%s new_version=%d",
+        body.cover_session_id,
+        current_user["id"],
+        len(rp),
+        image_model,
+        new_version,
+    )
+
+    response_body = {
+        "cover_object_name": new_object_name,
+        "image_url": "/api/upload/cover-preview/{}".format(new_object_name),
+        "current_version": new_version,
+        "cover_refine_history": [_serialize_history_entry(e) for e in history],
+    }
+    if job:
+        response_body["gen_job_id"] = str(job["_id"])
+        response_body["request_id"] = request_id
+        await gj.finish(
+            job,
+            result={"cover_session_id": body.cover_session_id, "cover_object_name": new_object_name,
+                    "image_url": response_body["image_url"], "current_version": new_version},
+            response=response_body,
+        )
+        gj.logger.info("[CoverDedupe] done kind=cover_refine user=%s job=%s session=%s v=%d",
+                       gj.u8(current_user["id"]), str(job["_id"]), body.cover_session_id, new_version)
+    return response_body
+
+
+@router.post("/revert-cover")
+async def revert_cover(
+    body: RevertCoverRequest,
+    current_user=Depends(get_current_user),
+):
+    """v58: revert to a previous version. History itself is preserved."""
+    if not isinstance(body.target_version, int) or body.target_version < 0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "유효하지 않은 target_version 입니다."},
+        )
+
+    mongo = get_mongo()
+    session = await _load_cover_session(mongo, body.cover_session_id, current_user["id"])
+    if not session:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "커버 세션을 찾을 수 없습니다."},
+        )
+
+    history = list(session.get("cover_refine_history") or [])
+    target_entry = None
+    for entry in history:
+        if entry.get("version") == body.target_version:
+            target_entry = entry
+            break
+    if not target_entry:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "해당 버전을 찾을 수 없습니다."},
+        )
+
+    prev_version = session.get("current_version")
+    new_cover_object = target_entry.get("object_name")
+    now_utc = datetime.now(timezone.utc)
+    await mongo.cover_sessions.update_one(
+        {"_id": ObjectId(body.cover_session_id)},
+        {
+            "$set": {
+                "cover_object_name": new_cover_object,
+                "current_version": body.target_version,
+                "updated_at": now_utc,
+            }
+        },
+    )
+
+    logger.info(
+        "[RevertCover] session=%s target_version=%d prev_version=%s user=%s",
+        body.cover_session_id,
+        body.target_version,
+        prev_version,
+        current_user["id"],
+    )
+
+    return {
+        "cover_object_name": new_cover_object,
+        "image_url": "/api/upload/cover-preview/{}".format(new_cover_object),
+        "current_version": body.target_version,
+    }
+
+
+@router.get("/cover-history/{cover_session_id}")
+async def get_cover_history(
+    cover_session_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v58: fetch the refine history for a cover session."""
+    mongo = get_mongo()
+    session = await _load_cover_session(mongo, cover_session_id, current_user["id"])
+    if not session:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "커버 세션을 찾을 수 없습니다."},
+        )
+
+    history = list(session.get("cover_refine_history") or [])
+    logger.info(
+        "[CoverHistory] session=%s entries=%d user=%s",
+        cover_session_id,
+        len(history),
+        current_user["id"],
+    )
+
+    return {
+        "cover_session_id": cover_session_id,
+        "current_version": session.get("current_version"),
+        "image_model": session.get("image_model") or "nb_pro",
+        "cover_object_name": session.get("cover_object_name"),
+        "cover_refine_history": [_serialize_history_entry(e) for e in history],
+    }
+
+
+# ── v215: 커버 보관함 (커버촬영실 — PLAN C2) ────────────────────────────────
+# 저장소 = cover_sessions 재활용 (신규 컬렉션 없음 — 기존 29건 자동 소급).
+# 실경로 /api/upload/cover-sessions (앱팀 가안 "GET /api/covers" 아님 — 계약서 명시).
+
+
+def _session_object_names(session: dict) -> set:
+    """세션의 오브젝트명 전량 (현재본 + refine 이력 전 버전)."""
+    names = set()
+    if session.get("cover_object_name"):
+        names.add(session["cover_object_name"])
+    for entry in session.get("cover_refine_history") or []:
+        if entry.get("object_name"):
+            names.add(entry["object_name"])
+    return names
+
+
+@router.get("/cover-sessions")
+async def list_cover_sessions(
+    page: int = 1,
+    limit: int = 20,
+    current_user=Depends(get_current_user),
+):
+    """v215 — 내 커버 보관함 목록 (updated_at 최신순) + 연결 곡 역조회.
+
+    연결 곡은 페이지 세션들의 오브젝트명 전량(현재본+이력)을 모아
+    tracks **$in 1회** 조회로 매핑 (N+1 금지). uploader 본인 한정 —
+    타인 곡이 내 세션 커버를 쓸 수 없는 현 검증 체계와 정합.
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    limit = min(max(limit, 1), 100)
+    skip = (max(page, 1) - 1) * limit
+
+    total = await mongo.cover_sessions.count_documents({"user_id": user_id})
+    sessions = await (
+        mongo.cover_sessions.find({"user_id": user_id})
+        .sort("updated_at", -1).skip(skip).limit(limit)
+    ).to_list(length=limit)
+
+    # 연결 곡 역조회 — 오브젝트명 전량 수집 → tracks $in 1회
+    all_names: set = set()
+    for s in sessions:
+        all_names |= _session_object_names(s)
+    linked_by_object: dict = {}
+    if all_names:
+        async for t in mongo.tracks.find(
+            {"uploader_id": user_id, "cover_image_url": {"$in": list(all_names)}},
+            {"title": 1, "cover_image_url": 1},
+        ):
+            linked_by_object.setdefault(t.get("cover_image_url"), []).append(
+                {"id": str(t["_id"]), "title": t.get("title") or ""}
+            )
+
+    covers = []
+    for s in sessions:
+        linked_tracks = []
+        _seen_track_ids = set()
+        for name in _session_object_names(s):
+            for t in linked_by_object.get(name, []):
+                if t["id"] not in _seen_track_ids:
+                    _seen_track_ids.add(t["id"])
+                    linked_tracks.append(t)
+        obj = s.get("cover_object_name")
+        covers.append({
+            "cover_session_id": str(s["_id"]),
+            "cover_object_name": obj,
+            "image_url": "/api/upload/cover-preview/{}".format(obj) if obj else None,
+            # Q2(planner 확정) — 구형 doc(v215 이전)은 title/gen_params/source
+            # **null 3키 통일 동봉**(키셋 고정). doc 저장은 키 부재 그대로 — 소급 쓰기 없음.
+            "title": s.get("title"),
+            "image_model": s.get("image_model") or "nb_pro",
+            "current_version": s.get("current_version", 0),
+            "history_count": len(s.get("cover_refine_history") or []),
+            "gen_params": s.get("gen_params"),
+            "source": s.get("source"),
+            "linked_tracks": linked_tracks,
+            "created_at": s.get("created_at").isoformat() if s.get("created_at") else None,
+            "updated_at": s.get("updated_at").isoformat() if s.get("updated_at") else None,
+        })
+
+    logger.info(
+        "[CoverLib] list user=%s page=%d count=%d total=%d linked_objs=%d",
+        user_id[:8], page, len(covers), total, len(linked_by_object),
+    )
+    import math as _math
+    return {
+        "covers": covers,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": _math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+@router.delete("/cover-sessions/{cover_session_id}")
+async def delete_cover_session(
+    cover_session_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v215 — 보관함 커버 삭제. 연결 곡 존재 시 409 거부 (미사용만 hard delete).
+
+    오브젝트 파기의 **단일 통로** (purge_track_document 는 세션 커버를 스킵 — C3).
+    삭제 = 세션 doc + 오브젝트 전 버전(현재본+이력). 타인/부재/무효 404 은닉.
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    session = await _load_cover_session(mongo, cover_session_id, user_id)
+    if not session:
+        return JSONResponse(status_code=404, content={"error": "커버 세션을 찾을 수 없습니다."})
+
+    names = _session_object_names(session)
+    linked_tracks = []
+    _seen = set()
+    if names:
+        async for t in mongo.tracks.find(
+            {"uploader_id": user_id, "cover_image_url": {"$in": list(names)}},
+            {"title": 1},
+        ):
+            tid = str(t["_id"])
+            if tid not in _seen:
+                _seen.add(tid)
+                linked_tracks.append({"id": tid, "title": t.get("title") or ""})
+    if linked_tracks:
+        logger.info(
+            "[CoverLib] delete rejected (linked) session=%s user=%s tracks=%d",
+            cover_session_id, user_id[:8], len(linked_tracks),
+        )
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "이 커버를 사용 중인 곡이 있어 삭제할 수 없습니다.",
+                "linked_tracks": linked_tracks,
+            },
+        )
+
+    # 미사용 — 오브젝트 전 버전 + doc hard delete (오브젝트 삭제는 best-effort)
+    minio_client = get_minio()
+    removed = 0
+    for name in names:
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_images, object_name=name,
+            )
+            removed += 1
+        except Exception as e:
+            logger.warning(
+                "[CoverLib] object delete failed session=%s obj=%s: %s",
+                cover_session_id, name, str(e)[:120],
+            )
+    await mongo.cover_sessions.delete_one({"_id": session["_id"]})
+    logger.info(
+        "[CoverLib] delete session=%s user=%s objects=%d/%d",
+        cover_session_id, user_id[:8], removed, len(names),
+    )
+    return {"message": "커버가 삭제되었습니다.", "deleted_objects": removed}
+
+
+@router.post("/generate-mv")
+async def generate_mv(
+    body: GenerateMVRequest,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """Start AI music video generation using the 20-scene pipeline.
+
+    Creates a background job that:
+      1. Splits lyrics into ~20 scenes (ChatGPT)
+      2. Generates scene images (Gemini)
+      3. Generates scene videos from images (Veo 3.1)
+      4. Concatenates all clips into a final video (ffmpeg)
+
+    Returns a job_id for polling via /mv-status/{job_id}.
+    """
+    if not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+
+    title = body.title.strip()
+    if not title:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "곡 제목을 입력해주세요."},
+        )
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (제한 중이면 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
+    mongo = get_mongo()
+
+    # Optionally load cover image from MinIO
+    cover_image_bytes = None
+    if body.cover_object_name:
+        try:
+            minio_client = get_minio()
+            response = minio_client.get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=body.cover_object_name,
+            )
+            cover_image_bytes = response.read()
+            response.close()
+            response.release_conn()
+        except Exception as e:
+            logger.warning("Failed to load cover image: %s", e)
+
+    # Create mv_jobs document
+    job_doc = {
+        "user_id": current_user["id"],
+        "title": title,
+        "status": "pending",
+        "progress": 0,
+        "total_scenes": 0,
+        "completed_scenes": 0,
+        "scene_thumbnails": [],
+        "result_video_url": "",
+        "error_message": "",
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    result = await mongo.mv_jobs.insert_one(job_doc)
+    job_id = result.inserted_id
+
+    # Launch pipeline in background
+    from ..services.mv_generator import run_mv_pipeline
+
+    background_tasks.add_task(
+        run_mv_pipeline,
+        job_id=job_id,
+        title=title,
+        genre=body.genre,
+        mood=body.mood,
+        lyrics=body.lyrics,
+        cover_image_bytes=cover_image_bytes,
+        mongo_db=mongo,
+    )
+
+    return {
+        "job_id": str(job_id),
+        "message": "뮤직비디오 생성이 시작되었습니다. (20장면 파이프라인)",
+    }
+
+
+@router.get("/mv-status/{job_id}")
+async def mv_status(
+    job_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Check music video generation job status."""
+    if not ObjectId.is_valid(job_id):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "유효하지 않은 작업 ID입니다."},
+        )
+
+    mongo = get_mongo()
+    job = await mongo.mv_jobs.find_one({"_id": ObjectId(job_id)})
+
+    if not job:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "작업을 찾을 수 없습니다."},
+        )
+
+    # v197: 소유권 가드 — mv.py:207 과 동일 문구. (upload.py 는 JSONResponse 관행 유지)
+    if job.get("user_id") != current_user["id"]:
+        logger.info("[upload] mv_status denied job=%s user=%s", job_id[:8], current_user["id"][:8])
+        return JSONResponse(status_code=403, content={"error": "이 작업에 접근할 권한이 없습니다."})
+
+    # v173: scene thumbnail 은 브라우저 노출 이미지 — 중앙 헬퍼 (proxy/presign 모드)
+    scene_thumbnail_urls = []
+    for thumb_name in (job.get("scene_thumbnails") or []):
+        scene_thumbnail_urls.append(browser_image_url(thumb_name) or "")
+
+    # v173: result video 는 브라우저 노출 비디오 — 항상 public presign
+    result_video_url = ""
+    if job.get("result_video_url"):
+        result_video_url = browser_video_url(job["result_video_url"]) or (
+            "/api/upload/mv-preview/{}".format(job["result_video_url"])
+        )
+
+    return {
+        "status": job.get("status", "pending"),
+        "progress": job.get("progress", 0),
+        "total_scenes": job.get("total_scenes", 0),
+        "completed_scenes": job.get("completed_scenes", 0),
+        "scene_thumbnails": scene_thumbnail_urls,
+        "result_video_url": result_video_url,
+        "object_name": job.get("result_video_url", ""),
+        "error_message": job.get("error_message", ""),
+    }
+
+
+@router.get("/mv-preview/{object_name:path}")
+async def mv_preview(object_name: str):
+    """Proxy music video or scene thumbnail from MinIO for playback."""
+    # v135 faces/ + v138 evidence/ — 백엔드 전용 경로 프록시 노출 금지.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+    # v3.227 (H-3) — 원본 얼굴 사진은 무인증 MV 프록시로 내보내지 않음.
+    if _suspicious_object_path(object_name) or _original_photo_owner(object_name) is not None:
+        logger.info("[PreviewGuard] mv-preview original/suspicious denied")
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+        )
+        data = response.read()
+        response.close()
+        response.release_conn()
+
+        # Determine content type from extension
+        if object_name.endswith(".png"):
+            media_type = "image/png"
+        elif object_name.endswith(".jpg") or object_name.endswith(".jpeg"):
+            media_type = "image/jpeg"
+        else:
+            media_type = "video/mp4"
+
+        return Response(content=data, media_type=media_type)
+    except Exception:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "파일을 찾을 수 없습니다."},
+        )

@@ -5487,3 +5487,11 @@ ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback
 - E1 [e2e] 차트 신곡 탭 '전체 담기' → 100곡 담김, 재탭 시 "모두 이미 재생목록에 있어요" — PASS(운영 웹, 모바일 뷰)
 - E2 [e2e] TOP100 탭 누적 순위·전체 담기 노출 — PASS
 - 미실행: 꾸미기 실제 완성→목록 착지(실생성 ⭐ 소모 — 코드 경로·타입 검증으로 대체), 아티스트 생성 중 재기동 후 자동 재개 실측(다음 배포 때 관측 로그 `[CharJob] job=… resumed after restart`).
+
+---
+## v3.287 — 재기동 자동 재개
+- G1~G13 [unit] gen_jobs: dead_boot+입력보관 재개·boot_id 교체·resume_count·안전망 done·ContextVar 노출·성공 무환불 / 입력없음·hard_cap·횟수소진·재개예외 → 실패+환불 / 동시 2경로 재개 1회 / 과금 전 사망 비대상 / 무과금 작업 대상 / 작곡 같은 taskId 재개 — PASS
+- R1 [unit] 실제 모듈 import 시 재개 함수 6종 등록 — PASS
+- S1~S5 [unit] Suno: 재개 제출 0회·같은 taskId 폴링·요청 캡처 중복 없음 / 신규 제출 1회·taskId 즉시 저장 — PASS · I1 연주곡 재개 제출 0회 — PASS
+- L1~L3 [unit/통합] 실제 작사 핸들러 재개 모드: 기존 원장 done·응답 보존·재과금 0회·피로 게이트 미호출 — PASS
+- 배포 실측: 기동 즉시 `[GenJobs] boot-sweep` 실행 확인. 실제 생성 중 재기동 재개는 다음 배포 로그(`[GenJobs] resume start`)로 관측(일부러 재기동하지 않음 — 사용자 영향).

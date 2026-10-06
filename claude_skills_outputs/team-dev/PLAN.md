@@ -8111,3 +8111,20 @@ Expo RN 앱(웹 빌드 배포) + FastAPI(EC2 도커). E2E 는 웹 빌드 실기 
 | A1 | services/generationTracker.ts | outfit finalize → MyArtists(savedNotice, popTo/replace/전역) | `[GenTracker] [OutfitSaved]` |
 | A2 | screens/ChartScreen.tsx | 차트 탭 상단 "N곡 · 전체 담기" — 큐 끝 추가·중복 제외 안내 | `[ChartScreen] [ChartAddAll]` |
 | A3 | components/lyrics/SectionLyricsEditor.tsx | 편집 가능 시 두 번째 탭 = "전체 편집"(raw 직행) | `[SectionLyrics] mode` |
+
+---
+
+## v3.287 — 전 생성 종류 재기동 자동 재개 (2026-10-06)
+### 요청 원문
+"작사, 작곡, 이미지, 영상 모두 아티스트 처럼 대기상황에 이렇게 처리 해야하는거 알지?"
+### Plan verification findings
+- 공통 원장 services/gen_jobs.py: 죽은 작업(dead_boot)은 _sweep_gen_job/_sweep_generation/_sweep_inst 로 **무조건 실패+환불**. boot sweep 은 첫 생성 요청 시에야 지연 실행(ensure_boot_sweep — main.py 미연결).
+- 작곡: generations 문서에 생성 인자 전부 보관, Suno taskId 는 **완성 시점에만** 저장(suno_generator 995) → 재기동 시 이어받기 불가.
+- 연주곡: inst_jobs 에 제출 즉시 suno_task_id 저장(이미 존재) → 폴링 재개만 추가하면 됨.
+- 작사·커버·다듬기·영상: POST 핸들러 안에서 바로 생성(입력 비영속). 핸들러는 current_user 중 id 만 사용 → 같은 핸들러를 재개 모드로 재호출 가능.
+- 영상 '합류 대기'(_SV_INFLIGHT)는 메모리 — 재기동 후 비어 자기 자신 대기 함정 없음. 캐시 히트 반환 시 원장 미종결 → 공통 안전망 필요.
+### 설계
+- gen_jobs 재개 등록부(register_resumer)·current_resume_job(ContextVar)·set_resume(입력 보관)·_handle_dead(dead_boot+재개가능 → 원자 claim 후 재개, 그 외 종전 정리)·_run_resumer(kind 상한·안전망: 미종결이면 응답으로 done 또는 실패+환불).
+- 작곡/연주곡: 제출 직후 taskId 저장 → 재개 시 제출 생략·같은 작업 폴링(재제출·이중 크레딧 없음). taskId 없으면 재제출.
+- 작사·커버·다듬기·영상: 과금 직후 입력 보관 → 재개 시 같은 핸들러를 재개 모드로(게이트·과금 생략, 기존 원장에 기록).
+- main.py 기동 시 boot sweep 즉시 실행.
