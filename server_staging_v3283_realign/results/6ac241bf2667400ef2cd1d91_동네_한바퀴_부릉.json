@@ -1,0 +1,1050 @@
+{
+ "metrics": {
+  "title": "동네 한바퀴 부릉",
+  "kind": "control-holdout",
+  "track_id": "6ac241bf2667400ef2cd1d91",
+  "suno_state": "ok",
+  "duration": 136.0,
+  "lines": 56,
+  "anchored": 49,
+  "anchor_ratio": 0.875,
+  "matched_ratio": 0.893,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.83,
+  "max_unanchored_run": 6,
+  "A_chars": 700,
+  "B_chars": 680,
+  "B_unmatched": 124,
+  "char_match": 0.794,
+  "char_exact": 0.789,
+  "unreliable_words": 32,
+  "words": 226,
+  "t_api": 10.74,
+  "audio_MB": 3.29,
+  "cost_usd": 0.0136,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 56,
+  "suno_lines": 56,
+  "ctrl_n": 56,
+  "ctrl_median": 0.24,
+  "ctrl_p90": 1.29,
+  "ctrl_anchor_median": 0.24,
+  "ctrl_anchor_p90": 0.46,
+  "ctrl_within_1s": 0.857,
+  "_diffs": [
+   7.75,
+   13.97,
+   0.17,
+   0.05,
+   0.27,
+   0.45,
+   0.05,
+   0.25,
+   0.21,
+   0.24,
+   0.24,
+   0.28,
+   0.08,
+   0.36,
+   0.1,
+   0.13,
+   0.15,
+   0.24,
+   0.24,
+   0.08,
+   0.16,
+   0.22,
+   0.48,
+   0.06,
+   0.15,
+   0.49,
+   0.18,
+   0.32,
+   0.16,
+   0.32,
+   0.39,
+   0.2,
+   0.34,
+   0.28,
+   0.23,
+   0.05,
+   0.34,
+   0.33,
+   1.04,
+   1.47,
+   1.11,
+   1.52,
+   2.08,
+   1.49,
+   0.43,
+   0.31,
+   0.3,
+   0.25,
+   0.2,
+   0.19,
+   0.2,
+   0.18,
+   0.21,
+   0.44,
+   0.27,
+   0.02
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "808 깔아, boom boom",
+   "new_start": 8.89,
+   "new_end": 15.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.14,
+   "suno_end": 3.91,
+   "suno_squashed": false,
+   "diff": 7.75
+  },
+  {
+   "i": 2,
+   "line": "Westside 바람, vroom",
+   "new_start": 18.0,
+   "new_end": 26.99,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.03,
+   "suno_end": 27.05,
+   "suno_squashed": false,
+   "diff": 13.97
+  },
+  {
+   "i": 3,
+   "line": "나는 오늘도 신나",
+   "new_start": 26.99,
+   "new_end": 28.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 27.17,
+   "suno_end": 28.32,
+   "suno_squashed": false,
+   "diff": -0.17
+  },
+  {
+   "i": 4,
+   "line": "Get it, get it, let's go",
+   "new_start": 28.3,
+   "new_end": 29.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 28.35,
+   "suno_end": 29.37,
+   "suno_squashed": false,
+   "diff": -0.05
+  },
+  {
+   "i": 5,
+   "line": "아침 햇살에 난 ride",
+   "new_start": 29.12,
+   "new_end": 29.95,
+   "anchor": true,
+   "match_ratio": 0.7,
+   "suno_start": 29.38,
+   "suno_end": 30.24,
+   "suno_squashed": false,
+   "diff": -0.27
+  },
+  {
+   "i": 6,
+   "line": "골목을 깨워, all night",
+   "new_start": 29.95,
+   "new_end": 31.71,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 30.4,
+   "suno_end": 31.68,
+   "suno_squashed": false,
+   "diff": -0.45
+  },
+  {
+   "i": 7,
+   "line": "매일 새 도전, no fear",
+   "new_start": 31.71,
+   "new_end": 33.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 31.75,
+   "suno_end": 33.35,
+   "suno_squashed": false,
+   "diff": -0.05
+  },
+  {
+   "i": 8,
+   "line": "내 발걸음은 top gear",
+   "new_start": 33.26,
+   "new_end": 34.85,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 33.51,
+   "suno_end": 34.95,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 9,
+   "line": "친구들 불러, come here",
+   "new_start": 34.85,
+   "new_end": 36.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 35.07,
+   "suno_end": 36.62,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 10,
+   "line": "동네 한바퀴 돌지",
+   "new_start": 36.54,
+   "new_end": 38.21,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 36.78,
+   "suno_end": 38.3,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 11,
+   "line": "손 흔들어, feel good",
+   "new_start": 38.21,
+   "new_end": 39.82,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 38.46,
+   "suno_end": 39.97,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 12,
+   "line": "나의 하루는 big mood",
+   "new_start": 39.82,
+   "new_end": 41.42,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 40.09,
+   "suno_end": 41.49,
+   "suno_squashed": false,
+   "diff": -0.28
+  },
+  {
+   "i": 13,
+   "line": "다같이 놀자, round round",
+   "new_start": 41.42,
+   "new_end": 42.96,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 41.5,
+   "suno_end": 43.16,
+   "suno_squashed": false,
+   "diff": -0.08
+  },
+  {
+   "i": 14,
+   "line": "동네 한바퀴, go loud",
+   "new_start": 42.96,
+   "new_end": 44.78,
+   "anchor": true,
+   "match_ratio": 0.455,
+   "suno_start": 43.32,
+   "suno_end": 44.76,
+   "suno_squashed": false,
+   "diff": -0.36
+  },
+  {
+   "i": 15,
+   "line": "나는 언제나 신나",
+   "new_start": 44.78,
+   "new_end": 46.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 44.88,
+   "suno_end": 46.6,
+   "suno_squashed": false,
+   "diff": -0.1
+  },
+  {
+   "i": 16,
+   "line": "Get it, get it, pump it up",
+   "new_start": 46.88,
+   "new_end": 48.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 46.76,
+   "suno_end": 48.75,
+   "suno_squashed": false,
+   "diff": 0.13
+  },
+  {
+   "i": 17,
+   "line": "808 베이스, drop drop",
+   "new_start": 48.14,
+   "new_end": 49.66,
+   "anchor": true,
+   "match_ratio": 0.786,
+   "suno_start": 47.99,
+   "suno_end": 49.79,
+   "suno_squashed": false,
+   "diff": 0.15
+  },
+  {
+   "i": 18,
+   "line": "심장은 뛰어, pop pop",
+   "new_start": 49.66,
+   "new_end": 51.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 49.91,
+   "suno_end": 51.46,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 19,
+   "line": "매일 신나는 도전",
+   "new_start": 51.3,
+   "new_end": 53.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 51.54,
+   "suno_end": 53.14,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 20,
+   "line": "We got that vibe, don't stop",
+   "new_start": 53.18,
+   "new_end": 55.23,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 53.26,
+   "suno_end": 55.06,
+   "suno_squashed": false,
+   "diff": -0.08
+  },
+  {
+   "i": 21,
+   "line": "해 지면 네온이 glow",
+   "new_start": 55.23,
+   "new_end": 56.74,
+   "anchor": true,
+   "match_ratio": 0.5,
+   "suno_start": 55.07,
+   "suno_end": 56.89,
+   "suno_squashed": false,
+   "diff": 0.16
+  },
+  {
+   "i": 22,
+   "line": "내 스텝은 lowrider flow",
+   "new_start": 56.74,
+   "new_end": 58.24,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 56.97,
+   "suno_end": 58.56,
+   "suno_squashed": false,
+   "diff": -0.22
+  },
+  {
+   "i": 23,
+   "line": "모자 눌러쓰고 bounce",
+   "new_start": 58.24,
+   "new_end": 60.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 58.72,
+   "suno_end": 60.0,
+   "suno_squashed": false,
+   "diff": -0.48
+  },
+  {
+   "i": 24,
+   "line": "리듬 위에서 I announce",
+   "new_start": 60.06,
+   "new_end": 61.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 60.12,
+   "suno_end": 61.68,
+   "suno_squashed": false,
+   "diff": -0.06
+  },
+  {
+   "i": 25,
+   "line": "걱정은 뒤로, bye bye",
+   "new_start": 61.68,
+   "new_end": 62.98,
+   "anchor": true,
+   "match_ratio": 0.909,
+   "suno_start": 61.84,
+   "suno_end": 63.35,
+   "suno_squashed": false,
+   "diff": -0.15
+  },
+  {
+   "i": 26,
+   "line": "웃음은 커져, sky high",
+   "new_start": 62.98,
+   "new_end": 64.77,
+   "anchor": true,
+   "match_ratio": 0.917,
+   "suno_start": 63.47,
+   "suno_end": 64.79,
+   "suno_squashed": false,
+   "diff": -0.49
+  },
+  {
+   "i": 27,
+   "line": "내 꿈을 잡아, get it",
+   "new_start": 64.77,
+   "new_end": 66.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 64.95,
+   "suno_end": 66.46,
+   "suno_squashed": false,
+   "diff": -0.18
+  },
+  {
+   "i": 28,
+   "line": "오늘의 나를 bet it",
+   "new_start": 66.26,
+   "new_end": 68.39,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 66.58,
+   "suno_end": 68.22,
+   "suno_squashed": false,
+   "diff": -0.32
+  },
+  {
+   "i": 29,
+   "line": "다같이 놀자, round round",
+   "new_start": 68.39,
+   "new_end": 69.66,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 68.23,
+   "suno_end": 69.81,
+   "suno_squashed": false,
+   "diff": 0.16
+  },
+  {
+   "i": 30,
+   "line": "동네 한바퀴, go loud",
+   "new_start": 69.66,
+   "new_end": 71.22,
+   "anchor": true,
+   "match_ratio": 0.455,
+   "suno_start": 69.97,
+   "suno_end": 71.49,
+   "suno_squashed": false,
+   "diff": -0.32
+  },
+  {
+   "i": 31,
+   "line": "나는 언제나 신나",
+   "new_start": 71.22,
+   "new_end": 73.15,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 71.61,
+   "suno_end": 73.25,
+   "suno_squashed": false,
+   "diff": -0.39
+  },
+  {
+   "i": 32,
+   "line": "Get it, get it, pump it up",
+   "new_start": 73.15,
+   "new_end": 74.9,
+   "anchor": true,
+   "match_ratio": 0.778,
+   "suno_start": 73.35,
+   "suno_end": 75.4,
+   "suno_squashed": false,
+   "diff": -0.2
+  },
+  {
+   "i": 33,
+   "line": "808 베이스, drop drop",
+   "new_start": 74.9,
+   "new_end": 76.36,
+   "anchor": true,
+   "match_ratio": 0.786,
+   "suno_start": 74.56,
+   "suno_end": 76.52,
+   "suno_squashed": false,
+   "diff": 0.34
+  },
+  {
+   "i": 34,
+   "line": "심장은 뛰어, pop pop",
+   "new_start": 76.36,
+   "new_end": 77.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 76.64,
+   "suno_end": 78.11,
+   "suno_squashed": false,
+   "diff": -0.28
+  },
+  {
+   "i": 35,
+   "line": "매일 신나는 도전",
+   "new_start": 77.96,
+   "new_end": 79.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 78.19,
+   "suno_end": 79.79,
+   "suno_squashed": false,
+   "diff": -0.23
+  },
+  {
+   "i": 36,
+   "line": "We got that vibe, don't stop",
+   "new_start": 79.86,
+   "new_end": 81.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 79.91,
+   "suno_end": 81.55,
+   "suno_squashed": false,
+   "diff": -0.05
+  },
+  {
+   "i": 37,
+   "line": "잠깐 숨 고르고 breathe",
+   "new_start": 81.9,
+   "new_end": 83.16,
+   "anchor": false,
+   "match_ratio": 0.231,
+   "suno_start": 81.55,
+   "suno_end": 83.38,
+   "suno_squashed": false,
+   "diff": 0.34
+  },
+  {
+   "i": 38,
+   "line": "하지만 멈추진 않아",
+   "new_start": 83.16,
+   "new_end": 83.93,
+   "anchor": false,
+   "match_ratio": 0.25,
+   "suno_start": 83.48,
+   "suno_end": 84.81,
+   "suno_squashed": false,
+   "diff": -0.33
+  },
+  {
+   "i": 39,
+   "line": "내 안의 불빛이 shine",
+   "new_start": 83.93,
+   "new_end": 85.0,
+   "anchor": false,
+   "match_ratio": 0.182,
+   "suno_start": 84.97,
+   "suno_end": 86.41,
+   "suno_squashed": false,
+   "diff": -1.04
+  },
+  {
+   "i": 40,
+   "line": "Westside rhythm in my soul",
+   "new_start": 85.0,
+   "new_end": 87.14,
+   "anchor": false,
+   "match_ratio": 0.318,
+   "suno_start": 86.47,
+   "suno_end": 88.08,
+   "suno_squashed": false,
+   "diff": -1.47
+  },
+  {
+   "i": 41,
+   "line": "넘어져도 다시 stand up",
+   "new_start": 87.14,
+   "new_end": 88.4,
+   "anchor": false,
+   "match_ratio": 0.077,
+   "suno_start": 88.25,
+   "suno_end": 89.76,
+   "suno_squashed": false,
+   "diff": -1.11
+  },
+  {
+   "i": 42,
+   "line": "내 이름 크게 call out",
+   "new_start": 88.4,
+   "new_end": 89.56,
+   "anchor": false,
+   "match_ratio": 0.083,
+   "suno_start": 89.92,
+   "suno_end": 91.52,
+   "suno_squashed": false,
+   "diff": -1.52
+  },
+  {
+   "i": 43,
+   "line": "오늘을 잡아, get it",
+   "new_start": 89.56,
+   "new_end": 91.78,
+   "anchor": true,
+   "match_ratio": 0.8,
+   "suno_start": 91.64,
+   "suno_end": 93.11,
+   "suno_squashed": false,
+   "diff": -2.08
+  },
+  {
+   "i": 44,
+   "line": "다 같이 외쳐, we own it",
+   "new_start": 91.78,
+   "new_end": 94.45,
+   "anchor": false,
+   "match_ratio": 0.167,
+   "suno_start": 93.27,
+   "suno_end": 94.87,
+   "suno_squashed": false,
+   "diff": -1.49
+  },
+  {
+   "i": 45,
+   "line": "다같이 놀자, round round",
+   "new_start": 94.45,
+   "new_end": 96.31,
+   "anchor": true,
+   "match_ratio": 0.467,
+   "suno_start": 94.88,
+   "suno_end": 96.46,
+   "suno_squashed": false,
+   "diff": -0.43
+  },
+  {
+   "i": 46,
+   "line": "동네 한바퀴, go loud",
+   "new_start": 96.31,
+   "new_end": 97.96,
+   "anchor": true,
+   "match_ratio": 0.455,
+   "suno_start": 96.62,
+   "suno_end": 98.14,
+   "suno_squashed": false,
+   "diff": -0.31
+  },
+  {
+   "i": 47,
+   "line": "나는 언제나 신나",
+   "new_start": 97.96,
+   "new_end": 100.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 98.26,
+   "suno_end": 99.89,
+   "suno_squashed": false,
+   "diff": -0.3
+  },
+  {
+   "i": 48,
+   "line": "Get it, get it, pump it up",
+   "new_start": 100.3,
+   "new_end": 101.49,
+   "anchor": true,
+   "match_ratio": 0.889,
+   "suno_start": 100.05,
+   "suno_end": 102.05,
+   "suno_squashed": false,
+   "diff": 0.25
+  },
+  {
+   "i": 49,
+   "line": "808 베이스, drop drop",
+   "new_start": 101.49,
+   "new_end": 103.02,
+   "anchor": true,
+   "match_ratio": 0.786,
+   "suno_start": 101.29,
+   "suno_end": 103.08,
+   "suno_squashed": false,
+   "diff": 0.2
+  },
+  {
+   "i": 50,
+   "line": "심장은 뛰어, pop pop",
+   "new_start": 103.02,
+   "new_end": 104.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 103.2,
+   "suno_end": 104.68,
+   "suno_squashed": false,
+   "diff": -0.19
+  },
+  {
+   "i": 51,
+   "line": "매일 신나는 도전",
+   "new_start": 104.64,
+   "new_end": 106.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 104.84,
+   "suno_end": 106.6,
+   "suno_squashed": false,
+   "diff": -0.2
+  },
+  {
+   "i": 52,
+   "line": "We got that vibe, don't stop",
+   "new_start": 106.5,
+   "new_end": 108.38,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 106.68,
+   "suno_end": 109.8,
+   "suno_squashed": false,
+   "diff": -0.18
+  },
+  {
+   "i": 53,
+   "line": "골목 끝까지 we ride",
+   "new_start": 109.6,
+   "new_end": 111.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 109.81,
+   "suno_end": 113.06,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 54,
+   "line": "웃음 번져 side to side",
+   "new_start": 112.78,
+   "new_end": 114.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 113.22,
+   "suno_end": 116.41,
+   "suno_squashed": false,
+   "diff": -0.44
+  },
+  {
+   "i": 55,
+   "line": "나는 내일도 신나",
+   "new_start": 116.26,
+   "new_end": 117.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 116.53,
+   "suno_end": 119.92,
+   "suno_squashed": false,
+   "diff": -0.27
+  },
+  {
+   "i": 56,
+   "line": "Get it, get it, good night",
+   "new_start": 119.95,
+   "new_end": 121.84,
+   "anchor": true,
+   "match_ratio": 0.789,
+   "suno_start": 119.97,
+   "suno_end": 121.68,
+   "suno_squashed": false,
+   "diff": -0.02
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "808 깔아, boom boom",
+   "start": 8.89,
+   "end": 15.06
+  },
+  {
+   "text": "Westside 바람, vroom",
+   "start": 18.0,
+   "end": 26.99
+  },
+  {
+   "text": "나는 오늘도 신나",
+   "start": 26.99,
+   "end": 28.3
+  },
+  {
+   "text": "Get it, get it, let's go",
+   "start": 28.3,
+   "end": 29.12
+  },
+  {
+   "text": "아침 햇살에 난 ride",
+   "start": 29.12,
+   "end": 29.95
+  },
+  {
+   "text": "골목을 깨워, all night",
+   "start": 29.95,
+   "end": 31.71
+  },
+  {
+   "text": "매일 새 도전, no fear",
+   "start": 31.71,
+   "end": 33.26
+  },
+  {
+   "text": "내 발걸음은 top gear",
+   "start": 33.26,
+   "end": 34.85
+  },
+  {
+   "text": "친구들 불러, come here",
+   "start": 34.85,
+   "end": 36.54
+  },
+  {
+   "text": "동네 한바퀴 돌지",
+   "start": 36.54,
+   "end": 38.21
+  },
+  {
+   "text": "손 흔들어, feel good",
+   "start": 38.21,
+   "end": 39.82
+  },
+  {
+   "text": "나의 하루는 big mood",
+   "start": 39.82,
+   "end": 41.42
+  },
+  {
+   "text": "다같이 놀자, round round",
+   "start": 41.42,
+   "end": 42.96
+  },
+  {
+   "text": "동네 한바퀴, go loud",
+   "start": 42.96,
+   "end": 44.78
+  },
+  {
+   "text": "나는 언제나 신나",
+   "start": 44.78,
+   "end": 46.88
+  },
+  {
+   "text": "Get it, get it, pump it up",
+   "start": 46.88,
+   "end": 48.14
+  },
+  {
+   "text": "808 베이스, drop drop",
+   "start": 48.14,
+   "end": 49.66
+  },
+  {
+   "text": "심장은 뛰어, pop pop",
+   "start": 49.66,
+   "end": 51.3
+  },
+  {
+   "text": "매일 신나는 도전",
+   "start": 51.3,
+   "end": 53.18
+  },
+  {
+   "text": "We got that vibe, don't stop",
+   "start": 53.18,
+   "end": 55.23
+  },
+  {
+   "text": "해 지면 네온이 glow",
+   "start": 55.23,
+   "end": 56.74
+  },
+  {
+   "text": "내 스텝은 lowrider flow",
+   "start": 56.74,
+   "end": 58.24
+  },
+  {
+   "text": "모자 눌러쓰고 bounce",
+   "start": 58.24,
+   "end": 60.06
+  },
+  {
+   "text": "리듬 위에서 I announce",
+   "start": 60.06,
+   "end": 61.68
+  },
+  {
+   "text": "걱정은 뒤로, bye bye",
+   "start": 61.68,
+   "end": 62.98
+  },
+  {
+   "text": "웃음은 커져, sky high",
+   "start": 62.98,
+   "end": 64.77
+  },
+  {
+   "text": "내 꿈을 잡아, get it",
+   "start": 64.77,
+   "end": 66.26
+  },
+  {
+   "text": "오늘의 나를 bet it",
+   "start": 66.26,
+   "end": 68.39
+  },
+  {
+   "text": "다같이 놀자, round round",
+   "start": 68.39,
+   "end": 69.66
+  },
+  {
+   "text": "동네 한바퀴, go loud",
+   "start": 69.66,
+   "end": 71.22
+  },
+  {
+   "text": "나는 언제나 신나",
+   "start": 71.22,
+   "end": 73.15
+  },
+  {
+   "text": "Get it, get it, pump it up",
+   "start": 73.15,
+   "end": 74.9
+  },
+  {
+   "text": "808 베이스, drop drop",
+   "start": 74.9,
+   "end": 76.36
+  },
+  {
+   "text": "심장은 뛰어, pop pop",
+   "start": 76.36,
+   "end": 77.96
+  },
+  {
+   "text": "매일 신나는 도전",
+   "start": 77.96,
+   "end": 79.86
+  },
+  {
+   "text": "We got that vibe, don't stop",
+   "start": 79.86,
+   "end": 81.9
+  },
+  {
+   "text": "잠깐 숨 고르고 breathe",
+   "start": 81.9,
+   "end": 83.16
+  },
+  {
+   "text": "하지만 멈추진 않아",
+   "start": 83.16,
+   "end": 83.93
+  },
+  {
+   "text": "내 안의 불빛이 shine",
+   "start": 83.93,
+   "end": 85.0
+  },
+  {
+   "text": "Westside rhythm in my soul",
+   "start": 85.0,
+   "end": 87.14
+  },
+  {
+   "text": "넘어져도 다시 stand up",
+   "start": 87.14,
+   "end": 88.4
+  },
+  {
+   "text": "내 이름 크게 call out",
+   "start": 88.4,
+   "end": 89.56
+  },
+  {
+   "text": "오늘을 잡아, get it",
+   "start": 89.56,
+   "end": 91.78
+  },
+  {
+   "text": "다 같이 외쳐, we own it",
+   "start": 91.78,
+   "end": 94.45
+  },
+  {
+   "text": "다같이 놀자, round round",
+   "start": 94.45,
+   "end": 96.31
+  },
+  {
+   "text": "동네 한바퀴, go loud",
+   "start": 96.31,
+   "end": 97.96
+  },
+  {
+   "text": "나는 언제나 신나",
+   "start": 97.96,
+   "end": 100.3
+  },
+  {
+   "text": "Get it, get it, pump it up",
+   "start": 100.3,
+   "end": 101.49
+  },
+  {
+   "text": "808 베이스, drop drop",
+   "start": 101.49,
+   "end": 103.02
+  },
+  {
+   "text": "심장은 뛰어, pop pop",
+   "start": 103.02,
+   "end": 104.64
+  },
+  {
+   "text": "매일 신나는 도전",
+   "start": 104.64,
+   "end": 106.5
+  },
+  {
+   "text": "We got that vibe, don't stop",
+   "start": 106.5,
+   "end": 108.38
+  },
+  {
+   "text": "골목 끝까지 we ride",
+   "start": 109.6,
+   "end": 111.66
+  },
+  {
+   "text": "웃음 번져 side to side",
+   "start": 112.78,
+   "end": 114.98
+  },
+  {
+   "text": "나는 내일도 신나",
+   "start": 116.26,
+   "end": 117.98
+  },
+  {
+   "text": "Get it, get it, good night",
+   "start": 119.95,
+   "end": 121.84
+  }
+ ]
+}

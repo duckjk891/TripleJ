@@ -1,0 +1,717 @@
+{
+ "metrics": {
+  "title": "우린 예뻐2",
+  "kind": "collapsed",
+  "track_id": "6ab7cdec9416ac9c3996cd59",
+  "suno_state": "collapsed",
+  "duration": 122.0,
+  "lines": 40,
+  "anchored": 40,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.883,
+  "max_unanchored_run": 0,
+  "A_chars": 440,
+  "B_chars": 461,
+  "B_unmatched": 28,
+  "char_match": 0.984,
+  "char_exact": 0.982,
+  "unreliable_words": 2,
+  "words": 123,
+  "t_api": 5.61,
+  "audio_MB": 2.76,
+  "cost_usd": 0.0122,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 21,
+  "suno_lines": 58,
+  "vs_suno_ok_n": 3,
+  "vs_suno_ok_median": 88.49,
+  "vs_suno_ok_p90": 89.1
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "주연아, can you feel it",
+   "new_start": 1.1,
+   "new_end": 10.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.74,
+   "suno_end": 2.92,
+   "suno_squashed": true,
+   "diff": -1.64
+  },
+  {
+   "i": 2,
+   "line": "대현아, I'm feeling you",
+   "new_start": 10.63,
+   "new_end": 13.35,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.92,
+   "suno_end": 3.11,
+   "suno_squashed": true,
+   "diff": 7.71
+  },
+  {
+   "i": 3,
+   "line": "너와의 여행 시작돼",
+   "new_start": 13.35,
+   "new_end": 16.81,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.12,
+   "suno_end": 3.23,
+   "suno_squashed": true,
+   "diff": 10.23
+  },
+  {
+   "i": 4,
+   "line": "Oh baby, let's groove",
+   "new_start": 16.81,
+   "new_end": 18.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.24,
+   "suno_end": 3.43,
+   "suno_squashed": true,
+   "diff": 13.57
+  },
+  {
+   "i": 5,
+   "line": "너는 오늘도 빛나",
+   "new_start": 20.94,
+   "new_end": 23.17,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.5,
+   "suno_end": 3.6,
+   "suno_squashed": true,
+   "diff": 17.44
+  },
+  {
+   "i": 6,
+   "line": "주연이는 예뻐 2탄",
+   "new_start": 23.17,
+   "new_end": 26.13,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.61,
+   "suno_end": 3.72,
+   "suno_squashed": true,
+   "diff": 19.56
+  },
+  {
+   "i": 7,
+   "line": "너의 눈빛에 설레",
+   "new_start": 26.13,
+   "new_end": 29.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.73,
+   "suno_end": 3.85,
+   "suno_squashed": true,
+   "diff": 22.4
+  },
+  {
+   "i": 8,
+   "line": "대현아, you got me",
+   "new_start": 29.03,
+   "new_end": 32.32,
+   "anchor": true,
+   "match_ratio": 0.727,
+   "suno_start": 3.85,
+   "suno_end": 4.02,
+   "suno_squashed": true,
+   "diff": 25.17
+  },
+  {
+   "i": 9,
+   "line": "부산 밤바다 위에",
+   "new_start": 32.32,
+   "new_end": 34.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.09,
+   "suno_end": 4.21,
+   "suno_squashed": true,
+   "diff": 28.23
+  },
+  {
+   "i": 10,
+   "line": "우리 이름을 적어",
+   "new_start": 34.66,
+   "new_end": 36.21,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.22,
+   "suno_end": 4.33,
+   "suno_squashed": true,
+   "diff": 30.44
+  },
+  {
+   "i": 11,
+   "line": "제주 바람을 타고",
+   "new_start": 36.21,
+   "new_end": 37.78,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.34,
+   "suno_end": 4.44,
+   "suno_squashed": true,
+   "diff": 31.87
+  },
+  {
+   "i": 12,
+   "line": "너에게 더 가까이",
+   "new_start": 37.78,
+   "new_end": 39.52,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.45,
+   "suno_end": 4.57,
+   "suno_squashed": true,
+   "diff": 33.33
+  },
+  {
+   "i": 13,
+   "line": "Every mile, 너만 보여",
+   "new_start": 39.52,
+   "new_end": 41.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.67,
+   "suno_end": 4.83,
+   "suno_squashed": true,
+   "diff": 34.85
+  },
+  {
+   "i": 14,
+   "line": "Every night, 네가 좋아",
+   "new_start": 41.3,
+   "new_end": 42.75,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.83,
+   "suno_end": 5.01,
+   "suno_squashed": true,
+   "diff": 36.47
+  },
+  {
+   "i": 15,
+   "line": "추억들이 춤을 춰",
+   "new_start": 42.75,
+   "new_end": 44.33,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 5.02,
+   "suno_end": 5.12,
+   "suno_squashed": true,
+   "diff": 37.73
+  },
+  {
+   "i": 16,
+   "line": "We shine, we shine",
+   "new_start": 44.33,
+   "new_end": 46.22,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 5.13,
+   "suno_end": 5.3,
+   "suno_squashed": true,
+   "diff": 39.21
+  },
+  {
+   "i": 17,
+   "line": "Love you, love you",
+   "new_start": 46.22,
+   "new_end": 47.39,
+   "anchor": true,
+   "match_ratio": 0.714,
+   "suno_start": 5.38,
+   "suno_end": 5.54,
+   "suno_squashed": true,
+   "diff": 40.84
+  },
+  {
+   "i": 18,
+   "line": "너와의 모든 순간",
+   "new_start": 47.39,
+   "new_end": 49.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 5.55,
+   "suno_end": 5.65,
+   "suno_squashed": true,
+   "diff": 41.84
+  },
+  {
+   "i": 19,
+   "line": "Feel me, hold me",
+   "new_start": 49.16,
+   "new_end": 51.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 5.66,
+   "suno_end": 5.81,
+   "suno_squashed": true,
+   "diff": 43.5
+  },
+  {
+   "i": 20,
+   "line": "주연 대현 forever",
+   "new_start": 53.64,
+   "new_end": 57.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 5.82,
+   "suno_end": 5.96,
+   "suno_squashed": true,
+   "diff": 47.82
+  },
+  {
+   "i": 21,
+   "line": "너 웃을 때 난 녹아",
+   "new_start": 57.96,
+   "new_end": 59.71,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.03,
+   "suno_end": 6.14,
+   "suno_squashed": true,
+   "diff": 51.93
+  },
+  {
+   "i": 22,
+   "line": "Oh my baby, so fine",
+   "new_start": 59.71,
+   "new_end": 61.22,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.15,
+   "suno_end": 6.32,
+   "suno_squashed": true,
+   "diff": 53.56
+  },
+  {
+   "i": 23,
+   "line": "네 손 잡고 달려",
+   "new_start": 61.22,
+   "new_end": 62.39,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.33,
+   "suno_end": 6.45,
+   "suno_squashed": true,
+   "diff": 54.89
+  },
+  {
+   "i": 24,
+   "line": "Highway to the moonlight",
+   "new_start": 62.39,
+   "new_end": 64.32,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.45,
+   "suno_end": 6.68,
+   "suno_squashed": true,
+   "diff": 55.94
+  },
+  {
+   "i": 25,
+   "line": "Love you, love you",
+   "new_start": 64.32,
+   "new_end": 66.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.76,
+   "suno_end": 6.92,
+   "suno_squashed": true,
+   "diff": 57.56
+  },
+  {
+   "i": 26,
+   "line": "너와의 모든 순간",
+   "new_start": 66.2,
+   "new_end": 67.89,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.93,
+   "suno_end": 7.03,
+   "suno_squashed": true,
+   "diff": 59.28
+  },
+  {
+   "i": 27,
+   "line": "Kiss me, trust me",
+   "new_start": 67.89,
+   "new_end": 69.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.04,
+   "suno_end": 7.2,
+   "suno_squashed": true,
+   "diff": 60.86
+  },
+  {
+   "i": 28,
+   "line": "주연 대현 forever",
+   "new_start": 69.18,
+   "new_end": 71.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.2,
+   "suno_end": 7.35,
+   "suno_squashed": true,
+   "diff": 61.98
+  },
+  {
+   "i": 29,
+   "line": "Paris 꿈도 좋지만",
+   "new_start": 71.55,
+   "new_end": 73.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.42,
+   "suno_end": 7.56,
+   "suno_squashed": true,
+   "diff": 64.13
+  },
+  {
+   "i": 30,
+   "line": "너 있는 여기가 heaven",
+   "new_start": 73.5,
+   "new_end": 75.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.56,
+   "suno_end": 7.71,
+   "suno_squashed": true,
+   "diff": 65.94
+  },
+  {
+   "i": 31,
+   "line": "사진보다 선명해",
+   "new_start": 75.46,
+   "new_end": 77.1,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.71,
+   "suno_end": 7.83,
+   "suno_squashed": true,
+   "diff": 67.75
+  },
+  {
+   "i": 32,
+   "line": "Our memories, my love",
+   "new_start": 78.59,
+   "new_end": 80.76,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.83,
+   "suno_end": 8.03,
+   "suno_squashed": true,
+   "diff": 70.76
+  },
+  {
+   "i": 33,
+   "line": "Love you, love you",
+   "new_start": 82.28,
+   "new_end": 84.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.1,
+   "suno_end": 8.27,
+   "suno_squashed": true,
+   "diff": 74.18
+  },
+  {
+   "i": 34,
+   "line": "너와의 모든 순간",
+   "new_start": 84.96,
+   "new_end": 86.73,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.27,
+   "suno_end": 8.38,
+   "suno_squashed": true,
+   "diff": 76.69
+  },
+  {
+   "i": 35,
+   "line": "Feel me, hold me",
+   "new_start": 86.73,
+   "new_end": 89.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.38,
+   "suno_end": 8.53,
+   "suno_squashed": true,
+   "diff": 78.35
+  },
+  {
+   "i": 36,
+   "line": "주연 대현 forever",
+   "new_start": 91.04,
+   "new_end": 92.69,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.54,
+   "suno_end": 8.69,
+   "suno_squashed": true,
+   "diff": 82.5
+  },
+  {
+   "i": 37,
+   "line": "주연아, stay with me",
+   "new_start": 95.78,
+   "new_end": 98.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.75,
+   "suno_end": 10.42,
+   "suno_squashed": true,
+   "diff": 87.03
+  },
+  {
+   "i": 38,
+   "line": "대현아, stay with you",
+   "new_start": 98.96,
+   "new_end": 102.28,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 10.47,
+   "suno_end": 13.96,
+   "suno_squashed": false,
+   "diff": 88.49
+  },
+  {
+   "i": 39,
+   "line": "다음 여행도 너와",
+   "new_start": 102.28,
+   "new_end": 104.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 14.04,
+   "suno_end": 16.38,
+   "suno_squashed": false,
+   "diff": 88.24
+  },
+  {
+   "i": 40,
+   "line": "Forever, just us two",
+   "new_start": 105.73,
+   "new_end": 108.85,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 16.48,
+   "suno_end": 22.43,
+   "suno_squashed": false,
+   "diff": 89.25
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "주연아, can you feel it",
+   "start": 1.1,
+   "end": 10.63
+  },
+  {
+   "text": "대현아, I'm feeling you",
+   "start": 10.63,
+   "end": 13.35
+  },
+  {
+   "text": "너와의 여행 시작돼",
+   "start": 13.35,
+   "end": 16.81
+  },
+  {
+   "text": "Oh baby, let's groove",
+   "start": 16.81,
+   "end": 18.5
+  },
+  {
+   "text": "너는 오늘도 빛나",
+   "start": 20.94,
+   "end": 23.17
+  },
+  {
+   "text": "주연이는 예뻐 2탄",
+   "start": 23.17,
+   "end": 26.13
+  },
+  {
+   "text": "너의 눈빛에 설레",
+   "start": 26.13,
+   "end": 29.03
+  },
+  {
+   "text": "대현아, you got me",
+   "start": 29.03,
+   "end": 32.32
+  },
+  {
+   "text": "부산 밤바다 위에",
+   "start": 32.32,
+   "end": 34.66
+  },
+  {
+   "text": "우리 이름을 적어",
+   "start": 34.66,
+   "end": 36.21
+  },
+  {
+   "text": "제주 바람을 타고",
+   "start": 36.21,
+   "end": 37.78
+  },
+  {
+   "text": "너에게 더 가까이",
+   "start": 37.78,
+   "end": 39.52
+  },
+  {
+   "text": "Every mile, 너만 보여",
+   "start": 39.52,
+   "end": 41.3
+  },
+  {
+   "text": "Every night, 네가 좋아",
+   "start": 41.3,
+   "end": 42.75
+  },
+  {
+   "text": "추억들이 춤을 춰",
+   "start": 42.75,
+   "end": 44.33
+  },
+  {
+   "text": "We shine, we shine",
+   "start": 44.33,
+   "end": 46.22
+  },
+  {
+   "text": "Love you, love you",
+   "start": 46.22,
+   "end": 47.39
+  },
+  {
+   "text": "너와의 모든 순간",
+   "start": 47.39,
+   "end": 49.16
+  },
+  {
+   "text": "Feel me, hold me",
+   "start": 49.16,
+   "end": 51.9
+  },
+  {
+   "text": "주연 대현 forever",
+   "start": 53.64,
+   "end": 57.96
+  },
+  {
+   "text": "너 웃을 때 난 녹아",
+   "start": 57.96,
+   "end": 59.71
+  },
+  {
+   "text": "Oh my baby, so fine",
+   "start": 59.71,
+   "end": 61.22
+  },
+  {
+   "text": "네 손 잡고 달려",
+   "start": 61.22,
+   "end": 62.39
+  },
+  {
+   "text": "Highway to the moonlight",
+   "start": 62.39,
+   "end": 64.32
+  },
+  {
+   "text": "Love you, love you",
+   "start": 64.32,
+   "end": 66.2
+  },
+  {
+   "text": "너와의 모든 순간",
+   "start": 66.2,
+   "end": 67.89
+  },
+  {
+   "text": "Kiss me, trust me",
+   "start": 67.89,
+   "end": 69.18
+  },
+  {
+   "text": "주연 대현 forever",
+   "start": 69.18,
+   "end": 71.55
+  },
+  {
+   "text": "Paris 꿈도 좋지만",
+   "start": 71.55,
+   "end": 73.5
+  },
+  {
+   "text": "너 있는 여기가 heaven",
+   "start": 73.5,
+   "end": 75.46
+  },
+  {
+   "text": "사진보다 선명해",
+   "start": 75.46,
+   "end": 77.1
+  },
+  {
+   "text": "Our memories, my love",
+   "start": 78.59,
+   "end": 80.76
+  },
+  {
+   "text": "Love you, love you",
+   "start": 82.28,
+   "end": 84.96
+  },
+  {
+   "text": "너와의 모든 순간",
+   "start": 84.96,
+   "end": 86.73
+  },
+  {
+   "text": "Feel me, hold me",
+   "start": 86.73,
+   "end": 89.98
+  },
+  {
+   "text": "주연 대현 forever",
+   "start": 91.04,
+   "end": 92.69
+  },
+  {
+   "text": "주연아, stay with me",
+   "start": 95.78,
+   "end": 98.96
+  },
+  {
+   "text": "대현아, stay with you",
+   "start": 98.96,
+   "end": 102.28
+  },
+  {
+   "text": "다음 여행도 너와",
+   "start": 102.28,
+   "end": 104.56
+  },
+  {
+   "text": "Forever, just us two",
+   "start": 105.73,
+   "end": 108.85
+  }
+ ]
+}

@@ -1,0 +1,547 @@
+{
+ "metrics": {
+  "title": "13층",
+  "kind": "collapsed",
+  "track_id": "6abca4e2e3fe1c6b30cf0492",
+  "suno_state": "collapsed",
+  "duration": 142.8,
+  "lines": 30,
+  "anchored": 28,
+  "anchor_ratio": 0.933,
+  "matched_ratio": 0.967,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.802,
+  "max_unanchored_run": 1,
+  "A_chars": 296,
+  "B_chars": 265,
+  "B_unmatched": 3,
+  "char_match": 0.885,
+  "char_exact": 0.878,
+  "unreliable_words": 5,
+  "words": 79,
+  "t_api": 5.78,
+  "audio_MB": 3.26,
+  "cost_usd": 0.0143,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 29,
+  "suno_lines": 74,
+  "vs_suno_ok_n": 15,
+  "vs_suno_ok_median": 60.18,
+  "vs_suno_ok_p90": 63.27
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "딩, 문이 열렸다",
+   "new_start": 12.32,
+   "new_end": 14.34,
+   "anchor": true,
+   "match_ratio": 0.833,
+   "suno_start": 8.06,
+   "suno_end": 14.44,
+   "suno_squashed": false,
+   "diff": 4.26
+  },
+  {
+   "i": 2,
+   "line": "숨이 먼저 멈췄다",
+   "new_start": 14.34,
+   "new_end": 17.09,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 14.6,
+   "suno_end": 19.63,
+   "suno_squashed": false,
+   "diff": -0.26
+  },
+  {
+   "i": 3,
+   "line": "(whisper) 여긴 어디",
+   "new_start": 17.09,
+   "new_end": 19.84,
+   "anchor": false,
+   "match_ratio": 0.364,
+   "suno_start": 15.48,
+   "suno_end": 19.64,
+   "suno_squashed": false,
+   "diff": 1.61
+  },
+  {
+   "i": 4,
+   "line": "No signal, no light",
+   "new_start": 21.42,
+   "new_end": 27.75,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.64,
+   "suno_end": 19.65,
+   "suno_squashed": true,
+   "diff": 1.78
+  },
+  {
+   "i": 5,
+   "line": "분명 12층 눌렀는데",
+   "new_start": 29.54,
+   "new_end": 32.51,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.65,
+   "suno_end": 19.66,
+   "suno_squashed": true,
+   "diff": 9.89
+  },
+  {
+   "i": 6,
+   "line": "숫자가 13에 선다",
+   "new_start": 32.51,
+   "new_end": 35.83,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.66,
+   "suno_end": 19.67,
+   "suno_squashed": true,
+   "diff": 12.84
+  },
+  {
+   "i": 7,
+   "line": "없는 층이라 했잖아",
+   "new_start": 35.83,
+   "new_end": 38.59,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.67,
+   "suno_end": 19.67,
+   "suno_squashed": true,
+   "diff": 16.16
+  },
+  {
+   "i": 8,
+   "line": "내 목소리만 돌아온다",
+   "new_start": 38.59,
+   "new_end": 41.47,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.67,
+   "suno_end": 19.68,
+   "suno_squashed": true,
+   "diff": 18.92
+  },
+  {
+   "i": 9,
+   "line": "복도는 끝이 없고",
+   "new_start": 41.47,
+   "new_end": 43.41,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.68,
+   "suno_end": 19.7,
+   "suno_squashed": true,
+   "diff": 21.79
+  },
+  {
+   "i": 10,
+   "line": "발자국은 내 뒤에",
+   "new_start": 43.41,
+   "new_end": 45.05,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.7,
+   "suno_end": 19.7,
+   "suno_squashed": true,
+   "diff": 23.72
+  },
+  {
+   "i": 11,
+   "line": "Don't look back",
+   "new_start": 45.05,
+   "new_end": 46.62,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.7,
+   "suno_end": 19.71,
+   "suno_squashed": true,
+   "diff": 25.35
+  },
+  {
+   "i": 12,
+   "line": "누가 나를 따라 웃어",
+   "new_start": 48.94,
+   "new_end": 51.04,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 19.71,
+   "suno_end": 19.71,
+   "suno_squashed": true,
+   "diff": 29.23
+  },
+  {
+   "i": 13,
+   "line": "여긴 어디, let me out",
+   "new_start": 52.22,
+   "new_end": 55.22,
+   "anchor": false,
+   "match_ratio": 0.0,
+   "suno_start": 19.71,
+   "suno_end": 19.73,
+   "suno_squashed": true,
+   "diff": 32.51
+  },
+  {
+   "i": 14,
+   "line": "Thirteenth floor, no way down",
+   "new_start": 57.14,
+   "new_end": 60.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.73,
+   "suno_end": 19.75,
+   "suno_squashed": true,
+   "diff": 37.41
+  },
+  {
+   "i": 15,
+   "line": "문마다 내 이름이 떠",
+   "new_start": 60.64,
+   "new_end": 63.79,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.75,
+   "suno_end": 19.75,
+   "suno_squashed": true,
+   "diff": 40.89
+  },
+  {
+   "i": 16,
+   "line": "I'm still here, I'm not alive?",
+   "new_start": 63.79,
+   "new_end": 68.71,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.75,
+   "suno_end": 19.77,
+   "suno_squashed": true,
+   "diff": 44.03
+  },
+  {
+   "i": 17,
+   "line": "여긴 어디 (echo)",
+   "new_start": 70.76,
+   "new_end": 72.28,
+   "anchor": true,
+   "match_ratio": 0.5,
+   "suno_start": 19.77,
+   "suno_end": 19.78,
+   "suno_squashed": true,
+   "diff": 50.99
+  },
+  {
+   "i": 18,
+   "line": "Where am I (echo)",
+   "new_start": 72.28,
+   "new_end": 73.13,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 19.79,
+   "suno_end": 24.26,
+   "suno_squashed": true,
+   "diff": 52.49
+  },
+  {
+   "i": 19,
+   "line": "전화 화면은 검은 눈",
+   "new_start": 84.52,
+   "new_end": 86.62,
+   "anchor": true,
+   "match_ratio": 0.875,
+   "suno_start": 24.34,
+   "suno_end": 30.16,
+   "suno_squashed": false,
+   "diff": 60.18
+  },
+  {
+   "i": 20,
+   "line": "시간은 0시에 묶여",
+   "new_start": 86.62,
+   "new_end": 88.91,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 30.32,
+   "suno_end": 31.31,
+   "suno_squashed": false,
+   "diff": 56.3
+  },
+  {
+   "i": 21,
+   "line": "거울 속 나는 늦게 걷고",
+   "new_start": 88.91,
+   "new_end": 92.08,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 31.37,
+   "suno_end": 33.75,
+   "suno_squashed": false,
+   "diff": 57.54
+  },
+  {
+   "i": 22,
+   "line": "나는 문 앞에 굳어",
+   "new_start": 92.08,
+   "new_end": 95.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 33.87,
+   "suno_end": 36.23,
+   "suno_squashed": false,
+   "diff": 58.21
+  },
+  {
+   "i": 23,
+   "line": "엘리베이터가 속삭여",
+   "new_start": 98.74,
+   "new_end": 101.3,
+   "anchor": true,
+   "match_ratio": 0.778,
+   "suno_start": 36.24,
+   "suno_end": 37.46,
+   "suno_squashed": false,
+   "diff": 62.5
+  },
+  {
+   "i": 24,
+   "line": "도착했습니다",
+   "new_start": 101.3,
+   "new_end": 102.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 37.5,
+   "suno_end": 39.73,
+   "suno_squashed": false,
+   "diff": 63.8
+  },
+  {
+   "i": 25,
+   "line": "Please wake me up",
+   "new_start": 102.55,
+   "new_end": 103.59,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 39.83,
+   "suno_end": 41.89,
+   "suno_squashed": false,
+   "diff": 62.71
+  },
+  {
+   "i": 26,
+   "line": "근데 잠든 적 없잖아",
+   "new_start": 103.59,
+   "new_end": 106.21,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 42.05,
+   "suno_end": 43.26,
+   "suno_squashed": false,
+   "diff": 61.54
+  },
+  {
+   "i": 27,
+   "line": "13층 불이 꺼진다",
+   "new_start": 106.21,
+   "new_end": 109.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 43.39,
+   "suno_end": 46.44,
+   "suno_squashed": false,
+   "diff": 62.81
+  },
+  {
+   "i": 28,
+   "line": "내가 나를 부른다",
+   "new_start": 109.04,
+   "new_end": 111.42,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 46.6,
+   "suno_end": 54.89,
+   "suno_squashed": false,
+   "diff": 62.44
+  },
+  {
+   "i": 29,
+   "line": "여긴 어디, where am I",
+   "new_start": 113.42,
+   "new_end": 115.09,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 55.05,
+   "suno_end": 61.28,
+   "suno_squashed": false,
+   "diff": 58.37
+  },
+  {
+   "i": 30,
+   "line": "딩, 다시 문이 닫힌다",
+   "new_start": 124.97,
+   "new_end": 126.92,
+   "anchor": true,
+   "match_ratio": 0.875,
+   "suno_start": 61.4,
+   "suno_end": 64.87,
+   "suno_squashed": false,
+   "diff": 63.57
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "딩, 문이 열렸다",
+   "start": 12.32,
+   "end": 14.34
+  },
+  {
+   "text": "숨이 먼저 멈췄다",
+   "start": 14.34,
+   "end": 17.09
+  },
+  {
+   "text": "(whisper) 여긴 어디",
+   "start": 17.09,
+   "end": 19.84
+  },
+  {
+   "text": "No signal, no light",
+   "start": 21.42,
+   "end": 27.75
+  },
+  {
+   "text": "분명 12층 눌렀는데",
+   "start": 29.54,
+   "end": 32.51
+  },
+  {
+   "text": "숫자가 13에 선다",
+   "start": 32.51,
+   "end": 35.83
+  },
+  {
+   "text": "없는 층이라 했잖아",
+   "start": 35.83,
+   "end": 38.59
+  },
+  {
+   "text": "내 목소리만 돌아온다",
+   "start": 38.59,
+   "end": 41.47
+  },
+  {
+   "text": "복도는 끝이 없고",
+   "start": 41.47,
+   "end": 43.41
+  },
+  {
+   "text": "발자국은 내 뒤에",
+   "start": 43.41,
+   "end": 45.05
+  },
+  {
+   "text": "Don't look back",
+   "start": 45.05,
+   "end": 46.62
+  },
+  {
+   "text": "누가 나를 따라 웃어",
+   "start": 48.94,
+   "end": 51.04
+  },
+  {
+   "text": "여긴 어디, let me out",
+   "start": 52.22,
+   "end": 55.22
+  },
+  {
+   "text": "Thirteenth floor, no way down",
+   "start": 57.14,
+   "end": 60.64
+  },
+  {
+   "text": "문마다 내 이름이 떠",
+   "start": 60.64,
+   "end": 63.79
+  },
+  {
+   "text": "I'm still here, I'm not alive?",
+   "start": 63.79,
+   "end": 68.71
+  },
+  {
+   "text": "여긴 어디 (echo)",
+   "start": 70.76,
+   "end": 72.28
+  },
+  {
+   "text": "Where am I (echo)",
+   "start": 72.28,
+   "end": 73.13
+  },
+  {
+   "text": "전화 화면은 검은 눈",
+   "start": 84.52,
+   "end": 86.62
+  },
+  {
+   "text": "시간은 0시에 묶여",
+   "start": 86.62,
+   "end": 88.91
+  },
+  {
+   "text": "거울 속 나는 늦게 걷고",
+   "start": 88.91,
+   "end": 92.08
+  },
+  {
+   "text": "나는 문 앞에 굳어",
+   "start": 92.08,
+   "end": 95.94
+  },
+  {
+   "text": "엘리베이터가 속삭여",
+   "start": 98.74,
+   "end": 101.3
+  },
+  {
+   "text": "도착했습니다",
+   "start": 101.3,
+   "end": 102.55
+  },
+  {
+   "text": "Please wake me up",
+   "start": 102.55,
+   "end": 103.59
+  },
+  {
+   "text": "근데 잠든 적 없잖아",
+   "start": 103.59,
+   "end": 106.21
+  },
+  {
+   "text": "13층 불이 꺼진다",
+   "start": 106.21,
+   "end": 109.04
+  },
+  {
+   "text": "내가 나를 부른다",
+   "start": 109.04,
+   "end": 111.42
+  },
+  {
+   "text": "여긴 어디, where am I",
+   "start": 113.42,
+   "end": 115.09
+  },
+  {
+   "text": "딩, 다시 문이 닫힌다",
+   "start": 124.97,
+   "end": 126.92
+  }
+ ]
+}

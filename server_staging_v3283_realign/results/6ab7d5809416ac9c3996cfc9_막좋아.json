@@ -1,0 +1,717 @@
+{
+ "metrics": {
+  "title": "막좋아",
+  "kind": "collapsed",
+  "track_id": "6ab7d5809416ac9c3996cfc9",
+  "suno_state": "collapsed",
+  "duration": 160.0,
+  "lines": 40,
+  "anchored": 40,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.805,
+  "max_unanchored_run": 0,
+  "A_chars": 284,
+  "B_chars": 285,
+  "B_unmatched": 9,
+  "char_match": 0.972,
+  "char_exact": 0.968,
+  "unreliable_words": 25,
+  "words": 130,
+  "t_api": 8.46,
+  "audio_MB": 3.68,
+  "cost_usd": 0.016,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 28,
+  "suno_lines": 65,
+  "vs_suno_ok_n": 3,
+  "vs_suno_ok_median": 115.28,
+  "vs_suno_ok_p90": 115.96
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "너 웃으면 나 흔들려",
+   "new_start": 18.96,
+   "new_end": 23.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.42,
+   "suno_end": 19.43,
+   "suno_squashed": true,
+   "diff": -0.46
+  },
+  {
+   "i": 2,
+   "line": "잘생긴 그 눈빛에",
+   "new_start": 23.2,
+   "new_end": 26.73,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.43,
+   "suno_end": 19.43,
+   "suno_squashed": true,
+   "diff": 3.77
+  },
+  {
+   "i": 3,
+   "line": "너 걸어오면 멈춰",
+   "new_start": 26.73,
+   "new_end": 28.82,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.43,
+   "suno_end": 19.44,
+   "suno_squashed": true,
+   "diff": 7.3
+  },
+  {
+   "i": 4,
+   "line": "예쁜 넌 내 리듬",
+   "new_start": 28.82,
+   "new_end": 32.16,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 19.44,
+   "suno_end": 19.45,
+   "suno_squashed": true,
+   "diff": 9.38
+  },
+  {
+   "i": 5,
+   "line": "주연, 너만 보면",
+   "new_start": 36.82,
+   "new_end": 38.24,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.45,
+   "suno_end": 19.46,
+   "suno_squashed": true,
+   "diff": 17.37
+  },
+  {
+   "i": 6,
+   "line": "심장이 박자를 타",
+   "new_start": 38.24,
+   "new_end": 39.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.46,
+   "suno_end": 19.46,
+   "suno_squashed": true,
+   "diff": 18.78
+  },
+  {
+   "i": 7,
+   "line": "대현, 너의 이름",
+   "new_start": 41.4,
+   "new_end": 42.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.46,
+   "suno_end": 19.47,
+   "suno_squashed": true,
+   "diff": 21.94
+  },
+  {
+   "i": 8,
+   "line": "입술에 자꾸 맴돌아",
+   "new_start": 42.96,
+   "new_end": 45.42,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.47,
+   "suno_end": 19.48,
+   "suno_squashed": true,
+   "diff": 23.49
+  },
+  {
+   "i": 9,
+   "line": "말해줘, 너도 같다고",
+   "new_start": 45.42,
+   "new_end": 47.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.48,
+   "suno_end": 19.49,
+   "suno_squashed": true,
+   "diff": 25.94
+  },
+  {
+   "i": 10,
+   "line": "이미 난 다 들켰어",
+   "new_start": 47.64,
+   "new_end": 49.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.49,
+   "suno_end": 19.5,
+   "suno_squashed": true,
+   "diff": 28.15
+  },
+  {
+   "i": 11,
+   "line": "서로를 향한 맘",
+   "new_start": 49.94,
+   "new_end": 52.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.5,
+   "suno_end": 19.5,
+   "suno_squashed": true,
+   "diff": 30.44
+  },
+  {
+   "i": 12,
+   "line": "숨길 수 없잖아",
+   "new_start": 52.2,
+   "new_end": 54.28,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.5,
+   "suno_end": 19.51,
+   "suno_squashed": true,
+   "diff": 32.7
+  },
+  {
+   "i": 13,
+   "line": "너를 좋아해, 막 사랑해",
+   "new_start": 54.28,
+   "new_end": 59.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.51,
+   "suno_end": 19.52,
+   "suno_squashed": true,
+   "diff": 34.76
+  },
+  {
+   "i": 14,
+   "line": "주연 대현, 둘이면 돼",
+   "new_start": 59.2,
+   "new_end": 62.44,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.52,
+   "suno_end": 19.53,
+   "suno_squashed": true,
+   "diff": 39.68
+  },
+  {
+   "i": 15,
+   "line": "넌 정말 잘생겼어",
+   "new_start": 62.44,
+   "new_end": 64.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.53,
+   "suno_end": 19.53,
+   "suno_squashed": true,
+   "diff": 42.91
+  },
+  {
+   "i": 16,
+   "line": "넌 너무 예뻐 보여",
+   "new_start": 67.12,
+   "new_end": 69.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.54,
+   "suno_end": 19.54,
+   "suno_squashed": true,
+   "diff": 47.58
+  },
+  {
+   "i": 17,
+   "line": "톡톡 튀는 우리 케미",
+   "new_start": 73.7,
+   "new_end": 75.44,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.55,
+   "suno_end": 19.56,
+   "suno_squashed": true,
+   "diff": 54.15
+  },
+  {
+   "i": 18,
+   "line": "두근대는 이 멜로디",
+   "new_start": 75.44,
+   "new_end": 77.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.56,
+   "suno_end": 19.56,
+   "suno_squashed": true,
+   "diff": 55.88
+  },
+  {
+   "i": 19,
+   "line": "대현 주연 이름 사이",
+   "new_start": 77.66,
+   "new_end": 79.82,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.56,
+   "suno_end": 19.57,
+   "suno_squashed": true,
+   "diff": 58.1
+  },
+  {
+   "i": 20,
+   "line": "사랑이 라임을 타지",
+   "new_start": 79.82,
+   "new_end": 82.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.57,
+   "suno_end": 19.58,
+   "suno_squashed": true,
+   "diff": 60.25
+  },
+  {
+   "i": 21,
+   "line": "너만 보면 웃음 나",
+   "new_start": 82.03,
+   "new_end": 83.34,
+   "anchor": true,
+   "match_ratio": 0.857,
+   "suno_start": 19.58,
+   "suno_end": 19.59,
+   "suno_squashed": true,
+   "diff": 62.45
+  },
+  {
+   "i": 22,
+   "line": "나도 그래, 너 때문에",
+   "new_start": 83.34,
+   "new_end": 85.3,
+   "anchor": true,
+   "match_ratio": 0.625,
+   "suno_start": 19.59,
+   "suno_end": 19.6,
+   "suno_squashed": true,
+   "diff": 63.75
+  },
+  {
+   "i": 23,
+   "line": "발끝부터 온 맘까지",
+   "new_start": 85.3,
+   "new_end": 87.48,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.6,
+   "suno_end": 19.6,
+   "suno_squashed": true,
+   "diff": 65.7
+  },
+  {
+   "i": 24,
+   "line": "너에게 춤을 춰",
+   "new_start": 88.48,
+   "new_end": 91.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.6,
+   "suno_end": 19.61,
+   "suno_squashed": true,
+   "diff": 68.88
+  },
+  {
+   "i": 25,
+   "line": "너를 좋아해, 막 사랑해",
+   "new_start": 91.04,
+   "new_end": 95.48,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.61,
+   "suno_end": 19.62,
+   "suno_squashed": true,
+   "diff": 71.43
+  },
+  {
+   "i": 26,
+   "line": "주연 대현, 둘이면 돼",
+   "new_start": 95.48,
+   "new_end": 98.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.62,
+   "suno_end": 19.63,
+   "suno_squashed": true,
+   "diff": 75.86
+  },
+  {
+   "i": 27,
+   "line": "손잡고 춤을 춰",
+   "new_start": 98.88,
+   "new_end": 101.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.63,
+   "suno_end": 19.63,
+   "suno_squashed": true,
+   "diff": 79.25
+  },
+  {
+   "i": 28,
+   "line": "밤새 웃어도 좋아",
+   "new_start": 103.18,
+   "new_end": 105.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.64,
+   "suno_end": 19.64,
+   "suno_squashed": true,
+   "diff": 83.54
+  },
+  {
+   "i": 29,
+   "line": "너에게 말할래",
+   "new_start": 109.96,
+   "new_end": 112.1,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.65,
+   "suno_end": 19.65,
+   "suno_squashed": true,
+   "diff": 90.31
+  },
+  {
+   "i": 30,
+   "line": "나도 고백할래",
+   "new_start": 112.1,
+   "new_end": 113.48,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 19.65,
+   "suno_end": 19.66,
+   "suno_squashed": true,
+   "diff": 92.45
+  },
+  {
+   "i": 31,
+   "line": "내일도 모레도",
+   "new_start": 113.48,
+   "new_end": 116.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.66,
+   "suno_end": 19.66,
+   "suno_squashed": true,
+   "diff": 93.82
+  },
+  {
+   "i": 32,
+   "line": "너만 보고 싶어",
+   "new_start": 116.02,
+   "new_end": 119.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.66,
+   "suno_end": 19.67,
+   "suno_squashed": true,
+   "diff": 96.36
+  },
+  {
+   "i": 33,
+   "line": "너를 좋아해, 막 사랑해",
+   "new_start": 120.18,
+   "new_end": 123.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.67,
+   "suno_end": 19.68,
+   "suno_squashed": true,
+   "diff": 100.51
+  },
+  {
+   "i": 34,
+   "line": "주연 대현, 둘이면 돼",
+   "new_start": 124.98,
+   "new_end": 128.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.68,
+   "suno_end": 19.69,
+   "suno_squashed": true,
+   "diff": 105.3
+  },
+  {
+   "i": 35,
+   "line": "내 맘은 네 편이야",
+   "new_start": 128.46,
+   "new_end": 130.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.69,
+   "suno_end": 19.69,
+   "suno_squashed": true,
+   "diff": 108.77
+  },
+  {
+   "i": 36,
+   "line": "내 전부는 너야",
+   "new_start": 133.54,
+   "new_end": 135.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.7,
+   "suno_end": 19.7,
+   "suno_squashed": true,
+   "diff": 113.84
+  },
+  {
+   "i": 37,
+   "line": "대현아, 가까이 와",
+   "new_start": 138.18,
+   "new_end": 140.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.7,
+   "suno_end": 24.65,
+   "suno_squashed": true,
+   "diff": 118.48
+  },
+  {
+   "i": 38,
+   "line": "주연아, 놓지 않아",
+   "new_start": 140.86,
+   "new_end": 143.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 24.73,
+   "suno_end": 27.79,
+   "suno_squashed": false,
+   "diff": 116.13
+  },
+  {
+   "i": 39,
+   "line": "우리 둘 사랑해",
+   "new_start": 143.18,
+   "new_end": 145.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 27.9,
+   "suno_end": 32.66,
+   "suno_squashed": false,
+   "diff": 115.28
+  },
+  {
+   "i": 40,
+   "line": "끝없이 반짝여",
+   "new_start": 145.84,
+   "new_end": 147.74,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 46.4,
+   "suno_end": 49.26,
+   "suno_squashed": false,
+   "diff": 99.44
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "너 웃으면 나 흔들려",
+   "start": 18.96,
+   "end": 23.2
+  },
+  {
+   "text": "잘생긴 그 눈빛에",
+   "start": 23.2,
+   "end": 26.73
+  },
+  {
+   "text": "너 걸어오면 멈춰",
+   "start": 26.73,
+   "end": 28.82
+  },
+  {
+   "text": "예쁜 넌 내 리듬",
+   "start": 28.82,
+   "end": 32.16
+  },
+  {
+   "text": "주연, 너만 보면",
+   "start": 36.82,
+   "end": 38.24
+  },
+  {
+   "text": "심장이 박자를 타",
+   "start": 38.24,
+   "end": 39.84
+  },
+  {
+   "text": "대현, 너의 이름",
+   "start": 41.4,
+   "end": 42.96
+  },
+  {
+   "text": "입술에 자꾸 맴돌아",
+   "start": 42.96,
+   "end": 45.42
+  },
+  {
+   "text": "말해줘, 너도 같다고",
+   "start": 45.42,
+   "end": 47.64
+  },
+  {
+   "text": "이미 난 다 들켰어",
+   "start": 47.64,
+   "end": 49.94
+  },
+  {
+   "text": "서로를 향한 맘",
+   "start": 49.94,
+   "end": 52.2
+  },
+  {
+   "text": "숨길 수 없잖아",
+   "start": 52.2,
+   "end": 54.28
+  },
+  {
+   "text": "너를 좋아해, 막 사랑해",
+   "start": 54.28,
+   "end": 59.2
+  },
+  {
+   "text": "주연 대현, 둘이면 돼",
+   "start": 59.2,
+   "end": 62.44
+  },
+  {
+   "text": "넌 정말 잘생겼어",
+   "start": 62.44,
+   "end": 64.64
+  },
+  {
+   "text": "넌 너무 예뻐 보여",
+   "start": 67.12,
+   "end": 69.16
+  },
+  {
+   "text": "톡톡 튀는 우리 케미",
+   "start": 73.7,
+   "end": 75.44
+  },
+  {
+   "text": "두근대는 이 멜로디",
+   "start": 75.44,
+   "end": 77.66
+  },
+  {
+   "text": "대현 주연 이름 사이",
+   "start": 77.66,
+   "end": 79.82
+  },
+  {
+   "text": "사랑이 라임을 타지",
+   "start": 79.82,
+   "end": 82.03
+  },
+  {
+   "text": "너만 보면 웃음 나",
+   "start": 82.03,
+   "end": 83.34
+  },
+  {
+   "text": "나도 그래, 너 때문에",
+   "start": 83.34,
+   "end": 85.3
+  },
+  {
+   "text": "발끝부터 온 맘까지",
+   "start": 85.3,
+   "end": 87.48
+  },
+  {
+   "text": "너에게 춤을 춰",
+   "start": 88.48,
+   "end": 91.04
+  },
+  {
+   "text": "너를 좋아해, 막 사랑해",
+   "start": 91.04,
+   "end": 95.48
+  },
+  {
+   "text": "주연 대현, 둘이면 돼",
+   "start": 95.48,
+   "end": 98.88
+  },
+  {
+   "text": "손잡고 춤을 춰",
+   "start": 98.88,
+   "end": 101.14
+  },
+  {
+   "text": "밤새 웃어도 좋아",
+   "start": 103.18,
+   "end": 105.06
+  },
+  {
+   "text": "너에게 말할래",
+   "start": 109.96,
+   "end": 112.1
+  },
+  {
+   "text": "나도 고백할래",
+   "start": 112.1,
+   "end": 113.48
+  },
+  {
+   "text": "내일도 모레도",
+   "start": 113.48,
+   "end": 116.02
+  },
+  {
+   "text": "너만 보고 싶어",
+   "start": 116.02,
+   "end": 119.14
+  },
+  {
+   "text": "너를 좋아해, 막 사랑해",
+   "start": 120.18,
+   "end": 123.94
+  },
+  {
+   "text": "주연 대현, 둘이면 돼",
+   "start": 124.98,
+   "end": 128.46
+  },
+  {
+   "text": "내 맘은 네 편이야",
+   "start": 128.46,
+   "end": 130.64
+  },
+  {
+   "text": "내 전부는 너야",
+   "start": 133.54,
+   "end": 135.9
+  },
+  {
+   "text": "대현아, 가까이 와",
+   "start": 138.18,
+   "end": 140.86
+  },
+  {
+   "text": "주연아, 놓지 않아",
+   "start": 140.86,
+   "end": 143.18
+  },
+  {
+   "text": "우리 둘 사랑해",
+   "start": 143.18,
+   "end": 145.84
+  },
+  {
+   "text": "끝없이 반짝여",
+   "start": 145.84,
+   "end": 147.74
+  }
+ ]
+}

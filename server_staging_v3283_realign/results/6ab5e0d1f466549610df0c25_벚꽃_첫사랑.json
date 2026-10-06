@@ -1,0 +1,377 @@
+{
+ "metrics": {
+  "title": "벚꽃 첫사랑",
+  "kind": "collapsed",
+  "track_id": "6ab5e0d1f466549610df0c25",
+  "suno_state": "collapsed",
+  "duration": 94.5,
+  "lines": 20,
+  "anchored": 20,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.852,
+  "max_unanchored_run": 0,
+  "A_chars": 157,
+  "B_chars": 158,
+  "B_unmatched": 1,
+  "char_match": 1.0,
+  "char_exact": 0.994,
+  "unreliable_words": 0,
+  "words": 66,
+  "t_api": 8.35,
+  "audio_MB": 2.12,
+  "cost_usd": 0.0095,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 15,
+  "suno_lines": 34,
+  "vs_suno_ok_n": 1,
+  "vs_suno_ok_median": 66.24,
+  "vs_suno_ok_p90": 66.24
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "벚꽃이 톡, 너를 불러",
+   "new_start": 2.32,
+   "new_end": 7.48,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.88,
+   "suno_end": 2.9,
+   "suno_squashed": true,
+   "diff": -0.56
+  },
+  {
+   "i": 2,
+   "line": "내 맘도 쿵, 너만 따라",
+   "new_start": 9.82,
+   "new_end": 14.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.9,
+   "suno_end": 2.92,
+   "suno_squashed": true,
+   "diff": 6.92
+  },
+  {
+   "i": 3,
+   "line": "너, 처음 본 그 순간",
+   "new_start": 18.86,
+   "new_end": 21.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.93,
+   "suno_end": 2.95,
+   "suno_squashed": true,
+   "diff": 15.93
+  },
+  {
+   "i": 4,
+   "line": "봄바람이 박자 맞춰",
+   "new_start": 21.94,
+   "new_end": 24.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.95,
+   "suno_end": 2.96,
+   "suno_squashed": true,
+   "diff": 18.99
+  },
+  {
+   "i": 5,
+   "line": "수줍게 웃던 네 눈빛",
+   "new_start": 24.54,
+   "new_end": 28.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.96,
+   "suno_end": 2.98,
+   "suno_squashed": true,
+   "diff": 21.58
+  },
+  {
+   "i": 6,
+   "line": "첫사랑이 시작됐어",
+   "new_start": 28.16,
+   "new_end": 30.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.98,
+   "suno_end": 3.0,
+   "suno_squashed": true,
+   "diff": 25.18
+  },
+  {
+   "i": 7,
+   "line": "너와 나, 두근두근",
+   "new_start": 33.6,
+   "new_end": 35.99,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.01,
+   "suno_end": 3.03,
+   "suno_squashed": true,
+   "diff": 30.59
+  },
+  {
+   "i": 8,
+   "line": "벚꽃 팡팡, 맘이 반짝",
+   "new_start": 35.99,
+   "new_end": 39.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.03,
+   "suno_end": 3.05,
+   "suno_squashed": true,
+   "diff": 32.96
+  },
+  {
+   "i": 9,
+   "line": "손잡고 춤추고 싶어",
+   "new_start": 39.04,
+   "new_end": 42.93,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.05,
+   "suno_end": 3.07,
+   "suno_squashed": true,
+   "diff": 36.0
+  },
+  {
+   "i": 10,
+   "line": "오늘은 너에게 갈래",
+   "new_start": 42.93,
+   "new_end": 46.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.07,
+   "suno_end": 3.08,
+   "suno_squashed": true,
+   "diff": 39.87
+  },
+  {
+   "i": 11,
+   "line": "톡톡, 네 이름 비트 위로",
+   "new_start": 48.24,
+   "new_end": 51.43,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.09,
+   "suno_end": 3.11,
+   "suno_squashed": true,
+   "diff": 45.15
+  },
+  {
+   "i": 12,
+   "line": "콕콕, 내 맘에 찍힌 신호",
+   "new_start": 51.43,
+   "new_end": 54.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.11,
+   "suno_end": 3.14,
+   "suno_squashed": true,
+   "diff": 48.32
+  },
+  {
+   "i": 13,
+   "line": "벚꽃길 달려, 리듬 타고",
+   "new_start": 54.96,
+   "new_end": 58.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.14,
+   "suno_end": 3.16,
+   "suno_squashed": true,
+   "diff": 51.82
+  },
+  {
+   "i": 14,
+   "line": "너와 나, 반짝 불꽃처럼",
+   "new_start": 58.34,
+   "new_end": 61.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.16,
+   "suno_end": 3.18,
+   "suno_squashed": true,
+   "diff": 55.18
+  },
+  {
+   "i": 15,
+   "line": "너와 나, 두근두근",
+   "new_start": 63.1,
+   "new_end": 65.61,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.19,
+   "suno_end": 3.21,
+   "suno_squashed": true,
+   "diff": 59.91
+  },
+  {
+   "i": 16,
+   "line": "벚꽃 팡팡, 맘이 반짝",
+   "new_start": 65.61,
+   "new_end": 69.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.21,
+   "suno_end": 3.22,
+   "suno_squashed": true,
+   "diff": 62.4
+  },
+  {
+   "i": 17,
+   "line": "네 곁에 더 가까이",
+   "new_start": 69.12,
+   "new_end": 73.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.22,
+   "suno_end": 3.24,
+   "suno_squashed": true,
+   "diff": 65.9
+  },
+  {
+   "i": 18,
+   "line": "내 첫사랑은 너야",
+   "new_start": 73.26,
+   "new_end": 75.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.24,
+   "suno_end": 3.26,
+   "suno_squashed": true,
+   "diff": 70.02
+  },
+  {
+   "i": 19,
+   "line": "벚꽃 아래, 너와 나",
+   "new_start": 77.26,
+   "new_end": 80.52,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.27,
+   "suno_end": 14.2,
+   "suno_squashed": true,
+   "diff": 73.99
+  },
+  {
+   "i": 20,
+   "line": "첫사랑처럼 빛나",
+   "new_start": 80.52,
+   "new_end": 82.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 14.28,
+   "suno_end": 21.95,
+   "suno_squashed": false,
+   "diff": 66.24
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "벚꽃이 톡, 너를 불러",
+   "start": 2.32,
+   "end": 7.48
+  },
+  {
+   "text": "내 맘도 쿵, 너만 따라",
+   "start": 9.82,
+   "end": 14.9
+  },
+  {
+   "text": "너, 처음 본 그 순간",
+   "start": 18.86,
+   "end": 21.94
+  },
+  {
+   "text": "봄바람이 박자 맞춰",
+   "start": 21.94,
+   "end": 24.54
+  },
+  {
+   "text": "수줍게 웃던 네 눈빛",
+   "start": 24.54,
+   "end": 28.16
+  },
+  {
+   "text": "첫사랑이 시작됐어",
+   "start": 28.16,
+   "end": 30.88
+  },
+  {
+   "text": "너와 나, 두근두근",
+   "start": 33.6,
+   "end": 35.99
+  },
+  {
+   "text": "벚꽃 팡팡, 맘이 반짝",
+   "start": 35.99,
+   "end": 39.04
+  },
+  {
+   "text": "손잡고 춤추고 싶어",
+   "start": 39.04,
+   "end": 42.93
+  },
+  {
+   "text": "오늘은 너에게 갈래",
+   "start": 42.93,
+   "end": 46.18
+  },
+  {
+   "text": "톡톡, 네 이름 비트 위로",
+   "start": 48.24,
+   "end": 51.43
+  },
+  {
+   "text": "콕콕, 내 맘에 찍힌 신호",
+   "start": 51.43,
+   "end": 54.96
+  },
+  {
+   "text": "벚꽃길 달려, 리듬 타고",
+   "start": 54.96,
+   "end": 58.34
+  },
+  {
+   "text": "너와 나, 반짝 불꽃처럼",
+   "start": 58.34,
+   "end": 61.12
+  },
+  {
+   "text": "너와 나, 두근두근",
+   "start": 63.1,
+   "end": 65.61
+  },
+  {
+   "text": "벚꽃 팡팡, 맘이 반짝",
+   "start": 65.61,
+   "end": 69.12
+  },
+  {
+   "text": "네 곁에 더 가까이",
+   "start": 69.12,
+   "end": 73.26
+  },
+  {
+   "text": "내 첫사랑은 너야",
+   "start": 73.26,
+   "end": 75.4
+  },
+  {
+   "text": "벚꽃 아래, 너와 나",
+   "start": 77.26,
+   "end": 80.52
+  },
+  {
+   "text": "첫사랑처럼 빛나",
+   "start": 80.52,
+   "end": 82.88
+  }
+ ]
+}

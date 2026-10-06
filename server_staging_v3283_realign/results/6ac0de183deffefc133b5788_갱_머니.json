@@ -1,0 +1,717 @@
+{
+ "metrics": {
+  "title": "갱 머니",
+  "kind": "collapsed",
+  "track_id": "6ac0de183deffefc133b5788",
+  "suno_state": "collapsed",
+  "duration": 99.6,
+  "lines": 40,
+  "anchored": 39,
+  "anchor_ratio": 0.975,
+  "matched_ratio": 0.975,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.862,
+  "max_unanchored_run": 1,
+  "A_chars": 433,
+  "B_chars": 494,
+  "B_unmatched": 95,
+  "char_match": 0.921,
+  "char_exact": 0.917,
+  "unreliable_words": 6,
+  "words": 163,
+  "t_api": 8.64,
+  "audio_MB": 2.28,
+  "cost_usd": 0.01,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 21,
+  "suno_lines": 58,
+  "vs_suno_ok_n": 3,
+  "vs_suno_ok_median": 75.16,
+  "vs_suno_ok_p90": 76.32
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "오늘도 지갑이 춤춰",
+   "new_start": 0.0,
+   "new_end": 2.39,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.89,
+   "suno_end": 0.89,
+   "suno_squashed": true,
+   "diff": -0.89
+  },
+  {
+   "i": 2,
+   "line": "swipe, swipe, 끝이 안 보여",
+   "new_start": 2.39,
+   "new_end": 4.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.89,
+   "suno_end": 0.9,
+   "suno_squashed": true,
+   "diff": 1.5
+  },
+  {
+   "i": 3,
+   "line": "flight 타고 밤 위로",
+   "new_start": 4.63,
+   "new_end": 5.67,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.9,
+   "suno_end": 0.9,
+   "suno_squashed": true,
+   "diff": 3.73
+  },
+  {
+   "i": 4,
+   "line": "gang gang, we go up",
+   "new_start": 5.67,
+   "new_end": 7.88,
+   "anchor": true,
+   "match_ratio": 0.714,
+   "suno_start": 0.9,
+   "suno_end": 0.91,
+   "suno_squashed": true,
+   "diff": 4.77
+  },
+  {
+   "i": 5,
+   "line": "그렇게 또 샀어?",
+   "new_start": 14.34,
+   "new_end": 15.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.91,
+   "suno_end": 0.91,
+   "suno_squashed": true,
+   "diff": 13.43
+  },
+  {
+   "i": 6,
+   "line": "사도 사도 남아돌아",
+   "new_start": 15.94,
+   "new_end": 17.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.91,
+   "suno_end": 0.91,
+   "suno_squashed": true,
+   "diff": 15.03
+  },
+  {
+   "i": 7,
+   "line": "비행기표 또 끊어?",
+   "new_start": 17.12,
+   "new_end": 18.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.91,
+   "suno_end": 0.92,
+   "suno_squashed": true,
+   "diff": 16.21
+  },
+  {
+   "i": 8,
+   "line": "runway 위로 바로 올라",
+   "new_start": 18.4,
+   "new_end": 20.69,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.92,
+   "suno_end": 0.92,
+   "suno_squashed": true,
+   "diff": 17.48
+  },
+  {
+   "i": 9,
+   "line": "허슬은 언제 쉬어?",
+   "new_start": 20.69,
+   "new_end": 22.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.92,
+   "suno_end": 0.93,
+   "suno_squashed": true,
+   "diff": 19.77
+  },
+  {
+   "i": 10,
+   "line": "잠깐도 못 쉬어",
+   "new_start": 22.64,
+   "new_end": 23.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.93,
+   "suno_end": 0.93,
+   "suno_squashed": true,
+   "diff": 21.71
+  },
+  {
+   "i": 11,
+   "line": "눈빛이 왜 빛나?",
+   "new_start": 23.9,
+   "new_end": 25.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.93,
+   "suno_end": 0.93,
+   "suno_squashed": true,
+   "diff": 22.97
+  },
+  {
+   "i": 12,
+   "line": "money talk, 난 들어",
+   "new_start": 25.18,
+   "new_end": 27.42,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.93,
+   "suno_end": 0.94,
+   "suno_squashed": true,
+   "diff": 24.25
+  },
+  {
+   "i": 13,
+   "line": "도시가 작아 보여",
+   "new_start": 27.42,
+   "new_end": 29.8,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.94,
+   "suno_end": 0.94,
+   "suno_squashed": true,
+   "diff": 26.48
+  },
+  {
+   "i": 14,
+   "line": "우린 구름 위로",
+   "new_start": 29.8,
+   "new_end": 31.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.94,
+   "suno_end": 0.94,
+   "suno_squashed": true,
+   "diff": 28.86
+  },
+  {
+   "i": 15,
+   "line": "너와 나의 리듬",
+   "new_start": 31.5,
+   "new_end": 33.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.94,
+   "suno_end": 0.95,
+   "suno_squashed": true,
+   "diff": 30.56
+  },
+  {
+   "i": 16,
+   "line": "full speed, no limit",
+   "new_start": 33.26,
+   "new_end": 34.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.95,
+   "suno_end": 0.95,
+   "suno_squashed": true,
+   "diff": 32.32
+  },
+  {
+   "i": 17,
+   "line": "돈 많아 매일 써도",
+   "new_start": 34.6,
+   "new_end": 36.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.95,
+   "suno_end": 0.95,
+   "suno_squashed": true,
+   "diff": 33.65
+  },
+  {
+   "i": 18,
+   "line": "남아돌아, 더 돌아",
+   "new_start": 36.4,
+   "new_end": 37.83,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.95,
+   "suno_end": 0.96,
+   "suno_squashed": true,
+   "diff": 35.45
+  },
+  {
+   "i": 19,
+   "line": "hustle all day, all night",
+   "new_start": 37.83,
+   "new_end": 39.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.96,
+   "suno_end": 0.96,
+   "suno_squashed": true,
+   "diff": 36.87
+  },
+  {
+   "i": 20,
+   "line": "gang gang, higher flight",
+   "new_start": 40.88,
+   "new_end": 46.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.96,
+   "suno_end": 0.97,
+   "suno_squashed": true,
+   "diff": 39.92
+  },
+  {
+   "i": 21,
+   "line": "카드 긁어 click clack",
+   "new_start": 46.68,
+   "new_end": 50.74,
+   "anchor": false,
+   "match_ratio": 0.143,
+   "suno_start": 0.97,
+   "suno_end": 0.97,
+   "suno_squashed": true,
+   "diff": 45.71
+  },
+  {
+   "i": 22,
+   "line": "또 울려, cash back",
+   "new_start": 50.74,
+   "new_end": 52.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.97,
+   "suno_end": 0.98,
+   "suno_squashed": true,
+   "diff": 49.77
+  },
+  {
+   "i": 23,
+   "line": "랩은 착착, 박자에 딱",
+   "new_start": 52.2,
+   "new_end": 53.78,
+   "anchor": true,
+   "match_ratio": 0.875,
+   "suno_start": 0.98,
+   "suno_end": 0.98,
+   "suno_squashed": true,
+   "diff": 51.22
+  },
+  {
+   "i": 24,
+   "line": "넌 말해, bring it back",
+   "new_start": 53.78,
+   "new_end": 55.62,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.98,
+   "suno_end": 0.98,
+   "suno_squashed": true,
+   "diff": 52.8
+  },
+  {
+   "i": 25,
+   "line": "돈 많아 매일 써도",
+   "new_start": 55.62,
+   "new_end": 56.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.99,
+   "suno_end": 0.99,
+   "suno_squashed": true,
+   "diff": 54.63
+  },
+  {
+   "i": 26,
+   "line": "남아돌아, 더 돌아",
+   "new_start": 56.86,
+   "new_end": 58.22,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.99,
+   "suno_end": 0.99,
+   "suno_squashed": true,
+   "diff": 55.87
+  },
+  {
+   "i": 27,
+   "line": "hustle all day, all night",
+   "new_start": 58.22,
+   "new_end": 59.9,
+   "anchor": true,
+   "match_ratio": 0.85,
+   "suno_start": 0.99,
+   "suno_end": 1.0,
+   "suno_squashed": true,
+   "diff": 57.23
+  },
+  {
+   "i": 28,
+   "line": "gang gang, higher flight",
+   "new_start": 59.9,
+   "new_end": 63.22,
+   "anchor": true,
+   "match_ratio": 0.55,
+   "suno_start": 1.0,
+   "suno_end": 1.0,
+   "suno_squashed": true,
+   "diff": 58.91
+  },
+  {
+   "i": 29,
+   "line": "높이 올라 무섭지 않아?",
+   "new_start": 63.22,
+   "new_end": 65.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.0,
+   "suno_end": 1.01,
+   "suno_squashed": true,
+   "diff": 62.22
+  },
+  {
+   "i": 30,
+   "line": "네 손 잡아 괜찮아",
+   "new_start": 65.34,
+   "new_end": 66.78,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.01,
+   "suno_end": 1.01,
+   "suno_squashed": true,
+   "diff": 64.33
+  },
+  {
+   "i": 31,
+   "line": "구름 아래 불빛 바다",
+   "new_start": 66.78,
+   "new_end": 68.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.01,
+   "suno_end": 1.01,
+   "suno_squashed": true,
+   "diff": 65.77
+  },
+  {
+   "i": 32,
+   "line": "we shine, never down",
+   "new_start": 68.66,
+   "new_end": 70.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.01,
+   "suno_end": 1.02,
+   "suno_squashed": true,
+   "diff": 67.65
+  },
+  {
+   "i": 33,
+   "line": "돈 많아 매일 써도",
+   "new_start": 70.54,
+   "new_end": 71.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.02,
+   "suno_end": 1.02,
+   "suno_squashed": true,
+   "diff": 69.52
+  },
+  {
+   "i": 34,
+   "line": "남아돌아, 더 돌아",
+   "new_start": 71.9,
+   "new_end": 73.39,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.02,
+   "suno_end": 1.02,
+   "suno_squashed": true,
+   "diff": 70.88
+  },
+  {
+   "i": 35,
+   "line": "hustle all day, all night",
+   "new_start": 73.39,
+   "new_end": 75.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.02,
+   "suno_end": 1.03,
+   "suno_squashed": true,
+   "diff": 72.36
+  },
+  {
+   "i": 36,
+   "line": "gang gang, higher flight",
+   "new_start": 75.46,
+   "new_end": 78.46,
+   "anchor": true,
+   "match_ratio": 0.8,
+   "suno_start": 1.03,
+   "suno_end": 1.03,
+   "suno_squashed": true,
+   "diff": 74.43
+  },
+  {
+   "i": 37,
+   "line": "다음 도시는 어디야?",
+   "new_start": 78.46,
+   "new_end": 80.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 1.04,
+   "suno_end": 3.9,
+   "suno_squashed": true,
+   "diff": 77.42
+  },
+  {
+   "i": 38,
+   "line": "네가 찍어, 바로 가",
+   "new_start": 80.54,
+   "new_end": 82.22,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.93,
+   "suno_end": 6.96,
+   "suno_squashed": false,
+   "diff": 76.61
+  },
+  {
+   "i": 39,
+   "line": "밤새 웃고 날아가",
+   "new_start": 82.22,
+   "new_end": 84.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.06,
+   "suno_end": 15.53,
+   "suno_squashed": false,
+   "diff": 75.16
+  },
+  {
+   "i": 40,
+   "line": "we own this flight",
+   "new_start": 84.18,
+   "new_end": 85.8,
+   "anchor": true,
+   "match_ratio": 0.933,
+   "suno_start": 24.07,
+   "suno_end": 29.23,
+   "suno_squashed": false,
+   "diff": 60.11
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "오늘도 지갑이 춤춰",
+   "start": 0.0,
+   "end": 2.39
+  },
+  {
+   "text": "swipe, swipe, 끝이 안 보여",
+   "start": 2.39,
+   "end": 4.63
+  },
+  {
+   "text": "flight 타고 밤 위로",
+   "start": 4.63,
+   "end": 5.67
+  },
+  {
+   "text": "gang gang, we go up",
+   "start": 5.67,
+   "end": 7.88
+  },
+  {
+   "text": "그렇게 또 샀어?",
+   "start": 14.34,
+   "end": 15.94
+  },
+  {
+   "text": "사도 사도 남아돌아",
+   "start": 15.94,
+   "end": 17.12
+  },
+  {
+   "text": "비행기표 또 끊어?",
+   "start": 17.12,
+   "end": 18.4
+  },
+  {
+   "text": "runway 위로 바로 올라",
+   "start": 18.4,
+   "end": 20.69
+  },
+  {
+   "text": "허슬은 언제 쉬어?",
+   "start": 20.69,
+   "end": 22.64
+  },
+  {
+   "text": "잠깐도 못 쉬어",
+   "start": 22.64,
+   "end": 23.9
+  },
+  {
+   "text": "눈빛이 왜 빛나?",
+   "start": 23.9,
+   "end": 25.18
+  },
+  {
+   "text": "money talk, 난 들어",
+   "start": 25.18,
+   "end": 27.42
+  },
+  {
+   "text": "도시가 작아 보여",
+   "start": 27.42,
+   "end": 29.8
+  },
+  {
+   "text": "우린 구름 위로",
+   "start": 29.8,
+   "end": 31.5
+  },
+  {
+   "text": "너와 나의 리듬",
+   "start": 31.5,
+   "end": 33.26
+  },
+  {
+   "text": "full speed, no limit",
+   "start": 33.26,
+   "end": 34.6
+  },
+  {
+   "text": "돈 많아 매일 써도",
+   "start": 34.6,
+   "end": 36.4
+  },
+  {
+   "text": "남아돌아, 더 돌아",
+   "start": 36.4,
+   "end": 37.83
+  },
+  {
+   "text": "hustle all day, all night",
+   "start": 37.83,
+   "end": 39.26
+  },
+  {
+   "text": "gang gang, higher flight",
+   "start": 40.88,
+   "end": 46.68
+  },
+  {
+   "text": "카드 긁어 click clack",
+   "start": 46.68,
+   "end": 50.74
+  },
+  {
+   "text": "또 울려, cash back",
+   "start": 50.74,
+   "end": 52.2
+  },
+  {
+   "text": "랩은 착착, 박자에 딱",
+   "start": 52.2,
+   "end": 53.78
+  },
+  {
+   "text": "넌 말해, bring it back",
+   "start": 53.78,
+   "end": 55.62
+  },
+  {
+   "text": "돈 많아 매일 써도",
+   "start": 55.62,
+   "end": 56.86
+  },
+  {
+   "text": "남아돌아, 더 돌아",
+   "start": 56.86,
+   "end": 58.22
+  },
+  {
+   "text": "hustle all day, all night",
+   "start": 58.22,
+   "end": 59.9
+  },
+  {
+   "text": "gang gang, higher flight",
+   "start": 59.9,
+   "end": 63.22
+  },
+  {
+   "text": "높이 올라 무섭지 않아?",
+   "start": 63.22,
+   "end": 65.34
+  },
+  {
+   "text": "네 손 잡아 괜찮아",
+   "start": 65.34,
+   "end": 66.78
+  },
+  {
+   "text": "구름 아래 불빛 바다",
+   "start": 66.78,
+   "end": 68.66
+  },
+  {
+   "text": "we shine, never down",
+   "start": 68.66,
+   "end": 70.54
+  },
+  {
+   "text": "돈 많아 매일 써도",
+   "start": 70.54,
+   "end": 71.9
+  },
+  {
+   "text": "남아돌아, 더 돌아",
+   "start": 71.9,
+   "end": 73.39
+  },
+  {
+   "text": "hustle all day, all night",
+   "start": 73.39,
+   "end": 75.46
+  },
+  {
+   "text": "gang gang, higher flight",
+   "start": 75.46,
+   "end": 78.46
+  },
+  {
+   "text": "다음 도시는 어디야?",
+   "start": 78.46,
+   "end": 80.54
+  },
+  {
+   "text": "네가 찍어, 바로 가",
+   "start": 80.54,
+   "end": 82.22
+  },
+  {
+   "text": "밤새 웃고 날아가",
+   "start": 82.22,
+   "end": 84.18
+  },
+  {
+   "text": "we own this flight",
+   "start": 84.18,
+   "end": 85.8
+  }
+ ]
+}

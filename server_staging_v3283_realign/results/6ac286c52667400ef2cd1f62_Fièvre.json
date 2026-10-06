@@ -1,0 +1,618 @@
+{
+ "metrics": {
+  "title": "Fièvre",
+  "kind": "control",
+  "track_id": "6ac286c52667400ef2cd1f62",
+  "suno_state": "ok",
+  "duration": 184.8,
+  "lines": 32,
+  "anchored": 30,
+  "anchor_ratio": 0.938,
+  "matched_ratio": 0.938,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.8,
+  "max_unanchored_run": 2,
+  "A_chars": 495,
+  "B_chars": 458,
+  "B_unmatched": 13,
+  "char_match": 0.899,
+  "char_exact": 0.889,
+  "unreliable_words": 12,
+  "words": 134,
+  "t_api": 8.3,
+  "audio_MB": 4.17,
+  "cost_usd": 0.0185,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 32,
+  "suno_lines": 32,
+  "ctrl_n": 32,
+  "ctrl_median": 0.27,
+  "ctrl_p90": 1.14,
+  "ctrl_anchor_median": 0.27,
+  "ctrl_anchor_p90": 0.83,
+  "ctrl_within_1s": 0.875,
+  "_diffs": [
+   0.24,
+   0.17,
+   0.79,
+   2.59,
+   0.21,
+   0.24,
+   0.32,
+   0.12,
+   0.21,
+   1.3,
+   0.11,
+   1.18,
+   0.41,
+   0.12,
+   0.47,
+   0.21,
+   0.07,
+   0.52,
+   0.5,
+   0.02,
+   0.29,
+   0.25,
+   0.33,
+   0.25,
+   0.07,
+   0.55,
+   1.53,
+   0.29,
+   0.33,
+   0.19,
+   0.5,
+   0.2
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "말발굽이 밤을 찢어",
+   "new_start": 8.22,
+   "new_end": 11.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.46,
+   "suno_end": 18.43,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 2,
+   "line": "Hold on, my son, hold on",
+   "new_start": 18.32,
+   "new_end": 21.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 18.49,
+   "suno_end": 21.7,
+   "suno_squashed": false,
+   "diff": -0.17
+  },
+  {
+   "i": 3,
+   "line": "어둠속 아래 안개가 뛴다",
+   "new_start": 21.03,
+   "new_end": 24.7,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 21.82,
+   "suno_end": 24.18,
+   "suno_squashed": false,
+   "diff": -0.79
+  },
+  {
+   "i": 4,
+   "line": "No, not tonight, not tonight",
+   "new_start": 26.92,
+   "new_end": 29.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 24.34,
+   "suno_end": 36.72,
+   "suno_squashed": false,
+   "diff": 2.59
+  },
+  {
+   "i": 5,
+   "line": "아버지, 숨이 불같아요",
+   "new_start": 36.52,
+   "new_end": 40.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 36.73,
+   "suno_end": 43.09,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 6,
+   "line": "Look at me, stay with me",
+   "new_start": 42.9,
+   "new_end": 44.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 43.14,
+   "suno_end": 44.84,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 7,
+   "line": "품 안의 손이 식어 간다",
+   "new_start": 44.68,
+   "new_end": 48.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 45.0,
+   "suno_end": 50.9,
+   "suno_squashed": false,
+   "diff": -0.32
+  },
+  {
+   "i": 8,
+   "line": "아들아 제발 눈을 떠다오",
+   "new_start": 50.94,
+   "new_end": 55.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 51.06,
+   "suno_end": 59.05,
+   "suno_squashed": false,
+   "diff": -0.12
+  },
+  {
+   "i": 9,
+   "line": "저 숲이 나를 부르는 것 같아",
+   "new_start": 58.84,
+   "new_end": 59.96,
+   "anchor": true,
+   "match_ratio": 0.455,
+   "suno_start": 59.05,
+   "suno_end": 62.63,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 10,
+   "line": "Don't listen, hear my heart",
+   "new_start": 61.36,
+   "new_end": 66.17,
+   "anchor": false,
+   "match_ratio": 0.0,
+   "suno_start": 62.66,
+   "suno_end": 65.9,
+   "suno_squashed": false,
+   "diff": -1.3
+  },
+  {
+   "i": 11,
+   "line": "의사의 창불이 멀리 보여",
+   "new_start": 66.17,
+   "new_end": 68.46,
+   "anchor": false,
+   "match_ratio": 0.0,
+   "suno_start": 66.06,
+   "suno_end": 69.57,
+   "suno_squashed": false,
+   "diff": 0.11
+  },
+  {
+   "i": 12,
+   "line": "Almost there, just one more mile",
+   "new_start": 68.46,
+   "new_end": 72.21,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 69.64,
+   "suno_end": 72.61,
+   "suno_squashed": false,
+   "diff": -1.18
+  },
+  {
+   "i": 13,
+   "line": "말아 달려라, faster, faster",
+   "new_start": 72.21,
+   "new_end": 74.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 72.62,
+   "suno_end": 74.36,
+   "suno_squashed": false,
+   "diff": -0.41
+  },
+  {
+   "i": 14,
+   "line": "하늘은 검은 종을 친다",
+   "new_start": 74.4,
+   "new_end": 76.24,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 74.52,
+   "suno_end": 78.99,
+   "suno_squashed": false,
+   "diff": -0.12
+  },
+  {
+   "i": 15,
+   "line": "아버지, 이제 너무 졸려요",
+   "new_start": 78.68,
+   "new_end": 83.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 79.15,
+   "suno_end": 84.33,
+   "suno_squashed": false,
+   "diff": -0.47
+  },
+  {
+   "i": 16,
+   "line": "No sleep, my child, breathe again",
+   "new_start": 84.24,
+   "new_end": 90.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 84.45,
+   "suno_end": 93.44,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 17,
+   "line": "Wake up, wake up, my only light",
+   "new_start": 93.38,
+   "new_end": 96.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 93.45,
+   "suno_end": 97.02,
+   "suno_squashed": false,
+   "diff": -0.07
+  },
+  {
+   "i": 18,
+   "line": "열병아, 내 아들을 놓아",
+   "new_start": 96.66,
+   "new_end": 100.09,
+   "anchor": true,
+   "match_ratio": 0.889,
+   "suno_start": 97.18,
+   "suno_end": 100.53,
+   "suno_squashed": false,
+   "diff": -0.52
+  },
+  {
+   "i": 19,
+   "line": "Ride on, ride on through the storm",
+   "new_start": 100.09,
+   "new_end": 103.82,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 100.59,
+   "suno_end": 103.72,
+   "suno_squashed": false,
+   "diff": -0.5
+  },
+  {
+   "i": 20,
+   "line": "하늘이시여 제발",
+   "new_start": 103.82,
+   "new_end": 106.06,
+   "anchor": true,
+   "match_ratio": 0.857,
+   "suno_start": 103.84,
+   "suno_end": 107.59,
+   "suno_squashed": false,
+   "diff": -0.02
+  },
+  {
+   "i": 21,
+   "line": "차가운 별이 내려앉고",
+   "new_start": 107.92,
+   "new_end": 111.46,
+   "anchor": true,
+   "match_ratio": 0.778,
+   "suno_start": 107.63,
+   "suno_end": 111.54,
+   "suno_squashed": false,
+   "diff": 0.29
+  },
+  {
+   "i": 22,
+   "line": "I see white hands in the dark",
+   "new_start": 111.46,
+   "new_end": 113.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 111.7,
+   "suno_end": 114.5,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 23,
+   "line": "내 품에 귀를 대고 웃어",
+   "new_start": 114.98,
+   "new_end": 118.15,
+   "anchor": true,
+   "match_ratio": 0.778,
+   "suno_start": 114.65,
+   "suno_end": 118.32,
+   "suno_squashed": false,
+   "diff": 0.33
+  },
+  {
+   "i": 24,
+   "line": "Say my name, don't fade away",
+   "new_start": 118.15,
+   "new_end": 121.38,
+   "anchor": true,
+   "match_ratio": 0.952,
+   "suno_start": 118.4,
+   "suno_end": 121.44,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 25,
+   "line": "Wake up, wake up, my only light",
+   "new_start": 121.38,
+   "new_end": 124.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 121.45,
+   "suno_end": 124.95,
+   "suno_squashed": false,
+   "diff": -0.07
+  },
+  {
+   "i": 26,
+   "line": "아들아 제발 눈을 떠다오",
+   "new_start": 124.55,
+   "new_end": 126.99,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 125.11,
+   "suno_end": 128.46,
+   "suno_squashed": false,
+   "diff": -0.55
+  },
+  {
+   "i": 27,
+   "line": "Ride on, ride on to the dawn",
+   "new_start": 126.99,
+   "new_end": 131.8,
+   "anchor": true,
+   "match_ratio": 0.714,
+   "suno_start": 128.52,
+   "suno_end": 131.97,
+   "suno_squashed": false,
+   "diff": -1.53
+  },
+  {
+   "i": 28,
+   "line": "Doctor, save him, save my son",
+   "new_start": 131.8,
+   "new_end": 134.83,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 132.09,
+   "suno_end": 142.36,
+   "suno_squashed": false,
+   "diff": -0.29
+  },
+  {
+   "i": 29,
+   "line": "문 두드리는 손이 떨려",
+   "new_start": 142.72,
+   "new_end": 145.76,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 142.39,
+   "suno_end": 145.85,
+   "suno_squashed": false,
+   "diff": 0.33
+  },
+  {
+   "i": 30,
+   "line": "Please, please, open the door",
+   "new_start": 145.76,
+   "new_end": 148.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 145.94,
+   "suno_end": 149.28,
+   "suno_squashed": false,
+   "diff": -0.19
+  },
+  {
+   "i": 31,
+   "line": "새벽 종이 멀리 울린다",
+   "new_start": 148.94,
+   "new_end": 152.65,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 149.44,
+   "suno_end": 152.79,
+   "suno_squashed": false,
+   "diff": -0.5
+  },
+  {
+   "i": 32,
+   "line": "Hold on, my son, hold on",
+   "new_start": 152.65,
+   "new_end": 156.08,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 152.85,
+   "suno_end": 173.7,
+   "suno_squashed": false,
+   "diff": -0.2
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "말발굽이 밤을 찢어",
+   "start": 8.22,
+   "end": 11.34
+  },
+  {
+   "text": "Hold on, my son, hold on",
+   "start": 18.32,
+   "end": 21.03
+  },
+  {
+   "text": "어둠속 아래 안개가 뛴다",
+   "start": 21.03,
+   "end": 24.7
+  },
+  {
+   "text": "No, not tonight, not tonight",
+   "start": 26.92,
+   "end": 29.98
+  },
+  {
+   "text": "아버지, 숨이 불같아요",
+   "start": 36.52,
+   "end": 40.84
+  },
+  {
+   "text": "Look at me, stay with me",
+   "start": 42.9,
+   "end": 44.68
+  },
+  {
+   "text": "품 안의 손이 식어 간다",
+   "start": 44.68,
+   "end": 48.06
+  },
+  {
+   "text": "아들아 제발 눈을 떠다오",
+   "start": 50.94,
+   "end": 55.34
+  },
+  {
+   "text": "저 숲이 나를 부르는 것 같아",
+   "start": 58.84,
+   "end": 59.96
+  },
+  {
+   "text": "Don't listen, hear my heart",
+   "start": 61.36,
+   "end": 66.17
+  },
+  {
+   "text": "의사의 창불이 멀리 보여",
+   "start": 66.17,
+   "end": 68.46
+  },
+  {
+   "text": "Almost there, just one more mile",
+   "start": 68.46,
+   "end": 72.21
+  },
+  {
+   "text": "말아 달려라, faster, faster",
+   "start": 72.21,
+   "end": 74.4
+  },
+  {
+   "text": "하늘은 검은 종을 친다",
+   "start": 74.4,
+   "end": 76.24
+  },
+  {
+   "text": "아버지, 이제 너무 졸려요",
+   "start": 78.68,
+   "end": 83.12
+  },
+  {
+   "text": "No sleep, my child, breathe again",
+   "start": 84.24,
+   "end": 90.03
+  },
+  {
+   "text": "Wake up, wake up, my only light",
+   "start": 93.38,
+   "end": 96.66
+  },
+  {
+   "text": "열병아, 내 아들을 놓아",
+   "start": 96.66,
+   "end": 100.09
+  },
+  {
+   "text": "Ride on, ride on through the storm",
+   "start": 100.09,
+   "end": 103.82
+  },
+  {
+   "text": "하늘이시여 제발",
+   "start": 103.82,
+   "end": 106.06
+  },
+  {
+   "text": "차가운 별이 내려앉고",
+   "start": 107.92,
+   "end": 111.46
+  },
+  {
+   "text": "I see white hands in the dark",
+   "start": 111.46,
+   "end": 113.94
+  },
+  {
+   "text": "내 품에 귀를 대고 웃어",
+   "start": 114.98,
+   "end": 118.15
+  },
+  {
+   "text": "Say my name, don't fade away",
+   "start": 118.15,
+   "end": 121.38
+  },
+  {
+   "text": "Wake up, wake up, my only light",
+   "start": 121.38,
+   "end": 124.55
+  },
+  {
+   "text": "아들아 제발 눈을 떠다오",
+   "start": 124.55,
+   "end": 126.99
+  },
+  {
+   "text": "Ride on, ride on to the dawn",
+   "start": 126.99,
+   "end": 131.8
+  },
+  {
+   "text": "Doctor, save him, save my son",
+   "start": 131.8,
+   "end": 134.83
+  },
+  {
+   "text": "문 두드리는 손이 떨려",
+   "start": 142.72,
+   "end": 145.76
+  },
+  {
+   "text": "Please, please, open the door",
+   "start": 145.76,
+   "end": 148.94
+  },
+  {
+   "text": "새벽 종이 멀리 울린다",
+   "start": 148.94,
+   "end": 152.65
+  },
+  {
+   "text": "Hold on, my son, hold on",
+   "start": 152.65,
+   "end": 156.08
+  }
+ ]
+}

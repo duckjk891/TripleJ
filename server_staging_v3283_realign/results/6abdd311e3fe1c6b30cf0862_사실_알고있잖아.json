@@ -1,0 +1,530 @@
+{
+ "metrics": {
+  "title": "사실 알고있잖아",
+  "kind": "collapsed",
+  "track_id": "6abdd311e3fe1c6b30cf0862",
+  "suno_state": "collapsed",
+  "duration": 113.2,
+  "lines": 29,
+  "anchored": 29,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.817,
+  "max_unanchored_run": 0,
+  "A_chars": 286,
+  "B_chars": 274,
+  "B_unmatched": 2,
+  "char_match": 0.951,
+  "char_exact": 0.948,
+  "unreliable_words": 12,
+  "words": 92,
+  "t_api": 4.99,
+  "audio_MB": 2.49,
+  "cost_usd": 0.0113,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 17,
+  "suno_lines": 44,
+  "vs_suno_ok_n": 2,
+  "vs_suno_ok_median": 80.15,
+  "vs_suno_ok_p90": 80.3
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "um 불 꺼진 방에 서서",
+   "new_start": 1.88,
+   "new_end": 5.69,
+   "anchor": true,
+   "match_ratio": 0.778,
+   "suno_start": 2.2,
+   "suno_end": 2.21,
+   "suno_squashed": true,
+   "diff": -0.32
+  },
+  {
+   "i": 2,
+   "line": "또 괜찮은 척 웃어",
+   "new_start": 5.69,
+   "new_end": 8.48,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.21,
+   "suno_end": 2.22,
+   "suno_squashed": true,
+   "diff": 3.47
+  },
+  {
+   "i": 3,
+   "line": "오래된 우리 사진 속",
+   "new_start": 8.48,
+   "new_end": 11.92,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.23,
+   "suno_end": 2.24,
+   "suno_squashed": true,
+   "diff": 6.26
+  },
+  {
+   "i": 4,
+   "line": "나는 더는 웃지 않아",
+   "new_start": 11.92,
+   "new_end": 15.33,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.24,
+   "suno_end": 2.25,
+   "suno_squashed": true,
+   "diff": 9.68
+  },
+  {
+   "i": 5,
+   "line": "너를 안아도 멀어져",
+   "new_start": 15.33,
+   "new_end": 18.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.26,
+   "suno_end": 2.26,
+   "suno_squashed": true,
+   "diff": 13.07
+  },
+  {
+   "i": 6,
+   "line": "내 맘은 빈 잔 같아",
+   "new_start": 18.26,
+   "new_end": 20.85,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.27,
+   "suno_end": 2.28,
+   "suno_squashed": true,
+   "diff": 15.99
+  },
+  {
+   "i": 7,
+   "line": "사실 알고있잖아",
+   "new_start": 20.85,
+   "new_end": 23.51,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.28,
+   "suno_end": 2.29,
+   "suno_squashed": true,
+   "diff": 18.57
+  },
+  {
+   "i": 8,
+   "line": "사랑은 끝났잖아",
+   "new_start": 23.51,
+   "new_end": 26.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.29,
+   "suno_end": 2.3,
+   "suno_squashed": true,
+   "diff": 21.22
+  },
+  {
+   "i": 9,
+   "line": "근데 왜 널 못 놓아",
+   "new_start": 26.14,
+   "new_end": 29.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.3,
+   "suno_end": 2.31,
+   "suno_squashed": true,
+   "diff": 23.84
+  },
+  {
+   "i": 10,
+   "line": "We can't say goodbye",
+   "new_start": 29.06,
+   "new_end": 29.98,
+   "anchor": true,
+   "match_ratio": 0.562,
+   "suno_start": 2.32,
+   "suno_end": 2.33,
+   "suno_squashed": true,
+   "diff": 26.74
+  },
+  {
+   "i": 11,
+   "line": "No love, no lie",
+   "new_start": 32.34,
+   "new_end": 34.66,
+   "anchor": true,
+   "match_ratio": 0.818,
+   "suno_start": 2.33,
+   "suno_end": 2.34,
+   "suno_squashed": true,
+   "diff": 30.01
+  },
+  {
+   "i": 12,
+   "line": "너 없는 밤은 두려워",
+   "new_start": 34.66,
+   "new_end": 37.73,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.34,
+   "suno_end": 2.35,
+   "suno_squashed": true,
+   "diff": 32.32
+  },
+  {
+   "i": 13,
+   "line": "Still we stay tonight",
+   "new_start": 37.73,
+   "new_end": 41.0,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.35,
+   "suno_end": 2.37,
+   "suno_squashed": true,
+   "diff": 35.37
+  },
+  {
+   "i": 14,
+   "line": "너의 습관이 남아서",
+   "new_start": 41.0,
+   "new_end": 43.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.38,
+   "suno_end": 2.39,
+   "suno_squashed": true,
+   "diff": 38.62
+  },
+  {
+   "i": 15,
+   "line": "이별도 길을 잃어",
+   "new_start": 43.94,
+   "new_end": 46.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.39,
+   "suno_end": 2.4,
+   "suno_squashed": true,
+   "diff": 41.55
+  },
+  {
+   "i": 16,
+   "line": "We can't say goodbye",
+   "new_start": 48.62,
+   "new_end": 50.59,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.4,
+   "suno_end": 2.42,
+   "suno_squashed": true,
+   "diff": 46.22
+  },
+  {
+   "i": 17,
+   "line": "No love, no lie",
+   "new_start": 51.66,
+   "new_end": 54.1,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.42,
+   "suno_end": 2.43,
+   "suno_squashed": true,
+   "diff": 49.24
+  },
+  {
+   "i": 18,
+   "line": "사랑 아닌 이름으로",
+   "new_start": 54.1,
+   "new_end": 57.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.43,
+   "suno_end": 2.44,
+   "suno_squashed": true,
+   "diff": 51.68
+  },
+  {
+   "i": 19,
+   "line": "Still we stay tonight",
+   "new_start": 57.04,
+   "new_end": 60.09,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.44,
+   "suno_end": 2.45,
+   "suno_squashed": true,
+   "diff": 54.6
+  },
+  {
+   "i": 20,
+   "line": "너를 미워한 날에도",
+   "new_start": 61.4,
+   "new_end": 63.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.46,
+   "suno_end": 2.47,
+   "suno_squashed": true,
+   "diff": 58.94
+  },
+  {
+   "i": 21,
+   "line": "네 전화만 기다려",
+   "new_start": 63.68,
+   "new_end": 66.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.47,
+   "suno_end": 2.48,
+   "suno_squashed": true,
+   "diff": 61.21
+  },
+  {
+   "i": 22,
+   "line": "끝을 말하면 끝날까",
+   "new_start": 66.58,
+   "new_end": 69.08,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.48,
+   "suno_end": 2.49,
+   "suno_squashed": true,
+   "diff": 64.1
+  },
+  {
+   "i": 23,
+   "line": "We can't say goodbye",
+   "new_start": 69.08,
+   "new_end": 70.67,
+   "anchor": true,
+   "match_ratio": 0.812,
+   "suno_start": 2.5,
+   "suno_end": 2.51,
+   "suno_squashed": true,
+   "diff": 66.58
+  },
+  {
+   "i": 24,
+   "line": "No love, no lie",
+   "new_start": 72.46,
+   "new_end": 74.33,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.51,
+   "suno_end": 2.52,
+   "suno_squashed": true,
+   "diff": 69.95
+  },
+  {
+   "i": 25,
+   "line": "사실 알고있잖아",
+   "new_start": 76.5,
+   "new_end": 78.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.52,
+   "suno_end": 2.53,
+   "suno_squashed": true,
+   "diff": 73.98
+  },
+  {
+   "i": 26,
+   "line": "Still we break inside",
+   "new_start": 80.09,
+   "new_end": 84.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.53,
+   "suno_end": 2.55,
+   "suno_squashed": true,
+   "diff": 77.56
+  },
+  {
+   "i": 27,
+   "line": "너, 문 앞에 서 있잖아",
+   "new_start": 84.4,
+   "new_end": 87.15,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.55,
+   "suno_end": 6.76,
+   "suno_squashed": true,
+   "diff": 81.85
+  },
+  {
+   "i": 28,
+   "line": "나도 보내질 못해",
+   "new_start": 87.15,
+   "new_end": 89.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.81,
+   "suno_end": 9.62,
+   "suno_squashed": false,
+   "diff": 80.34
+  },
+  {
+   "i": 29,
+   "line": "사랑 없이 또 우리",
+   "new_start": 89.63,
+   "new_end": 94.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 9.67,
+   "suno_end": 13.83,
+   "suno_squashed": false,
+   "diff": 79.96
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "um 불 꺼진 방에 서서",
+   "start": 1.88,
+   "end": 5.69
+  },
+  {
+   "text": "또 괜찮은 척 웃어",
+   "start": 5.69,
+   "end": 8.48
+  },
+  {
+   "text": "오래된 우리 사진 속",
+   "start": 8.48,
+   "end": 11.92
+  },
+  {
+   "text": "나는 더는 웃지 않아",
+   "start": 11.92,
+   "end": 15.33
+  },
+  {
+   "text": "너를 안아도 멀어져",
+   "start": 15.33,
+   "end": 18.26
+  },
+  {
+   "text": "내 맘은 빈 잔 같아",
+   "start": 18.26,
+   "end": 20.85
+  },
+  {
+   "text": "사실 알고있잖아",
+   "start": 20.85,
+   "end": 23.51
+  },
+  {
+   "text": "사랑은 끝났잖아",
+   "start": 23.51,
+   "end": 26.14
+  },
+  {
+   "text": "근데 왜 널 못 놓아",
+   "start": 26.14,
+   "end": 29.06
+  },
+  {
+   "text": "We can't say goodbye",
+   "start": 29.06,
+   "end": 29.98
+  },
+  {
+   "text": "No love, no lie",
+   "start": 32.34,
+   "end": 34.66
+  },
+  {
+   "text": "너 없는 밤은 두려워",
+   "start": 34.66,
+   "end": 37.73
+  },
+  {
+   "text": "Still we stay tonight",
+   "start": 37.73,
+   "end": 41.0
+  },
+  {
+   "text": "너의 습관이 남아서",
+   "start": 41.0,
+   "end": 43.94
+  },
+  {
+   "text": "이별도 길을 잃어",
+   "start": 43.94,
+   "end": 46.88
+  },
+  {
+   "text": "We can't say goodbye",
+   "start": 48.62,
+   "end": 50.59
+  },
+  {
+   "text": "No love, no lie",
+   "start": 51.66,
+   "end": 54.1
+  },
+  {
+   "text": "사랑 아닌 이름으로",
+   "start": 54.1,
+   "end": 57.04
+  },
+  {
+   "text": "Still we stay tonight",
+   "start": 57.04,
+   "end": 60.09
+  },
+  {
+   "text": "너를 미워한 날에도",
+   "start": 61.4,
+   "end": 63.68
+  },
+  {
+   "text": "네 전화만 기다려",
+   "start": 63.68,
+   "end": 66.58
+  },
+  {
+   "text": "끝을 말하면 끝날까",
+   "start": 66.58,
+   "end": 69.08
+  },
+  {
+   "text": "We can't say goodbye",
+   "start": 69.08,
+   "end": 70.67
+  },
+  {
+   "text": "No love, no lie",
+   "start": 72.46,
+   "end": 74.33
+  },
+  {
+   "text": "사실 알고있잖아",
+   "start": 76.5,
+   "end": 78.58
+  },
+  {
+   "text": "Still we break inside",
+   "start": 80.09,
+   "end": 84.4
+  },
+  {
+   "text": "너, 문 앞에 서 있잖아",
+   "start": 84.4,
+   "end": 87.15
+  },
+  {
+   "text": "나도 보내질 못해",
+   "start": 87.15,
+   "end": 89.63
+  },
+  {
+   "text": "사랑 없이 또 우리",
+   "start": 89.63,
+   "end": 94.34
+  }
+ ]
+}

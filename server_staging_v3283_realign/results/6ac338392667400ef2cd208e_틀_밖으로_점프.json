@@ -1,0 +1,564 @@
+{
+ "metrics": {
+  "title": "틀 밖으로 점프",
+  "kind": "control",
+  "track_id": "6ac338392667400ef2cd208e",
+  "suno_state": "ok",
+  "duration": 118.4,
+  "lines": 29,
+  "anchored": 27,
+  "anchor_ratio": 0.931,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.889,
+  "max_unanchored_run": 1,
+  "A_chars": 315,
+  "B_chars": 331,
+  "B_unmatched": 41,
+  "char_match": 0.921,
+  "char_exact": 0.883,
+  "unreliable_words": 5,
+  "words": 112,
+  "t_api": 6.34,
+  "audio_MB": 2.6,
+  "cost_usd": 0.0118,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 29,
+  "suno_lines": 29,
+  "ctrl_n": 29,
+  "ctrl_median": 0.22,
+  "ctrl_p90": 0.64,
+  "ctrl_anchor_median": 0.22,
+  "ctrl_anchor_p90": 0.47,
+  "ctrl_within_1s": 0.931,
+  "_diffs": [
+   0.12,
+   0.88,
+   0.01,
+   0.34,
+   0.21,
+   0.22,
+   0.38,
+   0.08,
+   0.45,
+   0.22,
+   0.46,
+   0.06,
+   0.58,
+   0.03,
+   0.31,
+   5.12,
+   0.12,
+   0.28,
+   0.22,
+   0.07,
+   0.01,
+   0.08,
+   0.25,
+   0.31,
+   0.24,
+   1.03,
+   0.48,
+   0.03,
+   0.14
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "Hey! 나 간다, break the frame",
+   "new_start": 2.43,
+   "new_end": 8.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.55,
+   "suno_end": 8.86,
+   "suno_squashed": false,
+   "diff": -0.12
+  },
+  {
+   "i": 2,
+   "line": "난잡한 벽에 낙서해",
+   "new_start": 8.14,
+   "new_end": 11.28,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 9.02,
+   "suno_end": 11.17,
+   "suno_squashed": false,
+   "diff": -0.88
+  },
+  {
+   "i": 3,
+   "line": "No rules, no cage",
+   "new_start": 11.28,
+   "new_end": 13.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 11.29,
+   "suno_end": 22.67,
+   "suno_squashed": false,
+   "diff": -0.01
+  },
+  {
+   "i": 4,
+   "line": "나의 심장 킥, 쿵탁 bounce",
+   "new_start": 22.34,
+   "new_end": 25.17,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 22.68,
+   "suno_end": 25.21,
+   "suno_squashed": false,
+   "diff": -0.34
+  },
+  {
+   "i": 5,
+   "line": "틀에 박힌 시선은 다 bounce",
+   "new_start": 25.17,
+   "new_end": 27.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 25.37,
+   "suno_end": 27.53,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 6,
+   "line": "정답지 찢고 난 run out",
+   "new_start": 27.46,
+   "new_end": 29.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 27.69,
+   "suno_end": 29.76,
+   "suno_squashed": false,
+   "diff": -0.22
+  },
+  {
+   "i": 7,
+   "line": "자유롭게 내 인생 countdown",
+   "new_start": 29.54,
+   "new_end": 32.01,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 29.92,
+   "suno_end": 32.08,
+   "suno_squashed": false,
+   "diff": -0.38
+  },
+  {
+   "i": 8,
+   "line": "삐걱대던 내 하루",
+   "new_start": 32.01,
+   "new_end": 34.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 32.09,
+   "suno_end": 34.47,
+   "suno_squashed": false,
+   "diff": -0.08
+  },
+  {
+   "i": 9,
+   "line": "이제 기타처럼 울려",
+   "new_start": 34.14,
+   "new_end": 36.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 34.59,
+   "suno_end": 36.62,
+   "suno_squashed": false,
+   "diff": -0.45
+  },
+  {
+   "i": 10,
+   "line": "망설임은 뒤로 던져",
+   "new_start": 36.56,
+   "new_end": 39.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 36.78,
+   "suno_end": 38.54,
+   "suno_squashed": false,
+   "diff": -0.22
+  },
+  {
+   "i": 11,
+   "line": "I'm alive, 더 크게",
+   "new_start": 39.16,
+   "new_end": 42.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 38.7,
+   "suno_end": 42.06,
+   "suno_squashed": false,
+   "diff": 0.46
+  },
+  {
+   "i": 12,
+   "line": "난 틀 밖으로 jump, jump",
+   "new_start": 42.12,
+   "new_end": 43.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 42.06,
+   "suno_end": 44.28,
+   "suno_squashed": false,
+   "diff": 0.06
+  },
+  {
+   "i": 13,
+   "line": "자유롭게 shout it out",
+   "new_start": 43.86,
+   "new_end": 46.72,
+   "anchor": true,
+   "match_ratio": 0.786,
+   "suno_start": 44.44,
+   "suno_end": 46.6,
+   "suno_squashed": false,
+   "diff": -0.58
+  },
+  {
+   "i": 14,
+   "line": "어둡기만한 밤을 깨",
+   "new_start": 46.72,
+   "new_end": 49.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 46.76,
+   "suno_end": 48.59,
+   "suno_squashed": false,
+   "diff": -0.03
+  },
+  {
+   "i": 15,
+   "line": "We are wild, turn it up",
+   "new_start": 49.02,
+   "new_end": 51.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 48.71,
+   "suno_end": 50.92,
+   "suno_squashed": false,
+   "diff": 0.31
+  },
+  {
+   "i": 16,
+   "line": "Go, go, 나를 따라",
+   "new_start": 56.06,
+   "new_end": 58.06,
+   "anchor": false,
+   "match_ratio": 0.5,
+   "suno_start": 50.94,
+   "suno_end": 59.44,
+   "suno_squashed": false,
+   "diff": 5.12
+  },
+  {
+   "i": 17,
+   "line": "Free my mind, 더 날아",
+   "new_start": 59.38,
+   "new_end": 65.04,
+   "anchor": true,
+   "match_ratio": 0.923,
+   "suno_start": 59.5,
+   "suno_end": 73.49,
+   "suno_squashed": false,
+   "diff": -0.12
+  },
+  {
+   "i": 18,
+   "line": "낡은 매뉴얼은 bye-bye",
+   "new_start": 73.22,
+   "new_end": 75.66,
+   "anchor": true,
+   "match_ratio": 0.417,
+   "suno_start": 73.5,
+   "suno_end": 75.72,
+   "suno_squashed": false,
+   "diff": -0.28
+  },
+  {
+   "i": 19,
+   "line": "내 신발은 스파크 fly",
+   "new_start": 75.66,
+   "new_end": 78.12,
+   "anchor": true,
+   "match_ratio": 0.7,
+   "suno_start": 75.88,
+   "suno_end": 78.03,
+   "suno_squashed": false,
+   "diff": -0.22
+  },
+  {
+   "i": 20,
+   "line": "길 잃어도 웃어 난",
+   "new_start": 78.12,
+   "new_end": 80.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 78.19,
+   "suno_end": 80.03,
+   "suno_squashed": false,
+   "diff": -0.07
+  },
+  {
+   "i": 21,
+   "line": "New day, 내가 만들어",
+   "new_start": 80.14,
+   "new_end": 82.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 80.13,
+   "suno_end": 82.92,
+   "suno_squashed": false,
+   "diff": 0.01
+  },
+  {
+   "i": 22,
+   "line": "세상이 각을 세우면",
+   "new_start": 82.86,
+   "new_end": 85.0,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 82.94,
+   "suno_end": 85.13,
+   "suno_squashed": false,
+   "diff": -0.08
+  },
+  {
+   "i": 23,
+   "line": "나는 조각가가되버려",
+   "new_start": 85.0,
+   "new_end": 87.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 85.25,
+   "suno_end": 87.49,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 24,
+   "line": "낡아빠진 문을 차고",
+   "new_start": 87.3,
+   "new_end": 89.14,
+   "anchor": true,
+   "match_ratio": 0.875,
+   "suno_start": 87.61,
+   "suno_end": 89.28,
+   "suno_squashed": false,
+   "diff": -0.31
+  },
+  {
+   "i": 25,
+   "line": "Open up, here I go",
+   "new_start": 89.14,
+   "new_end": 92.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 89.38,
+   "suno_end": 93.67,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 26,
+   "line": "Hey! 틀은 안녕",
+   "new_start": 94.7,
+   "new_end": 96.45,
+   "anchor": false,
+   "match_ratio": 0.571,
+   "suno_start": 93.67,
+   "suno_end": 98.06,
+   "suno_squashed": false,
+   "diff": 1.03
+  },
+  {
+   "i": 27,
+   "line": "내일도 나는 free",
+   "new_start": 97.7,
+   "new_end": 99.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 98.18,
+   "suno_end": 100.85,
+   "suno_squashed": false,
+   "diff": -0.48
+  },
+  {
+   "i": 28,
+   "line": "Sing it loud, oh-oh",
+   "new_start": 100.92,
+   "new_end": 102.86,
+   "anchor": true,
+   "match_ratio": 0.786,
+   "suno_start": 100.89,
+   "suno_end": 106.04,
+   "suno_squashed": false,
+   "diff": 0.03
+  },
+  {
+   "i": 29,
+   "line": "나답게 살아가",
+   "new_start": 106.06,
+   "new_end": 107.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 106.2,
+   "suno_end": 107.63,
+   "suno_squashed": false,
+   "diff": -0.14
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "Hey! 나 간다, break the frame",
+   "start": 2.43,
+   "end": 8.14
+  },
+  {
+   "text": "난잡한 벽에 낙서해",
+   "start": 8.14,
+   "end": 11.28
+  },
+  {
+   "text": "No rules, no cage",
+   "start": 11.28,
+   "end": 13.02
+  },
+  {
+   "text": "나의 심장 킥, 쿵탁 bounce",
+   "start": 22.34,
+   "end": 25.17
+  },
+  {
+   "text": "틀에 박힌 시선은 다 bounce",
+   "start": 25.17,
+   "end": 27.46
+  },
+  {
+   "text": "정답지 찢고 난 run out",
+   "start": 27.46,
+   "end": 29.54
+  },
+  {
+   "text": "자유롭게 내 인생 countdown",
+   "start": 29.54,
+   "end": 32.01
+  },
+  {
+   "text": "삐걱대던 내 하루",
+   "start": 32.01,
+   "end": 34.14
+  },
+  {
+   "text": "이제 기타처럼 울려",
+   "start": 34.14,
+   "end": 36.56
+  },
+  {
+   "text": "망설임은 뒤로 던져",
+   "start": 36.56,
+   "end": 39.16
+  },
+  {
+   "text": "I'm alive, 더 크게",
+   "start": 39.16,
+   "end": 42.12
+  },
+  {
+   "text": "난 틀 밖으로 jump, jump",
+   "start": 42.12,
+   "end": 43.86
+  },
+  {
+   "text": "자유롭게 shout it out",
+   "start": 43.86,
+   "end": 46.72
+  },
+  {
+   "text": "어둡기만한 밤을 깨",
+   "start": 46.72,
+   "end": 49.02
+  },
+  {
+   "text": "We are wild, turn it up",
+   "start": 49.02,
+   "end": 51.04
+  },
+  {
+   "text": "Go, go, 나를 따라",
+   "start": 56.06,
+   "end": 58.06
+  },
+  {
+   "text": "Free my mind, 더 날아",
+   "start": 59.38,
+   "end": 65.04
+  },
+  {
+   "text": "낡은 매뉴얼은 bye-bye",
+   "start": 73.22,
+   "end": 75.66
+  },
+  {
+   "text": "내 신발은 스파크 fly",
+   "start": 75.66,
+   "end": 78.12
+  },
+  {
+   "text": "길 잃어도 웃어 난",
+   "start": 78.12,
+   "end": 80.14
+  },
+  {
+   "text": "New day, 내가 만들어",
+   "start": 80.14,
+   "end": 82.86
+  },
+  {
+   "text": "세상이 각을 세우면",
+   "start": 82.86,
+   "end": 85.0
+  },
+  {
+   "text": "나는 조각가가되버려",
+   "start": 85.0,
+   "end": 87.3
+  },
+  {
+   "text": "낡아빠진 문을 차고",
+   "start": 87.3,
+   "end": 89.14
+  },
+  {
+   "text": "Open up, here I go",
+   "start": 89.14,
+   "end": 92.3
+  },
+  {
+   "text": "Hey! 틀은 안녕",
+   "start": 94.7,
+   "end": 96.45
+  },
+  {
+   "text": "내일도 나는 free",
+   "start": 97.7,
+   "end": 99.58
+  },
+  {
+   "text": "Sing it loud, oh-oh",
+   "start": 100.92,
+   "end": 102.86
+  },
+  {
+   "text": "나답게 살아가",
+   "start": 106.06,
+   "end": 107.66
+  }
+ ]
+}

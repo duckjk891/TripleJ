@@ -1,0 +1,690 @@
+{
+ "metrics": {
+  "title": "봐 신나잖아",
+  "kind": "control",
+  "track_id": "6ac331912667400ef2cd2053",
+  "suno_state": "ok",
+  "duration": 145.6,
+  "lines": 36,
+  "anchored": 36,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.811,
+  "max_unanchored_run": 0,
+  "A_chars": 559,
+  "B_chars": 559,
+  "B_unmatched": 57,
+  "char_match": 0.898,
+  "char_exact": 0.893,
+  "unreliable_words": 23,
+  "words": 208,
+  "t_api": 6.57,
+  "audio_MB": 3.49,
+  "cost_usd": 0.0146,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 36,
+  "suno_lines": 36,
+  "ctrl_n": 36,
+  "ctrl_median": 0.27,
+  "ctrl_p90": 0.81,
+  "ctrl_anchor_median": 0.27,
+  "ctrl_anchor_p90": 0.81,
+  "ctrl_within_1s": 0.944,
+  "_diffs": [
+   0.62,
+   0.85,
+   0.35,
+   0.01,
+   0.17,
+   0.44,
+   0.64,
+   0.26,
+   0.3,
+   0.19,
+   0.21,
+   0.11,
+   0.67,
+   0.88,
+   0.77,
+   0.25,
+   0.09,
+   0.28,
+   0.16,
+   0.29,
+   0.01,
+   0.25,
+   0.56,
+   1.19,
+   0.13,
+   0.47,
+   0.04,
+   0.15,
+   0.13,
+   0.05,
+   0.65,
+   1.08,
+   0.23,
+   0.12,
+   0.67,
+   0.52
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "너, 손 들어 put you hansup",
+   "new_start": 4.45,
+   "new_end": 9.12,
+   "anchor": true,
+   "match_ratio": 0.938,
+   "suno_start": 3.83,
+   "suno_end": 9.81,
+   "suno_squashed": false,
+   "diff": 0.62
+  },
+  {
+   "i": 2,
+   "line": "정신 차리고, okay lets go",
+   "new_start": 9.12,
+   "new_end": 11.73,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 9.97,
+   "suno_end": 11.37,
+   "suno_squashed": false,
+   "diff": -0.85
+  },
+  {
+   "i": 3,
+   "line": "Let's go, gang gang",
+   "new_start": 11.73,
+   "new_end": 13.37,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 11.38,
+   "suno_end": 13.32,
+   "suno_squashed": false,
+   "diff": 0.35
+  },
+  {
+   "i": 4,
+   "line": "just 들썩, bang bnag",
+   "new_start": 13.37,
+   "new_end": 15.52,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 13.38,
+   "suno_end": 16.85,
+   "suno_squashed": false,
+   "diff": -0.01
+  },
+  {
+   "i": 5,
+   "line": "내 인생은 브레이크가 고장난 8ton 트럭",
+   "new_start": 16.7,
+   "new_end": 19.67,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 16.87,
+   "suno_end": 20.85,
+   "suno_squashed": false,
+   "diff": -0.17
+  },
+  {
+   "i": 6,
+   "line": "yeah 신나는 비트는 흐르도록 내버려둬",
+   "new_start": 19.67,
+   "new_end": 24.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.23,
+   "suno_end": 24.5,
+   "suno_squashed": false,
+   "diff": 0.44
+  },
+  {
+   "i": 7,
+   "line": "정신이 오락가락, 그대로 둬 너랑나랑",
+   "new_start": 24.02,
+   "new_end": 27.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 24.65,
+   "suno_end": 27.69,
+   "suno_squashed": false,
+   "diff": -0.64
+  },
+  {
+   "i": 8,
+   "line": "인생은 몰라, 뭐가 정답? 하늘을 올라, 너의 착각?",
+   "new_start": 27.55,
+   "new_end": 31.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 27.81,
+   "suno_end": 31.64,
+   "suno_squashed": false,
+   "diff": -0.26
+  },
+  {
+   "i": 9,
+   "line": "만들어 날아가 저 하늘위로,",
+   "new_start": 31.46,
+   "new_end": 33.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 31.75,
+   "suno_end": 34.95,
+   "suno_squashed": false,
+   "diff": -0.3
+  },
+  {
+   "i": 10,
+   "line": "계속 가자 내 모습 그대로",
+   "new_start": 34.8,
+   "new_end": 36.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 34.99,
+   "suno_end": 36.7,
+   "suno_squashed": false,
+   "diff": -0.19
+  },
+  {
+   "i": 11,
+   "line": "Let's go, gang gang",
+   "new_start": 36.5,
+   "new_end": 38.62,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 36.71,
+   "suno_end": 38.46,
+   "suno_squashed": false,
+   "diff": -0.21
+  },
+  {
+   "i": 12,
+   "line": "shake it shake it, Bang bang",
+   "new_start": 38.62,
+   "new_end": 40.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 38.51,
+   "suno_end": 40.53,
+   "suno_squashed": false,
+   "diff": 0.11
+  },
+  {
+   "i": 13,
+   "line": "정신차리지 않을 거야, 예예",
+   "new_start": 40.02,
+   "new_end": 42.54,
+   "anchor": true,
+   "match_ratio": 0.818,
+   "suno_start": 40.69,
+   "suno_end": 44.44,
+   "suno_squashed": false,
+   "diff": -0.67
+  },
+  {
+   "i": 14,
+   "line": "이렇게 신나게 살거야, 오케이",
+   "new_start": 43.72,
+   "new_end": 46.5,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 44.6,
+   "suno_end": 52.82,
+   "suno_squashed": false,
+   "diff": -0.88
+  },
+  {
+   "i": 15,
+   "line": "너도 걱정은 내려놔 오늘 밤",
+   "new_start": 52.06,
+   "new_end": 54.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 52.83,
+   "suno_end": 55.05,
+   "suno_squashed": false,
+   "diff": -0.77
+  },
+  {
+   "i": 16,
+   "line": "삐끗한 길 위에서 고갤 기울려 봐",
+   "new_start": 54.96,
+   "new_end": 57.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 55.21,
+   "suno_end": 56.97,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 17,
+   "line": "내가 가는 길이 우리 맞는 길의 리듬",
+   "new_start": 57.18,
+   "new_end": 58.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 57.09,
+   "suno_end": 58.96,
+   "suno_squashed": false,
+   "diff": 0.09
+  },
+  {
+   "i": 18,
+   "line": "너도 같이 발을 맞춰 걸어 바로 지금",
+   "new_start": 58.84,
+   "new_end": 60.92,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 59.12,
+   "suno_end": 60.96,
+   "suno_squashed": false,
+   "diff": -0.28
+  },
+  {
+   "i": 19,
+   "line": "우리 둘의 파티 rock your body",
+   "new_start": 60.92,
+   "new_end": 62.98,
+   "anchor": true,
+   "match_ratio": 0.889,
+   "suno_start": 61.08,
+   "suno_end": 63.15,
+   "suno_squashed": false,
+   "diff": -0.16
+  },
+  {
+   "i": 20,
+   "line": "신나지 got it?",
+   "new_start": 62.98,
+   "new_end": 64.72,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 63.27,
+   "suno_end": 64.71,
+   "suno_squashed": false,
+   "diff": -0.29
+  },
+  {
+   "i": 21,
+   "line": "Let's go, gang gang",
+   "new_start": 64.72,
+   "new_end": 66.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 64.71,
+   "suno_end": 66.46,
+   "suno_squashed": false,
+   "diff": 0.01
+  },
+  {
+   "i": 22,
+   "line": "shake it shake it, Bang bang",
+   "new_start": 66.26,
+   "new_end": 68.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 66.51,
+   "suno_end": 68.46,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 23,
+   "line": "정신차리지 않을 거야, 예예",
+   "new_start": 68.06,
+   "new_end": 71.42,
+   "anchor": true,
+   "match_ratio": 0.818,
+   "suno_start": 68.62,
+   "suno_end": 72.45,
+   "suno_squashed": false,
+   "diff": -0.56
+  },
+  {
+   "i": 24,
+   "line": "이렇게 신나게 살거야, 오케이",
+   "new_start": 71.42,
+   "new_end": 74.52,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 72.61,
+   "suno_end": 80.91,
+   "suno_squashed": false,
+   "diff": -1.19
+  },
+  {
+   "i": 25,
+   "line": "망했다 생각 했을때, 웃으며 손뼉을 칠래, clap clap",
+   "new_start": 80.78,
+   "new_end": 84.78,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 80.91,
+   "suno_end": 85.13,
+   "suno_squashed": false,
+   "diff": -0.13
+  },
+  {
+   "i": 26,
+   "line": "혼자라 생각 했을때, 엉덩이나 더 흔들래, bang bang",
+   "new_start": 84.78,
+   "new_end": 89.16,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 85.25,
+   "suno_end": 89.04,
+   "suno_squashed": false,
+   "diff": -0.47
+  },
+  {
+   "i": 27,
+   "line": "망했다 생각 했을때, 웃으며 손뼉을 칠래, clap clap",
+   "new_start": 89.16,
+   "new_end": 93.46,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 89.2,
+   "suno_end": 93.19,
+   "suno_squashed": false,
+   "diff": -0.04
+  },
+  {
+   "i": 28,
+   "line": "혼자라 생각 했을때, 엉덩이나 더 흔들래, bang bang",
+   "new_start": 93.46,
+   "new_end": 96.92,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 93.31,
+   "suno_end": 96.78,
+   "suno_squashed": false,
+   "diff": 0.15
+  },
+  {
+   "i": 29,
+   "line": "Let's go, gang gang",
+   "new_start": 96.92,
+   "new_end": 98.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 96.79,
+   "suno_end": 98.46,
+   "suno_squashed": false,
+   "diff": 0.13
+  },
+  {
+   "i": 30,
+   "line": "shake it shake it, Bang bang",
+   "new_start": 98.56,
+   "new_end": 100.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 98.5,
+   "suno_end": 100.53,
+   "suno_squashed": false,
+   "diff": 0.05
+  },
+  {
+   "i": 31,
+   "line": "정신차리지 않을 거야, 예예",
+   "new_start": 100.04,
+   "new_end": 103.52,
+   "anchor": true,
+   "match_ratio": 0.818,
+   "suno_start": 100.69,
+   "suno_end": 104.44,
+   "suno_squashed": false,
+   "diff": -0.65
+  },
+  {
+   "i": 32,
+   "line": "이렇게 신나게 살거야, 오케이",
+   "new_start": 103.52,
+   "new_end": 106.56,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 104.6,
+   "suno_end": 112.74,
+   "suno_squashed": false,
+   "diff": -1.08
+  },
+  {
+   "i": 33,
+   "line": "Let's go, gang gang",
+   "new_start": 112.52,
+   "new_end": 114.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 112.75,
+   "suno_end": 114.42,
+   "suno_squashed": false,
+   "diff": -0.23
+  },
+  {
+   "i": 34,
+   "line": "shake it shake it, Bang bang",
+   "new_start": 114.58,
+   "new_end": 115.98,
+   "anchor": true,
+   "match_ratio": 0.909,
+   "suno_start": 114.46,
+   "suno_end": 116.49,
+   "suno_squashed": false,
+   "diff": 0.12
+  },
+  {
+   "i": 35,
+   "line": "정신차리지 않을 거야, 예예",
+   "new_start": 115.98,
+   "new_end": 118.72,
+   "anchor": true,
+   "match_ratio": 0.818,
+   "suno_start": 116.65,
+   "suno_end": 120.48,
+   "suno_squashed": false,
+   "diff": -0.67
+  },
+  {
+   "i": 36,
+   "line": "이렇게 신나게 살거야, 오케이",
+   "new_start": 120.12,
+   "new_end": 122.52,
+   "anchor": true,
+   "match_ratio": 0.75,
+   "suno_start": 120.64,
+   "suno_end": 123.67,
+   "suno_squashed": false,
+   "diff": -0.52
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "너, 손 들어 put you hansup",
+   "start": 4.45,
+   "end": 9.12
+  },
+  {
+   "text": "정신 차리고, okay lets go",
+   "start": 9.12,
+   "end": 11.73
+  },
+  {
+   "text": "Let's go, gang gang",
+   "start": 11.73,
+   "end": 13.37
+  },
+  {
+   "text": "just 들썩, bang bnag",
+   "start": 13.37,
+   "end": 15.52
+  },
+  {
+   "text": "내 인생은 브레이크가 고장난 8ton 트럭",
+   "start": 16.7,
+   "end": 19.67
+  },
+  {
+   "text": "yeah 신나는 비트는 흐르도록 내버려둬",
+   "start": 19.67,
+   "end": 24.02
+  },
+  {
+   "text": "정신이 오락가락, 그대로 둬 너랑나랑",
+   "start": 24.02,
+   "end": 27.55
+  },
+  {
+   "text": "인생은 몰라, 뭐가 정답? 하늘을 올라, 너의 착각?",
+   "start": 27.55,
+   "end": 31.46
+  },
+  {
+   "text": "만들어 날아가 저 하늘위로,",
+   "start": 31.46,
+   "end": 33.54
+  },
+  {
+   "text": "계속 가자 내 모습 그대로",
+   "start": 34.8,
+   "end": 36.5
+  },
+  {
+   "text": "Let's go, gang gang",
+   "start": 36.5,
+   "end": 38.62
+  },
+  {
+   "text": "shake it shake it, Bang bang",
+   "start": 38.62,
+   "end": 40.02
+  },
+  {
+   "text": "정신차리지 않을 거야, 예예",
+   "start": 40.02,
+   "end": 42.54
+  },
+  {
+   "text": "이렇게 신나게 살거야, 오케이",
+   "start": 43.72,
+   "end": 46.5
+  },
+  {
+   "text": "너도 걱정은 내려놔 오늘 밤",
+   "start": 52.06,
+   "end": 54.96
+  },
+  {
+   "text": "삐끗한 길 위에서 고갤 기울려 봐",
+   "start": 54.96,
+   "end": 57.18
+  },
+  {
+   "text": "내가 가는 길이 우리 맞는 길의 리듬",
+   "start": 57.18,
+   "end": 58.84
+  },
+  {
+   "text": "너도 같이 발을 맞춰 걸어 바로 지금",
+   "start": 58.84,
+   "end": 60.92
+  },
+  {
+   "text": "우리 둘의 파티 rock your body",
+   "start": 60.92,
+   "end": 62.98
+  },
+  {
+   "text": "신나지 got it?",
+   "start": 62.98,
+   "end": 64.72
+  },
+  {
+   "text": "Let's go, gang gang",
+   "start": 64.72,
+   "end": 66.26
+  },
+  {
+   "text": "shake it shake it, Bang bang",
+   "start": 66.26,
+   "end": 68.06
+  },
+  {
+   "text": "정신차리지 않을 거야, 예예",
+   "start": 68.06,
+   "end": 71.42
+  },
+  {
+   "text": "이렇게 신나게 살거야, 오케이",
+   "start": 71.42,
+   "end": 74.52
+  },
+  {
+   "text": "망했다 생각 했을때, 웃으며 손뼉을 칠래, clap clap",
+   "start": 80.78,
+   "end": 84.78
+  },
+  {
+   "text": "혼자라 생각 했을때, 엉덩이나 더 흔들래, bang bang",
+   "start": 84.78,
+   "end": 89.16
+  },
+  {
+   "text": "망했다 생각 했을때, 웃으며 손뼉을 칠래, clap clap",
+   "start": 89.16,
+   "end": 93.46
+  },
+  {
+   "text": "혼자라 생각 했을때, 엉덩이나 더 흔들래, bang bang",
+   "start": 93.46,
+   "end": 96.92
+  },
+  {
+   "text": "Let's go, gang gang",
+   "start": 96.92,
+   "end": 98.56
+  },
+  {
+   "text": "shake it shake it, Bang bang",
+   "start": 98.56,
+   "end": 100.04
+  },
+  {
+   "text": "정신차리지 않을 거야, 예예",
+   "start": 100.04,
+   "end": 103.52
+  },
+  {
+   "text": "이렇게 신나게 살거야, 오케이",
+   "start": 103.52,
+   "end": 106.56
+  },
+  {
+   "text": "Let's go, gang gang",
+   "start": 112.52,
+   "end": 114.58
+  },
+  {
+   "text": "shake it shake it, Bang bang",
+   "start": 114.58,
+   "end": 115.98
+  },
+  {
+   "text": "정신차리지 않을 거야, 예예",
+   "start": 115.98,
+   "end": 118.72
+  },
+  {
+   "text": "이렇게 신나게 살거야, 오케이",
+   "start": 120.12,
+   "end": 122.52
+  }
+ ]
+}

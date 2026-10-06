@@ -1,0 +1,618 @@
+{
+ "metrics": {
+  "title": "새벽한시 Awake",
+  "kind": "control-holdout",
+  "track_id": "6ac27bb92667400ef2cd1e95",
+  "suno_state": "ok",
+  "duration": 110.0,
+  "lines": 32,
+  "anchored": 31,
+  "anchor_ratio": 0.969,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.829,
+  "max_unanchored_run": 1,
+  "A_chars": 452,
+  "B_chars": 441,
+  "B_unmatched": 14,
+  "char_match": 0.945,
+  "char_exact": 0.938,
+  "unreliable_words": 0,
+  "words": 133,
+  "t_api": 8.14,
+  "audio_MB": 2.59,
+  "cost_usd": 0.011,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 32,
+  "suno_lines": 32,
+  "ctrl_n": 32,
+  "ctrl_median": 0.23,
+  "ctrl_p90": 0.8,
+  "ctrl_anchor_median": 0.22,
+  "ctrl_anchor_p90": 0.81,
+  "ctrl_within_1s": 0.938,
+  "_diffs": [
+   1.94,
+   0.43,
+   0.45,
+   0.32,
+   0.02,
+   0.16,
+   0.22,
+   0.14,
+   0.38,
+   0.88,
+   0.51,
+   0.11,
+   0.71,
+   0.18,
+   0.02,
+   0.07,
+   0.18,
+   0.81,
+   0.55,
+   0.07,
+   0.4,
+   0.4,
+   0.28,
+   0.09,
+   1.04,
+   0.14,
+   0.23,
+   0.03,
+   0.08,
+   0.18,
+   0.7,
+   0.14
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "새벽한시, 방 불 켜",
+   "new_start": 1.94,
+   "new_end": 4.44,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 0.0,
+   "suno_end": 4.71,
+   "suno_squashed": false,
+   "diff": 1.94
+  },
+  {
+   "i": 2,
+   "line": "너 지금 뭐 해, call me",
+   "new_start": 4.44,
+   "new_end": 7.89,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.87,
+   "suno_end": 8.22,
+   "suno_squashed": false,
+   "diff": -0.43
+  },
+  {
+   "i": 3,
+   "line": "모두다잠에든시간",
+   "new_start": 7.89,
+   "new_end": 11.17,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 8.34,
+   "suno_end": 11.33,
+   "suno_squashed": false,
+   "diff": -0.45
+  },
+  {
+   "i": 4,
+   "line": "나 혼자만의 시간",
+   "new_start": 11.17,
+   "new_end": 13.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 11.49,
+   "suno_end": 15.73,
+   "suno_squashed": false,
+   "diff": -0.32
+  },
+  {
+   "i": 5,
+   "line": "네 폰에 ping, 난 beat 위 swing",
+   "new_start": 15.72,
+   "new_end": 17.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 15.74,
+   "suno_end": 17.63,
+   "suno_squashed": false,
+   "diff": -0.02
+  },
+  {
+   "i": 6,
+   "line": "창밖은 hush, 내 맘은 bling",
+   "new_start": 17.63,
+   "new_end": 19.49,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 17.79,
+   "suno_end": 19.55,
+   "suno_squashed": false,
+   "diff": -0.16
+  },
+  {
+   "i": 7,
+   "line": "잠은 skip, 더 놀고 싶지",
+   "new_start": 19.49,
+   "new_end": 21.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 19.71,
+   "suno_end": 21.14,
+   "suno_squashed": false,
+   "diff": -0.22
+  },
+  {
+   "i": 8,
+   "line": "너 오면 밤이 club이 되지",
+   "new_start": 21.16,
+   "new_end": 22.86,
+   "anchor": true,
+   "match_ratio": 0.667,
+   "suno_start": 21.3,
+   "suno_end": 23.23,
+   "suno_squashed": false,
+   "diff": -0.14
+  },
+  {
+   "i": 9,
+   "line": "Always awake, 너와 난 fly",
+   "new_start": 22.86,
+   "new_end": 25.77,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 23.24,
+   "suno_end": 26.49,
+   "suno_squashed": false,
+   "diff": -0.38
+  },
+  {
+   "i": 10,
+   "line": "새벽한시, don't say goodbye",
+   "new_start": 25.77,
+   "new_end": 29.61,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 26.65,
+   "suno_end": 30.0,
+   "suno_squashed": false,
+   "diff": -0.88
+  },
+  {
+   "i": 11,
+   "line": "모두 잠든 도시 위 ride",
+   "new_start": 29.61,
+   "new_end": 33.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 30.12,
+   "suno_end": 33.59,
+   "suno_squashed": false,
+   "diff": -0.51
+  },
+  {
+   "i": 12,
+   "line": "더 놀자, we own the night",
+   "new_start": 33.64,
+   "new_end": 37.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 33.75,
+   "suno_end": 37.82,
+   "suno_squashed": false,
+   "diff": -0.11
+  },
+  {
+   "i": 13,
+   "line": "커튼 뒤 달빛이 disco",
+   "new_start": 37.12,
+   "new_end": 39.16,
+   "anchor": true,
+   "match_ratio": 0.364,
+   "suno_start": 37.83,
+   "suno_end": 39.26,
+   "suno_squashed": false,
+   "diff": -0.71
+  },
+  {
+   "i": 14,
+   "line": "컵엔 콜라, 마음은 tempo",
+   "new_start": 39.16,
+   "new_end": 40.94,
+   "anchor": true,
+   "match_ratio": 0.5,
+   "suno_start": 39.34,
+   "suno_end": 40.85,
+   "suno_squashed": false,
+   "diff": -0.18
+  },
+  {
+   "i": 15,
+   "line": "너에게 말 걸어, hey you",
+   "new_start": 40.94,
+   "new_end": 42.7,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 40.96,
+   "suno_end": 42.61,
+   "suno_squashed": false,
+   "diff": -0.02
+  },
+  {
+   "i": 16,
+   "line": "내 밤을 같이 break through",
+   "new_start": 42.7,
+   "new_end": 44.28,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 42.77,
+   "suno_end": 44.45,
+   "suno_squashed": false,
+   "diff": -0.07
+  },
+  {
+   "i": 17,
+   "line": "Always awake, 너와 난 fly",
+   "new_start": 44.28,
+   "new_end": 47.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 44.46,
+   "suno_end": 47.71,
+   "suno_squashed": false,
+   "diff": -0.18
+  },
+  {
+   "i": 18,
+   "line": "새벽한시, don't say goodbye",
+   "new_start": 47.06,
+   "new_end": 50.95,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 47.87,
+   "suno_end": 51.38,
+   "suno_squashed": false,
+   "diff": -0.81
+  },
+  {
+   "i": 19,
+   "line": "모두 잠든 도시 위 ride",
+   "new_start": 50.95,
+   "new_end": 54.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 51.5,
+   "suno_end": 54.89,
+   "suno_squashed": false,
+   "diff": -0.55
+  },
+  {
+   "i": 20,
+   "line": "더 놀자, we own the night",
+   "new_start": 54.98,
+   "new_end": 57.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 55.05,
+   "suno_end": 57.5,
+   "suno_squashed": false,
+   "diff": -0.07
+  },
+  {
+   "i": 21,
+   "line": "(spoken) 다 자도 우린 반짝",
+   "new_start": 57.68,
+   "new_end": 59.88,
+   "anchor": false,
+   "match_ratio": 0.462,
+   "suno_start": 58.09,
+   "suno_end": 60.16,
+   "suno_squashed": false,
+   "diff": -0.4
+  },
+  {
+   "i": 22,
+   "line": "너와 나, secret soundtrack",
+   "new_start": 59.88,
+   "new_end": 61.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 60.28,
+   "suno_end": 61.52,
+   "suno_squashed": false,
+   "diff": -0.4
+  },
+  {
+   "i": 23,
+   "line": "내일 걱정은 fade away",
+   "new_start": 61.4,
+   "new_end": 63.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 61.68,
+   "suno_end": 63.11,
+   "suno_squashed": false,
+   "diff": -0.28
+  },
+  {
+   "i": 24,
+   "line": "웃음은 louder, till the day",
+   "new_start": 63.14,
+   "new_end": 64.8,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 63.23,
+   "suno_end": 65.83,
+   "suno_squashed": false,
+   "diff": -0.09
+  },
+  {
+   "i": 25,
+   "line": "Always awake, 더 높이 fly",
+   "new_start": 64.8,
+   "new_end": 69.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 65.84,
+   "suno_end": 69.1,
+   "suno_squashed": false,
+   "diff": -1.04
+  },
+  {
+   "i": 26,
+   "line": "불 꺼진 거리도 spotlight",
+   "new_start": 69.12,
+   "new_end": 72.1,
+   "anchor": true,
+   "match_ratio": 0.933,
+   "suno_start": 69.25,
+   "suno_end": 72.21,
+   "suno_squashed": false,
+   "diff": -0.14
+  },
+  {
+   "i": 27,
+   "line": "너와 뛰면 시간은 rewind",
+   "new_start": 72.1,
+   "new_end": 76.25,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 72.33,
+   "suno_end": 76.2,
+   "suno_squashed": false,
+   "diff": -0.23
+  },
+  {
+   "i": 28,
+   "line": "One more dance, we own the night",
+   "new_start": 76.25,
+   "new_end": 79.72,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 76.28,
+   "suno_end": 79.79,
+   "suno_squashed": false,
+   "diff": -0.03
+  },
+  {
+   "i": 29,
+   "line": "새벽 한 시, 네 목소리",
+   "new_start": 79.72,
+   "new_end": 83.36,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 79.8,
+   "suno_end": 83.38,
+   "suno_squashed": false,
+   "diff": -0.08
+  },
+  {
+   "i": 30,
+   "line": "밤 끝에 남은 멜로디",
+   "new_start": 83.36,
+   "new_end": 86.51,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 83.54,
+   "suno_end": 87.13,
+   "suno_squashed": false,
+   "diff": -0.18
+  },
+  {
+   "i": 31,
+   "line": "Always awake, softly fade",
+   "new_start": 86.51,
+   "new_end": 90.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 87.21,
+   "suno_end": 90.48,
+   "suno_squashed": false,
+   "diff": -0.7
+  },
+  {
+   "i": 32,
+   "line": "너와 난 계속 one more play",
+   "new_start": 90.46,
+   "new_end": 93.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 90.6,
+   "suno_end": 93.43,
+   "suno_squashed": false,
+   "diff": -0.14
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "새벽한시, 방 불 켜",
+   "start": 1.94,
+   "end": 4.44
+  },
+  {
+   "text": "너 지금 뭐 해, call me",
+   "start": 4.44,
+   "end": 7.89
+  },
+  {
+   "text": "모두다잠에든시간",
+   "start": 7.89,
+   "end": 11.17
+  },
+  {
+   "text": "나 혼자만의 시간",
+   "start": 11.17,
+   "end": 13.06
+  },
+  {
+   "text": "네 폰에 ping, 난 beat 위 swing",
+   "start": 15.72,
+   "end": 17.63
+  },
+  {
+   "text": "창밖은 hush, 내 맘은 bling",
+   "start": 17.63,
+   "end": 19.49
+  },
+  {
+   "text": "잠은 skip, 더 놀고 싶지",
+   "start": 19.49,
+   "end": 21.16
+  },
+  {
+   "text": "너 오면 밤이 club이 되지",
+   "start": 21.16,
+   "end": 22.86
+  },
+  {
+   "text": "Always awake, 너와 난 fly",
+   "start": 22.86,
+   "end": 25.77
+  },
+  {
+   "text": "새벽한시, don't say goodbye",
+   "start": 25.77,
+   "end": 29.61
+  },
+  {
+   "text": "모두 잠든 도시 위 ride",
+   "start": 29.61,
+   "end": 33.64
+  },
+  {
+   "text": "더 놀자, we own the night",
+   "start": 33.64,
+   "end": 37.12
+  },
+  {
+   "text": "커튼 뒤 달빛이 disco",
+   "start": 37.12,
+   "end": 39.16
+  },
+  {
+   "text": "컵엔 콜라, 마음은 tempo",
+   "start": 39.16,
+   "end": 40.94
+  },
+  {
+   "text": "너에게 말 걸어, hey you",
+   "start": 40.94,
+   "end": 42.7
+  },
+  {
+   "text": "내 밤을 같이 break through",
+   "start": 42.7,
+   "end": 44.28
+  },
+  {
+   "text": "Always awake, 너와 난 fly",
+   "start": 44.28,
+   "end": 47.06
+  },
+  {
+   "text": "새벽한시, don't say goodbye",
+   "start": 47.06,
+   "end": 50.95
+  },
+  {
+   "text": "모두 잠든 도시 위 ride",
+   "start": 50.95,
+   "end": 54.98
+  },
+  {
+   "text": "더 놀자, we own the night",
+   "start": 54.98,
+   "end": 57.68
+  },
+  {
+   "text": "(spoken) 다 자도 우린 반짝",
+   "start": 57.68,
+   "end": 59.88
+  },
+  {
+   "text": "너와 나, secret soundtrack",
+   "start": 59.88,
+   "end": 61.4
+  },
+  {
+   "text": "내일 걱정은 fade away",
+   "start": 61.4,
+   "end": 63.14
+  },
+  {
+   "text": "웃음은 louder, till the day",
+   "start": 63.14,
+   "end": 64.8
+  },
+  {
+   "text": "Always awake, 더 높이 fly",
+   "start": 64.8,
+   "end": 69.12
+  },
+  {
+   "text": "불 꺼진 거리도 spotlight",
+   "start": 69.12,
+   "end": 72.1
+  },
+  {
+   "text": "너와 뛰면 시간은 rewind",
+   "start": 72.1,
+   "end": 76.25
+  },
+  {
+   "text": "One more dance, we own the night",
+   "start": 76.25,
+   "end": 79.72
+  },
+  {
+   "text": "새벽 한 시, 네 목소리",
+   "start": 79.72,
+   "end": 83.36
+  },
+  {
+   "text": "밤 끝에 남은 멜로디",
+   "start": 83.36,
+   "end": 86.51
+  },
+  {
+   "text": "Always awake, softly fade",
+   "start": 86.51,
+   "end": 90.46
+  },
+  {
+   "text": "너와 난 계속 one more play",
+   "start": 90.46,
+   "end": 93.16
+  }
+ ]
+}

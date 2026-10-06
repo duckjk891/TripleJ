@@ -1,0 +1,717 @@
+{
+ "metrics": {
+  "title": "너 정말",
+  "kind": "collapsed",
+  "track_id": "6aba6b465f279474ba710d37",
+  "suno_state": "collapsed",
+  "duration": 126.8,
+  "lines": 40,
+  "anchored": 40,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.634,
+  "max_unanchored_run": 0,
+  "A_chars": 349,
+  "B_chars": 387,
+  "B_unmatched": 40,
+  "char_match": 0.994,
+  "char_exact": 0.989,
+  "unreliable_words": 1,
+  "words": 127,
+  "t_api": 15.77,
+  "audio_MB": 2.87,
+  "cost_usd": 0.0127,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 25,
+  "suno_lines": 62,
+  "vs_suno_ok_n": 3,
+  "vs_suno_ok_median": 66.65,
+  "vs_suno_ok_p90": 68.51
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "또 눈이 마주쳐",
+   "new_start": 2.73,
+   "new_end": 4.63,
+   "anchor": true,
+   "match_ratio": 0.833,
+   "suno_start": 2.89,
+   "suno_end": 2.9,
+   "suno_squashed": true,
+   "diff": -0.16
+  },
+  {
+   "i": 2,
+   "line": "왜 웃고 도망쳐",
+   "new_start": 4.63,
+   "new_end": 6.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.9,
+   "suno_end": 2.92,
+   "suno_squashed": true,
+   "diff": 1.73
+  },
+  {
+   "i": 3,
+   "line": "Tell me, tell me now",
+   "new_start": 6.6,
+   "new_end": 8.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.92,
+   "suno_end": 2.95,
+   "suno_squashed": true,
+   "diff": 3.68
+  },
+  {
+   "i": 4,
+   "line": "우리 사이 뭐야",
+   "new_start": 8.12,
+   "new_end": 9.72,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.95,
+   "suno_end": 2.97,
+   "suno_squashed": true,
+   "diff": 5.17
+  },
+  {
+   "i": 5,
+   "line": "답장은 빠른데",
+   "new_start": 11.7,
+   "new_end": 13.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.98,
+   "suno_end": 3.0,
+   "suno_squashed": true,
+   "diff": 8.72
+  },
+  {
+   "i": 6,
+   "line": "약속은 애매해",
+   "new_start": 13.55,
+   "new_end": 15.39,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.0,
+   "suno_end": 3.01,
+   "suno_squashed": true,
+   "diff": 10.55
+  },
+  {
+   "i": 7,
+   "line": "너도 날 보면서",
+   "new_start": 15.39,
+   "new_end": 17.1,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.01,
+   "suno_end": 3.03,
+   "suno_squashed": true,
+   "diff": 12.37
+  },
+  {
+   "i": 8,
+   "line": "자꾸 아닌 척해",
+   "new_start": 17.1,
+   "new_end": 18.92,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.03,
+   "suno_end": 3.05,
+   "suno_squashed": true,
+   "diff": 14.07
+  },
+  {
+   "i": 9,
+   "line": "손끝이 스치면",
+   "new_start": 18.92,
+   "new_end": 21.04,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.06,
+   "suno_end": 3.07,
+   "suno_squashed": true,
+   "diff": 15.87
+  },
+  {
+   "i": 10,
+   "line": "심장이 춤을 춰",
+   "new_start": 21.04,
+   "new_end": 22.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.07,
+   "suno_end": 3.09,
+   "suno_squashed": true,
+   "diff": 17.97
+  },
+  {
+   "i": 11,
+   "line": "좋은 건 맞는데",
+   "new_start": 22.96,
+   "new_end": 24.65,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.09,
+   "suno_end": 3.11,
+   "suno_squashed": true,
+   "diff": 19.87
+  },
+  {
+   "i": 12,
+   "line": "말하긴 좀 무서워",
+   "new_start": 24.65,
+   "new_end": 26.8,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.11,
+   "suno_end": 3.13,
+   "suno_squashed": true,
+   "diff": 21.54
+  },
+  {
+   "i": 13,
+   "line": "네 맘을 모르겠어",
+   "new_start": 26.8,
+   "new_end": 28.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.15,
+   "suno_end": 3.16,
+   "suno_squashed": true,
+   "diff": 23.66
+  },
+  {
+   "i": 14,
+   "line": "내 맘은 여기 있어",
+   "new_start": 28.6,
+   "new_end": 30.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.17,
+   "suno_end": 3.18,
+   "suno_squashed": true,
+   "diff": 25.43
+  },
+  {
+   "i": 15,
+   "line": "One step closer baby",
+   "new_start": 30.68,
+   "new_end": 32.69,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.18,
+   "suno_end": 3.21,
+   "suno_squashed": true,
+   "diff": 27.49
+  },
+  {
+   "i": 16,
+   "line": "더 숨기긴 싫어",
+   "new_start": 32.69,
+   "new_end": 35.08,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.22,
+   "suno_end": 3.23,
+   "suno_squashed": true,
+   "diff": 29.47
+  },
+  {
+   "i": 17,
+   "line": "Love me like you do",
+   "new_start": 35.08,
+   "new_end": 36.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.24,
+   "suno_end": 3.27,
+   "suno_squashed": true,
+   "diff": 31.84
+  },
+  {
+   "i": 18,
+   "line": "오늘 밤 closer",
+   "new_start": 36.63,
+   "new_end": 38.73,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.27,
+   "suno_end": 3.29,
+   "suno_squashed": true,
+   "diff": 33.35
+  },
+  {
+   "i": 19,
+   "line": "썸 말고 love mode",
+   "new_start": 38.73,
+   "new_end": 40.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.29,
+   "suno_end": 3.31,
+   "suno_squashed": true,
+   "diff": 35.44
+  },
+  {
+   "i": 20,
+   "line": "Say yes, say yes",
+   "new_start": 40.56,
+   "new_end": 42.08,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.32,
+   "suno_end": 3.34,
+   "suno_squashed": true,
+   "diff": 37.24
+  },
+  {
+   "i": 21,
+   "line": "일부러 늦게 봐",
+   "new_start": 42.08,
+   "new_end": 44.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.35,
+   "suno_end": 3.37,
+   "suno_squashed": true,
+   "diff": 38.73
+  },
+  {
+   "i": 22,
+   "line": "너무 티 날까 봐",
+   "new_start": 44.14,
+   "new_end": 45.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.37,
+   "suno_end": 3.39,
+   "suno_squashed": true,
+   "diff": 40.77
+  },
+  {
+   "i": 23,
+   "line": "사실 난 기다려",
+   "new_start": 45.64,
+   "new_end": 47.62,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.39,
+   "suno_end": 3.41,
+   "suno_squashed": true,
+   "diff": 42.25
+  },
+  {
+   "i": 24,
+   "line": "네 알림 하나를",
+   "new_start": 47.62,
+   "new_end": 50.12,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.41,
+   "suno_end": 3.43,
+   "suno_squashed": true,
+   "diff": 44.21
+  },
+  {
+   "i": 25,
+   "line": "Love me like you do",
+   "new_start": 50.12,
+   "new_end": 51.59,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.44,
+   "suno_end": 3.46,
+   "suno_squashed": true,
+   "diff": 46.68
+  },
+  {
+   "i": 26,
+   "line": "오늘 밤 closer",
+   "new_start": 51.59,
+   "new_end": 53.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.46,
+   "suno_end": 3.48,
+   "suno_squashed": true,
+   "diff": 48.12
+  },
+  {
+   "i": 27,
+   "line": "밀고 당기지 마",
+   "new_start": 53.9,
+   "new_end": 55.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.48,
+   "suno_end": 3.5,
+   "suno_squashed": true,
+   "diff": 50.42
+  },
+  {
+   "i": 28,
+   "line": "내 손 잡아 tonight",
+   "new_start": 55.64,
+   "new_end": 57.92,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.5,
+   "suno_end": 3.53,
+   "suno_squashed": true,
+   "diff": 52.14
+  },
+  {
+   "i": 29,
+   "line": "헷갈리게 해서 미안",
+   "new_start": 57.92,
+   "new_end": 59.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.54,
+   "suno_end": 3.56,
+   "suno_squashed": true,
+   "diff": 54.38
+  },
+  {
+   "i": 30,
+   "line": "나도 겁이 났나 봐",
+   "new_start": 59.94,
+   "new_end": 61.9,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.56,
+   "suno_end": 3.58,
+   "suno_squashed": true,
+   "diff": 56.38
+  },
+  {
+   "i": 31,
+   "line": "넌 내 favorite sign",
+   "new_start": 61.9,
+   "new_end": 64.31,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.58,
+   "suno_end": 3.6,
+   "suno_squashed": true,
+   "diff": 58.32
+  },
+  {
+   "i": 32,
+   "line": "넌 내 answer야",
+   "new_start": 64.31,
+   "new_end": 66.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.6,
+   "suno_end": 3.63,
+   "suno_squashed": true,
+   "diff": 60.71
+  },
+  {
+   "i": 33,
+   "line": "Love me like you do",
+   "new_start": 66.84,
+   "new_end": 68.53,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.64,
+   "suno_end": 3.67,
+   "suno_squashed": true,
+   "diff": 63.2
+  },
+  {
+   "i": 34,
+   "line": "오늘 밤 closer",
+   "new_start": 68.53,
+   "new_end": 70.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.67,
+   "suno_end": 3.69,
+   "suno_squashed": true,
+   "diff": 64.86
+  },
+  {
+   "i": 35,
+   "line": "손끝부터 sparkle",
+   "new_start": 70.64,
+   "new_end": 72.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.69,
+   "suno_end": 3.71,
+   "suno_squashed": true,
+   "diff": 66.95
+  },
+  {
+   "i": 36,
+   "line": "Say yes, say yes",
+   "new_start": 72.6,
+   "new_end": 74.26,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.71,
+   "suno_end": 3.73,
+   "suno_squashed": true,
+   "diff": 68.89
+  },
+  {
+   "i": 37,
+   "line": "이제 말해줄래",
+   "new_start": 74.26,
+   "new_end": 76.24,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.74,
+   "suno_end": 7.22,
+   "suno_squashed": true,
+   "diff": 70.51
+  },
+  {
+   "i": 38,
+   "line": "이미 답은 너야",
+   "new_start": 76.24,
+   "new_end": 78.51,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 7.26,
+   "suno_end": 11.84,
+   "suno_squashed": false,
+   "diff": 68.98
+  },
+  {
+   "i": 39,
+   "line": "You and me, tonight",
+   "new_start": 78.51,
+   "new_end": 81.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 11.86,
+   "suno_end": 16.4,
+   "suno_squashed": false,
+   "diff": 66.65
+  },
+  {
+   "i": 40,
+   "line": "썸은 사랑이 돼",
+   "new_start": 81.5,
+   "new_end": 83.12,
+   "anchor": true,
+   "match_ratio": 0.833,
+   "suno_start": 16.44,
+   "suno_end": 18.29,
+   "suno_squashed": false,
+   "diff": 65.06
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "또 눈이 마주쳐",
+   "start": 2.73,
+   "end": 4.63
+  },
+  {
+   "text": "왜 웃고 도망쳐",
+   "start": 4.63,
+   "end": 6.6
+  },
+  {
+   "text": "Tell me, tell me now",
+   "start": 6.6,
+   "end": 8.12
+  },
+  {
+   "text": "우리 사이 뭐야",
+   "start": 8.12,
+   "end": 9.72
+  },
+  {
+   "text": "답장은 빠른데",
+   "start": 11.7,
+   "end": 13.55
+  },
+  {
+   "text": "약속은 애매해",
+   "start": 13.55,
+   "end": 15.39
+  },
+  {
+   "text": "너도 날 보면서",
+   "start": 15.39,
+   "end": 17.1
+  },
+  {
+   "text": "자꾸 아닌 척해",
+   "start": 17.1,
+   "end": 18.92
+  },
+  {
+   "text": "손끝이 스치면",
+   "start": 18.92,
+   "end": 21.04
+  },
+  {
+   "text": "심장이 춤을 춰",
+   "start": 21.04,
+   "end": 22.96
+  },
+  {
+   "text": "좋은 건 맞는데",
+   "start": 22.96,
+   "end": 24.65
+  },
+  {
+   "text": "말하긴 좀 무서워",
+   "start": 24.65,
+   "end": 26.8
+  },
+  {
+   "text": "네 맘을 모르겠어",
+   "start": 26.8,
+   "end": 28.6
+  },
+  {
+   "text": "내 맘은 여기 있어",
+   "start": 28.6,
+   "end": 30.68
+  },
+  {
+   "text": "One step closer baby",
+   "start": 30.68,
+   "end": 32.69
+  },
+  {
+   "text": "더 숨기긴 싫어",
+   "start": 32.69,
+   "end": 35.08
+  },
+  {
+   "text": "Love me like you do",
+   "start": 35.08,
+   "end": 36.63
+  },
+  {
+   "text": "오늘 밤 closer",
+   "start": 36.63,
+   "end": 38.73
+  },
+  {
+   "text": "썸 말고 love mode",
+   "start": 38.73,
+   "end": 40.56
+  },
+  {
+   "text": "Say yes, say yes",
+   "start": 40.56,
+   "end": 42.08
+  },
+  {
+   "text": "일부러 늦게 봐",
+   "start": 42.08,
+   "end": 44.14
+  },
+  {
+   "text": "너무 티 날까 봐",
+   "start": 44.14,
+   "end": 45.64
+  },
+  {
+   "text": "사실 난 기다려",
+   "start": 45.64,
+   "end": 47.62
+  },
+  {
+   "text": "네 알림 하나를",
+   "start": 47.62,
+   "end": 50.12
+  },
+  {
+   "text": "Love me like you do",
+   "start": 50.12,
+   "end": 51.59
+  },
+  {
+   "text": "오늘 밤 closer",
+   "start": 51.59,
+   "end": 53.9
+  },
+  {
+   "text": "밀고 당기지 마",
+   "start": 53.9,
+   "end": 55.64
+  },
+  {
+   "text": "내 손 잡아 tonight",
+   "start": 55.64,
+   "end": 57.92
+  },
+  {
+   "text": "헷갈리게 해서 미안",
+   "start": 57.92,
+   "end": 59.94
+  },
+  {
+   "text": "나도 겁이 났나 봐",
+   "start": 59.94,
+   "end": 61.9
+  },
+  {
+   "text": "넌 내 favorite sign",
+   "start": 61.9,
+   "end": 64.31
+  },
+  {
+   "text": "넌 내 answer야",
+   "start": 64.31,
+   "end": 66.84
+  },
+  {
+   "text": "Love me like you do",
+   "start": 66.84,
+   "end": 68.53
+  },
+  {
+   "text": "오늘 밤 closer",
+   "start": 68.53,
+   "end": 70.64
+  },
+  {
+   "text": "손끝부터 sparkle",
+   "start": 70.64,
+   "end": 72.6
+  },
+  {
+   "text": "Say yes, say yes",
+   "start": 72.6,
+   "end": 74.26
+  },
+  {
+   "text": "이제 말해줄래",
+   "start": 74.26,
+   "end": 76.24
+  },
+  {
+   "text": "이미 답은 너야",
+   "start": 76.24,
+   "end": 78.51
+  },
+  {
+   "text": "You and me, tonight",
+   "start": 78.51,
+   "end": 81.5
+  },
+  {
+   "text": "썸은 사랑이 돼",
+   "start": 81.5,
+   "end": 83.12
+  }
+ ]
+}

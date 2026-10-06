@@ -1,0 +1,479 @@
+{
+ "metrics": {
+  "title": "마지막 버스",
+  "kind": "collapsed",
+  "track_id": "6abc9a10e3fe1c6b30cf03cf",
+  "suno_state": "collapsed",
+  "duration": 121.6,
+  "lines": 26,
+  "anchored": 26,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.807,
+  "max_unanchored_run": 0,
+  "A_chars": 194,
+  "B_chars": 197,
+  "B_unmatched": 3,
+  "char_match": 1.0,
+  "char_exact": 0.995,
+  "unreliable_words": 11,
+  "words": 65,
+  "t_api": 5.72,
+  "audio_MB": 2.7,
+  "cost_usd": 0.0122,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 15,
+  "suno_lines": 40,
+  "vs_suno_ok_n": 1,
+  "vs_suno_ok_median": 92.91,
+  "vs_suno_ok_p90": 92.91
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "막차 불빛이 흔들려",
+   "new_start": 3.78,
+   "new_end": 6.78,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.49,
+   "suno_end": 3.5,
+   "suno_squashed": true,
+   "diff": 0.29
+  },
+  {
+   "i": 2,
+   "line": "빈자리 하나가 보여",
+   "new_start": 6.78,
+   "new_end": 9.87,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.5,
+   "suno_end": 3.51,
+   "suno_squashed": true,
+   "diff": 3.28
+  },
+  {
+   "i": 3,
+   "line": "오늘도 늦었나 봐요",
+   "new_start": 9.87,
+   "new_end": 13.01,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.52,
+   "suno_end": 3.53,
+   "suno_squashed": true,
+   "diff": 6.35
+  },
+  {
+   "i": 4,
+   "line": "괜찮아요, 저도 그래요",
+   "new_start": 13.01,
+   "new_end": 16.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.53,
+   "suno_end": 3.54,
+   "suno_squashed": true,
+   "diff": 9.48
+  },
+  {
+   "i": 5,
+   "line": "매일이 조금 버거워",
+   "new_start": 16.2,
+   "new_end": 19.53,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.55,
+   "suno_end": 3.56,
+   "suno_squashed": true,
+   "diff": 12.65
+  },
+  {
+   "i": 6,
+   "line": "내 하루도 늘 비슷해요",
+   "new_start": 19.53,
+   "new_end": 22.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.56,
+   "suno_end": 3.58,
+   "suno_squashed": true,
+   "diff": 15.97
+  },
+  {
+   "i": 7,
+   "line": "어디까지 가나요",
+   "new_start": 22.4,
+   "new_end": 24.88,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.59,
+   "suno_end": 3.6,
+   "suno_squashed": true,
+   "diff": 18.81
+  },
+  {
+   "i": 8,
+   "line": "당신 말이 궁금해요",
+   "new_start": 24.88,
+   "new_end": 28.44,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.6,
+   "suno_end": 3.61,
+   "suno_squashed": true,
+   "diff": 21.28
+  },
+  {
+   "i": 9,
+   "line": "막차 끝에 우리 둘",
+   "new_start": 28.44,
+   "new_end": 31.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.62,
+   "suno_end": 3.63,
+   "suno_squashed": true,
+   "diff": 24.82
+  },
+  {
+   "i": 10,
+   "line": "우연처럼 웃네요",
+   "new_start": 31.54,
+   "new_end": 34.74,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.63,
+   "suno_end": 3.64,
+   "suno_squashed": true,
+   "diff": 27.91
+  },
+  {
+   "i": 11,
+   "line": "흔들리는 밤 속에",
+   "new_start": 34.74,
+   "new_end": 38.1,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.64,
+   "suno_end": 3.65,
+   "suno_squashed": true,
+   "diff": 31.11
+  },
+  {
+   "i": 12,
+   "line": "마음이 가까워져",
+   "new_start": 38.1,
+   "new_end": 41.45,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.65,
+   "suno_end": 3.66,
+   "suno_squashed": true,
+   "diff": 34.45
+  },
+  {
+   "i": 13,
+   "line": "꿈은 아직 남았나요",
+   "new_start": 41.45,
+   "new_end": 44.71,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.66,
+   "suno_end": 3.68,
+   "suno_squashed": true,
+   "diff": 37.79
+  },
+  {
+   "i": 14,
+   "line": "네, 작지만 빛나죠",
+   "new_start": 44.71,
+   "new_end": 47.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.68,
+   "suno_end": 3.69,
+   "suno_squashed": true,
+   "diff": 41.03
+  },
+  {
+   "i": 15,
+   "line": "막차 끝에 우리 둘",
+   "new_start": 47.58,
+   "new_end": 50.65,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.7,
+   "suno_end": 3.71,
+   "suno_squashed": true,
+   "diff": 43.89
+  },
+  {
+   "i": 16,
+   "line": "오늘을 나누네요",
+   "new_start": 50.65,
+   "new_end": 54.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.71,
+   "suno_end": 3.72,
+   "suno_squashed": true,
+   "diff": 46.94
+  },
+  {
+   "i": 17,
+   "line": "매일이 달라질 듯",
+   "new_start": 66.94,
+   "new_end": 69.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.72,
+   "suno_end": 3.73,
+   "suno_squashed": true,
+   "diff": 63.22
+  },
+  {
+   "i": 18,
+   "line": "손끝이 설레어요",
+   "new_start": 69.94,
+   "new_end": 73.72,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.73,
+   "suno_end": 3.74,
+   "suno_squashed": true,
+   "diff": 66.21
+  },
+  {
+   "i": 19,
+   "line": "내일도 이 시간일까",
+   "new_start": 73.72,
+   "new_end": 78.81,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.75,
+   "suno_end": 3.76,
+   "suno_squashed": true,
+   "diff": 69.98
+  },
+  {
+   "i": 20,
+   "line": "기다려도 괜찮을까",
+   "new_start": 78.81,
+   "new_end": 82.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.76,
+   "suno_end": 3.77,
+   "suno_squashed": true,
+   "diff": 75.05
+  },
+  {
+   "i": 21,
+   "line": "막차 끝에 우리 둘",
+   "new_start": 82.6,
+   "new_end": 85.64,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.78,
+   "suno_end": 3.79,
+   "suno_squashed": true,
+   "diff": 78.82
+  },
+  {
+   "i": 22,
+   "line": "이름을 묻고 싶어",
+   "new_start": 85.64,
+   "new_end": 88.71,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.79,
+   "suno_end": 3.8,
+   "suno_squashed": true,
+   "diff": 81.85
+  },
+  {
+   "i": 23,
+   "line": "평범했던 매일이",
+   "new_start": 88.71,
+   "new_end": 91.34,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.8,
+   "suno_end": 3.81,
+   "suno_squashed": true,
+   "diff": 84.91
+  },
+  {
+   "i": 24,
+   "line": "사랑처럼 번져요",
+   "new_start": 92.36,
+   "new_end": 95.32,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.81,
+   "suno_end": 3.82,
+   "suno_squashed": true,
+   "diff": 88.55
+  },
+  {
+   "i": 25,
+   "line": "다음 역이 오네요",
+   "new_start": 95.32,
+   "new_end": 97.98,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 3.83,
+   "suno_end": 6.96,
+   "suno_squashed": true,
+   "diff": 91.5
+  },
+  {
+   "i": 26,
+   "line": "우리 또 만날까요",
+   "new_start": 99.88,
+   "new_end": 101.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 6.97,
+   "suno_end": 11.28,
+   "suno_squashed": false,
+   "diff": 92.91
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "막차 불빛이 흔들려",
+   "start": 3.78,
+   "end": 6.78
+  },
+  {
+   "text": "빈자리 하나가 보여",
+   "start": 6.78,
+   "end": 9.87
+  },
+  {
+   "text": "오늘도 늦었나 봐요",
+   "start": 9.87,
+   "end": 13.01
+  },
+  {
+   "text": "괜찮아요, 저도 그래요",
+   "start": 13.01,
+   "end": 16.2
+  },
+  {
+   "text": "매일이 조금 버거워",
+   "start": 16.2,
+   "end": 19.53
+  },
+  {
+   "text": "내 하루도 늘 비슷해요",
+   "start": 19.53,
+   "end": 22.4
+  },
+  {
+   "text": "어디까지 가나요",
+   "start": 22.4,
+   "end": 24.88
+  },
+  {
+   "text": "당신 말이 궁금해요",
+   "start": 24.88,
+   "end": 28.44
+  },
+  {
+   "text": "막차 끝에 우리 둘",
+   "start": 28.44,
+   "end": 31.54
+  },
+  {
+   "text": "우연처럼 웃네요",
+   "start": 31.54,
+   "end": 34.74
+  },
+  {
+   "text": "흔들리는 밤 속에",
+   "start": 34.74,
+   "end": 38.1
+  },
+  {
+   "text": "마음이 가까워져",
+   "start": 38.1,
+   "end": 41.45
+  },
+  {
+   "text": "꿈은 아직 남았나요",
+   "start": 41.45,
+   "end": 44.71
+  },
+  {
+   "text": "네, 작지만 빛나죠",
+   "start": 44.71,
+   "end": 47.58
+  },
+  {
+   "text": "막차 끝에 우리 둘",
+   "start": 47.58,
+   "end": 50.65
+  },
+  {
+   "text": "오늘을 나누네요",
+   "start": 50.65,
+   "end": 54.02
+  },
+  {
+   "text": "매일이 달라질 듯",
+   "start": 66.94,
+   "end": 69.94
+  },
+  {
+   "text": "손끝이 설레어요",
+   "start": 69.94,
+   "end": 73.72
+  },
+  {
+   "text": "내일도 이 시간일까",
+   "start": 73.72,
+   "end": 78.81
+  },
+  {
+   "text": "기다려도 괜찮을까",
+   "start": 78.81,
+   "end": 82.6
+  },
+  {
+   "text": "막차 끝에 우리 둘",
+   "start": 82.6,
+   "end": 85.64
+  },
+  {
+   "text": "이름을 묻고 싶어",
+   "start": 85.64,
+   "end": 88.71
+  },
+  {
+   "text": "평범했던 매일이",
+   "start": 88.71,
+   "end": 91.34
+  },
+  {
+   "text": "사랑처럼 번져요",
+   "start": 92.36,
+   "end": 95.32
+  },
+  {
+   "text": "다음 역이 오네요",
+   "start": 95.32,
+   "end": 97.98
+  },
+  {
+   "text": "우리 또 만날까요",
+   "start": 99.88,
+   "end": 101.94
+  }
+ ]
+}

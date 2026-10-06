@@ -1,0 +1,479 @@
+{
+ "metrics": {
+  "title": "show",
+  "kind": "collapsed",
+  "track_id": "6abb8a3fb765fcf17ff6c352",
+  "suno_state": "collapsed",
+  "duration": 141.6,
+  "lines": 26,
+  "anchored": 26,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.833,
+  "max_unanchored_run": 0,
+  "A_chars": 303,
+  "B_chars": 305,
+  "B_unmatched": 5,
+  "char_match": 0.99,
+  "char_exact": 0.99,
+  "unreliable_words": 35,
+  "words": 126,
+  "t_api": 10.16,
+  "audio_MB": 3.16,
+  "cost_usd": 0.0142,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 12,
+  "suno_lines": 37,
+  "vs_suno_ok_n": 1,
+  "vs_suno_ok_median": 110.3,
+  "vs_suno_ok_p90": 110.3
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "붉은 밤, 너를 접어",
+   "new_start": 4.64,
+   "new_end": 7.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.64,
+   "suno_end": 4.64,
+   "suno_squashed": true,
+   "diff": 0.0
+  },
+  {
+   "i": 2,
+   "line": "빈 잔엔 후회만 돌아",
+   "new_start": 8.24,
+   "new_end": 11.21,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.64,
+   "suno_end": 4.64,
+   "suno_squashed": true,
+   "diff": 3.6
+  },
+  {
+   "i": 3,
+   "line": "너, 그 거짓말 sweet lie",
+   "new_start": 11.21,
+   "new_end": 15.19,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.64,
+   "suno_end": 4.64,
+   "suno_squashed": true,
+   "diff": 6.56
+  },
+  {
+   "i": 4,
+   "line": "웃으며 날 팔았지",
+   "new_start": 16.4,
+   "new_end": 19.05,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.65,
+   "suno_end": 4.65,
+   "suno_squashed": true,
+   "diff": 11.75
+  },
+  {
+   "i": 5,
+   "line": "네 눈빛이 칼 같아",
+   "new_start": 19.05,
+   "new_end": 21.67,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.65,
+   "suno_end": 4.65,
+   "suno_squashed": true,
+   "diff": 14.4
+  },
+  {
+   "i": 6,
+   "line": "Baby, 늦게 알았어",
+   "new_start": 21.67,
+   "new_end": 23.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.65,
+   "suno_end": 4.65,
+   "suno_squashed": true,
+   "diff": 17.02
+  },
+  {
+   "i": 7,
+   "line": "박수 소리 속에",
+   "new_start": 26.04,
+   "new_end": 28.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.65,
+   "suno_end": 4.66,
+   "suno_squashed": true,
+   "diff": 21.39
+  },
+  {
+   "i": 8,
+   "line": "나는 무너져 가",
+   "new_start": 28.2,
+   "new_end": 32.29,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.66,
+   "suno_end": 4.66,
+   "suno_squashed": true,
+   "diff": 23.54
+  },
+  {
+   "i": 9,
+   "line": "Curtain call, 끝났어",
+   "new_start": 32.29,
+   "new_end": 35.54,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.66,
+   "suno_end": 4.66,
+   "suno_squashed": true,
+   "diff": 27.63
+  },
+  {
+   "i": 10,
+   "line": "I hate u, 춤추며 말해",
+   "new_start": 39.89,
+   "new_end": 43.65,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.66,
+   "suno_end": 4.66,
+   "suno_squashed": true,
+   "diff": 35.23
+  },
+  {
+   "i": 11,
+   "line": "I hate u, 웃으며 goodbye",
+   "new_start": 43.65,
+   "new_end": 46.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.66,
+   "suno_end": 4.67,
+   "suno_squashed": true,
+   "diff": 38.99
+  },
+  {
+   "i": 12,
+   "line": "네 love는 cheap champagne",
+   "new_start": 46.86,
+   "new_end": 51.52,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.67,
+   "suno_end": 4.67,
+   "suno_squashed": true,
+   "diff": 42.2
+  },
+  {
+   "i": 13,
+   "line": "너, 다시 손 내밀지 마",
+   "new_start": 54.96,
+   "new_end": 57.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.67,
+   "suno_end": 4.67,
+   "suno_squashed": true,
+   "diff": 50.29
+  },
+  {
+   "i": 14,
+   "line": "제발 한 번만 봐 줘",
+   "new_start": 57.46,
+   "new_end": 60.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.67,
+   "suno_end": 4.67,
+   "suno_squashed": true,
+   "diff": 52.79
+  },
+  {
+   "i": 15,
+   "line": "No no, 그 입술 닫아",
+   "new_start": 60.46,
+   "new_end": 65.16,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.67,
+   "suno_end": 4.68,
+   "suno_squashed": true,
+   "diff": 55.79
+  },
+  {
+   "i": 16,
+   "line": "I hate u, 춤추며 말해",
+   "new_start": 67.43,
+   "new_end": 72.43,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.68,
+   "suno_end": 4.68,
+   "suno_squashed": true,
+   "diff": 62.75
+  },
+  {
+   "i": 17,
+   "line": "I hate u, 웃으며 goodbye",
+   "new_start": 72.43,
+   "new_end": 75.46,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.68,
+   "suno_end": 4.68,
+   "suno_squashed": true,
+   "diff": 67.75
+  },
+  {
+   "i": 18,
+   "line": "네 love는 cheap champagne",
+   "new_start": 75.46,
+   "new_end": 79.76,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.68,
+   "suno_end": 4.69,
+   "suno_squashed": true,
+   "diff": 70.78
+  },
+  {
+   "i": 19,
+   "line": "내가 망친 love story",
+   "new_start": 81.64,
+   "new_end": 84.3,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.69,
+   "suno_end": 4.69,
+   "suno_squashed": true,
+   "diff": 76.95
+  },
+  {
+   "i": 20,
+   "line": "넌 내 bad memory",
+   "new_start": 84.3,
+   "new_end": 85.8,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.69,
+   "suno_end": 4.69,
+   "suno_squashed": true,
+   "diff": 79.61
+  },
+  {
+   "i": 21,
+   "line": "I hate u, honestly",
+   "new_start": 85.8,
+   "new_end": 89.68,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.69,
+   "suno_end": 4.7,
+   "suno_squashed": true,
+   "diff": 81.11
+  },
+  {
+   "i": 22,
+   "line": "I hate u, 춤추며 말해",
+   "new_start": 97.29,
+   "new_end": 101.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.7,
+   "suno_end": 4.7,
+   "suno_squashed": true,
+   "diff": 92.59
+  },
+  {
+   "i": 23,
+   "line": "I hate u, 웃으며 goodbye",
+   "new_start": 101.03,
+   "new_end": 104.11,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.7,
+   "suno_end": 4.7,
+   "suno_squashed": true,
+   "diff": 96.33
+  },
+  {
+   "i": 24,
+   "line": "네 love는 cheap champagne",
+   "new_start": 104.11,
+   "new_end": 108.63,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.7,
+   "suno_end": 4.71,
+   "suno_squashed": true,
+   "diff": 99.41
+  },
+  {
+   "i": 25,
+   "line": "잘 가, 내 못된 you",
+   "new_start": 113.0,
+   "new_end": 115.3,
+   "anchor": true,
+   "match_ratio": 0.625,
+   "suno_start": 4.71,
+   "suno_end": 9.41,
+   "suno_squashed": true,
+   "diff": 108.29
+  },
+  {
+   "i": 26,
+   "line": "Goodbye, 끝난 우리 show",
+   "new_start": 119.79,
+   "new_end": 122.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 9.49,
+   "suno_end": 18.46,
+   "suno_squashed": false,
+   "diff": 110.3
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "붉은 밤, 너를 접어",
+   "start": 4.64,
+   "end": 7.14
+  },
+  {
+   "text": "빈 잔엔 후회만 돌아",
+   "start": 8.24,
+   "end": 11.21
+  },
+  {
+   "text": "너, 그 거짓말 sweet lie",
+   "start": 11.21,
+   "end": 15.19
+  },
+  {
+   "text": "웃으며 날 팔았지",
+   "start": 16.4,
+   "end": 19.05
+  },
+  {
+   "text": "네 눈빛이 칼 같아",
+   "start": 19.05,
+   "end": 21.67
+  },
+  {
+   "text": "Baby, 늦게 알았어",
+   "start": 21.67,
+   "end": 23.86
+  },
+  {
+   "text": "박수 소리 속에",
+   "start": 26.04,
+   "end": 28.2
+  },
+  {
+   "text": "나는 무너져 가",
+   "start": 28.2,
+   "end": 32.29
+  },
+  {
+   "text": "Curtain call, 끝났어",
+   "start": 32.29,
+   "end": 35.54
+  },
+  {
+   "text": "I hate u, 춤추며 말해",
+   "start": 39.89,
+   "end": 43.65
+  },
+  {
+   "text": "I hate u, 웃으며 goodbye",
+   "start": 43.65,
+   "end": 46.86
+  },
+  {
+   "text": "네 love는 cheap champagne",
+   "start": 46.86,
+   "end": 51.52
+  },
+  {
+   "text": "너, 다시 손 내밀지 마",
+   "start": 54.96,
+   "end": 57.46
+  },
+  {
+   "text": "제발 한 번만 봐 줘",
+   "start": 57.46,
+   "end": 60.46
+  },
+  {
+   "text": "No no, 그 입술 닫아",
+   "start": 60.46,
+   "end": 65.16
+  },
+  {
+   "text": "I hate u, 춤추며 말해",
+   "start": 67.43,
+   "end": 72.43
+  },
+  {
+   "text": "I hate u, 웃으며 goodbye",
+   "start": 72.43,
+   "end": 75.46
+  },
+  {
+   "text": "네 love는 cheap champagne",
+   "start": 75.46,
+   "end": 79.76
+  },
+  {
+   "text": "내가 망친 love story",
+   "start": 81.64,
+   "end": 84.3
+  },
+  {
+   "text": "넌 내 bad memory",
+   "start": 84.3,
+   "end": 85.8
+  },
+  {
+   "text": "I hate u, honestly",
+   "start": 85.8,
+   "end": 89.68
+  },
+  {
+   "text": "I hate u, 춤추며 말해",
+   "start": 97.29,
+   "end": 101.03
+  },
+  {
+   "text": "I hate u, 웃으며 goodbye",
+   "start": 101.03,
+   "end": 104.11
+  },
+  {
+   "text": "네 love는 cheap champagne",
+   "start": 104.11,
+   "end": 108.63
+  },
+  {
+   "text": "잘 가, 내 못된 you",
+   "start": 113.0,
+   "end": 115.3
+  },
+  {
+   "text": "Goodbye, 끝난 우리 show",
+   "start": 119.79,
+   "end": 122.6
+  }
+ ]
+}

@@ -1,0 +1,632 @@
+{
+ "metrics": {
+  "title": "미칠거같아",
+  "kind": "collapsed",
+  "track_id": "6aba5ed98f4dcb9ca865d9dd",
+  "suno_state": "collapsed",
+  "duration": 146.4,
+  "lines": 35,
+  "anchored": 35,
+  "anchor_ratio": 1.0,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.832,
+  "max_unanchored_run": 0,
+  "A_chars": 318,
+  "B_chars": 316,
+  "B_unmatched": 1,
+  "char_match": 0.991,
+  "char_exact": 0.987,
+  "unreliable_words": 1,
+  "words": 102,
+  "t_api": 7.56,
+  "audio_MB": 3.27,
+  "cost_usd": 0.0146,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 26,
+  "suno_lines": 59,
+  "vs_suno_ok_n": 2,
+  "vs_suno_ok_median": 112.59,
+  "vs_suno_ok_p90": 113.78
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "너 없는 밤이 길어",
+   "new_start": 2.7,
+   "new_end": 5.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.58,
+   "suno_end": 2.58,
+   "suno_squashed": true,
+   "diff": 0.12
+  },
+  {
+   "i": 2,
+   "line": "나도 아직 여기야",
+   "new_start": 5.14,
+   "new_end": 7.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.58,
+   "suno_end": 2.59,
+   "suno_squashed": true,
+   "diff": 2.56
+  },
+  {
+   "i": 3,
+   "line": "Baby, I miss you",
+   "new_start": 10.04,
+   "new_end": 12.13,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.59,
+   "suno_end": 2.59,
+   "suno_squashed": true,
+   "diff": 7.45
+  },
+  {
+   "i": 4,
+   "line": "너를 지운 줄 알았어",
+   "new_start": 19.22,
+   "new_end": 21.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.6,
+   "suno_end": 2.6,
+   "suno_squashed": true,
+   "diff": 16.62
+  },
+  {
+   "i": 5,
+   "line": "눈 뜨면 또 네 이름",
+   "new_start": 23.18,
+   "new_end": 26.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.6,
+   "suno_end": 2.61,
+   "suno_squashed": true,
+   "diff": 20.58
+  },
+  {
+   "i": 6,
+   "line": "웃던 너만 떠올라",
+   "new_start": 26.06,
+   "new_end": 29.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.61,
+   "suno_end": 2.61,
+   "suno_squashed": true,
+   "diff": 23.45
+  },
+  {
+   "i": 7,
+   "line": "너를 미워해 보려다",
+   "new_start": 30.22,
+   "new_end": 33.22,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.62,
+   "suno_end": 2.62,
+   "suno_squashed": true,
+   "diff": 27.6
+  },
+  {
+   "i": 8,
+   "line": "결국 네 편이 됐어",
+   "new_start": 33.22,
+   "new_end": 36.25,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.62,
+   "suno_end": 2.63,
+   "suno_squashed": true,
+   "diff": 30.6
+  },
+  {
+   "i": 9,
+   "line": "바보처럼 또 운다",
+   "new_start": 36.25,
+   "new_end": 40.74,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.63,
+   "suno_end": 2.63,
+   "suno_squashed": true,
+   "diff": 33.62
+  },
+  {
+   "i": 10,
+   "line": "왜 내 맘은 늦을까",
+   "new_start": 40.74,
+   "new_end": 42.58,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.64,
+   "suno_end": 2.64,
+   "suno_squashed": true,
+   "diff": 38.1
+  },
+  {
+   "i": 11,
+   "line": "넌 벌써 끝났을까",
+   "new_start": 42.58,
+   "new_end": 44.79,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.64,
+   "suno_end": 2.65,
+   "suno_squashed": true,
+   "diff": 39.94
+  },
+  {
+   "i": 12,
+   "line": "Tell me, is it over",
+   "new_start": 44.79,
+   "new_end": 46.54,
+   "anchor": true,
+   "match_ratio": 0.857,
+   "suno_start": 2.65,
+   "suno_end": 2.65,
+   "suno_squashed": true,
+   "diff": 42.14
+  },
+  {
+   "i": 13,
+   "line": "너 때문에 미칠거같아",
+   "new_start": 46.54,
+   "new_end": 49.06,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.66,
+   "suno_end": 2.66,
+   "suno_squashed": true,
+   "diff": 43.89
+  },
+  {
+   "i": 14,
+   "line": "숨 쉬어도 아파 와",
+   "new_start": 51.74,
+   "new_end": 54.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.66,
+   "suno_end": 2.67,
+   "suno_squashed": true,
+   "diff": 49.08
+  },
+  {
+   "i": 15,
+   "line": "Come back to me",
+   "new_start": 54.6,
+   "new_end": 57.55,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.67,
+   "suno_end": 2.67,
+   "suno_squashed": true,
+   "diff": 51.93
+  },
+  {
+   "i": 16,
+   "line": "I can't let you go",
+   "new_start": 57.55,
+   "new_end": 59.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.67,
+   "suno_end": 2.68,
+   "suno_squashed": true,
+   "diff": 54.88
+  },
+  {
+   "i": 17,
+   "line": "너도 가끔 흔들리니",
+   "new_start": 59.4,
+   "new_end": 62.27,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.68,
+   "suno_end": 2.69,
+   "suno_squashed": true,
+   "diff": 56.72
+  },
+  {
+   "i": 18,
+   "line": "내 번호를 눌러 보니",
+   "new_start": 62.27,
+   "new_end": 64.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.69,
+   "suno_end": 2.7,
+   "suno_squashed": true,
+   "diff": 59.58
+  },
+  {
+   "i": 19,
+   "line": "말 못 한 밤만 쌓여",
+   "new_start": 64.5,
+   "new_end": 66.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.7,
+   "suno_end": 2.7,
+   "suno_squashed": true,
+   "diff": 61.81
+  },
+  {
+   "i": 20,
+   "line": "네 침묵만 들려와",
+   "new_start": 68.61,
+   "new_end": 70.66,
+   "anchor": true,
+   "match_ratio": 0.857,
+   "suno_start": 2.7,
+   "suno_end": 2.71,
+   "suno_squashed": true,
+   "diff": 65.91
+  },
+  {
+   "i": 21,
+   "line": "너 때문에 미칠거같아",
+   "new_start": 74.1,
+   "new_end": 78.94,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.71,
+   "suno_end": 2.71,
+   "suno_squashed": true,
+   "diff": 71.39
+  },
+  {
+   "i": 22,
+   "line": "하루가 널 불러 와",
+   "new_start": 78.94,
+   "new_end": 81.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.71,
+   "suno_end": 2.72,
+   "suno_squashed": true,
+   "diff": 76.23
+  },
+  {
+   "i": 23,
+   "line": "Don't leave me now",
+   "new_start": 83.14,
+   "new_end": 85.61,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.72,
+   "suno_end": 2.73,
+   "suno_squashed": true,
+   "diff": 80.42
+  },
+  {
+   "i": 24,
+   "line": "I'm still loving you",
+   "new_start": 85.61,
+   "new_end": 88.6,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.73,
+   "suno_end": 2.74,
+   "suno_squashed": true,
+   "diff": 82.88
+  },
+  {
+   "i": 25,
+   "line": "네가 남긴 향기마저",
+   "new_start": 88.6,
+   "new_end": 91.86,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.74,
+   "suno_end": 2.74,
+   "suno_squashed": true,
+   "diff": 85.86
+  },
+  {
+   "i": 26,
+   "line": "나를 다시 무너뜨려",
+   "new_start": 91.86,
+   "new_end": 95.0,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.74,
+   "suno_end": 2.75,
+   "suno_squashed": true,
+   "diff": 89.12
+  },
+  {
+   "i": 27,
+   "line": "너 없인 난 안 되나 봐",
+   "new_start": 95.0,
+   "new_end": 98.79,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.75,
+   "suno_end": 2.75,
+   "suno_squashed": true,
+   "diff": 92.25
+  },
+  {
+   "i": 28,
+   "line": "Oh, I'm broken inside",
+   "new_start": 98.79,
+   "new_end": 101.24,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.75,
+   "suno_end": 2.76,
+   "suno_squashed": true,
+   "diff": 96.03
+  },
+  {
+   "i": 29,
+   "line": "너 때문에 미칠거같아",
+   "new_start": 103.1,
+   "new_end": 107.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.77,
+   "suno_end": 2.77,
+   "suno_squashed": true,
+   "diff": 100.33
+  },
+  {
+   "i": 30,
+   "line": "끝난 사랑 붙잡아",
+   "new_start": 107.18,
+   "new_end": 109.96,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.77,
+   "suno_end": 2.78,
+   "suno_squashed": true,
+   "diff": 104.41
+  },
+  {
+   "i": 31,
+   "line": "Just one more time",
+   "new_start": 111.52,
+   "new_end": 113.77,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.78,
+   "suno_end": 2.78,
+   "suno_squashed": true,
+   "diff": 108.74
+  },
+  {
+   "i": 32,
+   "line": "돌아와 줘, 너",
+   "new_start": 113.77,
+   "new_end": 115.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.78,
+   "suno_end": 2.79,
+   "suno_squashed": true,
+   "diff": 110.98
+  },
+  {
+   "i": 33,
+   "line": "너는 듣고 있니",
+   "new_start": 117.16,
+   "new_end": 118.84,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 2.79,
+   "suno_end": 4.65,
+   "suno_squashed": true,
+   "diff": 114.37
+  },
+  {
+   "i": 34,
+   "line": "아직 널 사랑해",
+   "new_start": 118.84,
+   "new_end": 121.03,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 4.76,
+   "suno_end": 9.83,
+   "suno_squashed": false,
+   "diff": 114.08
+  },
+  {
+   "i": 35,
+   "line": "Good night, my love",
+   "new_start": 121.03,
+   "new_end": 124.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 9.92,
+   "suno_end": 19.95,
+   "suno_squashed": false,
+   "diff": 111.11
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "너 없는 밤이 길어",
+   "start": 2.7,
+   "end": 5.14
+  },
+  {
+   "text": "나도 아직 여기야",
+   "start": 5.14,
+   "end": 7.94
+  },
+  {
+   "text": "Baby, I miss you",
+   "start": 10.04,
+   "end": 12.13
+  },
+  {
+   "text": "너를 지운 줄 알았어",
+   "start": 19.22,
+   "end": 21.86
+  },
+  {
+   "text": "눈 뜨면 또 네 이름",
+   "start": 23.18,
+   "end": 26.06
+  },
+  {
+   "text": "웃던 너만 떠올라",
+   "start": 26.06,
+   "end": 29.02
+  },
+  {
+   "text": "너를 미워해 보려다",
+   "start": 30.22,
+   "end": 33.22
+  },
+  {
+   "text": "결국 네 편이 됐어",
+   "start": 33.22,
+   "end": 36.25
+  },
+  {
+   "text": "바보처럼 또 운다",
+   "start": 36.25,
+   "end": 40.74
+  },
+  {
+   "text": "왜 내 맘은 늦을까",
+   "start": 40.74,
+   "end": 42.58
+  },
+  {
+   "text": "넌 벌써 끝났을까",
+   "start": 42.58,
+   "end": 44.79
+  },
+  {
+   "text": "Tell me, is it over",
+   "start": 44.79,
+   "end": 46.54
+  },
+  {
+   "text": "너 때문에 미칠거같아",
+   "start": 46.54,
+   "end": 49.06
+  },
+  {
+   "text": "숨 쉬어도 아파 와",
+   "start": 51.74,
+   "end": 54.6
+  },
+  {
+   "text": "Come back to me",
+   "start": 54.6,
+   "end": 57.55
+  },
+  {
+   "text": "I can't let you go",
+   "start": 57.55,
+   "end": 59.4
+  },
+  {
+   "text": "너도 가끔 흔들리니",
+   "start": 59.4,
+   "end": 62.27
+  },
+  {
+   "text": "내 번호를 눌러 보니",
+   "start": 62.27,
+   "end": 64.5
+  },
+  {
+   "text": "말 못 한 밤만 쌓여",
+   "start": 64.5,
+   "end": 66.6
+  },
+  {
+   "text": "네 침묵만 들려와",
+   "start": 68.61,
+   "end": 70.66
+  },
+  {
+   "text": "너 때문에 미칠거같아",
+   "start": 74.1,
+   "end": 78.94
+  },
+  {
+   "text": "하루가 널 불러 와",
+   "start": 78.94,
+   "end": 81.84
+  },
+  {
+   "text": "Don't leave me now",
+   "start": 83.14,
+   "end": 85.61
+  },
+  {
+   "text": "I'm still loving you",
+   "start": 85.61,
+   "end": 88.6
+  },
+  {
+   "text": "네가 남긴 향기마저",
+   "start": 88.6,
+   "end": 91.86
+  },
+  {
+   "text": "나를 다시 무너뜨려",
+   "start": 91.86,
+   "end": 95.0
+  },
+  {
+   "text": "너 없인 난 안 되나 봐",
+   "start": 95.0,
+   "end": 98.79
+  },
+  {
+   "text": "Oh, I'm broken inside",
+   "start": 98.79,
+   "end": 101.24
+  },
+  {
+   "text": "너 때문에 미칠거같아",
+   "start": 103.1,
+   "end": 107.18
+  },
+  {
+   "text": "끝난 사랑 붙잡아",
+   "start": 107.18,
+   "end": 109.96
+  },
+  {
+   "text": "Just one more time",
+   "start": 111.52,
+   "end": 113.77
+  },
+  {
+   "text": "돌아와 줘, 너",
+   "start": 113.77,
+   "end": 115.56
+  },
+  {
+   "text": "너는 듣고 있니",
+   "start": 117.16,
+   "end": 118.84
+  },
+  {
+   "text": "아직 널 사랑해",
+   "start": 118.84,
+   "end": 121.03
+  },
+  {
+   "text": "Good night, my love",
+   "start": 121.03,
+   "end": 124.56
+  }
+ ]
+}

@@ -1,0 +1,288 @@
+INFO [suno] voice audioWeight override=off
+INFO [suno] voice audioWeight override=off
+====================================================================== 
+A. DUET 10
+- 6ac18dc2 completed stats={'duet': True, 'header_removed': True, 'sections': 7, 'moved_labels': 16, 'switches': 7}
+- 6ac0dd80 completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 40, 'switches': 21}
+- 6abe15fb failed    stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 40, 'switches': 15}
+- 6abdd191 completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 29, 'switches': 7}
+- 6abc998d completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 26, 'switches': 7}
+- 6abb88f6 completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 26, 'switches': 7}
+- 6aba69e4 completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 40, 'switches': 15}
+- 6aba5e56 completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 35, 'switches': 16}
+- 6ab8f52d completed stats={'duet': True, 'header_removed': True, 'sections': 12, 'moved_labels': 48, 'switches': 19}
+- 6ab7d47a completed stats={'duet': True, 'header_removed': True, 'sections': 10, 'moved_labels': 40, 'switches': 17}
+====================================================================== 
+B. SOLO byte-identical 10
+- 6ac449b2 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac33780 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac33027 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac28550 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac27ab1 duet=False identical=True same_obj=True inline_paren=True tag_mod=True
+- 6ac25e99 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac240d0 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac21f1b duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac20290 duet=False identical=True same_obj=True inline_paren=False tag_mod=True
+- 6ac1ff22 duet=False identical=True same_obj=True inline_paren=False tag_mod=False
+====================================================================== 
+C. Synthetic edge cases
+--- switch_mid_section {'duet': True, 'header_removed': False, 'sections': 2, 'moved_labels': 4, 'switches': 1}
+[Verse 1: Male Vocal]
+a
+b
+[Female Vocal]
+c
+d
+
+[Chorus: Male and Female Vocals]
+e
+f
+--- existing_mod {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 2, 'switches': 0}
+[Verse 1: Female Vocal, soft, whispered]
+a
+b
+--- existing_vocal_mod {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 1, 'switches': 0}
+[Chorus: Duet]
+a
+  FAIL: existing_vocal_mod seq mismatch [('Chorus', 'a', 'both')] vs [('Chorus', 'a', None)]
+--- unlabeled_first {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 1, 'switches': 1}
+[Verse]
+a
+[Male Vocal]
+b
+--- no_section_tags {'duet': True, 'header_removed': True, 'sections': 1, 'moved_labels': 2, 'switches': 2}
+[Male Vocal]
+a
+[Female Vocal]
+b
+--- standalone_label {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 2, 'switches': 1}
+[Bridge: Female Vocal]
+a
+b
+[Male Vocal]
+c
+--- empty_intro {'duet': True, 'header_removed': True, 'sections': 1, 'moved_labels': 1, 'switches': 0}
+[Intro]
+
+[Verse: Male Vocal]
+a
+--- inline_paren_kept {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 1, 'switches': 0}
+[Verse: Male Vocal]
+a (whisper)
+(spoken) b
+--- lowercase_label {'duet': True, 'header_removed': False, 'sections': 1, 'moved_labels': 2, 'switches': 1}
+[Verse: Male Vocal]
+a
+[Female Vocal]
+b
+====================================================================== 
+D. generate_music_suno end-to-end (httpx mocked, captured body) OLD vs NEW
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO [suno] duet lyrics normalized sections=7 moved_labels=16 switches=7 header_removed=True style_hint=added generation_id=0123456789abcdef01234567
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- duet 6ac18dc2 style NEW: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+  prompt NEW head: [Instrumental Intro] /  / [Intro: Male Vocal] / 최돈준! / [Female Vocal] / 이금란! / [Male and Female Vocals] / 열여덟 스무 살 이팔청춘에 / 백년가약 맺었네 /  / [Verse: Male Vocal] / 어린 나이에 당신을 만나 / 육십오 년 함께 
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO [suno] duet lyrics normalized sections=10 moved_labels=40 switches=21 header_removed=True style_hint=added generation_id=0123456789abcdef01234567
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- duet 6ac0dd80 style NEW: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+  prompt NEW head: [Instrumental Intro] /  / [Intro: Female Vocal] / 오늘도 지갑이 춤춰 / [Male Vocal] / swipe, swipe, 끝이 안 보여 / [Female Vocal] / flight 타고 밤 위로 / [Male and Female Vocals] / gang gang, we g
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO [suno] duet lyrics normalized sections=10 moved_labels=40 switches=15 header_removed=True style_hint=added generation_id=0123456789abcdef01234567
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- duet 6abe15fb style NEW: Ballad, Romantic, soft female vocal, breathy, warm, soft female vocal, warm male vocal, clean intro, vocals enter on the downbeat, duet, male and female vocals
+  prompt NEW head: [Instrumental Intro] /  / [Intro: Female Vocal] / 네온빛 바다 위 / [Male Vocal] / 너의 눈물이 반짝여 / [Female Vocal] / 닫힌 밤의 문 앞 / [Male and Female Vocals] / 우리 조용히 서 있어 /  / [Verse 1: Female Voc
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac449b2 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac33780 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac33027 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac28550 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac27ab1 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac25e99 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac240d0 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac21f1b body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac20290 body identical OLD==NEW: True
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO Suno style string: Ballad, Romantic, soft female vocal, breathy, warm, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- solo 6ac1ff22 body identical OLD==NEW: True
+INFO [suno] voice_persona style cleaned removed=4 generation_id=0123456789abcdef01234567 vocal=female_warm
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO [suno] duet lyrics normalized sections=7 moved_labels=16 switches=7 header_removed=True style_hint=skip_voice_persona generation_id=0123456789abcdef01234567
+INFO Suno style string: clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=True)
+INFO [suno][voice] generation_id=0123456789abcdef01234567 persona submit model=V6 personaModel=voice_persona audioWeight req=None sent=None styleWeight=None ref_audio=False override=off
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- voice_persona duet style: clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=no_lyrics_source short_song=False
+INFO [suno] duet lyrics normalized sections=7 moved_labels=16 switches=7 header_removed=True style_hint=present generation_id=0123456789abcdef01234567
+INFO Suno style string: duet, male and female vocals, pop, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=added_before_sung_intro style_hint=on
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=False duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- pre-existing duet style: duet, male and female vocals, pop, clean intro, vocals enter on the downbeat
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=inst_auto short_song=False
+INFO Suno style string: pop
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=skip style_hint=off
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=True duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+INFO [suno] generation_id=0123456789abcdef01234567 requested_length req=None src=inst_auto short_song=False
+INFO Suno style string: pop
+INFO [suno] generation_id=0123456789abcdef01234567 leadin_intro=skip style_hint=off
+INFO [suno] generation_id=0123456789abcdef01234567 resolved_model=V6 (suno_model_in=None use_upload_cover=False persona=False)
+INFO [suno] generation_id=0123456789abcdef01234567 customMode=True instrumental=True duration=None
+INFO Suno: using generate endpoint for generation 0123456789abcdef01234567 (reference_audio=False)
+- instrumental identical: True
+======================================================================
+RESULT: FAIL 1
+  existing_vocal_mod seq mismatch [('Chorus', 'a', 'both')] vs [('Chorus', 'a', None)]

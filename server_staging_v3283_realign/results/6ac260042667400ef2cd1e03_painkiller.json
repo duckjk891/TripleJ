@@ -1,0 +1,546 @@
+{
+ "metrics": {
+  "title": "painkiller",
+  "kind": "control-holdout",
+  "track_id": "6ac260042667400ef2cd1e03",
+  "suno_state": "ok",
+  "duration": 142.4,
+  "lines": 28,
+  "anchored": 26,
+  "anchor_ratio": 0.929,
+  "matched_ratio": 1.0,
+  "mono_violations": 0,
+  "short_lines": 0,
+  "coverage": 0.893,
+  "max_unanchored_run": 1,
+  "A_chars": 294,
+  "B_chars": 288,
+  "B_unmatched": 18,
+  "char_match": 0.918,
+  "char_exact": 0.918,
+  "unreliable_words": 0,
+  "words": 86,
+  "t_api": 5.37,
+  "audio_MB": 3.19,
+  "cost_usd": 0.0142,
+  "new_timeline_state": "ok",
+  "suno_lines_ok": 28,
+  "suno_lines": 28,
+  "ctrl_n": 28,
+  "ctrl_median": 0.67,
+  "ctrl_p90": 3.03,
+  "ctrl_anchor_median": 0.67,
+  "ctrl_anchor_p90": 1.64,
+  "ctrl_within_1s": 0.75,
+  "_diffs": [
+   5.26,
+   5.19,
+   0.51,
+   0.77,
+   0.72,
+   0.86,
+   0.47,
+   0.09,
+   0.24,
+   0.15,
+   0.24,
+   0.77,
+   1.18,
+   0.68,
+   0.74,
+   2.1,
+   0.48,
+   0.56,
+   0.65,
+   1.15,
+   0.29,
+   0.1,
+   0.43,
+   1.17,
+   0.25,
+   14.37,
+   0.23,
+   0.97
+  ]
+ },
+ "table": [
+  {
+   "i": 1,
+   "line": "wowo, 여린 숨이 녹아",
+   "new_start": 13.56,
+   "new_end": 16.06,
+   "anchor": false,
+   "match_ratio": 0.6,
+   "suno_start": 8.3,
+   "suno_end": 10.77,
+   "suno_squashed": false,
+   "diff": 5.26
+  },
+  {
+   "i": 2,
+   "line": "Slow night, I'm not okay",
+   "new_start": 16.06,
+   "new_end": 23.72,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 10.87,
+   "suno_end": 29.21,
+   "suno_squashed": false,
+   "diff": 5.19
+  },
+  {
+   "i": 3,
+   "line": "거울 속 나는 낯설어",
+   "new_start": 28.7,
+   "new_end": 32.02,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 29.21,
+   "suno_end": 32.63,
+   "suno_squashed": false,
+   "diff": -0.51
+  },
+  {
+   "i": 4,
+   "line": "젊던 등불이 저물어",
+   "new_start": 32.02,
+   "new_end": 35.5,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 32.79,
+   "suno_end": 36.06,
+   "suno_squashed": false,
+   "diff": -0.77
+  },
+  {
+   "i": 5,
+   "line": "계단 하나에 숨이 차",
+   "new_start": 35.5,
+   "new_end": 38.52,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 36.22,
+   "suno_end": 39.26,
+   "suno_squashed": false,
+   "diff": -0.72
+  },
+  {
+   "i": 6,
+   "line": "그때의 내가 그리워",
+   "new_start": 38.52,
+   "new_end": 41.4,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 39.38,
+   "suno_end": 43.73,
+   "suno_squashed": false,
+   "diff": -0.86
+  },
+  {
+   "i": 7,
+   "line": "삼십대 끝, 허리 삐끗",
+   "new_start": 43.26,
+   "new_end": 45.79,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 43.73,
+   "suno_end": 45.88,
+   "suno_squashed": false,
+   "diff": -0.47
+  },
+  {
+   "i": 8,
+   "line": "야근의 빚, 목도 삐끗",
+   "new_start": 45.79,
+   "new_end": 47.56,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 45.88,
+   "suno_end": 47.71,
+   "suno_squashed": false,
+   "diff": -0.09
+  },
+  {
+   "i": 9,
+   "line": "한숨은 beat, 심장은 mute",
+   "new_start": 47.56,
+   "new_end": 49.23,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 47.79,
+   "suno_end": 49.23,
+   "suno_squashed": false,
+   "diff": -0.24
+  },
+  {
+   "i": 10,
+   "line": "웃으며 버틴 나의 route",
+   "new_start": 49.23,
+   "new_end": 51.41,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 49.39,
+   "suno_end": 51.16,
+   "suno_squashed": false,
+   "diff": -0.15
+  },
+  {
+   "i": 11,
+   "line": "I can't believe it, my life",
+   "new_start": 51.41,
+   "new_end": 54.09,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 51.17,
+   "suno_end": 54.73,
+   "suno_squashed": false,
+   "diff": 0.24
+  },
+  {
+   "i": 12,
+   "line": "괜찮다 말해봐도",
+   "new_start": 54.09,
+   "new_end": 57.09,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 54.85,
+   "suno_end": 58.16,
+   "suno_squashed": false,
+   "diff": -0.77
+  },
+  {
+   "i": 13,
+   "line": "오늘도 병원행",
+   "new_start": 57.09,
+   "new_end": 59.18,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 58.27,
+   "suno_end": 61.45,
+   "suno_squashed": false,
+   "diff": -1.18
+  },
+  {
+   "i": 14,
+   "line": "Slow down, 내 몸아",
+   "new_start": 60.78,
+   "new_end": 64.13,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 61.46,
+   "suno_end": 64.79,
+   "suno_squashed": false,
+   "diff": -0.68
+  },
+  {
+   "i": 15,
+   "line": "아직 난 돈 벌어야해",
+   "new_start": 64.13,
+   "new_end": 66.3,
+   "anchor": true,
+   "match_ratio": 0.5,
+   "suno_start": 64.87,
+   "suno_end": 68.3,
+   "suno_squashed": false,
+   "diff": -0.74
+  },
+  {
+   "i": 16,
+   "line": "Hold on, 내 맘아",
+   "new_start": 66.3,
+   "new_end": 70.93,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 68.4,
+   "suno_end": 71.25,
+   "suno_squashed": false,
+   "diff": -2.1
+  },
+  {
+   "i": 17,
+   "line": "몸을 이끌고 출근해",
+   "new_start": 70.93,
+   "new_end": 74.14,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 71.41,
+   "suno_end": 74.69,
+   "suno_squashed": false,
+   "diff": -0.48
+  },
+  {
+   "i": 18,
+   "line": "푸르던 날의 나에게",
+   "new_start": 74.14,
+   "new_end": 77.54,
+   "anchor": true,
+   "match_ratio": 0.875,
+   "suno_start": 74.7,
+   "suno_end": 78.03,
+   "suno_squashed": false,
+   "diff": -0.56
+  },
+  {
+   "i": 19,
+   "line": "미안해, 너무 늦었어",
+   "new_start": 77.54,
+   "new_end": 80.0,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 78.19,
+   "suno_end": 81.06,
+   "suno_squashed": false,
+   "diff": -0.65
+  },
+  {
+   "i": 20,
+   "line": "But I still breathe tonight",
+   "new_start": 80.0,
+   "new_end": 83.95,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 81.14,
+   "suno_end": 85.85,
+   "suno_squashed": false,
+   "diff": -1.15
+  },
+  {
+   "i": 21,
+   "line": "건강할 때 운동해 please",
+   "new_start": 85.72,
+   "new_end": 91.2,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 86.01,
+   "suno_end": 99.11,
+   "suno_squashed": false,
+   "diff": -0.29
+  },
+  {
+   "i": 22,
+   "line": "Slow down, 내 몸아",
+   "new_start": 99.22,
+   "new_end": 102.06,
+   "anchor": true,
+   "match_ratio": 0.909,
+   "suno_start": 99.12,
+   "suno_end": 102.37,
+   "suno_squashed": false,
+   "diff": 0.1
+  },
+  {
+   "i": 23,
+   "line": "아직 난 가야 해",
+   "new_start": 102.06,
+   "new_end": 104.81,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 102.49,
+   "suno_end": 105.88,
+   "suno_squashed": false,
+   "diff": -0.43
+  },
+  {
+   "i": 24,
+   "line": "Hold on, my body",
+   "new_start": 104.81,
+   "new_end": 108.78,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 105.98,
+   "suno_end": 108.91,
+   "suno_squashed": false,
+   "diff": -1.17
+  },
+  {
+   "i": 25,
+   "line": "내일은 덜 아프게",
+   "new_start": 108.78,
+   "new_end": 111.66,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 109.03,
+   "suno_end": 117.85,
+   "suno_squashed": false,
+   "diff": -0.25
+  },
+  {
+   "i": 26,
+   "line": "wowo, ibuprofen",
+   "new_start": 132.3,
+   "new_end": 133.54,
+   "anchor": true,
+   "match_ratio": 0.615,
+   "suno_start": 117.93,
+   "suno_end": 135.64,
+   "suno_squashed": false,
+   "diff": 14.37
+  },
+  {
+   "i": 27,
+   "line": "Acetaminophen",
+   "new_start": 135.57,
+   "new_end": 138.84,
+   "anchor": false,
+   "match_ratio": 0.308,
+   "suno_start": 135.8,
+   "suno_end": 139.71,
+   "suno_squashed": false,
+   "diff": -0.23
+  },
+  {
+   "i": 28,
+   "line": "Good night",
+   "new_start": 138.84,
+   "new_end": 140.82,
+   "anchor": true,
+   "match_ratio": 1.0,
+   "suno_start": 139.81,
+   "suno_end": 140.75,
+   "suno_squashed": false,
+   "diff": -0.97
+  }
+ ],
+ "realigned_timestamps": [
+  {
+   "text": "wowo, 여린 숨이 녹아",
+   "start": 13.56,
+   "end": 16.06
+  },
+  {
+   "text": "Slow night, I'm not okay",
+   "start": 16.06,
+   "end": 23.72
+  },
+  {
+   "text": "거울 속 나는 낯설어",
+   "start": 28.7,
+   "end": 32.02
+  },
+  {
+   "text": "젊던 등불이 저물어",
+   "start": 32.02,
+   "end": 35.5
+  },
+  {
+   "text": "계단 하나에 숨이 차",
+   "start": 35.5,
+   "end": 38.52
+  },
+  {
+   "text": "그때의 내가 그리워",
+   "start": 38.52,
+   "end": 41.4
+  },
+  {
+   "text": "삼십대 끝, 허리 삐끗",
+   "start": 43.26,
+   "end": 45.79
+  },
+  {
+   "text": "야근의 빚, 목도 삐끗",
+   "start": 45.79,
+   "end": 47.56
+  },
+  {
+   "text": "한숨은 beat, 심장은 mute",
+   "start": 47.56,
+   "end": 49.23
+  },
+  {
+   "text": "웃으며 버틴 나의 route",
+   "start": 49.23,
+   "end": 51.41
+  },
+  {
+   "text": "I can't believe it, my life",
+   "start": 51.41,
+   "end": 54.09
+  },
+  {
+   "text": "괜찮다 말해봐도",
+   "start": 54.09,
+   "end": 57.09
+  },
+  {
+   "text": "오늘도 병원행",
+   "start": 57.09,
+   "end": 59.18
+  },
+  {
+   "text": "Slow down, 내 몸아",
+   "start": 60.78,
+   "end": 64.13
+  },
+  {
+   "text": "아직 난 돈 벌어야해",
+   "start": 64.13,
+   "end": 66.3
+  },
+  {
+   "text": "Hold on, 내 맘아",
+   "start": 66.3,
+   "end": 70.93
+  },
+  {
+   "text": "몸을 이끌고 출근해",
+   "start": 70.93,
+   "end": 74.14
+  },
+  {
+   "text": "푸르던 날의 나에게",
+   "start": 74.14,
+   "end": 77.54
+  },
+  {
+   "text": "미안해, 너무 늦었어",
+   "start": 77.54,
+   "end": 80.0
+  },
+  {
+   "text": "But I still breathe tonight",
+   "start": 80.0,
+   "end": 83.95
+  },
+  {
+   "text": "건강할 때 운동해 please",
+   "start": 85.72,
+   "end": 91.2
+  },
+  {
+   "text": "Slow down, 내 몸아",
+   "start": 99.22,
+   "end": 102.06
+  },
+  {
+   "text": "아직 난 가야 해",
+   "start": 102.06,
+   "end": 104.81
+  },
+  {
+   "text": "Hold on, my body",
+   "start": 104.81,
+   "end": 108.78
+  },
+  {
+   "text": "내일은 덜 아프게",
+   "start": 108.78,
+   "end": 111.66
+  },
+  {
+   "text": "wowo, ibuprofen",
+   "start": 132.3,
+   "end": 133.54
+  },
+  {
+   "text": "Acetaminophen",
+   "start": 135.57,
+   "end": 138.84
+  },
+  {
+   "text": "Good night",
+   "start": 138.84,
+   "end": 140.82
+  }
+ ]
+}

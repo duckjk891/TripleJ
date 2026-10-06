@@ -1,0 +1,60 @@
+- instrumental identical: True
+======================================================================
+RESULT: PASS
+
+### system duet=False: CHANGED
+    @@ -59 +59 @@
+    -2. Minimum structure: [Intro] + 2x[Verse] + [Pre-Chorus] + [Chorus] + [Bridge] + [Outro] — UNLESS the user message asks for a SHORT SONG (about 1 minute); then follow its SHORT SONG rule exactly instead (it overrides this minimum)
+    +2. Minimum structure: [Intro] + 2x[Verse] + [Pre-Chorus] + [Chorus] + [Bridge] + [Outro] — UNLESS the user message asks for a SHORT SONG (about 1 minute); then follow its SHORT SONG rule exactly instead (it overrides this minimum). If the user message gives a LENGTH CAP (max sections / max lyric lines), never exceed it — the cap overrides this minimum (lyrics longer than the song make Suno skip or squeeze the last sections)
+### system duet=True: CHANGED
+    @@ -42 +42 @@
+    -5. Minimum structure: [Intro] + [Verse] + [Verse] + [Pre-Chorus] + [Chorus] + [Verse] + [Chorus] + [Bridge] + [Chorus] + [Outro] — UNLESS the user message asks for a SHORT SONG (about 1 minute); then follow its SHORT SONG rule exactly instead
+    +5. Minimum structure: [Intro] + [Verse] + [Verse] + [Pre-Chorus] + [Chorus] + [Verse] + [Chorus] + [Bridge] + [Chorus] + [Outro] — UNLESS the user message asks for a SHORT SONG (about 1 minute); then follow its SHORT SONG rule exactly instead. If the user message gives a LENGTH CAP (max sections / max lyric lines), never exceed it — the cap overrides this minimum (drop the third [Verse] / a repeated [Chorus] first; lyrics longer than the song make Suno skip or squeeze the last sections)
+### user dm=1 structure=N: IDENTICAL
+### user dm=1 structure=Y: IDENTICAL
+### user dm=2 structure=N: CHANGED
+    @@ -5 +5,2 @@
+    -약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.
+    +약 2분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2개 + Chorus 2회 + Outro.
+    +[분량 상한] 가사가 있는 섹션은 6개 이하, 가사 줄은 전체 28줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+### user dm=2 structure=Y: CHANGED
+    @@ -5 +5,2 @@
+    -약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.
+    +약 2분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2개 + Chorus 2회 + Outro.
+    +[분량 상한] 가사가 있는 섹션은 6개 이하, 가사 줄은 전체 28줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+    @@ -6,0 +8 @@
+    +단, 위 분량 상한을 넘지 않도록 각 섹션 줄 수를 2~3줄로 줄여 맞춰주세요.
+### user dm=3 structure=N: CHANGED
+    @@ -5 +5,2 @@
+    -약 3분 분량의 충분히 긴 가사를 작성해주세요. 최소 구성: Intro + Verse 3개 이상 + Pre-Chorus + Chorus 반복 + Bridge + Outro. 각 섹션의 가사를 3~4줄로 충분히 작성해주세요.
+    +약 3분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2~3개 + Pre-Chorus + Chorus 반복 + Bridge + Outro. 각 섹션의 가사는 3~4줄.
+    +[분량 상한] 가사가 있는 섹션은 8개 이하, 가사 줄은 전체 40줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+### user dm=3 structure=Y: CHANGED
+    @@ -5 +5,2 @@
+    -약 3분 분량의 충분히 긴 가사를 작성해주세요. 최소 구성: Intro + Verse 3개 이상 + Pre-Chorus + Chorus 반복 + Bridge + Outro. 각 섹션의 가사를 3~4줄로 충분히 작성해주세요.
+    +약 3분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2~3개 + Pre-Chorus + Chorus 반복 + Bridge + Outro. 각 섹션의 가사는 3~4줄.
+    +[분량 상한] 가사가 있는 섹션은 8개 이하, 가사 줄은 전체 40줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+    @@ -6,0 +8 @@
+    +단, 위 분량 상한을 넘지 않도록 각 섹션 줄 수를 2~3줄로 줄여 맞춰주세요.
+### user dm=4 structure=N: IDENTICAL
+### user dm=4 structure=Y: IDENTICAL
+### user dm=5 structure=N: IDENTICAL
+### user dm=5 structure=Y: IDENTICAL
+### user dm=None structure=N: CHANGED
+    @@ -5 +5,2 @@
+    -약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.
+    +약 2분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2개 + Chorus 2회 + Outro.
+    +[분량 상한] 가사가 있는 섹션은 6개 이하, 가사 줄은 전체 28줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+### user dm=None structure=Y: CHANGED
+    @@ -5 +5,2 @@
+    -약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.
+    +약 2분 분량의 가사를 작성해주세요. 기본 구성: Intro + Verse 2개 + Chorus 2회 + Outro.
+    +[분량 상한] 가사가 있는 섹션은 6개 이하, 가사 줄은 전체 28줄 이하(섹션 태그 줄 제외)로 쓰세요. 이 상한은 시스템 지시의 Minimum structure 보다 우선합니다 — 넘칠 것 같으면 3절·반복 후렴부터 빼세요.
+    @@ -6,0 +8 @@
+    +단, 위 분량 상한을 넘지 않도록 각 섹션 줄 수를 2~3줄로 줄여 맞춰주세요.
+WARNING [lyrics] shape model=x dm=1 sections=9 lines=36 intro_lyrics=False short-song OVER cap
+WARNING [lyrics] shape model=x dm=2 sections=9 lines=36 intro_lyrics=False length OVER cap (6, 28)
+WARNING [lyrics] shape model=x dm=3 sections=9 lines=36 intro_lyrics=False length OVER cap (8, 40)
+INFO [lyrics] shape model=x dm=4 sections=9 lines=36 intro_lyrics=False
+INFO [lyrics] shape model=x dm=2 sections=2 lines=3 intro_lyrics=False
+caps: {1: None, 2: (6, 28), 3: (8, 40), 4: None, 5: None, None: None, '2': (6, 28)}
