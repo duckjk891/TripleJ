@@ -277,6 +277,8 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
     const childNow = isChildNow();
     const callApi = async () => {
       try {
+        // v3.283: 얼굴 인증 후 재개 등 — 이전 단계에서 남긴 '이어서 만들기' 안내(apiError)는 새 시도에서 정리
+        if (useCharacterTaskStore.getState().apiError) useCharacterTaskStore.setState({ apiError: null });
         const photoUri = taskStore.photoUri;
         const photoName = taskStore.photoName;
 
@@ -635,6 +637,9 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         // 같은 taskStore 입력으로 생성을 자동 재개한다.
         if (status === 403 && err.response?.data?.error === 'face_verification_required') {
           console.info('[ArtistLoading] 얼굴 인증 필요 — FaceVerify 진입 (무과금)');
+          // v3.283: 인증이 실패·취소돼 돌아가도 아티스트 만들기에 "이어서 만들기"가 뜨도록 재개 표식을 남긴다
+          // (기존엔 표식이 없어 처음 흐름으로 다시 들어가며 고른 옷이 초기화됐다 — 10-05 DDui). 성공 재개 시 위에서 정리.
+          taskStore.failApi('얼굴 인증을 마치면 "이어서 만들기"로 바로 이어갈 수 있어요. 고른 옷과 입력한 내용은 유지돼요.');
           navigation.replace('FaceVerify' as any);
           return;
         }

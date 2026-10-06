@@ -270,7 +270,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               }));
               useOutfitStore.getState().setItems(mapped);
             } else {
-              useOutfitStore.getState().clear();
+              // v3.283 [CodyDraft]: 착용 목록만 비운다 — clear()는 진행 중인 새 아티스트 의상 선택 draft(sheet)까지
+              // 지워, 오류 후 다른 아티스트 상세를 보고 돌아가면 고른 옷이 사라졌다(10-05 DDui)
+              useOutfitStore.getState().setItems([]);
             }
             // B-3 표시용 클론 목록(무해 GET) — 연결 팝업에서 재사용
             useVoiceStore.getState().fetchClones();

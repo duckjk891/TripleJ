@@ -423,12 +423,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   useEffect(() => {
     let alive = true;
     const restore = () => {
-      const { codyDraft: d, codyOptions: o, items: applied } = useOutfitStore.getState();
+      const { codyDraft: d, codyOptions: o } = useOutfitStore.getState();
       if (d) {
         const keyOk = d.mode === draftMode && d.characterId === draftCharacterId && d.kind === draftKind;
-        const reachedResult = d.appliedAt != null && !applied.some((it) => it.appliedAt === d.appliedAt);
-        if (!keyOk || reachedResult) {
-          console.info('[ArtistCody] draft discard', { reason: !keyOk ? 'key' : 'applied', mode: d.mode });
+        // v3.283 [CodyDraft]: '적용 후 결과 도달' 추정(착용 목록 appliedAt 대조) 폐지 — 실패한 적용도 다른 화면이
+        // 착용 목록을 바꾸면 완료로 오판해 고른 옷이 사라졌다(10-05 DDui). 성공 정리는 settleCodyDraftOnSuccess 단일 지점.
+        // 오래된 적용 draft(7일 경과 — 성공 정리 도입 전 잔존본)만 폐기.
+        const staleApplied = d.appliedAt != null && Date.now() - d.appliedAt > 7 * 24 * 60 * 60 * 1000;
+        if (!keyOk) {
+          // 다른 흐름(다른 아티스트·신규/꾸미기) draft 는 복원하지도, 지우지도 않는다(그 흐름으로 돌아가면 복원)
+          console.info('[ArtistCody] draft skip — 다른 흐름', { draftMode: d.mode, mode: draftMode });
+        } else if (staleApplied) {
+          console.info('[ArtistCody] draft discard', { reason: 'stale-applied', mode: d.mode });
           useOutfitStore.getState().clearCodyDraft();
         } else {
           const restored: Partial<Record<Cat, AdItem>> = {};
@@ -441,7 +447,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             setItemOptions((o.itemOptions || {}) as Partial<Record<Cat, Record<string, string>>>);
             setFreeDirecting((o.freeDirecting || '').slice(0, FREE_DIRECTING_MAX));
           }
-          console.info('[ArtistCody] draft restore', { n: Object.keys(restored).length, mode: d.mode });
+          console.info('[ArtistCody] draft restore', {
+            n: Object.keys(restored).length, mode: d.mode, afterFailedApply: d.appliedAt != null,
+          });
           checkStale(restored, () => alive);
         }
       }
@@ -464,7 +472,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     for (const c of CATEGORIES) if (selected[c]) items[c] = toDraftItem(selected[c]!);
     const hasOptions = Object.values(itemOptions).some((o) => o && Object.keys(o).length > 0);
     if (Object.keys(items).length === 0 && !hasOptions && !freeDirecting.trim()) {
-      if (useOutfitStore.getState().codyDraft) useOutfitStore.getState().clearCodyDraft();
+      // v3.283: 비울 때는 이 흐름의 draft 만 — 다른 흐름(예: 오류로 멈춘 새 아티스트 선택)은 보존
+      const cur = useOutfitStore.getState().codyDraft;
+      if (cur && cur.mode === draftMode && cur.characterId === draftCharacterId && cur.kind === draftKind) {
+        useOutfitStore.getState().clearCodyDraft();
+      }
       return;
     }
     useOutfitStore.getState().setCodyDraft(
@@ -894,7 +906,23 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       {/* v3.227 H-1: 실사 sheet — 이번 생성에 얼굴 사진(새 사진 또는 이전 사진 재사용)이 들어가는지 명시(사진 소실 시 조용한 텍스트 생성 인지) */}
       {isSheetMode && taskStore.characterKind !== 'virtual' ? (
         <View style={styles.photoBadgeRow}>
-          <View style={[styles.photoBadge, !photoSource && styles.photoBadgeText]}>
+          {/* v3.283(10-05 DDui "선택 클릭이 안돼요"): 버튼처럼 보이는 상태 배지가 눌러도 반응이 없었다 —
+              누르면 무엇이 포함되는지·바꾸는 방법을 안내(앱 내 다이얼로그). 생성 동작은 불변. */}
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={photoSource ? '얼굴 사진 포함 안내' : '설명으로 만들기 안내'}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            onPress={() => {
+              console.info('[ArtistCody] 사진 배지 탭', { photoSource });
+              showAlert(
+                photoSource ? '얼굴 사진 포함' : '설명으로 만들기',
+                photoSource
+                  ? '아티스트 만들기에서 올린 얼굴 사진이 이번 생성에 함께 쓰여요. 따로 선택할 필요는 없어요.\n\n사진을 바꾸려면 아래 [취소]를 눌러 아티스트 만들기로 돌아간 뒤 사진을 다시 올려주세요. 고른 옷은 유지돼요.'
+                  : '얼굴 사진 없이, 대화에서 답한 설명으로 아티스트를 만들어요.\n\n사진으로 만들려면 아래 [취소]를 눌러 아티스트 만들기로 돌아가 사진을 올려주세요. 고른 옷은 유지돼요.',
+              );
+            }}
+            style={[styles.photoBadge, !photoSource && styles.photoBadgeText]}
+          >
             <Feather
               name={photoSource ? 'camera' : 'type'}
               size={11}
@@ -903,7 +931,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             <AppText style={[styles.photoBadgeLabel, !photoSource && styles.photoBadgeLabelText]}>
               {photoSource ? '얼굴 사진 포함' : '설명으로 만들기'}
             </AppText>
-          </View>
+            <Feather name="info" size={11} color={photoSource ? colors.accent.primary : colors.text.secondary} />
+          </TouchableOpacity>
         </View>
       ) : null}
 

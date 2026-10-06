@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CoverReturnTo, CoverReturnMeta } from './generationJobStore';
+import { useOutfitStore } from './outfitStore';
 
 export type CharacterTaskMode = 'sheet' | 'refine' | 'outfit';
 
@@ -310,6 +311,10 @@ export interface ArtistJobSuccessInfo {
  * 실패·취소·중간 이탈은 호출하지 않는다(draft 보존 — 이어서 하기 유지).
  */
 export function settleArtistDraftOnSuccess(info: ArtistJobSuccessInfo): boolean {
+  // v3.283 [CodyDraft]: 꾸미기 선택 draft 는 "생성 성공"에서만 비운다(같은 모드·적용 표식 있는 draft 한정).
+  // 이전엔 착용 목록(items)의 appliedAt 일치로 "결과 도달"을 추정해, 실패 후 다른 화면이 items 를 바꾸면
+  // 선택이 사라졌다(10-05 DDui 제보 "입혀둔 옷들도 다 리셋").
+  settleCodyDraftOnSuccess(info);
   try {
     if (info.mode !== 'sheet' || !info.jobId) return false;
     const s = useCharacterTaskStore.getState();
@@ -413,4 +418,58 @@ export function pickCoverArtistCid(input: {
     return { cid: compose, source: 'compose', via: 'saved-track' };
   }
   return { cid: null, source: 'me', via: explicitNone ? 'track-no-artist' : 'no-cid' };
+}
+
+
+// ── v3.283 [CodyDraft]: 꾸미기 선택 draft 보존 규칙 — 실패·오류·이탈 시 유지, 성공 시에만 정리 ─────────
+// 10-05 DDui 제보: 새 아티스트 의상 선택 → 얼굴 인증 오류(서버 500) → 다시 들어오니 고른 옷이 전부 사라짐.
+// 원인 ① ArtistInput 이 의상 화면으로 갈 때마다 outfitStore.clear()(sheet draft 동반 삭제)
+//      ② ArtistCody 복원이 "착용 목록(items)에 적용 표식이 남아 있나"로 결과 도달을 추정 — 다른 화면이 items 를
+//        바꾸면(아티스트 상세 하이드레이션 등) 실패한 적용도 '완료'로 오판해 폐기.
+// 규칙: draft 는 생성 성공(settleArtistDraftOnSuccess — 단일 완료 지점)에서만 비우고,
+//      새 아티스트 흐름 진입은 키(대상 cid·종류)가 다르거나 '처음부터'일 때만 비운다.
+
+/** 생성 성공 시 같은 모드의 "적용된" 꾸미기 draft 정리 (고르는 중인 draft 는 유지) */
+export function settleCodyDraftOnSuccess(info: Pick<ArtistJobSuccessInfo, 'jobId' | 'mode' | 'via'>): void {
+  try {
+    const { codyDraft } = useOutfitStore.getState();
+    if (!codyDraft || codyDraft.appliedAt == null) return;
+    if (codyDraft.mode !== (info.mode === 'sheet' ? 'sheet' : info.mode === 'outfit' ? 'outfit' : null)) return;
+    useOutfitStore.getState().clearCodyDraft();
+    console.info('[CodyDraft] 생성 성공 — 적용된 선택 draft 정리', { jobId: info.jobId, mode: info.mode, via: info.via });
+  } catch (err) {
+    console.error('[CodyDraft] 성공 정리 실패', err);
+  }
+}
+
+/**
+ * 새 시트(아티스트 생성·다시 만들기) 의상 화면으로 갈 때 — 착용 목록(items)은 비우되,
+ * 같은 흐름(대상 cid·종류 일치)의 sheet 선택 draft 는 보존한다(오류 후 재시도 시 고른 옷 유지).
+ * restarted('처음부터' 등 새 입력) 이거나 키가 다르면 draft 도 비운다(다른 아티스트 선택 혼입 방지).
+ */
+export function resetOutfitForNewSheet(input: {
+  targetCharacterId: string | null;
+  kind: 'real' | 'virtual';
+  restarted: boolean;
+  where: string;
+}): void {
+  try {
+    const st = useOutfitStore.getState();
+    const d = st.codyDraft;
+    st.setItems([]);
+    if (!d || d.mode !== 'sheet') return;
+    const sameFlow = d.characterId === (input.targetCharacterId ?? null) && d.kind === input.kind;
+    if (input.restarted || !sameFlow) {
+      useOutfitStore.getState().clearCodyDraft();
+      console.info('[CodyDraft] 새 시트 — 이전 선택 draft 폐기', {
+        where: input.where, restarted: input.restarted, sameFlow,
+      });
+    } else {
+      console.info('[CodyDraft] 새 시트 — 같은 흐름 선택 draft 보존', {
+        where: input.where, n: Object.keys(d.items || {}).length, applied: d.appliedAt != null,
+      });
+    }
+  } catch (err) {
+    console.error('[CodyDraft] 새 시트 초기화 실패', err);
+  }
 }

@@ -1383,7 +1383,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           appliedAt: Date.now(),
         })));
       } else {
-        useOutfitStore.getState().clear();
+        // v3.283: clear() 는 진행 중인 의상 draft(꾸미기 선택)까지 지운다 — 착용 목록만 비움(ArtistResult 와 동일)
+        useOutfitStore.getState().setItems([]);
       }
     }
     console.info(`[CoverWardrobe] target cid=${cid} kind=${kind}`, {

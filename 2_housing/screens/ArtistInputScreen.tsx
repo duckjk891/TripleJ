@@ -21,9 +21,9 @@ import { listArtists } from '../services/characterService';
 import { hasArtistDraftProgress } from '../utils/directorResume';
 import { useAuthStore } from '../stores/authStore';
 import { isKidsRestrictedUser, KIDS_TEXT } from '../utils/kidsMode';
-import { useCharacterTaskStore, isArtistDraftCompleted, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
+import { useCharacterTaskStore, isArtistDraftCompleted, resetOutfitForNewSheet, type ArtistDraft, type ArtistPhotoIntent } from '../stores/characterTaskStore';
+import { shrinkFacePhotoIfNeeded } from '../utils/artistPhotoResize';
 import { usePlayerStore } from '../stores/playerStore';
-import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { getFaceVerifyStatus } from '../services/faceVerifyService';
 import { faceIdentityRoute } from '../utils/identityGate';
@@ -724,7 +724,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (!res.canceled && res.assets && res.assets[0]) {
-        const file = res.assets[0];
+        const picked = res.assets[0];
+        // v3.283 [ArtistPhoto]: 웹 — 4MB 넘는 사진은 긴 변 2048px JPEG 로 줄여 쓴다(얼굴 인증 5MB 한도 —
+        // 초과 시 인증이 서버 오류로 반복 실패하던 10-05 DDui 제보). 생성·인증·원본 보관이 같은 파일을 쓴다.
+        const shrunk = await shrinkFacePhotoIfNeeded({
+          uri: picked.uri, name: picked.name, size: picked.size ?? null, file: (picked as any).file ?? null,
+        });
+        const file = { uri: shrunk.uri, name: shrunk.name };
         // v3.76: 사진 확약 — 본인/동의 확인 + 보관·비학습 고지. 미확인 시 진행 불가.
         showAlert(
           '사진 확인',
@@ -902,8 +908,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     );
     pushDirector('좋아요! 이제 어떤 옷을 입혀줄지 골라볼까요?');
 
-    // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
-    useOutfitStore.getState().clear();
+    // 새 시트 → 이전 캐릭터의 착용 목록은 폐기. v3.283: 같은 생성 흐름(초안 복원)의 의상 선택 draft 는 보존
+    resetOutfitForNewSheet({
+      targetCharacterId: useCharacterTaskStore.getState().targetCharacterId,
+      kind: 'virtual',
+      restarted: !resumableDraft || resumeDismissed,
+      where: 'ArtistInput.style',
+    });
     // v3.227 H-1: photoUri/photoName은 사진이 있을 때만 갱신(null 덮어쓰기 금지 — 사진 소실 회귀)
     taskStore.setInput({
       ...(photoUri ? { photoUri, photoName } : {}),
@@ -1024,8 +1035,14 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     }
     console.info('[ArtistInput] 의상 이동', { origin: 'answers', kind: selectedKind });
     pushDirector(GO_CODY_BUBBLE);
-    // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
-    useOutfitStore.getState().clear();
+    // 새 시트 → 이전 캐릭터의 착용 목록은 폐기. v3.283: 같은 생성 흐름(초안 복원)의 의상 선택 draft 는 보존
+    // (오류 후 다시 들어와 확인 단계에서 넘어가도 고른 옷 유지 — 10-05 DDui 제보)
+    resetOutfitForNewSheet({
+      targetCharacterId: useCharacterTaskStore.getState().targetCharacterId,
+      kind: selectedKind === 'virtual' ? 'virtual' : 'real',
+      restarted: !resumableDraft || resumeDismissed,
+      where: 'ArtistInput.review',
+    });
     setTimeout(() => {
       // 옷 선택 화면으로. mode='sheet' 전달 → ArtistCody가 초기 생성 분기로 동작.
       navigation.replace('ArtistCody', { mode: 'sheet' });
