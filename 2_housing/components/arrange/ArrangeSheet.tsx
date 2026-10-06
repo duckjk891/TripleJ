@@ -23,6 +23,8 @@ interface Props {
   visible: boolean;
   /** 현재 곡 장르(한글 라벨이면 "지금" 표시) */
   currentGenre?: string | null;
+  /** v3.291: 편곡 원본 버전 라벨(예: '버전 A') — 어느 버전을 편곡하는지 명시 */
+  sourceLabel?: string | null;
   /** ⭐ 비용(compose) */
   cost: number;
   busy?: boolean;
@@ -32,7 +34,7 @@ interface Props {
 
 const DEFAULT_KEEP = ARRANGE_KEEP_LEVELS[1].value; // 보통 0.65
 
-export default function ArrangeSheet({ visible, currentGenre, cost, busy, onClose, onSubmit }: Props) {
+export default function ArrangeSheet({ visible, currentGenre, sourceLabel, cost, busy, onClose, onSubmit }: Props) {
   const insets = useSafeAreaInsets(); // Modal 은 루트 인셋 미상속 → 시트에 직접 보강(PlaylistPickerSheet 관행)
   const [genreKo, setGenreKo] = useState<string | null>(null);
   const [moodKo, setMoodKo] = useState<string | null>(null);
@@ -69,9 +71,11 @@ export default function ArrangeSheet({ visible, currentGenre, cost, busy, onClos
             activeOpacity={1}
             onPress={() => {}}
           >
-            <AppText variant="title3">편곡하기</AppText>
+            <AppText variant="title3">{sourceLabel ? `편곡하기 · ${sourceLabel}` : '편곡하기'}</AppText>
             <AppText variant="footnote" tone="secondary" style={styles.subtitle}>
-              가사와 목소리는 그대로, 사운드만 새로 만들어요.
+              {sourceLabel
+                ? `${sourceLabel}를 바탕으로 가사와 목소리는 그대로, 사운드만 새로 만들어요.`
+                : '가사와 목소리는 그대로, 사운드만 새로 만들어요.'}
             </AppText>
             <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <AppText variant="footnote" tone="secondary" style={styles.label}>장르</AppText>

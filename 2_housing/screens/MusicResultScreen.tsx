@@ -256,6 +256,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   // v3.281 편곡하기 — 시트 열림·요청 중
   const [arrangeOpen, setArrangeOpen] = useState(false);
   const [arrangeBusy, setArrangeBusy] = useState(false);
+  // v3.291 [ArrangeSrc]: 편곡 원본 버전(A/B 중 하나) — 팝업에서 명시 선택. undefined=서버 결정(발매 곡)
+  const [arrangeVariant, setArrangeVariant] = useState<number | undefined>(undefined);
   const isChildAccount = useIsChild();
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
@@ -766,8 +768,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   // 서버 POST /generate/{id}/arrange 가 새 generation(201)을 만들면 기존 "이어보기" 폴링(MusicLoading
   // resumeGenerationId)으로 이동 → 완료 시 MusicResult A/B 그대로. 게이트 응답(429 피로·409 진행 중·
   // 402 잔액·응답 유실)은 MusicLoading 의 작곡 처리와 같은 문구 체계.
-  const openArrange = () => {
+  const openArrange = (variant?: number) => {
     if (!store.generationId || arrangeBusy) return;
+    setArrangeVariant(variant);
     // 진행 중 작곡이 있으면 시트를 열기 전에 안내(서버 409 와 같은 결과 — 과금 전 차단)
     if (guardGeneration('music', { navigation, where: 'MusicResult:arrange' })) return;
     setArrangeOpen(true);
@@ -779,7 +782,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     setArrangeBusy(true);
     const rid = newRequestId();
     // 비교 중이면 고른 버전, 단일 플레이어(발매됨 등)면 서버가 발매 트랙의 버전으로 결정
-    const variantIndex = showComparison ? selectedVariant : undefined;
+    // v3.291 [ArrangeSrc]: 팝업에서 고른 버전 우선 — 편곡은 이 한 버전만 원본으로 쓴다
+    const variantIndex = arrangeVariant ?? (showComparison ? selectedVariant : undefined);
     console.info('[Arrange] 시작', { genId, variantIndex: variantIndex ?? 'auto', genre: sel.genreKo, mood: sel.moodKo, keep: sel.keepMelody, hasStyle: !!sel.styleText });
     try {
       const doc = await arrangeGeneration(
@@ -1082,12 +1086,26 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       void handleRegenerate();
       return;
     }
-    if (__DEV__) console.info('[MusicResult] 다시 만들기 선택 팝업');
-    showAlert('다시 만들기', '어떤 방식으로 다시 만들까요?', [
-      { text: '같은 설정으로 다시 생성', onPress: () => void handleRegenerate() },
-      { text: '다른 장르로 편곡', onPress: () => openArrange() },
-      { text: '취소', style: 'cancel' },
-    ]);
+    if (__DEV__) console.info('[MusicResult] 다시 만들기 선택 팝업', { showComparison, variantCount });
+    // v3.291 [ArrangeSrc]: 편곡은 A/B 중 "한 버전"만 원본으로 새 사운드를 만든다(둘 다 다시 만들지 않음) —
+    // 어느 버전인지 팝업에서 직접 고르게 해 낭비 오해·의도치 않은 원본 선택을 막는다(대표 10-06).
+    const arrangeButtons = showComparison
+      ? Array.from({ length: variantCount }).map((_, i) => ({
+          text: `${VARIANT_LABELS[i] || `버전 ${i + 1}`}로 편곡 (다른 장르)`,
+          onPress: () => openArrange(i),
+        }))
+      : [{ text: '다른 장르로 편곡', onPress: () => openArrange() }];
+    showAlert(
+      '다시 만들기',
+      showComparison
+        ? '편곡은 고른 버전 하나를 바탕으로 가사·목소리는 그대로 두고 사운드만 새로 만들어요.\n같은 설정으로 새로 만들기는 처음부터 새 곡을 만들어요.'
+        : '어떤 방식으로 다시 만들까요?',
+      [
+        ...arrangeButtons,
+        { text: '같은 설정으로 새로 만들기', onPress: () => void handleRegenerate() },
+        { text: '취소', style: 'cancel' },
+      ]
+    );
   };
 
 
@@ -1328,6 +1346,13 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       <ArrangeSheet
         visible={arrangeOpen}
         currentGenre={store.genre || null}
+        sourceLabel={
+          arrangeVariant != null
+            ? VARIANT_LABELS[arrangeVariant] || `버전 ${arrangeVariant + 1}`
+            : showComparison
+              ? VARIANT_LABELS[selectedVariant] || null
+              : null
+        }
         cost={getPointCostSync('compose')}
         busy={arrangeBusy}
         onClose={() => { if (!arrangeBusy) setArrangeOpen(false); }}
