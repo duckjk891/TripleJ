@@ -10,6 +10,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
+import WeeklyMissionCard from './WeeklyMissionCard';
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
@@ -76,6 +77,9 @@ export default function StarGuideModal() {
             <AppText variant="footnote" tone="secondary">내역 보기</AppText>
             <Feather name="chevron-right" size={14} color={colors.text.muted} />
           </TouchableOpacity>
+
+          {/* v3.293 [WeeklyMission] 이번 주 미션(로그인 시) */}
+          <WeeklyMissionCard onGo={() => { close(); navigateGlobal('Studio'); }} />
 
           {EARN_ROWS.map((r) => {
             const pressable = !!r.action;

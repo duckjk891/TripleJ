@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import WeeklyMissionCard from '../components/WeeklyMissionCard';
 import {
   StyleSheet,
   View,
@@ -453,6 +454,8 @@ export default function MyArtistsScreen({ navigation, route }: any) {
         </View>
       ) : (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+          {/* v3.293 [WeeklyMission] 내 아티스트로 창작하면 ⭐ — 아티스트가 있을 때만 */}
+          {artists.length > 0 && <WeeklyMissionCard />}
           {artists.length === 0 && (
             <View style={styles.emptyBox}>
               <AppText style={styles.emptyTitle}>아직 아티스트가 없어요</AppText>
