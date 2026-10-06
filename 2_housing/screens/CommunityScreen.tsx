@@ -5,8 +5,8 @@
 //   CTA 버튼 lg(텍스트 18)→md 기본(16) · 클럽 카드 제목은 목록 행 관행(15~16/600)=callout.
 // 서버 미배포(404/네트워크) → 안내 빈 상태로 강등(크래시 금지). 비로그인: 목록은 보이되
 // 개설 시 로그인 오버레이(FeedScreen loginOverlay 관행). 가입 유도는 ClubHome 소관.
-import { useCallback, useState } from 'react';
-import { StyleSheet, View, FlatList, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { StyleSheet, View, FlatList, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -16,7 +16,7 @@ import LoginPrompt from '../components/LoginPrompt';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAuthStore } from '../stores/authStore';
 import { useIsChild } from '../utils/kidsMode';
-import { CLUB_LABEL, Club, ClubSort, listClubs, getMyClubs } from '../services/clubService';
+import { CLUB_LABEL, Club, ClubSort, listClubs, getMyClubs, getRecommendedClubs, CLUB_GENRES } from '../services/clubService';
 // v3.252: 크루 채팅 unread 뱃지 — 소켓 club_chat 수신 시 화면 내 즉시 증가(재조회는 focus 관행 그대로)
 import { dmSocketSubscribeClubChat } from '../services/dmSocket';
 // v3.257: v3.253 크루 인지도 노출(레벨 배지·'인기 크루' 섹션·'인기' 정렬 토글) 전면 제거 —
@@ -48,16 +48,24 @@ export default function CommunityScreen() {
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [ctaVisible, setCtaVisible] = useState(false); // 비로그인 개설 시 로그인 오버레이
+  // v3.296 [ClubGenre] 검색·장르 필터·추천
+  const [searchText, setSearchText] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  const [genre, setGenre] = useState<string | null>(null);
+  const [recClubs, setRecClubs] = useState<Club[]>([]);
+  const filtering = !!appliedQuery || !!genre;
   // v3.257: 인기 크루 섹션 상태(popular)·별도 fetch 제거 — 크루 인지도 미노출(대표 확정)
 
   const fetchAll = useCallback(async (s: ClubSort) => {
-    if (__DEV__) console.info('[Club] Community fetchAll', { sort: s, loggedIn: !!user });
+    if (__DEV__) console.info('[Club] Community fetchAll', { sort: s, loggedIn: !!user, q: appliedQuery, genre });
     try {
       setLoading(true);
-      const [listRes, mineRes] = await Promise.allSettled([
-        listClubs({ sort: s, limit: LIST_LIMIT }),
+      const [listRes, mineRes, recRes] = await Promise.allSettled([
+        listClubs({ sort: s, limit: LIST_LIMIT, q: appliedQuery, genre }),
         user ? getMyClubs() : Promise.resolve([] as Club[]),
+        user && !appliedQuery && !genre ? getRecommendedClubs(10) : Promise.resolve({ clubs: [] as Club[], myGenres: [] as string[] }),
       ]);
+      setRecClubs(recRes.status === 'fulfilled' ? recRes.value.clubs : []);
       if (listRes.status === 'fulfilled') {
         setClubs(listRes.value.clubs);
         setNextBefore(listRes.value.next_before);
@@ -78,9 +86,36 @@ export default function CommunityScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user]);
+  }, [user, appliedQuery, genre]);
 
   useFocusEffect(useCallback(() => { fetchAll(sort); }, [fetchAll, sort]));
+
+  const applySearch = () => {
+    const q = searchText.trim().slice(0, 30);
+    if (q === appliedQuery) return;
+    if (__DEV__) console.info('[ClubSearch] 검색', { qLen: q.length });
+    setClubs([]);
+    setNextBefore(null);
+    setAppliedQuery(q);
+  };
+
+  // 입력이 멈추면 자동 검색(한글 조합 중 Enter 가 조합 확정에 먹혀 제출되지 않는 웹 환경 대비)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const q = searchText.trim().slice(0, 30);
+      if (q !== appliedQuery) applySearch();
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText]);
+
+  const pickGenre = (g: string | null) => {
+    if (g === genre) return;
+    if (__DEV__) console.info('[ClubSearch] 장르 필터', { genre: g });
+    setClubs([]);
+    setNextBefore(null);
+    setGenre(g);
+  };
 
   // v3.252: 화면 표시 중 크루 채팅 수신 → 해당 크루 카드 unread_chat 즉시 +1 (focus 재조회가 서버값으로 보정)
   useFocusEffect(useCallback(() => {
@@ -98,7 +133,7 @@ export default function CommunityScreen() {
     setLoadingMore(true);
     if (__DEV__) console.info('[Club] Community loadMore', { before: nextBefore });
     try {
-      const page = await listClubs({ sort, limit: LIST_LIMIT, before: nextBefore });
+      const page = await listClubs({ sort, limit: LIST_LIMIT, before: nextBefore, q: appliedQuery, genre });
       setClubs((prev) => {
         const seen = new Set(prev.map((c) => c.id));
         return [...prev, ...page.clubs.filter((c) => !seen.has(c.id))];
@@ -110,7 +145,7 @@ export default function CommunityScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [nextBefore, loadingMore, loading, sort]);
+  }, [nextBefore, loadingMore, loading, sort, appliedQuery, genre]);
 
   const handleCreateClub = () => {
     if (!user) {
@@ -138,6 +173,11 @@ export default function CommunityScreen() {
           {item.description
             ? <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.clubDesc}>{item.description}</AppText>
             : null}
+          {item.genres && item.genres.length > 0 ? (
+            <AppText variant="caption" tone="accent" numberOfLines={1} style={{ marginTop: spacing.xs }}>
+              {item.genres.map((g) => `#${g}`).join(' ')}
+            </AppText>
+          ) : null}
           <View style={styles.clubMetaRow}>
             <Feather name="users" size={12} color={colors.text.muted} />
             <AppText variant="caption" tone="muted">{`멤버 ${item.member_count ?? 0}명`}</AppText>
@@ -215,6 +255,66 @@ export default function CommunityScreen() {
 
       {/* v3.257: '인기 크루' 섹션 제거(크루 인지도 미노출 — 대표 확정) */}
 
+      {/* v3.296 [ClubGenre] 추천 크루 — 내가 발매한 곡 장르 기반(없으면 인기순). 검색·필터 중엔 숨김 */}
+      {user && !filtering && recClubs.length > 0 ? (
+        <View style={styles.myClubSection}>
+          <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`추천 ${CLUB_LABEL}`}</AppText>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.myClubRow}>
+            {recClubs.map((c) => (
+              <TouchableOpacity key={`rec_${c.id}`} style={styles.myClubCard} activeOpacity={0.75} onPress={() => openClub(c)} accessibilityLabel={`추천 ${CLUB_LABEL} ${c.name}`}>
+                <View style={styles.myClubIcon}>
+                  <Feather name="star" size={16} color={colors.accent.primary} />
+                </View>
+                <AppText variant="bodyStrong" numberOfLines={1} style={{ marginTop: spacing.sm }}>{c.name}</AppText>
+                <AppText variant="caption" tone={c.matched_genres && c.matched_genres.length ? 'accent' : 'muted'} numberOfLines={1}>
+                  {c.matched_genres && c.matched_genres.length
+                    ? `내 곡과 같은 ${c.matched_genres.join('·')}`
+                    : (c.genres && c.genres.length ? c.genres.map((g) => `#${g}`).join(' ') : '인기 크루')}
+                </AppText>
+                <View style={styles.clubMetaRow}>
+                  <Feather name="users" size={12} color={colors.text.muted} />
+                  <AppText variant="caption" tone="muted">{`${c.member_count ?? 0}명`}</AppText>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {/* v3.296 [ClubGenre] 검색 + 장르 필터 */}
+      <View style={styles.searchRow}>
+        <Feather name="search" size={16} color={colors.text.muted} />
+        <TextInput
+          style={styles.searchInput}
+          value={searchText}
+          onChangeText={setSearchText}
+          placeholder={`${CLUB_LABEL} 이름이나 소개로 찾기`}
+          placeholderTextColor={colors.text.muted}
+          returnKeyType="search"
+          maxLength={30}
+          onSubmitEditing={applySearch}
+          accessibilityLabel={`${CLUB_LABEL} 검색`}
+        />
+        {searchText || appliedQuery ? (
+          <TouchableOpacity
+            onPress={() => { setSearchText(''); if (appliedQuery) { setClubs([]); setNextBefore(null); setAppliedQuery(''); } }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="검색어 지우기"
+          >
+            <Feather name="x" size={16} color={colors.text.muted} />
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity onPress={applySearch} style={styles.searchBtn} accessibilityLabel="검색">
+          <AppText variant="footnote" tone="accent">검색</AppText>
+        </TouchableOpacity>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.genreRow}>
+        <Tag label="전체" selected={!genre} onPress={() => pickGenre(null)} />
+        {CLUB_GENRES.map((g) => (
+          <Tag key={g} label={g} selected={genre === g} onPress={() => pickGenre(g)} />
+        ))}
+      </ScrollView>
+
       <View style={styles.listLabelRow}>
         <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>{`${CLUB_LABEL} 목록`}</AppText>
         <View style={styles.sortRow}>
@@ -260,8 +360,8 @@ export default function CommunityScreen() {
             ) : (
               <EmptyState
                 icon={<Feather name="flag" size={44} color={colors.text.muted} />}
-                title={`아직 ${CLUB_LABEL}가 없어요`}
-                hint={`첫 ${CLUB_LABEL}를 만들어보세요!`}
+                title={filtering ? `조건에 맞는 ${CLUB_LABEL}가 없어요` : `아직 ${CLUB_LABEL}가 없어요`}
+                hint={filtering ? '다른 검색어나 장르로 찾아보거나, 직접 만들어보세요!' : `첫 ${CLUB_LABEL}를 만들어보세요!`}
               />
             )
           }
@@ -342,6 +442,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   sortRow: { flexDirection: 'row', gap: spacing.sm },
+  // v3.296 [ClubGenre]
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.xl, marginHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md, borderRadius: radius.lg,
+    backgroundColor: colors.bg.surface1,
+  },
+  searchInput: { flex: 1, color: colors.text.primary, fontSize: 14, paddingVertical: spacing.sm },
+  searchBtn: { paddingHorizontal: spacing.xs, paddingVertical: spacing.sm },
+  genreRow: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   clubCard: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     marginHorizontal: spacing.lg, marginTop: spacing.md,

@@ -56,7 +56,15 @@ export interface Club {
   unread_chat?: number;
   /** v3.253 크루 인지도 — v3.257: 앱 미사용(노출 제거). 서버가 내려도/안 내려도 무해한 optional */
   recognition?: ClubRecognition | null;
+  /** v3.296 [ClubGenre] 장르 태그(최대 3) */
+  genres?: string[];
+  /** v3.296 추천 응답 전용 — 내 곡 장르와 겹친 태그 */
+  matched_genres?: string[];
 }
+
+// v3.296 [ClubGenre] 크루 장르(서버 CLUB_GENRES 와 동일 순서) — 칩 렌더용 상수(요청 없이 즉시 표시)
+export const CLUB_GENRES = ['댄스', '발라드', '힙합', 'R&B', '트로트', '인디', '록', '포크', '인디팝', '시티팝', '재즈', 'EDM', '클래식', '기타'];
+export const MAX_CLUB_GENRES = 3;
 
 /** v3.252: 가입 상태 파생 — join_status(신서버) 우선, 구서버는 is_member/role 로 폴백 */
 export type ClubJoinStatus = 'none' | 'pending' | 'member';
@@ -99,18 +107,50 @@ export function getClubErrorCode(err: any): string | null {
   }
 }
 
-const normClub = (c: any): Club => ({ ...c, id: String(c?.id ?? '') });
+const normClub = (c: any): Club => ({
+  ...c,
+  id: String(c?.id ?? ''),
+  genres: Array.isArray(c?.genres) ? c.genres.filter((g: any) => typeof g === 'string') : [],
+});
 
-export async function createClub(name: string, description: string): Promise<Club> {
-  if (__DEV__) console.info('[Club] createClub', { nameLen: name.length, descLen: description.length });
+export async function createClub(name: string, description: string, genres: string[] = []): Promise<Club> {
+  if (__DEV__) console.info('[Club] createClub', { nameLen: name.length, descLen: description.length, genres });
   // v3.245 게이트픽스 BUG-1: canonical '/clubs/' — 무슬래시는 307, Android OkHttp가 POST 307 미추종
-  const res = await api.post('/clubs/', { name, description });
+  const res = await api.post('/clubs/', { name, description, genres });
   return normClub(res.data);
 }
 
-export async function listClubs(opts: { sort?: ClubSort; limit?: number; before?: string | null } = {}): Promise<ClubListPage> {
+/** v3.296 [ClubGenre] 크루장 정보 수정 — 장르·소개(이름은 변경 불가) */
+export async function updateClub(clubId: string, patch: { genres?: string[]; description?: string }): Promise<Club> {
+  if (__DEV__) console.info('[ClubEdit] updateClub', { clubId, genres: patch.genres, descLen: patch.description?.length });
+  try {
+    const res = await api.patch(`/clubs/${clubId}`, patch);
+    return normClub(res.data);
+  } catch (err: any) {
+    console.error('[ClubEdit] 수정 실패', { clubId, status: err?.response?.status });
+    throw err;
+  }
+}
+
+/** v3.296 [ClubGenre] 추천 크루 — 내가 발매한 곡 장르 기반(없으면 인기순) */
+export async function getRecommendedClubs(limit = 10): Promise<{ clubs: Club[]; myGenres: string[] }> {
+  if (__DEV__) console.info('[ClubRec] 추천 조회', { limit });
+  try {
+    const res = await api.get('/clubs/recommended', { params: { limit } });
+    const clubs: Club[] = Array.isArray(res.data?.clubs) ? res.data.clubs.map(normClub) : [];
+    const myGenres: string[] = Array.isArray(res.data?.my_genres) ? res.data.my_genres : [];
+    return { clubs, myGenres };
+  } catch (err: any) {
+    console.error('[ClubRec] 추천 조회 실패', { status: err?.response?.status });
+    throw err;
+  }
+}
+
+export async function listClubs(opts: { sort?: ClubSort; limit?: number; before?: string | null; q?: string; genre?: string | null } = {}): Promise<ClubListPage> {
   const params: Record<string, any> = { sort: opts.sort || 'new', limit: opts.limit ?? 20 };
   if (opts.before) params.before = opts.before;
+  if (opts.q && opts.q.trim()) params.q = opts.q.trim().slice(0, 30); // v3.296 검색
+  if (opts.genre) params.genre = opts.genre; // v3.296 장르 필터
   if (__DEV__) console.info('[Club] listClubs', params);
   const res = await api.get('/clubs/', { params }); // v3.245 게이트픽스 BUG-1: 307 왕복 제거
   const clubs: Club[] = Array.isArray(res.data?.clubs) ? res.data.clubs.map(normClub) : [];

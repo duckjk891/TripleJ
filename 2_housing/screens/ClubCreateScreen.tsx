@@ -14,7 +14,8 @@ import { AppText, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import { showAlert } from '../utils/appAlert';
 import { useAuthStore } from '../stores/authStore';
-import { CLUB_LABEL, createClub, getClubErrorCode } from '../services/clubService';
+import { CLUB_LABEL, createClub, getClubErrorCode, MAX_CLUB_GENRES } from '../services/clubService';
+import ClubGenrePicker from '../components/ClubGenrePicker';
 import { getWordFilteredMessage } from '../utils/kidsMode';
 
 const NAME_MAX = 30;
@@ -25,6 +26,7 @@ export default function ClubCreateScreen() {
   const user = useAuthStore((s) => s.user);
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const [genres, setGenres] = useState<string[]>([]); // v3.296 [ClubGenre]
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -36,7 +38,7 @@ export default function ClubCreateScreen() {
     if (busy) return;
     setBusy(true);
     try {
-      const club = await createClub(trimmedName, desc.trim());
+      const club = await createClub(trimmedName, desc.trim(), genres);
       console.info('[Club] 개설 성공', { clubId: club.id });
       navigation.navigate('ClubHome', { clubId: club.id, name: club.name });
     } catch (err: any) {
@@ -102,8 +104,15 @@ export default function ClubCreateScreen() {
           editable={!busy}
         />
 
+        {/* v3.296 [ClubGenre] 장르 태그 — 검색·추천에 쓰여요 */}
+        <View style={[styles.labelRow, { marginTop: spacing.lg }]}>
+          <AppText variant="footnote" tone="secondary" style={styles.label}>장르</AppText>
+          <AppText variant="caption" tone="muted">{`${genres.length}/${MAX_CLUB_GENRES} (선택)`}</AppText>
+        </View>
+        <ClubGenrePicker value={genres} onChange={setGenres} disabled={busy} />
+
         <AppText variant="caption" tone="muted" style={styles.hint}>
-          {`${CLUB_LABEL}는 계정당 1개까지 만들 수 있어요. 가입한 멤버 누구나 채팅·게시판과 공유 플레이리스트를 함께 써요.`}
+          {`장르를 고르면 같은 장르로 곡을 만드는 사람들에게 추천돼요. ${CLUB_LABEL}는 계정당 1개까지 만들 수 있어요. 가입한 멤버 누구나 채팅·게시판과 공유 플레이리스트를 함께 써요.`}
         </AppText>
 
         <View style={{ marginTop: spacing.xl }}>

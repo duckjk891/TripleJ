@@ -21,6 +21,8 @@ import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import TrackRow from '../components/TrackRow';
 import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
+import ClubGenrePicker from '../components/ClubGenrePicker'; // v3.296 [ClubGenre]
+import { updateClub } from '../services/clubService';
 // v3.257: v3.253 크루 인지도 레벨 배지(CrewLevelBadge) 제거 — 대표 확정 "크루는 인지도가 필요없어.
 // 크루원들한테 혜택이 가는 형태면 되." 실적 축적(queueSource·play-start)은 그대로 유지.
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
@@ -131,6 +133,31 @@ export default function ClubHomeScreen() {
 
   const isMember = !!detail?.is_member || detail?.role === 'owner' || detail?.role === 'member';
   const isOwner = detail?.role === 'owner' || (!!user && !!detail?.owner_id && String(detail.owner_id) === String(user.id));
+  // v3.296 [ClubGenre] 크루장 정보 수정(장르·소개)
+  const [editInfoOpen, setEditInfoOpen] = useState(false);
+  const [editGenres, setEditGenres] = useState<string[]>([]);
+  const [editDesc, setEditDesc] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
+  const openEditInfo = () => {
+    setEditGenres(Array.isArray(detail?.genres) ? [...(detail?.genres as string[])] : []);
+    setEditDesc(detail?.description || '');
+    setEditInfoOpen(true);
+  };
+  const saveEditInfo = async () => {
+    if (!detail?.id || editBusy) return;
+    setEditBusy(true);
+    try {
+      const updated = await updateClub(String(detail.id), { genres: editGenres, description: editDesc.trim() });
+      setDetail((d) => (d ? { ...d, genres: updated.genres ?? editGenres, description: updated.description ?? editDesc.trim() } : d));
+      setEditInfoOpen(false);
+      console.info('[ClubEdit] 저장 완료', { clubId: detail.id, genres: editGenres.length });
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || '저장하지 못했어요. 잠시 후 다시 시도해주세요.';
+      showAlert('알림', msg);
+    } finally {
+      setEditBusy(false);
+    }
+  };
   // v3.252: 가입 상태 — 신서버 join_status 우선(pending 지원), 구서버는 is_member 폴백
   const joinStatus = clubJoinStatus(detail);
   const isPending = joinStatus === 'pending';
@@ -819,6 +846,11 @@ export default function ClubHomeScreen() {
       <AppText variant="body" tone="secondary" style={styles.infoValue}>
         {detail?.description || '아직 소개가 없어요.'}
       </AppText>
+      {/* v3.296 [ClubGenre] 장르 태그 */}
+      <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>장르</AppText>
+      <AppText variant="body" tone={detail?.genres && detail.genres.length ? 'accent' : 'secondary'} style={styles.infoValue}>
+        {detail?.genres && detail.genres.length ? detail.genres.map((g) => `#${g}`).join(' ') : '아직 정하지 않았어요.'}
+      </AppText>
       <AppText variant="footnote" tone="secondary" style={styles.infoLabel}>개설일</AppText>
       <AppText variant="body" tone="secondary" style={styles.infoValue}>
         {fmtDate(detail?.created_at) || '정보 없음'}
@@ -827,6 +859,14 @@ export default function ClubHomeScreen() {
       <AppText variant="body" tone="secondary" style={styles.infoValue}>
         {(detail as any)?.owner_nickname || (isOwner ? (user as any)?.nickname || '나' : `${CLUB_LABEL} 운영자`)}
       </AppText>
+      {/* v3.296 [ClubGenre] 크루 정보 수정 — owner 전용(장르·소개) */}
+      {isOwner ? (
+        <TouchableOpacity style={styles.promoRow} activeOpacity={0.7} onPress={openEditInfo} accessibilityLabel={`${CLUB_LABEL} 정보 수정`}>
+          <Feather name="edit-2" size={16} color={colors.accent.primary} />
+          <AppText variant="body" tone="accent" style={{ flex: 1 }}>{`${CLUB_LABEL} 정보 수정 (장르·소개)`}</AppText>
+          <Feather name="chevron-right" size={16} color={colors.text.muted} />
+        </TouchableOpacity>
+      ) : null}
       {/* v3.261: 크루 홍보하기 — owner 전용 행(취향 매칭 유저에게 알림, 7일 1회) */}
       {isOwner ? (
         <TouchableOpacity style={styles.promoRow} activeOpacity={0.7} onPress={openPromoSheet} accessibilityLabel={`${CLUB_LABEL} 홍보하기`}>
@@ -1103,6 +1143,39 @@ export default function ClubHomeScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Button label="만들기" fullWidth loading={plBusy} onPress={handleCreatePlaylist} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* v3.296 [ClubGenre] 크루 정보 수정 팝업 — 장르(최대 3)·소개(300자) */}
+      <Modal visible={editInfoOpen} transparent animationType="fade" onRequestClose={() => setEditInfoOpen(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
+          <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
+            <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setEditInfoOpen(false)} accessibilityLabel="정보 수정 닫기" />
+            <View style={styles.modalCard}>
+              <AppText style={styles.modalTitle}>{`${CLUB_LABEL} 정보 수정`}</AppText>
+              <AppText variant="footnote" tone="secondary" style={{ fontWeight: '700' }}>장르 (최대 3개)</AppText>
+              <ClubGenrePicker value={editGenres} onChange={setEditGenres} disabled={editBusy} />
+              <AppText variant="footnote" tone="secondary" style={{ fontWeight: '700', marginTop: spacing.sm }}>{`소개 (${editDesc.length}/300)`}</AppText>
+              <TextInput
+                style={[styles.modalInput, { minHeight: 90, textAlignVertical: 'top' }]}
+                value={editDesc}
+                onChangeText={setEditDesc}
+                placeholder={`어떤 음악을 함께 듣는 ${CLUB_LABEL}인지 알려주세요.`}
+                placeholderTextColor={colors.text.muted}
+                maxLength={300}
+                multiline
+                editable={!editBusy}
+              />
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <View style={{ flex: 1 }}>
+                  <Button label="취소" variant="tonal" fullWidth onPress={() => setEditInfoOpen(false)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button label="저장" fullWidth loading={editBusy} onPress={saveEditInfo} />
                 </View>
               </View>
             </View>
