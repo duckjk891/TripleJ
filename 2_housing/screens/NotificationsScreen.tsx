@@ -5,6 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
+import PushBanner from '../components/PushBanner';
 import { AppText, Avatar, EmptyState } from '../components/ui';
 import { colors } from '../theme/colors';
 import { spacing } from '../theme/spacing';
@@ -165,6 +166,8 @@ export default function NotificationsScreen() {
   return (
     <View style={styles.container}>
       {/* v3.71: 타이틀·뒤로가기는 네이티브 헤더(App.tsx stackHeader)로 이동 — 본문 헤더 제거 */}
+      {/* v3.298 [WebPush] 푸시 켜기 배너(웹·미구독일 때만) */}
+      <PushBanner />
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
       ) : items.length === 0 ? (

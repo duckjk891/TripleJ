@@ -4062,3 +4062,14 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
   - 배지 8종: 첫 발매·꾸준한 창작자(10곡)·인기곡 보유(재생 100/좋아요 10)·아티스트 데뷔·크루장·소통왕(댓글 20)·주간 미션 달성·따뜻한 피드백(40°↑).
 - 앱: ReputationCard(온도 막대·색, 탭하면 설명, 배지 칩 탭하면 획득 조건) — 내 페이지 지표 카드 아래·다른 사람 채널 팔로우 버튼 아래.
 - 검증: 격리 컨테이너 12/12(공식·상한·하한·배지·집계·캐시·부분 실패 강등), tsc 0. 배포: md5 가드 → 백업·pre-v3297-live → 사전 임포트(라우트 등록) → 빌드 → 진행 작업 0건 → 재기동 → health·Traceback 0·실계정 응답(37.1°·배지 5종) 확인.
+
+---
+
+## v3.298 — 2026-10-06 — 웹 푸시 알림 (서버·웹 배포 완료)
+
+대표 선택: 참여 유도 — 푸시 알림.
+- 서버: services/webpush.py — RFC 8291(aes128gcm)·RFC 8292(VAPID ES256) 직접 구현(이미지 내 cryptography·httpx, 신규 의존성 없음). VAPID 키쌍은 Mongo app_secrets 에 최초 1회 생성·보관. 구독 push_subscriptions(엔드포인트 유니크·사용자당 최근 10개). 404/410 구독 자동 삭제. routes/push.py: GET vapid-public-key, POST subscribe/unsubscribe, GET status. 인앱 알림 저장(push_notification) 시 follow·comment·reply·like·star 만 비동기 푸시(피드 팬아웃·크루 홍보 제외 — 스팸 방지), 실패는 알림 저장 무영향.
+- 앱(웹): public/sw.js(푸시 표시·탭 시 앱 포커스/열기, 캐시 없음), public/manifest.json + index.html manifest·apple-mobile-web-app-capable(아이폰은 홈 화면 앱에서만 웹 푸시 — Apple 정책). 설정 > 알림 설정 [푸시 알림] 스위치, 알림함 상단 [켜기] 배너(닫으면 다시 안 보임, 아이폰 사파리는 홈 화면 추가 안내). 로그아웃 시 이 기기 구독 해제(공용 기기 이전 계정 알림 차단).
+- 안드로이드 APK: 미지원 — Firebase(FCM) 프로젝트·자격 증명이 필요(대표 작업). 앱 안에서는 '다음 업데이트에서 지원' 안내.
+- 검증: 격리 컨테이너 13/13(브라우저 측 RFC 8291 복호화로 암호화 왕복 일치·VAPID 서명 공개키 검증·aud/exp·필수 헤더·410 정리·알림 훅 예약/제외), 사전 임포트, tsc 0. 운영: VAPID 공개키 응답, sw.js(200 application/javascript)·manifest.json(200) 서빙, 앱 페이지 manifest 링크, 실브라우저 서비스워커 루트 scope 등록 확인(테스트 등록 해제).
+- 미실측(정직 기재): 실제 기기에서 권한 허용→구독→푸시 수신 — 내장 브라우저가 알림 권한을 막아(denied) 검증 불가. 대표 기기에서 설정 > 푸시 알림 켜고 댓글·좋아요 시 수신 확인 필요.

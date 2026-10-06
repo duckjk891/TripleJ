@@ -16,6 +16,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
+import PushToggleRow from '../components/PushToggleRow';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import api from '../services/api';
@@ -615,7 +616,9 @@ export default function SettingsScreen({ navigation, route }: any) {
 
         {/* 알림 설정 */}
         <AppText variant="callout" style={styles.sectionTitle}>알림 설정</AppText>
-        <View style={[styles.settingRow, styles.settingRowFirst]}>
+        {/* v3.298 [WebPush] 푸시 알림(웹 구독) */}
+        <PushToggleRow rowStyle={[styles.settingRow, styles.settingRowFirst]} labelStyle={styles.settingLabel} />
+        <View style={styles.settingRow}>
           <AppText style={styles.settingLabel}>곡 생성 완료 알림</AppText>
           <Switch
             value={notifySongComplete}

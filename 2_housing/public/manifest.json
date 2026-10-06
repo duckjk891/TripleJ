@@ -1,0 +1,12 @@
+{
+  "name": "MAIDOL — MY AI IDOL",
+  "short_name": "MAIDOL",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0814",
+  "theme_color": "#0b0814",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}

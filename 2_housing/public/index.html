@@ -16,6 +16,10 @@
          트레이드오프: 브라우저 확대(저시력 접근성) 제한 — 앱 내 글꼴 크기로 보완 필요. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
     <title>%WEB_TITLE%</title>
+    <!-- v3.298 [WebPush]: 아이폰은 홈 화면에 추가한 웹앱에서만 푸시 가능(Apple) — 매니페스트·standalone -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="MAIDOL" />
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
       /* These styles make the body full-height */
