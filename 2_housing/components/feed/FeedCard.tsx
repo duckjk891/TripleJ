@@ -16,6 +16,8 @@ import { spacing, radius } from '../../theme/spacing';
 import { fetchOfficial, getCachedOfficial } from '../../services/officialService';
 import { useIsChild, useKidsPermission, KIDS_TEXT, isChildRestrictedError } from '../../utils/kidsMode';
 import { getWordFilteredMessage } from '../../utils/kidsMode'; // v3.233: 금칙어 400 안내
+import { useNavigation } from '@react-navigation/native';
+import { blockUser } from '../../services/blockService';
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -47,6 +49,10 @@ interface Props {
   requireLogin: () => boolean;     // 비로그인 시 CTA 처리(true=로그인됨)
   /** v3.247: 클럽명 배지 억제 — 클럽 게시판(ClubHome)처럼 맥락상 중복인 화면에서 전달 */
   hideClubBadge?: boolean;
+  /** v3.294 [ClubMod]: 크루장 화면(내 크루 게시판) — 남의 글도 삭제 가능 */
+  canModerate?: boolean;
+  /** v3.294 [Block]: 작성자 차단 후(목록에서 그 사람 글 제거). 미지정 시 onDeleted 로 갱신 */
+  onBlocked?: () => void;
 }
 
 // 서버 created_at은 타임존 표기 없는 UTC — 'Z'를 붙여 파싱(KST 9시간 오차 방지)
@@ -63,8 +69,9 @@ const fmtTime = (iso?: string): string => {
   return d.toLocaleDateString('ko-KR');
 };
 
-export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin, hideClubBadge }: Props) {
+export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin, hideClubBadge, canModerate, onBlocked }: Props) {
   const user = useAuthStore((s) => s.user);
+  const navigation = useNavigation<any>();
   const isMine = !!user && String(feed.author_id) === String(user.id);
 
   // v3.247: 클럽 글 배지 — club_id 있는 글이 일반 피드/채널에 노출될 때 클럽명 표시.
@@ -244,6 +251,47 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
     }
   };
 
+  // v3.294 [FeedEdit]: 글 수정 — 작성 화면을 수정 모드로(기존 내용 미리 채움)
+  const editFeed = () => {
+    if (__DEV__) console.info('[FeedEdit] 수정 진입', { feedId: feed.id, kind: feed.kind });
+    navigation.navigate('FeedCompose', { editFeed: feed });
+  };
+
+  // v3.294 [Block]: 작성자 차단 — 이후 그 사람의 글·댓글·메시지가 보이지 않음(설정 > 차단한 사용자에서 해제)
+  const blockAuthor = () => {
+    if (!feed.author_id) return;
+    const nick = feed.author_nickname || '이 사용자';
+    showAlert('사용자 차단', `${nick}님을 차단할까요?\n차단하면 서로 메시지를 주고받을 수 없고, 이 사람의 글과 댓글이 보이지 않아요.\n설정 > 차단한 사용자에서 언제든 해제할 수 있어요.`, [
+      { text: '취소', style: 'cancel' },
+      { text: '차단', style: 'destructive', onPress: async () => {
+        try {
+          await blockUser(String(feed.author_id));
+          showAlert('차단 완료', `${nick}님을 차단했어요.`);
+          (onBlocked || onDeleted)?.();
+        } catch {
+          showAlert('오류', '차단하지 못했어요. 잠시 후 다시 시도해주세요.');
+        }
+      } },
+    ]);
+  };
+
+  // v3.294 [ClubMod]: 크루장 — 크루 게시판의 남의 글 삭제(서버가 크루장 권한 재검증)
+  const moderateDelete = () => {
+    showAlert('크루 글 삭제', '크루장 권한으로 이 글을 삭제할까요?\n삭제하면 되돌릴 수 없어요.', [
+      { text: '취소', style: 'cancel' },
+      { text: '삭제', style: 'destructive', onPress: async () => {
+        try {
+          await api.delete(`/feeds/${feed.id}`);
+          console.info('[ClubMod] 크루장 글 삭제', { feedId: feed.id });
+          onDeleted?.();
+        } catch (err: any) {
+          console.error('[ClubMod] 크루장 글 삭제 실패', { feedId: feed.id, status: err?.response?.status });
+          showAlert('오류', '삭제에 실패했습니다.');
+        }
+      } },
+    ]);
+  };
+
   const deleteFeed = () => {
     showAlert('피드 삭제', '이 피드를 삭제할까요?', [
       { text: '취소', style: 'cancel' },
@@ -377,6 +425,12 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
               {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환
                   v3.232 B1: 어린이는 숨김(서버 PUT /feeds/{id} 403 — 글 수정 제한) */}
               {/* v3.233: 보호자가 글쓰기(feed_write)를 허용한 어린이는 표시 — feedWriteBlocked 만 숨김 */}
+              {!feedWriteBlocked && !feed.report_blinded && (
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); editFeed(); }}>
+                <Feather name="edit-2" size={16} color={feedTheme.sub} />
+                <AppText variant="footnote" style={{ color: feedTheme.sub }}>수정</AppText>
+              </TouchableOpacity>
+              )}
               {!feedWriteBlocked && (
               <TouchableOpacity style={styles.menuItem} disabled={visBusy} onPress={() => { setMenuOpen(false); toggleVisibility(); }}>
                 <Feather name={isPublic ? 'lock' : 'globe'} size={16} color={feedTheme.sub} />
@@ -405,6 +459,18 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
                 <Feather name="flag" size={16} color={feedTheme.sub} />
                 <AppText variant="footnote" style={{ color: feedTheme.sub }}>신고</AppText>
               </TouchableOpacity>
+              {user && feed.author_id ? (
+                <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); blockAuthor(); }}>
+                  <Feather name="slash" size={16} color={feedTheme.sub} />
+                  <AppText variant="footnote" style={{ color: feedTheme.sub }}>이 사용자 차단</AppText>
+                </TouchableOpacity>
+              ) : null}
+              {canModerate ? (
+                <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); moderateDelete(); }}>
+                  <Feather name="trash-2" size={16} color={colors.status.error} />
+                  <AppText variant="footnote" style={{ color: colors.status.error }}>크루 글 삭제</AppText>
+                </TouchableOpacity>
+              ) : null}
             </>
           )}
         </View>

@@ -691,6 +691,7 @@ export default function ClubHomeScreen() {
           onDeleted={fetchBoard}
           onUpdated={fetchBoard}
           hideClubBadge // v3.247: 클럽 게시판 안에서는 클럽명 배지 중복 — 억제
+          canModerate={isOwner} // v3.294 [ClubMod]: 크루장은 남의 글 삭제 가능
 
           onPressAuthor={() => {
             if (!requireLogin()) return;

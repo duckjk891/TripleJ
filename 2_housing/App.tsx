@@ -65,6 +65,7 @@ import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import MyReportsScreen from './screens/MyReportsScreen';
+import BlockedUsersScreen from './screens/BlockedUsersScreen'; // v3.294 [Block]
 import StarHistoryScreen from './screens/StarHistoryScreen'; // v3.230 A7-3
 import { useRewardNotice } from './hooks/useRewardNotice'; // v3.230 A7-2
 import { useUiStore } from './stores/uiStore';
@@ -191,6 +192,7 @@ export type RootStackParamList = {
   DmInbox: undefined;
   Notifications: undefined;
   MyReports: undefined;
+  BlockedUsers: undefined;
   // v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역
   StarHistory: undefined;
   // prefill — 입력창 프리필(자동 전송 X). v3.247 클럽 삭제 요청 초안이 사용.
@@ -845,6 +847,7 @@ export default function App() {
             <RootStack.Screen name="DmInbox" component={DmInboxScreen} options={({ navigation }) => stackHeader(navigation, '메시지')} />
             <RootStack.Screen name="Notifications" component={NotificationsScreen} options={({ navigation }) => stackHeader(navigation, '알림')} />
             <RootStack.Screen name="MyReports" component={MyReportsScreen} />
+            <RootStack.Screen name="BlockedUsers" component={BlockedUsersScreen} options={({ navigation }) => stackHeader(navigation, '차단한 사용자')} />
             <RootStack.Screen name="StarHistory" component={StarHistoryScreen} options={({ navigation }) => stackHeader(navigation, '스타 내역')} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />
             {/* v3.252: 크루 채팅 — DmChat 관행(자체 헤더·키보드 처리, 탭바 없음 풀스크린) */}

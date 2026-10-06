@@ -580,6 +580,14 @@ export default function SettingsScreen({ navigation, route }: any) {
           <AppText style={styles.settingLabel}>내 신고 내역</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
+        {/* v3.294 [Block] 차단한 사용자 목록·해제 */}
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => navigation.navigate('BlockedUsers' as never)}
+        >
+          <AppText style={styles.settingLabel}>차단한 사용자</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
+        </TouchableOpacity>
         {/* v3.232 K4(B8): 어린이 — 온라인 안전 안내 다시 보기 */}
         {isChild && (
           <TouchableOpacity

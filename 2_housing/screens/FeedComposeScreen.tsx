@@ -51,26 +51,55 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   //   계약: POST /feeds/ 에 kind='club' + club_id 동반(403 code 'club_members_only' = 멤버 아님).
   //   블록은 피드 파이프라인 재사용(글+사진+음악) — 어린이 이미지 금지 게이트(!isChild)도 기존 로직 그대로 적용.
   //   공개 스위치는 숨김·항상 공개(클럽 게시판 = 공개 읽기 계약, 비공개 글 의미 없음).
+  // v3.294 [FeedEdit]: route.params.editFeed(피드 직렬화 원형) → 수정 모드. kind·크루는 저장된 글 기준,
+  // 기존 제목·본문·음악·사진·아이템·공개 범위를 미리 채우고 PUT /feeds/{id}(전체 body 계약)로 저장.
+  const editFeed: any = route?.params?.editFeed || null;
+  const isEdit = !!editFeed?.id;
+  const rawKind = isEdit ? editFeed.kind : route?.params?.kind;
   const kind: 'feed' | 'community' | 'club' =
-    route?.params?.kind === 'community' ? 'community'
-    : route?.params?.kind === 'club' ? 'club'
+    rawKind === 'community' ? 'community'
+    : rawKind === 'club' ? 'club'
     : 'feed';
   const isCommunity = kind === 'community';
   const isClub = kind === 'club';
-  const clubId: string | undefined = route?.params?.clubId ? String(route.params.clubId) : undefined;
+  const clubId: string | undefined = isEdit
+    ? (editFeed.club_id ? String(editFeed.club_id) : undefined)
+    : route?.params?.clubId ? String(route.params.clubId) : undefined;
+  const editBlocks: any[] = isEdit && Array.isArray(editFeed.blocks) ? editFeed.blocks : [];
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [attached, setAttached] = useState<RowTrack | null>(null);
+  const [title, setTitle] = useState<string>(isEdit ? (editFeed.title || '') : '');
+  const [body, setBody] = useState<string>(() => (isEdit
+    ? editBlocks
+        .filter((b) => b?.type === 'text' && typeof b.text === 'string' && !b.text.startsWith('[item]'))
+        .map((b) => b.text)
+        .join('\n\n')
+    : ''));
+  const [attached, setAttached] = useState<RowTrack | null>(() => {
+    if (!isEdit) return null;
+    const tb = editBlocks.find((b) => b?.type === 'track' && (b.track?.id || b.track_id));
+    if (!tb) return null;
+    return tb.track?.id ? (tb.track as RowTrack) : ({ id: String(tb.track_id), title: '첨부한 곡' } as RowTrack);
+  });
   const [posting, setPosting] = useState(false);
   // v3.210 ①-B: 공개/비공개 — 기본 ON(공개). 피드·공지(kind 불문) 공통, TrackUploadScreen 스위치 관행
-  const [isPublic, setIsPublic] = useState(true);
+  const [isPublic, setIsPublic] = useState<boolean>(isEdit ? editFeed.is_public !== false : true);
   // v3.247: 클럽 글 공개 범위 — 계약 POST /feeds kind='club' 에 club_scope:'club'|'public'(기본 'club').
   // 구서버(필드 미지원)는 club_scope 를 무시 → 오늘과 동일(클럽 게시판에만) 동작. 어린이 게이트·이미지 규칙 불변.
-  const [clubScope, setClubScope] = useState<'club' | 'public'>('club');
+  const [clubScope, setClubScope] = useState<'club' | 'public'>(isEdit && editFeed.club_scope === 'public' ? 'public' : 'club');
   // v3.111: 첨부 사진 — 선택 즉시 업로드(진행 표시), 실패분은 재시도/제거 가능
-  const [images, setImages] = useState<AttachedImage[]>([]);
+  const [images, setImages] = useState<AttachedImage[]>(() => (isEdit
+    ? editBlocks
+        .filter((b) => b?.type === 'image' && b.object_name)
+        .map((b, i) => ({
+          key: `edit_${i}_${b.object_name}`,
+          localUri: b.image_url || '',
+          name: String(b.object_name).split('/').pop() || `image_${i}`,
+          mime: 'image/jpeg',
+          status: 'done' as const,
+          objectName: b.object_name,
+        }))
+    : []));
 
   // 음악 첨부/가사 복사/아이템 첨부 — 내 곡 목록(공용 TrackRow, 차트와 동일 디자인) 피커 공유
   // v3.70: pickerMode 'attach'=곡 첨부, 'lyrics'=선택 곡 가사를 클립보드에 복사, 'item'=곡의 착장 아이템 첨부(공구)
@@ -81,7 +110,16 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   // 아이템 선택 2단계(곡 → 그 곡의 착장 아이템)와 첨부된 아이템(마커 블록으로 저장)
   const [itemChoices, setItemChoices] = useState<any[] | null>(null);
-  const [attachedItems, setAttachedItems] = useState<{ name: string; category?: string; url?: string; img?: string }[]>([]);
+  const [attachedItems, setAttachedItems] = useState<{ name: string; category?: string; url?: string; img?: string }[]>(() => {
+    if (!isEdit) return [];
+    const out: { name: string; category?: string; url?: string; img?: string }[] = [];
+    for (const b of editBlocks) {
+      if (b?.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[item]')) {
+        try { out.push(JSON.parse(b.text.slice(6))); } catch { /* 손상 마커는 건너뜀 */ }
+      }
+    }
+    return out;
+  });
   // v3.71: 착장 유무는 곡 상세에만 있어 병렬 조회로 판별 — trackId → used_items 캐시(null=미조회)
   const [itemTrackMap, setItemTrackMap] = useState<Record<string, any[]> | null>(null);
   const [itemFilterLoading, setItemFilterLoading] = useState(false);
@@ -272,6 +310,19 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
     if (__DEV__) console.info('[Feed] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length, isPublic, ...(isClub ? { clubScope } : {}) });
     try {
+      if (isEdit) {
+        // v3.294 [FeedEdit]: 수정 — kind 는 서버가 저장값 고정, BGM·크루 공개 범위는 보존 재전송
+        if (__DEV__) console.info('[FeedEdit] 저장', { feedId: editFeed.id, blocks: blocks.length });
+        await api.put(`/feeds/${editFeed.id}`, {
+          title: isCommunity ? null : (title.trim() || null),
+          blocks,
+          is_public: isClub ? true : isPublic,
+          bgm_track_id: editFeed.bgm_track_id ?? null,
+          ...(isClub ? { club_scope: clubScope } : {}),
+        });
+        navigation.goBack();
+        return;
+      }
       await api.post('/feeds/', {
         // v3.115: community는 서버가 title 무시(null 저장) — 입력 UI도 숨겼으니 null 고정
         title: isCommunity ? null : (title.trim() || null),
@@ -286,7 +337,11 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       });
       navigation.goBack();
     } catch (err: any) {
-      console.error('[FeedCompose] 등록 실패', { kind, status: err?.response?.status });
+      console.error('[FeedCompose] 등록 실패', { kind, isEdit, status: err?.response?.status });
+      if (isEdit && err?.response?.status === 400 && err?.response?.data?.error) {
+        showAlert('알림', err.response.data.error);
+        return;
+      }
       // v3.233: 어린이 403 은 인터셉터가 안내(이중 팝업 방지) · 금칙어 400 은 서버 안내 문구
       if (isChildRestrictedError(err)) return;
       const wf = getWordFilteredMessage(err);
@@ -317,10 +372,11 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (feedWriteBlocked) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
       headerRight: () => (
-        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel="피드 등록" style={{ marginRight: 12 }}>
-          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? '등록 중…' : '등록'}</AppText>
+        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '피드 수정 저장' : '피드 등록'} style={{ marginRight: 12 }}>
+          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit ? '저장 중…' : '등록 중…') : (isEdit ? '저장' : '등록')}</AppText>
         </TouchableOpacity>
       ),
+      ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">글 수정</AppText> } : {}),
     });
   });
 

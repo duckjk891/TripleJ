@@ -1,0 +1,1099 @@
+"""FeedSquad — 스타 채널 음악 피드 (v131 1단계).
+
+Mongo `feeds`/`feed_comments` + PG `feed_likes`.
+피드 글 = 작성자 종속 독립 문서 (향후 인스타형 글로벌 노출 대비).
+로그 prefix [feed] — feed_id/author 앞8자만, 본문·댓글 텍스트 원문 로그 금지(길이만).
+"""
+import logging
+import math
+import uuid
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from ..auth import get_current_user, get_current_user_optional
+from ..config import settings
+from ..database.minio import get_minio
+from ..database.mongodb import get_mongo
+from ..database.postgres import get_pg
+from ..services.media_urls import browser_image_url
+from .notifications import push_notification, push_notifications_bulk
+from ..services import kids_policy  # v3.232 F3 — 어린이 글·댓글(킬 스위치 OFF 면 no-op)
+from ..services.word_filter import social_filter_on, word_filter_response  # v3.232 G1 · v3.233 소통 경로 전체 적용
+
+
+def _kids_feed_texts(body) -> list:
+    """v3.232 G1 — 금칙어 검사 대상(제목 + text 블록 본문)."""
+    texts = [body.title]
+    for b in body.blocks or []:
+        if isinstance(b, dict) and isinstance(b.get("text"), str):
+            texts.append(b.get("text"))
+    return texts
+
+
+def _kids_has_image(body) -> bool:
+    """v3.233 — 이미지 블록 포함 여부(어린이는 보호자가 글쓰기를 허용해도 사진 첨부 금지)."""
+    return any(isinstance(b, dict) and b.get("type") == "image" for b in (body.blocks or []))
+
+
+async def _kids_feed_gate(user_id, perm_key: str, feature: str, texts, where: str, conn=None, has_image: bool = False):
+    """v3.232 F3+G1 — 어린이 && 보호자 허용 없음 → 403, 허용 시·전체 적용 시 금칙어 400.
+    v3.233 — 허용값 = 보호자 관리 설정(feed_post), 허용돼도 이미지 블록은 403 feed_image,
+    WORD_FILTER_SOCIAL_ALL_USERS(소통 경로 전체 적용)면 성인도 금칙어(욕설·성적·혐오만).
+    킬 스위치·전체 적용·소통 전체 적용 모두 OFF 면 DB 0회로 None."""
+    if (not kids_policy.kids_enabled() and not getattr(settings, "word_filter_all_users", False)
+            and not social_filter_on()):
+        return None
+    child = await kids_policy.is_child_user(user_id, conn)
+    if child and not await kids_policy.kids_allows_async(user_id, perm_key, conn):
+        return kids_policy.child_restricted(feature, user_id)
+    if child and has_image:
+        return kids_policy.child_restricted("feed_image", user_id)
+    return await word_filter_response(user_id, texts, where, child=child)
+
+router = APIRouter(prefix="/api/feeds", tags=["Feeds"])
+
+logger = logging.getLogger(__name__)
+
+FEED_KINDS = ("feed", "community", "club")  # v133: community = 채널 공지 글 (텍스트만) · v3.245: club = 클럽 게시판 글
+CLUB_SCOPES = ("club", "public")  # v3.247: 클럽 글 공개 범위 — club=클럽 보드만(기본) · public=타임라인·채널에도 노출
+
+MAX_BLOCKS = 50
+# v3.111: 이미지 블록 — {type:"image", object_name:"feeds/{user_id}/..."} (업로드는 /upload/feed-image)
+MAX_IMAGE_BLOCKS = 5          # 피드당 이미지 상한 (v3.273: 4→5 — 앱 다중 선택과 짝)
+MAX_IMAGE_OBJECT_NAME_LEN = 300
+TIMELINE_CANDIDATES = 200  # v134: 타임라인 랭킹 후보 풀 (is_public 최신순)
+TIMELINE_MAX_LIMIT = 30
+TIMELINE_FOLLOWING_BOOST = 1000.0  # 로그인 시 팔로잉 작성자 글 최우선 블록
+MAX_TITLE_LEN = 100
+MAX_TEXT_TOTAL = 10_000
+MAX_COMMENT_LEN = 1_000
+
+# 트랙 하이드레이션 시 필요한 필드만 조회
+_TRACK_PROJECTION = {
+    "title": 1,
+    "uploader_id": 1,
+    "uploader_nickname": 1,
+    "artist_name": 1,  # v3.229 N3 — 가수명(아티스트) 우선 표기
+    "character_id": 1,  # v3.229 N4 — 앱 재생 큐 개명 즉시 반영(playerStore character_id 매칭)
+    "cover_image_url": 1,
+    "duration_sec": 1,
+    "is_public": 1,
+}
+
+
+def _short(value) -> str:
+    """로그 추적자 — id 앞 8자."""
+    return str(value)[:8] if value else "?"
+
+
+class FeedBody(BaseModel):
+    title: Optional[str] = None
+    blocks: List[dict]
+    bgm_track_id: Optional[str] = None
+    is_public: bool = True
+    kind: str = "feed"  # v133: "feed" | "community" | "club"(v3.245) (수정 시엔 무시 — 저장된 kind 유지)
+    club_id: Optional[str] = None  # v3.245: kind='club' 전용 — 대상 클럽 (수정 시엔 무시, 저장값 유지)
+    # v3.247: kind='club' 전용 공개 범위 'club'|'public' (기본 'club'). 수정(PUT)에서는
+    # 저장 kind='club' 글에 한해 변경 허용, None 이면 저장값 유지. 다른 kind 에서는 무시.
+    club_scope: Optional[str] = None
+
+
+class CommentBody(BaseModel):
+    text: str
+    # v191: 대댓글 — 같은 피드 내 부모 댓글 id (None=최상위 댓글)
+    parent_id: str | None = None
+
+
+def _track_view(doc: dict) -> dict:
+    """tracks 문서 → 피드 하이드레이션용 축약 뷰 (_serialize_track 별칭 관행 동일)."""
+    return {
+        "id": str(doc["_id"]),
+        "title": doc.get("title"),
+        "artist_id": doc.get("uploader_id"),
+        # v3.229 N3 — v236 규칙 통일: 곡의 가수명(아티스트) 우선, 없으면 기획사명(닉네임) 폴백
+        "artist_name": doc.get("artist_name") or doc.get("uploader_nickname") or "AI",
+        "character_id": str(doc["character_id"]) if doc.get("character_id") else None,  # v3.229 N4 (없으면 null)
+        "cover_image": doc.get("cover_image_url"),
+        "duration_sec": doc.get("duration_sec"),
+        "is_public": doc.get("is_public", False),
+    }
+
+
+def _serialize_feed(doc: dict) -> dict:
+    doc["id"] = str(doc.pop("_id"))
+    doc["kind"] = doc.get("kind") or "feed"  # v133: 기존 문서(kind 없음)=feed 취급
+    if doc["kind"] == "club":
+        # v3.247 — 백필 전 구 클럽 글(club_scope 없음)은 'club'(현행 노출 범위) 취급
+        doc["club_scope"] = doc.get("club_scope") or "club"
+    # v137 — 신고 블라인드 플래그 (소유자 사유 표시용, 기본 false)
+    doc["report_blinded"] = bool(doc.get("report_blinded", False))
+    for key in ("created_at", "updated_at"):
+        if key in doc and isinstance(doc[key], datetime):
+            doc[key] = doc[key].isoformat()
+    return doc
+
+
+def _serialize_comment(doc: dict) -> dict:
+    doc["id"] = str(doc.pop("_id"))
+    if isinstance(doc.get("created_at"), datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+async def _validate_and_normalize(mongo, user_id: str, body: FeedBody, kind: str = "feed"):
+    """생성/수정 공통 검증. 반환 (normalized: dict|None, error: JSONResponse|None).
+
+    - kind "feed"|"community" 외 400 (수정 시엔 저장된 kind 가 전달됨 — body.kind 무시)
+    - community(v133): 텍스트 블록만(track 400), bgm 400, title 무시(null 저장)
+    - blocks 1~50개, text 블록 trim 후 비면 제거, 전체 비면 400
+    - title ≤ 100자, text 합계 ≤ 10,000자
+    - track 블록·bgm 실존 트랙만, 타인 곡은 is_public 필수
+    - v3.111 image 블록: object_name 은 본인 feeds/{user_id}/ prefix 필수 + MinIO 실존,
+      피드당 최대 4장, community 금지
+    """
+    if kind not in FEED_KINDS:
+        return None, JSONResponse(status_code=400, content={"error": "지원하지 않는 글 종류입니다."})
+    is_community = kind == "community"
+
+    if is_community:
+        title = None  # 커뮤니티 글은 제목을 받지 않음 (무시·null 저장)
+    else:
+        title = body.title.strip() if isinstance(body.title, str) else None
+    if title is not None and len(title) > MAX_TITLE_LEN:
+        return None, JSONResponse(status_code=400, content={"error": f"제목은 {MAX_TITLE_LEN}자 이하여야 합니다."})
+
+    if not isinstance(body.blocks, list) or len(body.blocks) == 0:
+        return None, JSONResponse(status_code=400, content={"error": "블록은 1개 이상이어야 합니다."})
+    if len(body.blocks) > MAX_BLOCKS:
+        return None, JSONResponse(status_code=400, content={"error": f"블록은 최대 {MAX_BLOCKS}개까지 가능합니다."})
+
+    normalized_blocks = []
+    total_text = 0
+    track_ids = set()
+    image_objects = []  # v3.111: 이미지 블록 object_name (순서 보존, 상한·실존 검증용)
+    image_prefix = f"feeds/{user_id}/"
+    for block in body.blocks:
+        if not isinstance(block, dict):
+            return None, JSONResponse(status_code=400, content={"error": "블록 형식이 올바르지 않습니다."})
+        btype = block.get("type")
+        if btype == "text":
+            text = (block.get("text") or "").strip()
+            if not text:
+                continue  # 빈 텍스트 블록은 제거
+            total_text += len(text)
+            normalized_blocks.append({"type": "text", "text": text})
+        elif btype == "track":
+            if is_community:
+                return None, JSONResponse(status_code=400, content={"error": "커뮤니티 글에는 곡을 넣을 수 없습니다."})
+            track_id = block.get("track_id")
+            if not track_id or not ObjectId.is_valid(str(track_id)):
+                return None, JSONResponse(status_code=400, content={"error": "존재하지 않는 트랙이 포함되어 있습니다."})
+            track_ids.add(str(track_id))
+            normalized_blocks.append({"type": "track", "track_id": str(track_id)})
+        elif btype == "image":
+            # v3.111: 본인 업로드(feeds/{user_id}/) 오브젝트만 수용 — 타인/시스템 경로 참조 차단
+            if is_community:
+                return None, JSONResponse(status_code=400, content={"error": "커뮤니티 글에는 이미지를 넣을 수 없습니다."})
+            object_name = str(block.get("object_name") or "").strip()
+            if (
+                not object_name
+                or ".." in object_name
+                or len(object_name) > MAX_IMAGE_OBJECT_NAME_LEN
+                or not object_name.startswith(image_prefix)
+            ):
+                logger.info("[feed] image_check invalid author=%s obj=%s", _short(user_id), object_name[:40])
+                return None, JSONResponse(status_code=400, content={"error": "이미지 정보가 올바르지 않습니다."})
+            image_objects.append(object_name)
+            normalized_blocks.append({"type": "image", "object_name": object_name})
+        else:
+            return None, JSONResponse(status_code=400, content={"error": "지원하지 않는 블록 타입입니다."})
+
+    if not normalized_blocks:
+        return None, JSONResponse(status_code=400, content={"error": "피드 내용이 비어 있습니다."})
+    if len(image_objects) > MAX_IMAGE_BLOCKS:
+        return None, JSONResponse(
+            status_code=400, content={"error": f"이미지는 피드당 최대 {MAX_IMAGE_BLOCKS}장까지 첨부할 수 있습니다."}
+        )
+    if total_text > MAX_TEXT_TOTAL:
+        return None, JSONResponse(
+            status_code=400, content={"error": f"텍스트는 합계 {MAX_TEXT_TOTAL:,}자 이하여야 합니다."}
+        )
+
+    bgm_track_id = body.bgm_track_id
+    if bgm_track_id and is_community:
+        return None, JSONResponse(status_code=400, content={"error": "커뮤니티 글에는 BGM 을 설정할 수 없습니다."})
+    if bgm_track_id:
+        bgm_track_id = str(bgm_track_id)
+        if not ObjectId.is_valid(bgm_track_id):
+            return None, JSONResponse(status_code=400, content={"error": "BGM 트랙을 찾을 수 없습니다."})
+        track_ids.add(bgm_track_id)
+    else:
+        bgm_track_id = None
+
+    # 트랙 실존 + 타인 비공개 곡 차단 (1쿼리 $in)
+    if track_ids:
+        oids = [ObjectId(t) for t in track_ids]
+        docs = await mongo.tracks.find({"_id": {"$in": oids}}, _TRACK_PROJECTION).to_list(length=len(oids))
+        found = {str(d["_id"]): d for d in docs}
+        logger.info("[feed] track_check author=%s requested=%d found=%d", _short(user_id), len(track_ids), len(found))
+        for tid in track_ids:
+            doc = found.get(tid)
+            if not doc:
+                return None, JSONResponse(status_code=400, content={"error": "존재하지 않는 트랙이 포함되어 있습니다."})
+            if doc.get("uploader_id") != user_id and not doc.get("is_public"):
+                logger.info("[feed] track_check private_denied author=%s track=%s", _short(user_id), _short(tid))
+                return None, JSONResponse(status_code=400, content={"error": "다른 사용자의 비공개 곡은 사용할 수 없습니다."})
+
+    # v3.111: 이미지 실존 확인 (MinIO stat, 최대 4건) — 업로드 안 된/삭제된 오브젝트 참조 차단
+    if image_objects:
+        minio_client = get_minio()
+        for obj in image_objects:
+            try:
+                minio_client.stat_object(
+                    bucket_name=settings.minio_bucket_images, object_name=obj,
+                )
+            except Exception:
+                logger.info("[feed] image_check missing author=%s obj=%s", _short(user_id), obj[-40:])
+                return None, JSONResponse(status_code=400, content={"error": "존재하지 않는 이미지가 포함되어 있습니다."})
+        logger.info("[feed] image_check ok author=%s images=%d", _short(user_id), len(image_objects))
+
+    return {
+        "title": title,
+        "blocks": normalized_blocks,
+        "bgm_track_id": bgm_track_id,
+        "is_public": bool(body.is_public),
+        "text_len": total_text,
+        "image_count": len(image_objects),
+    }, None
+
+
+async def _hydrate_feeds(mongo, conn, feeds: list, current_user=None) -> list:
+    """직렬화된 피드 목록에 트랙 블록·bgm 하이드레이션 + 작성자 프로필 + is_liked 일괄 첨부."""
+    # 1) 트랙 일괄 조회 (1쿼리 $in)
+    track_ids = set()
+    for f in feeds:
+        for b in f.get("blocks", []):
+            if b.get("type") == "track" and b.get("track_id"):
+                track_ids.add(b["track_id"])
+        if f.get("bgm_track_id"):
+            track_ids.add(f["bgm_track_id"])
+    track_map = {}
+    if track_ids:
+        oids = [ObjectId(t) for t in track_ids if ObjectId.is_valid(t)]
+        docs = await mongo.tracks.find({"_id": {"$in": oids}}, _TRACK_PROJECTION).to_list(length=len(oids))
+        track_map = {str(d["_id"]): _track_view(d) for d in docs}
+
+    # 2) 작성자 프로필 일괄 조회 (PG — nickname 은 현재값 우선, 라이브 참조 관행)
+    author_ids = sorted({f.get("author_id") for f in feeds if f.get("author_id")})
+    profiles = {}
+    if author_ids:
+        try:
+            rows = await conn.fetch(
+                "SELECT id::text, nickname, profile_image FROM users WHERE id::text = ANY($1)", author_ids
+            )
+            profiles = {r["id"]: (r["nickname"], r["profile_image"]) for r in rows}
+        except Exception as e:
+            logger.error("[feed] hydrate author_profile_failed n=%d err=%s", len(author_ids), e)
+
+    # 3) is_liked 일괄 (로그인 시)
+    liked_ids = set()
+    if current_user and feeds:
+        try:
+            rows = await conn.fetch(
+                "SELECT feed_id FROM feed_likes WHERE user_id = $1 AND feed_id = ANY($2::varchar[])",
+                uuid.UUID(current_user["id"]), [f["id"] for f in feeds],
+            )
+            liked_ids = {r["feed_id"] for r in rows}
+        except Exception as e:
+            logger.error("[feed] hydrate is_liked_failed user=%s err=%s", _short(current_user.get("id")), e)
+
+    # 4) v3.247 — 클럽 글 club_name 일괄 첨부(클럽 글이 있을 때만 Mongo 1쿼리 $in — 배지 표시용)
+    club_names = {}
+    club_ids = sorted({f.get("club_id") for f in feeds if f.get("club_id")})
+    if club_ids:
+        try:
+            coids = [ObjectId(c) for c in club_ids if ObjectId.is_valid(c)]
+            cdocs = await mongo.clubs.find({"_id": {"$in": coids}}, {"name": 1}).to_list(length=len(coids))
+            club_names = {str(d["_id"]): d.get("name") for d in cdocs}
+        except Exception as e:  # noqa: BLE001 — best-effort(실패 시 club_name None)
+            logger.error("[feed] hydrate club_name_failed n=%d err=%s", len(club_ids), e)
+
+    for f in feeds:
+        for b in f.get("blocks", []):
+            if b.get("type") == "track":
+                tid = b.get("track_id")
+                b["track"] = track_map.get(tid) or {"id": tid, "deleted": True}
+            elif b.get("type") == "image" and b.get("object_name"):
+                # v3.111: 이미지 블록 URL 서빙 — cover-preview 무인증 프록시/presign (기존 관행)
+                b["image_url"] = browser_image_url(b["object_name"]) or (
+                    "/api/upload/cover-preview/{}".format(b["object_name"])
+                )
+        if f.get("bgm_track_id"):
+            f["bgm_track"] = track_map.get(f["bgm_track_id"]) or {"id": f["bgm_track_id"], "deleted": True}
+        else:
+            f["bgm_track"] = None
+        nickname, profile_image = profiles.get(f.get("author_id"), (None, None))
+        if nickname:
+            f["author_nickname"] = nickname
+        f["author_profile_image"] = profile_image
+        f["is_liked"] = f["id"] in liked_ids
+        if f.get("club_id"):
+            f["club_name"] = club_names.get(f["club_id"])  # v3.247 — 클럽 글에만 추가 키
+    return feeds
+
+
+async def _get_feed_or_404(mongo, feed_id: str):
+    """(doc, error) — 비정상 id/미존재 모두 404."""
+    if not ObjectId.is_valid(feed_id):
+        logger.info("[feed] lookup invalid_id feed=%s", _short(feed_id))
+        return None, JSONResponse(status_code=404, content={"error": "피드를 찾을 수 없습니다."})
+    doc = await mongo.feeds.find_one({"_id": ObjectId(feed_id)})
+    if not doc:
+        logger.info("[feed] lookup not_found feed=%s", _short(feed_id))
+        return None, JSONResponse(status_code=404, content={"error": "피드를 찾을 수 없습니다."})
+    return doc, None
+
+
+# ---------------------------------------------------------------- CRUD
+
+
+@router.post("/", status_code=201)
+async def create_feed(body: FeedBody, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info(
+        "[feed] create enter author=%s kind=%s blocks=%d bgm=%s",
+        _short(user_id), body.kind, len(body.blocks or []), bool(body.bgm_track_id),
+    )
+    _kids_block = await _kids_feed_gate(user_id, "feed_write", "feed_write", _kids_feed_texts(body), "feed_create", conn, has_image=_kids_has_image(body))
+    if _kids_block is not None:
+        return _kids_block
+
+    # v3.245 [Club] — kind='club' 은 실존·비블라인드 클럽 + 회원만 (공개 클럽이지만 쓰기는 회원 전용)
+    club_id = None
+    club_scope = None  # v3.247 — kind='club' 만 보유
+    if body.kind == "club":
+        club_scope = body.club_scope or "club"
+        if club_scope not in CLUB_SCOPES:
+            return JSONResponse(status_code=400, content={"error": "지원하지 않는 공개 범위입니다."})
+        from .clubs import CLUB_MEMBERS_ONLY_CODE, get_club_or_404, get_membership
+
+        club_doc, club_err = await get_club_or_404(mongo, str(body.club_id or ""), viewer=current_user)
+        if club_err:
+            logger.info("[Club] feed create club_not_found author=%s club=%s", _short(user_id), _short(body.club_id))
+            return club_err
+        club_id = str(club_doc["_id"])
+        if not await get_membership(mongo, club_id, user_id):
+            logger.info("[Club] feed create not_member author=%s club=%s", _short(user_id), _short(club_id))
+            return JSONResponse(
+                status_code=403,
+                content={"error": "클럽 회원만 글을 쓸 수 있습니다.", "code": CLUB_MEMBERS_ONLY_CODE},
+            )
+
+    normalized, err = await _validate_and_normalize(mongo, user_id, body, kind=body.kind)
+    if err:
+        logger.info("[feed] create rejected author=%s kind=%s", _short(user_id), body.kind)
+        return err
+
+    now = datetime.utcnow()
+    doc = {
+        "author_id": user_id,
+        "author_nickname": current_user.get("nickname"),
+        "kind": body.kind,
+        "title": normalized["title"],
+        "blocks": normalized["blocks"],
+        "bgm_track_id": normalized["bgm_track_id"],
+        "like_count": 0,
+        "comment_count": 0,
+        "is_public": normalized["is_public"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    if club_id:
+        doc["club_id"] = club_id  # v3.245 — kind='club' 만 보유(기존 kind 문서 형태 불변)
+        doc["club_scope"] = club_scope  # v3.247 — 'club'(보드만) | 'public'(타임라인·채널에도)
+    result = await mongo.feeds.insert_one(doc)
+    feed_id = str(result.inserted_id)
+    logger.info(
+        "[feed] create ok feed=%s author=%s kind=%s blocks=%d text_len=%d bgm=%s images=%d",
+        _short(feed_id), _short(user_id), body.kind, len(normalized["blocks"]),
+        normalized["text_len"], bool(normalized["bgm_track_id"]), normalized["image_count"],
+    )
+
+    if club_id:
+        logger.info(
+            "[Club] feed create ok club=%s feed=%s user=%s scope=%s",
+            _short(club_id), _short(feed_id), _short(user_id), club_scope,
+        )
+
+    # v192: 공개 피드 업로드 → 팔로워 전원에게 알림 팬아웃
+    # v3.245 — 클럽 게시판 글은 팔로워 팬아웃 제외 · v3.247 — club_scope='public' 은
+    # 일반 피드처럼 타임라인·채널에 노출되므로 팬아웃도 일반 글과 동일하게 수행
+    if doc.get("is_public", True) and (body.kind != "club" or club_scope == "public"):
+        try:
+            rows = await conn.fetch("SELECT follower_id FROM follows WHERE followee_id = $1", uuid.UUID(user_id))
+            follower_ids = [str(r["follower_id"]) for r in rows]
+            if follower_ids:
+                await push_notifications_bulk(
+                    mongo, user_ids=follower_ids, ntype="feed",
+                    actor_id=user_id, actor_nickname=current_user.get("nickname"),
+                    target_id=feed_id, preview=doc.get("title") or normalized.get("text_preview"),
+                )
+        except Exception:
+            logger.exception("[feed] create notify fanout failed feed=%s", _short(feed_id))
+
+    feed = _serialize_feed(doc)
+    await _hydrate_feeds(mongo, conn, [feed], current_user)
+    return {"feed": feed}
+
+
+@router.get("/user/{user_id}")
+async def list_user_feeds(
+    user_id: str,
+    page: int = 1,
+    limit: int = 10,
+    kind: str = Query("feed"),
+    current_user=Depends(get_current_user_optional),
+    conn=Depends(get_pg),
+):
+    mongo = get_mongo()
+    page = max(1, page)
+    limit = max(1, min(limit, 50))
+    logger.info(
+        "[feed] list enter author=%s kind=%s page=%d limit=%d viewer=%s",
+        _short(user_id), kind, page, limit, _short(current_user.get("id")) if current_user else "anon",
+    )
+
+    if kind not in FEED_KINDS:
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 글 종류입니다."})
+    query = {"author_id": user_id}
+    if kind == "community":
+        query["kind"] = "community"
+    elif kind == "club":
+        # v3.245 — 작성자의 클럽 글 모음(클럽 게시판 조회는 GET /api/feeds/club/{club_id})
+        query["kind"] = "club"
+    else:
+        # 기존 문서(kind 없음)도 feed 로 취급 · v3.245: 클럽 글은 채널 피드에서 제외
+        # v3.247: club_scope='public' 클럽 글은 일반 글처럼 작성자 채널에 포함(club_id·club_name 유지 — 배지용)
+        query["$or"] = [
+            {"kind": {"$nin": ["community", "club"]}},
+            {"kind": "club", "club_scope": "public"},
+        ]
+    # v137 BUG-2 — 비공개(신고 블라인드 포함) 피드는 소유자 본인에게만 노출
+    viewer_id = str(current_user.get("id")) if current_user else None
+    if viewer_id != str(user_id):
+        query["is_public"] = {"$ne": False}
+    total = await mongo.feeds.count_documents(query)
+    docs = (
+        await mongo.feeds.find(query)
+        .sort("created_at", -1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(length=limit)
+    )
+    feeds = [_serialize_feed(d) for d in docs]
+    await _hydrate_feeds(mongo, conn, feeds, current_user)
+    logger.info("[feed] list ok author=%s kind=%s returned=%d total=%d", _short(user_id), kind, len(feeds), total)
+
+    return {
+        "feeds": feeds,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+# ---------------------------------------------------------------- 타임라인 (v134)
+# 주의: FastAPI 는 정의 순서대로 매칭하므로 /timeline 은 반드시 /{feed_id} 보다 앞에 둔다.
+
+
+def _feed_track_ids(doc: dict) -> set:
+    """피드 문서의 삽입곡+BGM track_id 집합 (track_power 산정용)."""
+    tids = {
+        b.get("track_id")
+        for b in doc.get("blocks", [])
+        if isinstance(b, dict) and b.get("type") == "track" and b.get("track_id")
+    }
+    if doc.get("bgm_track_id"):
+        tids.add(doc["bgm_track_id"])
+    return tids
+
+
+def _timeline_age_hours(created, now_utc: datetime) -> float:
+    """created_at 이 tz-naive(utcnow 저장)/aware 혼재 가능 — 항상 UTC aware 로 맞춰 계산."""
+    if not isinstance(created, datetime):
+        return 24.0 * 365  # created_at 없음/이상 → 1년 취급 (사실상 최하 recency)
+    aware = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+    return max(0.0, (now_utc - aware).total_seconds() / 3600.0)
+
+
+@router.get("/timeline")
+async def get_timeline(
+    page: int = 1,
+    limit: int = 10,
+    current_user=Depends(get_current_user_optional),
+    conn=Depends(get_pg),
+):
+    """인스타형 혼합 타임라인 — is_public 최신 200건 후보를 점수 랭킹해 페이징 반환.
+
+    base = recency*2 + engagement + author_pop + track_power*0.5
+    (recency=1/(1+age_hours/24), engagement=log1p(like)+0.5*log1p(comment),
+     author_pop=log1p(팔로워 수), track_power=삽입곡·BGM 중 max(log1p(play)+log1p(like)))
+    로그인 시 팔로잉 작성자 글 +1000 (팔로잉 최우선 블록). 동률은 created_at desc.
+    """
+    mongo = get_mongo()
+    page = max(1, page)
+    limit = max(1, min(limit, TIMELINE_MAX_LIMIT))
+    viewer_id = current_user.get("id") if current_user else None
+    logger.info(
+        "[timeline] enter viewer=%s page=%d limit=%d",
+        _short(viewer_id) if viewer_id else "anon", page, limit,
+    )
+
+    # 1) 후보: 공개 글 최신 200건 (피드+공지 혼합 — v3.245: 클럽 게시판 글은 타임라인 제외)
+    # v3.247: 제외는 club_scope='club'(보드 전용)만 — 'public' 클럽 글은 일반 글처럼 랭킹 포함
+    docs = (
+        await mongo.feeds.find({
+            "is_public": True,
+            "$or": [{"kind": {"$ne": "club"}}, {"club_scope": "public"}],
+        })
+        .sort("created_at", -1)
+        .limit(TIMELINE_CANDIDATES)
+        .to_list(length=TIMELINE_CANDIDATES)
+    )
+    total = len(docs)
+
+    # 2) 작성자 팔로워 수 일괄 (PG 1쿼리) — author_id 는 str(UUID)
+    author_ids = sorted({d.get("author_id") for d in docs if d.get("author_id")})
+    author_uuids = []
+    for aid in author_ids:
+        try:
+            author_uuids.append(uuid.UUID(aid))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    follower_counts = {}
+    if author_uuids:
+        try:
+            rows = await conn.fetch(
+                "SELECT followee_id, COUNT(*) AS cnt FROM follows"
+                " WHERE followee_id = ANY($1::uuid[]) GROUP BY followee_id",
+                author_uuids,
+            )
+            follower_counts = {str(r["followee_id"]): int(r["cnt"]) for r in rows}
+        except Exception as e:
+            logger.error("[timeline] follower_counts_failed authors=%d err=%s", len(author_uuids), e)
+
+    # 3) 내 팔로잉 (로그인 시 — 팔로잉 작성자 글 +1000)
+    following = set()
+    if viewer_id:
+        try:
+            rows = await conn.fetch(
+                "SELECT followee_id FROM follows WHERE follower_id = $1", uuid.UUID(viewer_id)
+            )
+            following = {str(r["followee_id"]) for r in rows}
+        except Exception as e:
+            logger.error("[timeline] following_failed viewer=%s err=%s", _short(viewer_id), e)
+
+    # 4) 곡 인기 일괄 (Mongo 1쿼리) — track_power 원자료
+    all_track_ids = set()
+    for d in docs:
+        all_track_ids |= _feed_track_ids(d)
+    track_pop = {}
+    if all_track_ids:
+        oids = [ObjectId(t) for t in all_track_ids if ObjectId.is_valid(t)]
+        tdocs = await mongo.tracks.find(
+            {"_id": {"$in": oids}}, {"play_count": 1, "like_count": 1}
+        ).to_list(length=len(oids))
+        track_pop = {
+            str(t["_id"]): math.log1p(t.get("play_count") or 0) + math.log1p(t.get("like_count") or 0)
+            for t in tdocs
+        }
+
+    # 5) 점수 계산 → 정렬 (동률은 created_at desc)
+    now_utc = datetime.now(timezone.utc)
+    scored = []
+    for d in docs:
+        age_hours = _timeline_age_hours(d.get("created_at"), now_utc)
+        recency = 1.0 / (1.0 + age_hours / 24.0)
+        engagement = math.log1p(d.get("like_count") or 0) + 0.5 * math.log1p(d.get("comment_count") or 0)
+        author_pop = math.log1p(follower_counts.get(d.get("author_id"), 0))
+        powers = [track_pop.get(t, 0.0) for t in _feed_track_ids(d)]
+        track_power = max(powers) if powers else 0.0
+        score = recency * 2 + engagement + author_pop + track_power * 0.5
+        if viewer_id and d.get("author_id") in following:
+            score += TIMELINE_FOLLOWING_BOOST
+        scored.append((score, -age_hours, d))  # -age_hours: 동률 시 최신 우선
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    logger.info(
+        "[timeline] scored candidates=%d following=%d authors=%d tracks=%d top3=%s",
+        total, len(following), len(author_ids), len(all_track_ids),
+        [(_short(str(item[2]["_id"])), round(item[0], 3)) for item in scored[:3]],
+    )
+
+    # 6) 페이징 슬라이스 → 하이드레이션 (is_liked 포함)
+    start = (page - 1) * limit
+    page_docs = [item[2] for item in scored[start:start + limit]]
+    feeds = [_serialize_feed(d) for d in page_docs]
+    await _hydrate_feeds(mongo, conn, feeds, current_user)
+    logger.info(
+        "[timeline] ok viewer=%s page=%d returned=%d total=%d",
+        _short(viewer_id) if viewer_id else "anon", page, len(feeds), total,
+    )
+
+    return {
+        "feeds": feeds,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+# v3.245 [Club] — 클럽 게시판 목록 (공개 클럽 — 회원 아니어도 읽기 가능, 커서 페이징).
+# 주의: /timeline 관행과 동일하게 /{feed_id} 보다 앞에 선언한다.
+@router.get("/club/{club_id}")
+async def list_club_feeds(
+    club_id: str,
+    limit: int = 20,
+    before: Optional[str] = None,
+    current_user=Depends(get_current_user_optional),
+    conn=Depends(get_pg),
+):
+    """클럽 게시판 — kind='club' 글을 최신순 커서(before=<feed id>)로 반환.
+
+    응답 {feeds:[기존 피드 직렬화 동일], next_before}. 비공개(신고 블라인드 포함)
+    글은 작성자 본인에게만 노출(list_user_feeds v137 BUG-2 규칙 준용).
+    """
+    from .clubs import get_club_or_404
+
+    mongo = get_mongo()
+    limit = max(1, min(int(limit or 20), 50))
+    viewer_id = str(current_user.get("id")) if current_user else None
+
+    club_doc, club_err = await get_club_or_404(mongo, club_id, viewer=current_user)
+    if club_err:
+        return club_err
+    cid = str(club_doc["_id"])
+
+    query = {"kind": "club", "club_id": cid}
+    if viewer_id:
+        query["$or"] = [{"is_public": {"$ne": False}}, {"author_id": viewer_id}]
+    else:
+        query["is_public"] = {"$ne": False}
+    if before:
+        if not ObjectId.is_valid(before):
+            return JSONResponse(status_code=400, content={"error": "유효하지 않은 커서입니다."})
+        query["_id"] = {"$lt": ObjectId(before)}
+
+    docs = (
+        await mongo.feeds.find(query)
+        .sort("_id", -1)
+        .limit(limit)
+        .to_list(length=limit)
+    )
+    feeds = [_serialize_feed(d) for d in docs]
+    await _hydrate_feeds(mongo, conn, feeds, current_user)
+    next_before = feeds[-1]["id"] if len(feeds) == limit else None
+    logger.info(
+        "[Club] board list ok club=%s returned=%d viewer=%s",
+        _short(cid), len(feeds), _short(viewer_id) if viewer_id else "anon",
+    )
+    return {"feeds": feeds, "next_before": next_before}
+
+
+@router.get("/{feed_id}")
+async def get_feed(feed_id: str, current_user=Depends(get_current_user_optional), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    logger.info(
+        "[feed] get enter feed=%s viewer=%s",
+        _short(feed_id), _short(current_user.get("id")) if current_user else "anon",
+    )
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+
+    # v137 BUG-2 — 비공개(신고 블라인드 포함) 피드 단건은 소유자 외 404
+    if doc.get("is_public") is False:
+        viewer_id = str(current_user.get("id")) if current_user else None
+        if viewer_id != str(doc.get("author_id")):
+            logger.info("[feed] get blocked (non-public) feed=%s viewer=%s", _short(feed_id), viewer_id[:8] if viewer_id else "anon")
+            return JSONResponse(status_code=404, content={"error": "글을 찾을 수 없습니다."})
+
+    feed = _serialize_feed(doc)
+    await _hydrate_feeds(mongo, conn, [feed], current_user)
+    logger.info("[feed] get ok feed=%s author=%s", _short(feed_id), _short(feed.get("author_id")))
+    return {"feed": feed}
+
+
+@router.put("/{feed_id}")
+async def update_feed(feed_id: str, body: FeedBody, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[feed] update enter feed=%s author=%s", _short(feed_id), _short(user_id))
+    _kids_block = await _kids_feed_gate(user_id, "feed_write", "feed_write", _kids_feed_texts(body), "feed_update", conn, has_image=_kids_has_image(body))
+    if _kids_block is not None:
+        return _kids_block
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+    if doc.get("author_id") != user_id:
+        logger.info("[feed] update forbidden feed=%s author=%s", _short(feed_id), _short(user_id))
+        return JSONResponse(status_code=403, content={"error": "피드를 수정할 권한이 없습니다."})
+
+    # v137 — 신고 블라인드 피드는 수정 불가 (is_public 강제 복구 방지)
+    if doc.get("report_blinded"):
+        logger.info("[report] feed update_blocked feed=%s author=%s", _short(feed_id), _short(user_id))
+        return JSONResponse(status_code=400, content={"error": "신고 처리로 제한된 콘텐츠입니다."})
+
+    # v133: kind 변경 불가 — body.kind 무시, 저장된 kind 기준으로 검증
+    stored_kind = doc.get("kind") or "feed"
+    normalized, verr = await _validate_and_normalize(mongo, user_id, body, kind=stored_kind)
+    if verr:
+        logger.info("[feed] update rejected feed=%s author=%s kind=%s", _short(feed_id), _short(user_id), stored_kind)
+        return verr
+
+    now = datetime.utcnow()
+    set_fields = {
+        "title": normalized["title"],
+        "blocks": normalized["blocks"],
+        "bgm_track_id": normalized["bgm_track_id"],
+        "is_public": normalized["is_public"],
+        "updated_at": now,
+    }
+    # v3.247 — 클럽 글(저장 kind='club')만 공개 범위 변경 허용(멤버 본인 글 — 위 author 검증 통과).
+    # club_scope 미전달(None)은 저장값 유지, 다른 kind 에 전달된 값은 무시(기존 계약 불변).
+    if stored_kind == "club" and body.club_scope is not None:
+        if body.club_scope not in CLUB_SCOPES:
+            return JSONResponse(status_code=400, content={"error": "지원하지 않는 공개 범위입니다."})
+        set_fields["club_scope"] = body.club_scope
+        logger.info(
+            "[Club] feed scope_update feed=%s author=%s scope=%s",
+            _short(feed_id), _short(user_id), body.club_scope,
+        )
+    await mongo.feeds.update_one({"_id": doc["_id"]}, {"$set": set_fields})
+    logger.info(
+        "[feed] update ok feed=%s author=%s kind=%s blocks=%d text_len=%d images=%d",
+        _short(feed_id), _short(user_id), stored_kind, len(normalized["blocks"]), normalized["text_len"],
+        normalized["image_count"],
+    )
+
+    updated = await mongo.feeds.find_one({"_id": doc["_id"]})
+    feed = _serialize_feed(updated)
+    await _hydrate_feeds(mongo, conn, [feed], current_user)
+    return {"feed": feed}
+
+
+async def purge_feed_document(mongo, conn, doc: dict) -> dict:
+    """v138 — 피드 완전 파기(재사용 함수). 소유자 DELETE 라우트와
+    admin confirm_delete 가 공용으로 호출한다.
+
+    파기: feeds 도큐먼트 + 하위 feed_comments 전체 + PG feed_likes
+          + v196 ④ 해당 피드를 가리키는 인앱 알림(best-effort).
+    Returns: {"feed_id", "owner_id", "comments_removed", "notifications_removed"}.
+    """
+    feed_id = str(doc["_id"])
+    owner_id = doc.get("author_id")
+    # v3.111: 첨부 이미지 오브젝트 파기 (best-effort — feeds/{owner}/ 전용 경로라 공유 없음)
+    for b in doc.get("blocks", []) or []:
+        if isinstance(b, dict) and b.get("type") == "image" and b.get("object_name"):
+            try:
+                get_minio().remove_object(
+                    bucket_name=settings.minio_bucket_images, object_name=b["object_name"],
+                )
+            except Exception as e:
+                logger.warning(
+                    "[feed] purge image_cleanup_failed feed=%s obj=%s err=%s",
+                    _short(feed_id), b["object_name"][-40:], str(e)[:80],
+                )
+    await mongo.feeds.delete_one({"_id": doc["_id"]})
+    comments_result = await mongo.feed_comments.delete_many({"feed_id": feed_id})
+    try:
+        await conn.execute("DELETE FROM feed_likes WHERE feed_id = $1", feed_id)
+    except Exception as e:
+        logger.error("[feed] delete likes_cleanup_failed feed=%s err=%s", _short(feed_id), e)
+    # v196 ④ — 삭제된 피드를 가리키는 알림 정리(클릭 시 404 빈 화면 방지).
+    # best-effort: 실패해도 삭제 응답은 불변(예외 전파 금지).
+    # type 화이트리스트는 향후 타입 추가 시 오삭제 방어용
+    # (follow 는 target_id=None 이라 피드 id 와 충돌하지 않는다).
+    notifications_removed = 0
+    try:
+        notif_result = await mongo.notifications.delete_many(
+            {"target_id": feed_id, "type": {"$in": ["feed", "like", "comment", "reply"]}}
+        )
+        notifications_removed = notif_result.deleted_count
+    except Exception as e:
+        logger.error("[feed] purge notifications_cleanup_failed feed=%s err=%s", _short(feed_id), e)
+    logger.info(
+        "[feed] purge ok feed=%s author=%s comments_removed=%d notifications_removed=%d",
+        _short(feed_id), _short(owner_id), comments_result.deleted_count, notifications_removed,
+    )
+    return {
+        "feed_id": feed_id,
+        "owner_id": owner_id,
+        "comments_removed": comments_result.deleted_count,
+        "notifications_removed": notifications_removed,
+    }
+
+
+@router.delete("/{feed_id}")
+async def delete_feed(feed_id: str, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[feed] delete enter feed=%s author=%s", _short(feed_id), _short(user_id))
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+    if doc.get("author_id") != user_id:
+        logger.info("[feed] delete forbidden feed=%s author=%s", _short(feed_id), _short(user_id))
+        return JSONResponse(status_code=403, content={"error": "피드를 삭제할 권한이 없습니다."})
+
+    await purge_feed_document(mongo, conn, doc)
+    return {"message": "피드가 삭제되었습니다."}
+
+
+# ---------------------------------------------------------------- 좋아요 (멱등)
+
+
+@router.post("/{feed_id}/like")
+async def like_feed(feed_id: str, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[feed] like enter feed=%s user=%s", _short(feed_id), _short(user_id))
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+
+    result = await conn.execute(
+        "INSERT INTO feed_likes (user_id, feed_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        uuid.UUID(user_id), feed_id,
+    )
+    inserted = result == "INSERT 0 1"
+    if inserted:
+        await mongo.feeds.update_one({"_id": doc["_id"]}, {"$inc": {"like_count": 1}})
+        # v192: 좋아요 알림(중복 좋아요는 미발행)
+        await push_notification(
+            mongo, user_id=doc.get("author_id"), ntype="like",
+            actor_id=user_id, actor_nickname=current_user.get("nickname"),
+            target_id=feed_id, preview=doc.get("title"),
+        )
+    logger.info("[feed] like %s feed=%s user=%s", "ok" if inserted else "noop", _short(feed_id), _short(user_id))
+
+    updated = await mongo.feeds.find_one({"_id": doc["_id"]}, {"like_count": 1})
+    return {
+        "message": "좋아요가 추가되었습니다.",
+        "is_liked": True,
+        "like_count": (updated or {}).get("like_count", 0),
+    }
+
+
+@router.delete("/{feed_id}/like")
+async def unlike_feed(feed_id: str, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[feed] unlike enter feed=%s user=%s", _short(feed_id), _short(user_id))
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+
+    result = await conn.execute(
+        "DELETE FROM feed_likes WHERE user_id = $1 AND feed_id = $2",
+        uuid.UUID(user_id), feed_id,
+    )
+    deleted = result == "DELETE 1"
+    if deleted:
+        # 음수 방지 가드
+        await mongo.feeds.update_one(
+            {"_id": doc["_id"], "like_count": {"$gt": 0}}, {"$inc": {"like_count": -1}}
+        )
+    logger.info("[feed] unlike %s feed=%s user=%s", "ok" if deleted else "noop", _short(feed_id), _short(user_id))
+
+    updated = await mongo.feeds.find_one({"_id": doc["_id"]}, {"like_count": 1})
+    return {
+        "message": "좋아요가 취소되었습니다.",
+        "is_liked": False,
+        "like_count": (updated or {}).get("like_count", 0),
+    }
+
+
+# ---------------------------------------------------------------- 댓글
+
+
+@router.get("/{feed_id}/comments")
+async def list_feed_comments(feed_id: str, page: int = 1, limit: int = 20, conn=Depends(get_pg)):
+    mongo = get_mongo()
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
+    logger.info("[feed] comments_list enter feed=%s page=%d limit=%d", _short(feed_id), page, limit)
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+
+    query = {"feed_id": feed_id}
+    total = await mongo.feed_comments.count_documents(query)
+    docs = (
+        await mongo.feed_comments.find(query)
+        .sort("created_at", 1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(length=limit)
+    )
+    comments = [_serialize_comment(d) for d in docs]
+
+    # v3.181: 작성자 프로필 이미지 배치 join (track 댓글 관행 동일 — best-effort, fresh)
+    author_ids = sorted({c.get("author_id") for c in comments if c.get("author_id")})
+    if author_ids:
+        try:
+            rows = await conn.fetch(
+                "SELECT id::text, profile_image FROM users WHERE id::text = ANY($1)", author_ids
+            )
+            img_by_id = {r["id"]: r["profile_image"] for r in rows}
+            for c in comments:
+                c["author_profile_image"] = img_by_id.get(c.get("author_id"))
+        except Exception:
+            logger.warning("[feed] comment profile join failed feed=%s ids=%d", _short(feed_id), len(author_ids))
+            for c in comments:
+                c.setdefault("author_profile_image", None)
+    logger.info("[feed] comments_list ok feed=%s returned=%d total=%d", _short(feed_id), len(comments), total)
+
+    return {
+        "comments": comments,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+@router.post("/{feed_id}/comments", status_code=201)
+async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends(get_current_user)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    text = (body.text or "").strip()
+    logger.info("[feed] comment_add enter feed=%s user=%s text_len=%d", _short(feed_id), _short(user_id), len(text))
+    _kids_block = await _kids_feed_gate(user_id, "comment", "comment", [text], "feed_comment")
+    if _kids_block is not None:
+        return _kids_block
+
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "댓글 내용을 입력해주세요."})
+    if len(text) > MAX_COMMENT_LEN:
+        return JSONResponse(status_code=400, content={"error": f"댓글은 {MAX_COMMENT_LEN:,}자 이하여야 합니다."})
+
+    doc, err = await _get_feed_or_404(mongo, feed_id)
+    if err:
+        return err
+
+    # v191: 대댓글 부모 검증 — 같은 피드의 실존 댓글이어야 하고, 대댓글의 대댓글은 1단으로 평탄화
+    parent_id = (body.parent_id or "").strip() or None
+    # v196 ③: 알림 대상은 **평탄화 전** 부모 댓글 작성자(= 실제로 답글이 달린 사람).
+    # 저장되는 parent_id 는 v191 트리 계약대로 평탄화 값을 그대로 유지한다.
+    reply_target_author_id = None
+    if parent_id:
+        if not ObjectId.is_valid(parent_id):
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        parent = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id), "feed_id": feed_id})
+        if not parent:
+            logger.warning("[feed] comment_add parent_missing feed=%s parent=%s", _short(feed_id), _short(parent_id))
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        reply_target_author_id = parent.get("author_id")  # ★ 평탄화 전 = 실제 답글 대상
+        if parent.get("parent_id"):
+            parent_id = parent["parent_id"]  # 2단 이상은 부모의 부모로 평탄화(인스타 방식)
+        logger.info(
+            "[feed] comment_add reply feed=%s parent_stored=%s notify_to=%s",
+            _short(feed_id), _short(parent_id), _short(reply_target_author_id),
+        )
+
+    comment = {
+        "feed_id": feed_id,
+        "author_id": user_id,
+        "author_nickname": current_user.get("nickname"),
+        "text": text,
+        "parent_id": parent_id,
+        "created_at": datetime.utcnow(),
+    }
+    result = await mongo.feed_comments.insert_one(comment)
+    await mongo.feeds.update_one({"_id": doc["_id"]}, {"$inc": {"comment_count": 1}})
+    # v192: 알림 — 피드 소유자에게 comment, 답글이면 부모 댓글 작성자에게 reply
+    await push_notification(
+        mongo, user_id=doc.get("author_id"), ntype="comment",
+        actor_id=user_id, actor_nickname=current_user.get("nickname"),
+        target_id=feed_id, preview=text,
+    )
+    # v196 ③: 대상은 평탄화 전 부모 댓글 작성자. 부모 작성자 == 피드 주인이면
+    # 위 comment 알림과 중복이므로 건너뛴다(v192 의도 유지 — 비교 대상만 교정).
+    # push_notification 이 self-skip 을 내장하므로 자기 답글은 자동 미발송.
+    if reply_target_author_id:
+        if str(reply_target_author_id) != str(doc.get("author_id")):
+            await push_notification(
+                mongo, user_id=reply_target_author_id, ntype="reply",
+                actor_id=user_id, actor_nickname=current_user.get("nickname"),
+                target_id=feed_id, preview=text,
+            )
+        else:
+            logger.info(
+                "[feed] comment_add reply notify_skipped (feed owner) feed=%s notify_to=%s",
+                _short(feed_id), _short(reply_target_author_id),
+            )
+    logger.info(
+        "[feed] comment_add ok feed=%s user=%s comment=%s text_len=%d",
+        _short(feed_id), _short(user_id), _short(result.inserted_id), len(text),
+    )
+    return {"comment": _serialize_comment(comment)}
+
+
+@router.delete("/comments/{comment_id}")
+async def delete_feed_comment(comment_id: str, current_user=Depends(get_current_user)):
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[feed] comment_delete enter comment=%s user=%s", _short(comment_id), _short(user_id))
+
+    if not ObjectId.is_valid(comment_id):
+        return JSONResponse(status_code=404, content={"error": "댓글을 찾을 수 없습니다."})
+    comment = await mongo.feed_comments.find_one({"_id": ObjectId(comment_id)})
+    if not comment:
+        logger.info("[feed] comment_delete not_found comment=%s", _short(comment_id))
+        return JSONResponse(status_code=404, content={"error": "댓글을 찾을 수 없습니다."})
+
+    feed_id = comment.get("feed_id")
+    feed = None
+    if feed_id and ObjectId.is_valid(feed_id):
+        feed = await mongo.feeds.find_one({"_id": ObjectId(feed_id)}, {"author_id": 1})
+
+    is_comment_author = comment.get("author_id") == user_id
+    is_feed_owner = bool(feed) and feed.get("author_id") == user_id
+    if not (is_comment_author or is_feed_owner):
+        logger.info(
+            "[feed] comment_delete forbidden comment=%s feed=%s user=%s",
+            _short(comment_id), _short(feed_id), _short(user_id),
+        )
+        return JSONResponse(status_code=403, content={"error": "댓글을 삭제할 권한이 없습니다."})
+
+    await mongo.feed_comments.delete_one({"_id": comment["_id"]})
+    if feed:
+        # 음수 방지 가드
+        await mongo.feeds.update_one(
+            {"_id": feed["_id"], "comment_count": {"$gt": 0}}, {"$inc": {"comment_count": -1}}
+        )
+    logger.info(
+        "[feed] comment_delete ok comment=%s feed=%s user=%s by=%s",
+        _short(comment_id), _short(feed_id), _short(user_id),
+        "author" if is_comment_author else "feed_owner",
+    )
+    return {"message": "댓글이 삭제되었습니다."}
