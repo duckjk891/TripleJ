@@ -30,6 +30,7 @@ import { spacing, radius } from '../../theme/spacing';
 import {
   countLyricLines,
   joinLyricsSections,
+  stripTrailingNewlines,
   linkedIndices,
   parseLyricsSections,
   updateSectionBody,
@@ -154,6 +155,10 @@ export default function SectionLyricsEditor({
   };
 
   // ── 편집 ──
+  // v3.284: 구간 끝에서 엔터가 안 먹던 문제 — 끝 줄바꿈이 재파싱 때 trail 로 빠져 입력창 값이 되돌아갔고,
+  // 누를 때마다 구간 사이에 보이지 않는 빈 줄이 쌓였다. 입력 중 원문은 카드별 draft 로 들고,
+  // 상위에는 끝 줄바꿈을 뗀 본문만 올린다(draft 는 본문이 외부에서 바뀌면 자동 무효).
+  const [draft, setDraft] = useState<{ id: string; text: string } | null>(null);
   const syncLoggedRef = useRef<Set<string>>(new Set());
   const groupIdOf = (idx: number): string | null => {
     const idxs = linkedIndices(sections, idx);
@@ -230,6 +235,11 @@ export default function SectionLyricsEditor({
   ) => {
     const open = expandedId === id;
     const lines = countLyricLines(body);
+    const shown = draft && draft.id === id && stripTrailingNewlines(draft.text) === body ? draft.text : body;
+    const onInputChange = (t: string) => {
+      setDraft({ id, text: t });
+      onBodyChange(stripTrailingNewlines(t));
+    };
     const syncOn = groupId != null && !syncOff[groupId];
     return (
       <View
@@ -278,9 +288,9 @@ export default function SectionLyricsEditor({
           <View style={styles.cardBody}>
             {editable ? (
               <TextInput
-                style={[styles.sectionInput, sectionInputSize(body, bounded)]}
-                value={body}
-                onChangeText={onBodyChange}
+                style={[styles.sectionInput, sectionInputSize(shown, bounded)]}
+                value={shown}
+                onChangeText={onInputChange}
                 onFocus={() => onInputFocus(id)}
                 multiline
                 scrollEnabled

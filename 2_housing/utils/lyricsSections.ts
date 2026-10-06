@@ -227,3 +227,9 @@ export function linkedIndices(sections: LyricsSection[], idx: number): number[] 
 export function countLyricLines(body: string): number {
   return body.split('\n').filter((l) => l.trim().length > 0).length;
 }
+
+/** v3.284: 본문 끝 줄바꿈 제거 — 끝 줄바꿈은 재조립·재파싱 때 섹션 사이 간격(trail)으로 흡수되므로
+ *  편집기는 입력 원문을 로컬 draft 로 들고 상위에는 이 값을 올린다(엔터 무반응·빈 줄 누적 방지) */
+export function stripTrailingNewlines(t: string): string {
+  return t.replace(/(?:\r?\n)+$/, '');
+}
