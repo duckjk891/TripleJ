@@ -34,6 +34,7 @@ import { openLoginModal } from '../utils/loginModal';
 import { GUEST_TEXT, isGuestNow, isGuestTrialUsed, isGuestComposeUsed } from '../utils/guestTrial';
 // v3.281 [SectionLyrics]: 가사 수정 = 곡 구성별(벌스·후렴·브릿지) 아코디언 편집 + 전체 보기/직접 편집 탈출구
 import SectionLyricsEditor from '../components/lyrics/SectionLyricsEditor';
+import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -388,35 +389,29 @@ export default function LyricsResultScreen({ navigation }: Props) {
           )}
         </View>
 
-        {/* Action buttons */}
+        {/* v3.290 [ResultBar]: 보조 [다시 생성하기][보관함에 저장] + 하단 [‹ 이전 | 저장하고 작곡하러 가기] */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.regenerateButton}
-            onPress={handleRegenerate}
-          >
-            <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
-          </TouchableOpacity>
-
           {hasLyrics && (
-            <TouchableOpacity
-              style={styles.bookSaveButton}
-              onPress={handleSaveToBook}
-            >
-              <AppText style={styles.bookSaveButtonText}>보관함에 저장</AppText>
-            </TouchableOpacity>
+            <View style={resultBarStyles.secondaryRow}>
+              <ResultSecondaryButton label="다시 생성하기" onPress={handleRegenerate} />
+              <ResultSecondaryButton label="보관함에 저장" onPress={handleSaveToBook} />
+            </View>
           )}
-
-          {hasLyrics && (
-            <TouchableOpacity
-              style={styles.composeButton}
-              onPress={handleSaveAndCompose}
-            >
-              <AppText style={styles.composeButtonText}>
-                {/* v3.277 [GuestCompose]: 게스트 작곡 체험 미사용이면 저장 없이 작곡 체험으로 */}
-                {isGuest && !guestComposeUsed ? '이 가사로 작곡 체험하기' : '저장하고 작곡하러 가기'}
-              </AppText>
-            </TouchableOpacity>
-          )}
+          <ResultActionBar
+            screen="LyricsResult"
+            onBack={() => {
+              if (navigation.canGoBack()) navigation.goBack();
+              else navigation.popToTop();
+            }}
+            primaryLabel={
+              !hasLyrics
+                ? '다시 생성하기'
+                : isGuest && !guestComposeUsed
+                  ? '이 가사로 작곡 체험하기' // v3.277 [GuestCompose]: 게스트 작곡 체험 미사용이면 저장 없이 체험으로
+                  : '저장하고 작곡하러 가기'
+            }
+            onPrimary={!hasLyrics ? handleRegenerate : handleSaveAndCompose}
+          />
         </View>
 
         <View style={{ height: 40 }} />

@@ -28,6 +28,7 @@ import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
+import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePointsStore } from '../stores/pointsStore';
 // v3.214 ⑨: 영상 디렉터 피로도 게이트 — MusicGenerationScreen 패턴 이식(진입/포커스 status,
@@ -1616,7 +1617,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             </View>
             {madeFormat === 'kakao' ? (
               <AppText style={styles.resultLengthHint}>
-                곡 전체가 필요하면 [다른 형식으로] → 「SNS용 세로」를 골라주세요.
+                곡 전체가 필요하면 [다른 형식] → 「SNS용 세로」를 골라주세요.
               </AppText>
             ) : null}
             {/* v3.282: 같은 영상의 구간만 다시 자르기(서버 판정 무과금) — 이번 대화에서 만든 영상일 때만 */}
@@ -1625,26 +1626,21 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
                 <AppText style={styles.outlineBtnText}>구간 다시 자르기 (무료)</AppText>
               </TouchableOpacity>
             ) : null}
-            {/* v3.182(대표): 기기 저장(사진 앨범) / 공유 — 서로 다른 기능이라 분리 */}
-            <View style={{ flexDirection: 'row', gap: 8, width: 300, maxWidth: '100%' }}>
-              <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={handleSaveToDevice} disabled={saving} activeOpacity={0.8}>
-                {saving ? <ActivityIndicator size="small" color="#fff" />
-                  : <AppText style={styles.primaryBtnText}>기기에 저장</AppText>}
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.primaryBtn, { flex: 1, backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.accent.primary }]} onPress={handleShare} disabled={sharing} activeOpacity={0.8}>
-                {sharing ? <ActivityIndicator size="small" color={colors.accent.primary} />
-                  : <AppText style={[styles.primaryBtnText, { color: colors.accent.primary }]}>공유하기</AppText>}
-              </TouchableOpacity>
+            {/* v3.290 [ResultBar]: 보조 [공유하기][다른 형식][다른 곡] + 하단 [‹ 이전 | 기기에 저장].
+                이전 = 상단바 ← 와 같은 목적지(작업실 맵). */}
+            <View style={[resultBarStyles.secondaryRow, { width: 300, maxWidth: '100%' }]}>
+              <ResultSecondaryButton label={sharing ? '공유 중...' : '공유하기'} onPress={handleShare} disabled={sharing} />
+              <ResultSecondaryButton label="다른 형식" onPress={handleAnotherFormat} />
+              <ResultSecondaryButton label="다른 곡" onPress={handleAnotherTrack} />
             </View>
-            {/* v3.214 ⑤: 2행도 1행과 동일 규격(width 300·padV 12·fs14) — 4버튼 통일 */}
-            <View style={{ flexDirection: 'row', gap: 8, width: 300, maxWidth: '100%' }}>
-              <TouchableOpacity style={[styles.outlineBtn, { flex: 1 }]} onPress={handleAnotherFormat} activeOpacity={0.8}>
-                <AppText style={styles.outlineBtnText}>다른 형식으로</AppText>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.outlineBtn, { flex: 1 }]} onPress={handleAnotherTrack} activeOpacity={0.8}>
-                <AppText style={styles.outlineBtnText}>다른 곡으로</AppText>
-              </TouchableOpacity>
-            </View>
+            <ResultActionBar
+              screen="VideoDirector"
+              style={{ width: 300, maxWidth: '100%' }}
+              onBack={() => navigation.popTo('Map')}
+              primaryLabel="기기에 저장"
+              onPrimary={handleSaveToDevice}
+              primaryBusy={saving}
+            />
           </View>
         ) : null}
       </ScrollView>

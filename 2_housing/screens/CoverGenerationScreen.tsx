@@ -39,6 +39,7 @@ import { useIsChild, isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 import { fetchPointCosts } from '../services/pointCosts';
 import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
+import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
 import { Feather } from '@expo/vector-icons';
 // v3.228 W2 [GenJob:cover]: 서버 원장(request_id) 연동 — 추적기 공개 API(1조) + cover 어댑터(2조, import 시 registerKind)
 import {
@@ -2678,49 +2679,35 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </View>
           )}
 
-          {/* 버튼 */}
+          {/* v3.290 [ResultBar]: 보조 [다시 생성하기] + 하단 [‹ 이전 | 커버 이미지 확정(또는 이 버전 사용)].
+              이전 = 상단바 ← 와 같은 목적지(앨범 모드는 앨범으로). 맵으로 버튼은 이전으로 대체. */}
           <View style={styles.buttonContainer}>
-            {/* v3.89: 이전 버전을 보는 중 → "이 버전 사용" (서버 세션 되돌리기) */}
-            {canRefine && !isViewingCurrent && (
-              <TouchableOpacity
-                style={[styles.saveButton, busy && { opacity: 0.5 }]}
-                onPress={() => handleUseVersion(viewVersion)}
-                disabled={busy}
-              >
-                <AppText style={styles.saveButtonText}>
-                  {reverting ? '되돌리는 중...' : '이 버전 사용'}
-                </AppText>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={[styles.regenerateButton, busy && { opacity: 0.5 }]}
-              onPress={handleRegenerate}
-              disabled={busy}
-            >
-              <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
-            </TouchableOpacity>
-
-            {coverImageUrl && isViewingCurrent && (
-              <TouchableOpacity
-                style={[styles.saveButton, busy && { opacity: 0.5 }]}
-                onPress={handleConfirm}
-                disabled={busy}
-              >
-                <AppText style={styles.saveButtonText}>
-                  {applying ? '적용 중...' : albumMode ? '앨범 커버로 확정' : '커버 이미지 확정'}
-                </AppText>
-              </TouchableOpacity>
-            )}
-
-            {/* v3.120: 앨범 모드는 RootStack 진입 — popToTop 대신 goBack으로 AlbumDetail 복귀 */}
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => (albumMode ? navigation.goBack() : navigation.popToTop())}
-              disabled={busy}
-            >
-              <AppText style={styles.backButtonText}>{albumMode ? '앨범으로 돌아가기' : '맵으로 돌아가기'}</AppText>
-            </TouchableOpacity>
+            <View style={resultBarStyles.secondaryRow}>
+              <ResultSecondaryButton label="다시 생성하기" onPress={handleRegenerate} disabled={busy} />
+            </View>
+            <ResultActionBar
+              screen="CoverGeneration"
+              onBack={() => {
+                if (albumMode) navigation.goBack();
+                else if (navigation.canGoBack()) navigation.goBack();
+                else (navigation as any).popTo('Map');
+              }}
+              backLabel={albumMode ? '앨범으로' : '이전'}
+              {...(canRefine && !isViewingCurrent
+                ? {
+                    // v3.89: 이전 버전을 보는 중 → "이 버전 사용" (서버 세션 되돌리기)
+                    primaryLabel: reverting ? '되돌리는 중...' : '이 버전 사용',
+                    onPrimary: () => handleUseVersion(viewVersion),
+                    primaryDisabled: busy,
+                  }
+                : coverImageUrl && isViewingCurrent
+                  ? {
+                      primaryLabel: applying ? '적용 중...' : albumMode ? '앨범 커버로 확정' : '커버 이미지 확정',
+                      onPrimary: handleConfirm,
+                      primaryDisabled: busy,
+                    }
+                  : {})}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -2993,6 +2980,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         extraActions={editStep != null ? editExtraActionsForStep(editStep) : undefined}
         onPick={handleEditPick}
         onCancel={handleEditCancel}
+        // v3.290 [ParamEdit]: 지금 답변 표시·직접 입력 복원
+        currentValue={
+          editStep != null
+            ? [...chatHistory].reverse().find((m) => m.type === 'user' && m.step === editStep)?.text ?? null
+            : null
+        }
       />
     </KeyboardAvoidingView>
   );

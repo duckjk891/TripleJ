@@ -40,6 +40,7 @@ import { guardGeneration } from '../services/generationTracker';
 import { showAlert } from '../utils/appAlert';
 import { openLoginModal } from '../utils/loginModal';
 import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
+import { STRUCTURE_EXAMPLES } from '../utils/lyricsStructureGuide';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -140,14 +141,31 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     await confirmThenStart('button');
   };
 
+  // v3.290 [ParamEdit]: 편집 시 기존 입력 복원 — 종전엔 reference 외 전부 입력칸을 비워서, 선택지에 없는
+  // 직접 입력값(주제·꼭 들어갈 말 등)은 하이라이트도 입력칸도 없어 "내가 입력한 게 안 뜬다"(대표 제보).
+  // 선택지 값이면 하이라이트, 직접 입력값이면 입력칸에 미리 채운다.
   const handleFieldEdit = (field: EditField) => {
     setEditingField(field);
-    if (field === 'reference') {
-      setCustomInput(store.reference === '없음' ? '' : store.reference);
-    } else if (field === 'keywords') {
-      setCustomInput('');
-    } else {
-      setCustomInput('');
+    const cur = currentTextValue(field);
+    const opts = optionsOf(field);
+    const prefill = cur && cur !== '없음' && !opts.includes(cur) ? cur : '';
+    if (__DEV__) console.info('[ParamEdit] open', { field, hasValue: !!cur, prefill: !!prefill });
+    setCustomInput(prefill);
+  };
+
+  const currentTextValue = (field: EditField): string => {
+    const st = useLyricsStore.getState();
+    switch (field) {
+      case 'genre': return st.genre || '';
+      case 'mood': return st.mood || '';
+      case 'style': return st.style || '';
+      case 'content': return st.content || '';
+      case 'keywords': return st.keywords || '';
+      case 'perspective': return st.perspective || '';
+      case 'language': return st.language || '';
+      case 'structure': return st.structure || '';
+      case 'reference': return st.reference || '';
+      default: return '';
     }
   };
 
@@ -188,8 +206,10 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     handleSelectOption(customInput.trim());
   };
 
-  const getOptionsForField = (): string[] => {
-    switch (editingField) {
+  const getOptionsForField = (): string[] => optionsOf(editingField);
+
+  function optionsOf(field: EditField): string[] {
+    switch (field) {
       case 'genre': return GENRE_OPTIONS;
       case 'mood': return MOOD_OPTIONS;
       case 'style': return STYLE_OPTIONS;
@@ -201,7 +221,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
       case 'duet': return DUET_OPTIONS;
       default: return [];
     }
-  };
+  }
 
   const isOptionSelected = (opt: string): boolean => {
     switch (editingField) {
@@ -424,6 +444,10 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                       >
                         {opt}
                       </AppText>
+                      {/* v3.290 [StructGuide]: 곡 구조 — 흐름을 쉬운 말로 함께 표시 */}
+                      {editingField === 'structure' && STRUCTURE_EXAMPLES[opt] ? (
+                        <AppText style={styles.optionFlowText}>{STRUCTURE_EXAMPLES[opt].flow}</AppText>
+                      ) : null}
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -468,6 +492,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  optionFlowText: { color: colors.text.muted, fontSize: 12, marginTop: 4 },
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,

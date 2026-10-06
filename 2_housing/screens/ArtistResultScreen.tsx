@@ -47,6 +47,7 @@ import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { useAuthImage } from '../utils/authImage';
 import { colors } from '../theme/colors';
+import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
 
 // ── v3.121: 아티스트 상세 개편 — 착용 제품 매핑 타입 ─────────────────────────
 // used_items 실측(v216): [{id: null(레거시 저장분), name, image_object_name, product_url, category}]
@@ -187,6 +188,13 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // → bottomArea(꾸미기/저장)가 탭바 바로 위에 고정된다. blur 시 반드시 복원.
   useHideMiniPlayerOnFocus('ArtistResult'); // v3.288 [MiniHide] 화면별 숨김 요청(전환 순서 무관)
 
+  // v3.290 [ResultBar]: 상단바 ‹ 와 하단 [‹ 이전] 공용 목적지
+  const handleHeaderBack = useCallback(() => {
+    const fromList = !!(slotParam || characterIdParam);
+    if (fromList && navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate(fromList ? 'MyArtists' : 'Map');
+  }, [navigation, slotParam, characterIdParam]);
+
   // Tab 헤더 좌측에 ← 버튼 주입.
   // v3.79 UX-1: useLayoutEffect(마운트 기준)이면 VoiceManage 등 다음 화면을 push 해도
   // 주입이 남아 이중 뒤로가기 화살표(탭 헤더 ‹ + 화면 자체 ‹)가 생김 →
@@ -200,11 +208,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           <TouchableOpacity
             // v3.81: 목록(slot param)에서 온 경우 pop으로 복귀(navigate는 목록을 새로 push해
             // 목록↔상세 핑퐁이 생김), 생성 직후는 기존대로 Map으로
-            onPress={() => {
-              const fromList = !!(slotParam || characterIdParam);
-              if (fromList && navigation.canGoBack()) navigation.goBack();
-              else navigation.navigate(fromList ? 'MyArtists' : 'Map');
-            }}
+            onPress={handleHeaderBack}
             style={{ paddingHorizontal: 12, paddingVertical: 6 }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
@@ -215,7 +219,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       return () => {
         parent.setOptions({ headerLeft: undefined });
       };
-    }, [navigation, slotParam, characterIdParam])
+    }, [navigation, handleHeaderBack])
   );
 
   // 화면 포커스마다 /character/me로 최신화
@@ -1217,17 +1221,18 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           레거시 가상만 handleGoCody가 앱 내 팝업으로 안내. */}
       <View style={styles.bottomArea}>
         {isUnsaved ? (
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-              <AppText style={styles.skipBtnText}>꾸미기</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.applyBtn, saving && { opacity: 0.5 }]}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <AppText style={styles.applyBtnText}>{saving ? '저장 중...' : '저장'}</AppText>
-            </TouchableOpacity>
+          /* v3.290 [ResultBar]: 보조 [꾸미기] + 하단 [‹ 이전 | 저장] */
+          <View style={{ gap: 10 }}>
+            <View style={resultBarStyles.secondaryRow}>
+              <ResultSecondaryButton label="꾸미기" onPress={handleGoCody} />
+            </View>
+            <ResultActionBar
+              screen="ArtistResult"
+              onBack={handleHeaderBack}
+              primaryLabel={saving ? '저장 중...' : '저장'}
+              onPrimary={handleSave}
+              primaryDisabled={saving}
+            />
           </View>
         ) : justCreated ? (
           /* v3.113: 생성 완료 직후 — 주요 버튼 [아티스트 저장하기](멱등 재저장).
@@ -1236,19 +1241,18 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             {manualSaved && (
               <AppText style={styles.savedNotice}>아티스트가 저장되었어요</AppText>
             )}
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-                <AppText style={styles.skipBtnText}>꾸미기</AppText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.applyBtn, (manualSaving || manualSaved) && { opacity: 0.55 }]}
-                onPress={handleManualSave}
-                disabled={manualSaving || manualSaved}
-              >
-                <AppText style={styles.applyBtnText}>
-                  {manualSaving ? '저장 중...' : manualSaved ? '저장 완료' : '아티스트 저장하기'}
-                </AppText>
-              </TouchableOpacity>
+            {/* v3.290 [ResultBar]: 보조 [꾸미기] + 하단 [‹ 이전 | 아티스트 저장하기] */}
+            <View style={{ gap: 10 }}>
+              <View style={resultBarStyles.secondaryRow}>
+                <ResultSecondaryButton label="꾸미기" onPress={handleGoCody} />
+              </View>
+              <ResultActionBar
+                screen="ArtistResult"
+                onBack={handleHeaderBack}
+                primaryLabel={manualSaving ? '저장 중...' : manualSaved ? '저장 완료' : '아티스트 저장하기'}
+                onPrimary={handleManualSave}
+                primaryDisabled={manualSaving || manualSaved}
+              />
             </View>
           </View>
         ) : (

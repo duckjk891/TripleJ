@@ -43,6 +43,8 @@ import {
   STRUCTURE_OPTIONS,
   DUET_OPTIONS,
 } from '../utils/lyricsPrompt';
+import { STRUCTURE_INTRO, structureExampleBody } from '../utils/lyricsStructureGuide';
+import { showAlert } from '../utils/appAlert';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -60,6 +62,7 @@ interface StepConfig {
 }
 
 // step: 0=장르, 1=분위기, 2=듀엣, 3=내용, 4=키워드, 5=시점, 6=언어, 7=구조, 8=랩, 9=길이, 10=추가요청
+const STRUCTURE_STEP = 7;
 // v3.129(대표): 사운드(스타일) 질문 제거 — 장르에 사운드 정체성(록=밴드, 포크=어쿠스틱,
 // EDM=전자음, 클래식=오케스트라)이 이미 포함돼 중복. 작곡용 악기·질감 태그는
 // musicService가 장르에서 자동 파생(GENRE_DEFAULT_STYLE).
@@ -315,6 +318,8 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
     const newHistory: ChatMessage[] = [
       ...chatHistory,
       { type: 'user', text: answer, step: currentStep },
+      // v3.290 [StructGuide]: 곡 구조 질문 직전 — 절·후렴·브릿지 용어 설명(대표: 이해하기 어렵다)
+      ...(nextStep === STRUCTURE_STEP ? [{ type: 'director' as const, text: STRUCTURE_INTRO }] : []),
       { type: 'director', text: nextQuestion },
     ];
     setChatHistory(newHistory);
@@ -530,7 +535,24 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
                   onPress={() => handleChoicePress(choice)}
                 >
                   <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
-                  <AppText style={styles.choiceText}>{choice}</AppText>
+                  <AppText style={[styles.choiceText, { flex: 1 }]}>{choice}</AppText>
+                  {/* v3.290 [StructGuide]: 곡 구조 선택지마다 흐름·예시 가사 보기 */}
+                  {step === STRUCTURE_STEP && structureExampleBody(choice) && (
+                    <TouchableOpacity
+                      style={styles.exampleChip}
+                      onPress={() => {
+                        if (__DEV__) console.info('[StructGuide] 예시 보기', { choice });
+                        showAlert(choice, structureExampleBody(choice) || '', [
+                          { text: '이 구조로 할게요', onPress: () => handleChoicePress(choice) },
+                          { text: '닫기', style: 'cancel' },
+                        ]);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel={`${choice} 예시 보기`}
+                    >
+                      <AppText style={styles.exampleChipText}>예시</AppText>
+                    </TouchableOpacity>
+                  )}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -584,6 +606,12 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
         freeText={reselectStep != null && reselectStep !== 2 && reselectStep !== 8 && reselectStep !== 9}
         onPick={handleReselectChoice}
         onCancel={closeReselect}
+        // v3.290 [ParamEdit]: 지금 답변(대화의 내 말풍선) — 선택지면 '현재' 표시, 직접 입력이면 입력칸 복원
+        currentValue={
+          reselectStep != null
+            ? [...chatHistory].reverse().find((m) => m.type === 'user' && m.step === reselectStep)?.text ?? null
+            : null
+        }
       />
     </KeyboardAvoidingView>
   );
@@ -594,6 +622,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.deepest,
   },
+  exampleChip: {
+    marginLeft: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+  },
+  exampleChipText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
   chatArea: {
     flex: 1,
   },

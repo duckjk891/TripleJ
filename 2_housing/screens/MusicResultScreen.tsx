@@ -62,6 +62,7 @@ import {
 } from '../utils/guestTrial';
 // v3.281 편곡하기 — 완성 곡을 다른 장르·분위기로(서버 upload-cover, ⭐compose). 요청·오류는 기존 작곡 관행 재사용
 import ArrangeSheet, { ArrangeSelection } from '../components/arrange/ArrangeSheet';
+import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
 import { arrangeGeneration } from '../services/musicService';
 import { adoptCreationSession } from '../services/creationLogService';
 import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
@@ -1047,13 +1048,48 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     navigation.navigate('CoverGeneration');
   };
 
-  const handleBackToMap = () => {
+  // v3.290 [ResultBar]: 상단바 ← 와 같은 목적지 — 디렉터 대화(또는 생성 이력)로, 없으면 맵.
+  const handleResultBack = () => {
     if (soundRef.current) {
       soundRef.current.unloadAsync().catch(() => {});
       soundRef.current = null;
     }
-    navigation.popToTop();
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.popToTop();
   };
+
+  // v3.290: 커버 2버튼(새로 만들기/보관함) → 선택 팝업 1버튼
+  const openCoverChoice = () => {
+    if (__DEV__) console.info('[MusicResult] 커버 선택 팝업');
+    showAlert('커버 이미지', '어떻게 할까요?', [
+      { text: '새로 만들기', onPress: () => void handleGenerateCover() },
+      {
+        text: '보관함에서 고르기',
+        onPress: () => {
+          const openLibrary = () => navigation.navigate('CoverLibrary' as any, { select: true });
+          // v3.277 [GuestCompose]: 게스트 → 로그인 → claim → 보관함(로그인 전용)
+          if (requireLoginForGuest('guest_compose_cover_library', openLibrary)) return;
+          openLibrary();
+        },
+      },
+      { text: '취소', style: 'cancel' },
+    ]);
+  };
+
+  // v3.290: 다시 생성하기·편곡하기 2버튼 → [다시 만들기] 1버튼(편곡 불가 사용자는 곧장 재생성)
+  const openRemakeChoice = () => {
+    if (!showArrange) {
+      void handleRegenerate();
+      return;
+    }
+    if (__DEV__) console.info('[MusicResult] 다시 만들기 선택 팝업');
+    showAlert('다시 만들기', '어떤 방식으로 다시 만들까요?', [
+      { text: '같은 설정으로 다시 생성', onPress: () => void handleRegenerate() },
+      { text: '다른 장르로 편곡', onPress: () => openArrange() },
+      { text: '취소', style: 'cancel' },
+    ]);
+  };
+
 
   return (
     <View style={styles.container}>
@@ -1221,67 +1257,19 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           </View>
         )}
 
-        {/* Action buttons */}
+        {/* v3.290 [ResultBar]: 버튼 7개 → 보조 2개 + 하단 [‹ 이전 | 저장] (대표 "버튼이 너무 많다").
+            커버(새로 만들기/보관함)·다시 만들기(재생성/편곡)는 선택 팝업으로 묶고, 준비 중 MV·맵으로 버튼은 제거
+            (맵 복귀는 상단바·탭으로). */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.regenerateButton}
-            onPress={handleRegenerate}
-          >
-            <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
-          </TouchableOpacity>
-
-          {/* v3.281 편곡하기 — 로그인 성인 사용자의 완성 곡(발매 여부 무관). 게스트·어린이 숨김 */}
-          {showArrange && (
-            <TouchableOpacity
-              style={[styles.regenerateButton, arrangeBusy && { opacity: 0.6 }]}
-              onPress={openArrange}
-              disabled={arrangeBusy}
-            >
-              <AppText style={styles.regenerateButtonText}>편곡하기 · 다른 장르로</AppText>
-            </TouchableOpacity>
-          )}
-
           {hasResult && (
-            <TouchableOpacity
-              style={[styles.saveButton, (isSaving || isSaved) && { opacity: 0.6 }]}
-              onPress={handleSave}
-              disabled={isSaving || isSaved}
-            >
-              <AppText style={styles.saveButtonText}>
-                {isSaved
-                  ? '저장 완료'
-                  : isSaving
-                    ? '저장 중...'
-                    : showComparison
-                      ? `${VARIANT_LABELS[selectedVariant] || `버전 ${selectedVariant + 1}`}로 저장하기`
-                      : '저장하기'}
-              </AppText>
-            </TouchableOpacity>
-          )}
-
-          {/* Cover image - 이미지 디렉터와 대화 */}
-          {hasResult && (
-            <TouchableOpacity
-              style={styles.coverButton}
-              onPress={handleGenerateCover}
-            >
-              <AppText style={styles.coverButtonText}>커버 이미지 생성하기</AppText>
-            </TouchableOpacity>
-          )}
-
-          {/* v3.104(B-5): 커버 보관함 재사용 — 선택 모드로 진입, 돌아오면 useFocusEffect가 소비 */}
-          {hasResult && (
-            <TouchableOpacity
-              style={styles.coverButton}
-              onPress={() => {
-                const openLibrary = () => navigation.navigate('CoverLibrary' as any, { select: true });
-                // v3.277 [GuestCompose]: 게스트 → 로그인 → claim → 보관함(로그인 전용)
-                if (requireLoginForGuest('guest_compose_cover_library', openLibrary)) return;
-                openLibrary();
-              }}
-            >
-              <AppText style={styles.coverButtonText}>보관함에서 커버 선택</AppText>
-            </TouchableOpacity>
+            <View style={resultBarStyles.secondaryRow}>
+              <ResultSecondaryButton label="커버 이미지" onPress={openCoverChoice} />
+              <ResultSecondaryButton
+                label="다시 만들기"
+                onPress={openRemakeChoice}
+                disabled={arrangeBusy}
+              />
+            </View>
           )}
 
           {/* v3.104(B-5): 선택한 보관함 커버 미리보기 (미저장=저장 시 적용 / 저장됨=적용 완료) */}
@@ -1308,20 +1296,30 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             </View>
           )}
 
-          {/* MV button - future feature */}
-          <TouchableOpacity
-            style={[styles.mvButton, styles.mvButtonDisabled]}
-            disabled
-          >
-            <AppText style={styles.mvButtonText}>MV 만들기 (준비 중)</AppText>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={handleBackToMap}
-          >
-            <AppText style={styles.backButtonText}>맵으로 돌아가기</AppText>
-          </TouchableOpacity>
+          {hasResult ? (
+            <ResultActionBar
+              screen="MusicResult"
+              onBack={handleResultBack}
+              primaryLabel={
+                isSaved
+                  ? '저장 완료'
+                  : isSaving
+                    ? '저장 중...'
+                    : showComparison
+                      ? `${VARIANT_LABELS[selectedVariant] || `버전 ${selectedVariant + 1}`}로 저장`
+                      : '저장하기'
+              }
+              onPrimary={handleSave}
+              primaryDisabled={isSaving || isSaved}
+            />
+          ) : (
+            <ResultActionBar
+              screen="MusicResult"
+              onBack={handleResultBack}
+              primaryLabel="다시 생성하기"
+              onPrimary={handleRegenerate}
+            />
+          )}
         </View>
 
         <View style={{ height: 40 }} />

@@ -2793,6 +2793,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         freeText={editStep != null && EDIT_FREETEXT_STEPS.has(editStep)}
         onPick={handleEditPick}
         onCancel={handleEditCancel}
+        // v3.290 [ParamEdit]: 지금 답변 표시·직접 입력 복원
+        currentValue={
+          editStep != null
+            ? [...chatHistory].reverse().find((m) => m.type === 'user' && m.step === editStep)?.text ?? null
+            : null
+        }
       />
     </KeyboardAvoidingView>
   );

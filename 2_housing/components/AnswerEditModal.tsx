@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -32,6 +32,8 @@ interface AnswerEditModalProps {
   extraActions?: AnswerEditExtraAction[];
   onPick: (text: string) => void;
   onCancel: () => void;
+  /** v3.290 [ParamEdit]: 지금 답변 — 선택지면 '현재' 표시, 직접 입력값이면 입력칸에 미리 채움 */
+  currentValue?: string | null;
 }
 
 export default function AnswerEditModal({
@@ -42,12 +44,23 @@ export default function AnswerEditModal({
   extraActions,
   onPick,
   onCancel,
+  currentValue,
 }: AnswerEditModalProps) {
   const insets = useSafeAreaInsets();
   // [KeyboardCtl] v3.207(⑤): useAndroidKeyboardLift(marginBottom 리프트·동적 maxHeight) 제거 —
   // RN Keyboard 이벤트 의존이 SDK 54 edge-to-edge+Fabric 실기기에서 실패 확정.
   // keyboard-controller KAV(behavior='padding')로 iOS·Android 리프트 일원화(Modal 내 동작).
   const [input, setInput] = useState('');
+  const cur = (currentValue || '').trim();
+  const curIsChoice = !!cur && choices.includes(cur);
+  // 열릴 때 직접 입력했던 답변을 입력칸에 복원(선택지 답변은 하이라이트로 표시)
+  useEffect(() => {
+    if (!visible) return;
+    const prefill = freeText && cur && cur !== '없음' && !curIsChoice ? cur : '';
+    if (__DEV__ && cur) console.info('[ParamEdit] reselect open', { prefill: !!prefill, isChoice: curIsChoice });
+    setInput(prefill);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   // 닫힘/선택 공통 — 자유 입력 리셋(선택지 탭·자유 입력 제출·취소 공통)
   const pick = (text: string) => {
@@ -89,10 +102,12 @@ export default function AnswerEditModal({
               {choices.map((choice, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={styles.reselectOption}
+                  style={[styles.reselectOption, curIsChoice && choice === cur && styles.reselectOptionCurrent]}
                   onPress={() => pick(choice)}
                 >
-                  <AppText style={styles.reselectOptionText}>{choice}</AppText>
+                  <AppText style={[styles.reselectOptionText, curIsChoice && choice === cur && styles.reselectOptionTextCurrent]}>
+                    {choice}{curIsChoice && choice === cur ? '  · 현재' : ''}
+                  </AppText>
                 </TouchableOpacity>
               ))}
               {(extraActions || []).map((action, idx) => (
@@ -173,6 +188,8 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: 14,
   },
+  reselectOptionCurrent: { borderWidth: 1, borderColor: colors.accent.primary },
+  reselectOptionTextCurrent: { color: colors.accent.primary, fontWeight: '700' },
   // 특수 액션(사진 올리기·꾸미기 가기 등) — 선택지와 구분되는 강조 색
   extraActionText: {
     color: colors.accent.primary,
