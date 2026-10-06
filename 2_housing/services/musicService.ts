@@ -386,6 +386,69 @@ export const generateWithWondera = async (params: Partial<MusicParams>) => {
   return response.data;
 };
 
+// ── v3.281 편곡하기 — 완성 곡(variant)을 다른 장르·분위기로 (POST /generate/{id}/arrange) ──
+// 서버가 원곡 오디오를 참고 음원(upload-cover)으로, 원곡 가사·보컬·내 목소리를 그대로 실어
+// 기존 작곡 경로(⭐compose 선차감·원장·실패 환불·피로 429·진행 중 409·잔액 402)를 탄다.
+// 응답 = POST /generate/ 와 같은 새 generation 문서(201) → 앱은 MusicLoading 이어보기 폴링 재사용.
+export interface ArrangeOptions {
+  /** 비교 중(A/B) 고른 variant. 생략 = 서버가 발매 트랙의 variant(미발매면 0)로 결정 */
+  variantIndex?: number;
+  /** GENRE_OPTIONS 한글 라벨 */
+  genreKo?: string | null;
+  /** MOOD_OPTIONS 한글 라벨 */
+  moodKo?: string | null;
+  /** 자유 입력 1줄 */
+  styleText?: string | null;
+  /** 원곡 멜로디 유지(0.3~0.9 → audioWeight) */
+  keepMelody: number;
+}
+
+export const ARRANGE_KEEP_LEVELS = [
+  { label: '조금', value: 0.45 },
+  { label: '보통', value: 0.65 },
+  { label: '많이', value: 0.8 },
+] as const;
+
+/** 편곡 요청 바디 조립 — 한글 라벨을 기존 작곡과 같은 Suno 영문 태그로 매핑(장르 기본 사운드 태그 포함) */
+export const buildArrangeBody = async (opts: ArrangeOptions): Promise<Record<string, any>> => {
+  const genreKo = (opts.genreKo || '').trim();
+  const moodKo = (opts.moodKo || '').trim();
+  const styleText = (opts.styleText || '').trim().slice(0, 200);
+  let styleEn = styleText;
+  if (styleText) {
+    // 기존 작곡의 매핑 밖 태그 번역과 같은 경로(실패 시 원문 유지 — 생성 비차단)
+    try {
+      const res = await api.post('/generate/translate-tags', { tags: [styleText] }, { timeout: 30000 });
+      const translated: string[] = Array.isArray(res.data?.translated) ? res.data.translated : [];
+      const joined = translated.filter(Boolean).join(', ');
+      if (joined) styleEn = joined;
+    } catch (err: any) {
+      console.warn('[Arrange] translate-tags 실패 — 원문 유지:', err?.response?.status, err?.message);
+    }
+  }
+  const styleParts = [genreKo ? GENRE_DEFAULT_STYLE[genreKo] : '', styleEn].filter(Boolean);
+  const keep = Math.min(0.9, Math.max(0.3, Number(opts.keepMelody) || 0.65));
+  return {
+    ...(typeof opts.variantIndex === 'number' ? { variant_index: opts.variantIndex } : {}),
+    ...(genreKo ? { genre: toEnglish(genreKo, GENRE_EN) } : {}),
+    ...(moodKo ? { mood: toEnglish(moodKo, MOOD_EN) } : {}),
+    ...(styleParts.length ? { style: styleParts.join(', ').slice(0, 300) } : {}),
+    keep_melody: keep,
+    label: (genreKo || moodKo || '새 스타일').slice(0, 20),
+  };
+};
+
+export const arrangeGeneration = async (
+  genId: string,
+  opts: ArrangeOptions,
+  reqOpts: { requestId?: string | null } = {}
+): Promise<GenerationItem & Record<string, any>> => {
+  const body = await buildArrangeBody(opts);
+  console.info('[Arrange] 요청', { genId, variant: body.variant_index ?? 'auto', genre: body.genre ?? null, mood: body.mood ?? null, keep: body.keep_melody, hasStyle: !!body.style });
+  const response = await api.post(`/generate/${genId}/arrange`, body, { headers: genRequestHeaders(reqOpts.requestId) });
+  return response.data;
+};
+
 export const getGenerationStatus = async (genId: string) => {
   const response = await api.get(`/generate/${genId}`);
   return response.data;

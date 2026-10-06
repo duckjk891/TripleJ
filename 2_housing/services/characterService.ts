@@ -349,3 +349,73 @@ export const dismissCharacterJob = async (jobId: string): Promise<boolean> => {
     return false;
   }
 };
+
+// ── v3.281 [61] [ArtistOutfit]: 실사 옷 갈아입히기 얼굴 기준 해석 — 대상 아티스트 자신의 것만 ─────────
+// 10-04 제보(사진 없이 만든 실사 아티스트 '이유나' 옷 바꾸기 → 대표 아티스트 얼굴로 그려짐) 근본 원인:
+// ArtistLoading 실사 outfit 분기가 얼굴 원본을 store 캐시(originalPhotoObjectName — 이전 대상/생성 잔존값)
+// → 없으면 GET /character/me(= 대표 실사 아티스트) 원본으로 채워 보냈다. 대상 cid 와 원본 소유 아티스트를
+// 대조하지 않았고, 서버도 "본인 소유" 만 검증해 그대로 통과했다.
+// 규칙: 신 계약(cid)에서는 대상 아티스트 문서(GET /character/{cid})의 original_photo_object_name 만 쓴다.
+//   - 원본 있음 → 그 원본(캐시가 다르면 교정 + 경고 로그)
+//   - 원본 없음(사진 없이 만든 아티스트) → 서버가 저장 시트 기준을 지원(saved_sheet_outfit)하면 use_saved_sheet,
+//     아니면 차단(⭐ 요청 전) — 다른 아티스트 얼굴로 대체 금지
+//   - 종류 불일치(가상 cid 가 실사 분기로 옴)·조회 실패 → 차단
+// 레거시(cid 없는 단일 문서 계정)는 실사 아티스트가 1명뿐이라 기존 경로(캐시 → /me) 유지.
+
+export const OUTFIT_NO_ORIGINAL_MSG =
+  '사진 없이 만든 아티스트는 아직 옷 갈아입히기를 준비 중이에요. 곧 열어드릴게요.';
+export const OUTFIT_TARGET_MISMATCH_MSG =
+  '옷을 바꿀 아티스트 정보가 맞지 않아요. 내 아티스트 목록에서 다시 들어와 주세요.';
+
+export type RealOutfitBase =
+  | { kind: 'original'; objectName: string; correctedFrom: string | null }
+  | { kind: 'saved_sheet' }
+  | { kind: 'blocked'; reason: 'no_original' | 'kind_mismatch' | 'lookup_failed'; message: string };
+
+/** 순수 판정 — 대상 아티스트 문서 + store 캐시 원본 → 얼굴 기준 (테스트 가능하도록 IO 분리) */
+export function decideRealOutfitBase(
+  artist: Pick<ServerArtist, 'character_id' | 'kind'> & { original_photo_object_name?: string | null; saved_sheet_outfit?: boolean | null },
+  cachedOriginal: string | null | undefined,
+): RealOutfitBase {
+  if (artist.kind !== 'real') {
+    return { kind: 'blocked', reason: 'kind_mismatch', message: OUTFIT_TARGET_MISMATCH_MSG };
+  }
+  const own = typeof artist.original_photo_object_name === 'string' ? artist.original_photo_object_name.trim() : '';
+  if (own) {
+    const cached = (cachedOriginal || '').trim();
+    return { kind: 'original', objectName: own, correctedFrom: cached && cached !== own ? cached : null };
+  }
+  if (artist.saved_sheet_outfit === true) return { kind: 'saved_sheet' };
+  return { kind: 'blocked', reason: 'no_original', message: OUTFIT_NO_ORIGINAL_MSG };
+}
+
+/** 요청 직전 해석 — 대상 cid 문서를 다시 읽어 판정(화면 캐시 불신). 실패는 blocked(lookup_failed) */
+export async function resolveRealOutfitBase(
+  targetCid: string,
+  cachedOriginal: string | null | undefined,
+): Promise<RealOutfitBase> {
+  let artist: ServerArtist;
+  try {
+    artist = await getArtist(targetCid);
+  } catch (err: any) {
+    console.warn('[ArtistOutfit] 대상 아티스트 조회 실패 — 차단', { cid: targetCid, status: err?.response?.status ?? null });
+    return { kind: 'blocked', reason: 'lookup_failed', message: OUTFIT_TARGET_MISMATCH_MSG };
+  }
+  if (artist.character_id !== targetCid) {
+    console.warn('[ArtistOutfit] 대상 cid 불일치 — 차단', { want: targetCid, got: artist.character_id });
+    return { kind: 'blocked', reason: 'kind_mismatch', message: OUTFIT_TARGET_MISMATCH_MSG };
+  }
+  const base = decideRealOutfitBase(artist as any, cachedOriginal);
+  if (base.kind === 'original' && base.correctedFrom) {
+    // 회귀 방지 가드: 캐시 원본이 대상 아티스트 것이 아님(이전 대상·대표 잔존값) → 대상 원본으로 교정
+    console.warn('[ArtistOutfit] 캐시 원본 ≠ 대상 원본 — 대상 원본으로 교정', {
+      cid: targetCid,
+      cached: base.correctedFrom.split('/').pop(),
+      own: base.objectName.split('/').pop(),
+    });
+  }
+  console.info('[ArtistOutfit] 얼굴 기준 해석', {
+    cid: targetCid, kind: artist.kind, base: base.kind, reason: base.kind === 'blocked' ? base.reason : null,
+  });
+  return base;
+}

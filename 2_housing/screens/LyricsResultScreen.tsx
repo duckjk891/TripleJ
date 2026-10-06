@@ -32,6 +32,8 @@ import { colors } from '../theme/colors';
 // v3.276 [GuestLyrics]: 게스트 체험 결과 — 보기·수정·선택 복사만 허용, 저장·작곡·다시 생성은 로그인 모달 후 원래 동작
 import { openLoginModal } from '../utils/loginModal';
 import { GUEST_TEXT, isGuestNow, isGuestTrialUsed, isGuestComposeUsed } from '../utils/guestTrial';
+// v3.281 [SectionLyrics]: 가사 수정 = 곡 구성별(벌스·후렴·브릿지) 아코디언 편집 + 전체 보기/직접 편집 탈출구
+import SectionLyricsEditor from '../components/lyrics/SectionLyricsEditor';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -49,6 +51,14 @@ export default function LyricsResultScreen({ navigation }: Props) {
 
   const hasError = !!store.error;
   const hasLyrics = editedLyrics.trim().length > 0;
+  // v3.281 [SectionLyrics]: 구성별 편집기 카드 → 페이지 스크롤(레이아웃 좌표 합산: 섹션 y + 편집기 y + 카드 y)
+  const pageScrollRef = useRef<ScrollView>(null);
+  const lyricsSectionYRef = useRef(0);
+  const lyricsEditorYRef = useRef(0);
+  const scrollToLyricsEditorY = (y: number) => {
+    const target = lyricsSectionYRef.current + lyricsEditorYRef.current + y - 12;
+    pageScrollRef.current?.scrollTo({ y: Math.max(0, target), animated: true });
+  };
   // 동일 내용 연속 저장 가드 (중복 저장 자체는 허용)
   const lastSavedSignatureRef = useRef<string | null>(null);
 
@@ -271,6 +281,8 @@ export default function LyricsResultScreen({ navigation }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
+        ref={pageScrollRef}
+        keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
@@ -336,7 +348,10 @@ export default function LyricsResultScreen({ navigation }: Props) {
         </View>
 
         {/* Lyrics display */}
-        <View style={styles.lyricsSection}>
+        <View
+          style={styles.lyricsSection}
+          onLayout={(e) => { lyricsSectionYRef.current = e.nativeEvent.layout.y; }}
+        >
           <View style={styles.lyricsTitleRow}>
             <AppText style={styles.sectionTitle}>생성된 가사</AppText>
             <TouchableOpacity
@@ -356,13 +371,14 @@ export default function LyricsResultScreen({ navigation }: Props) {
           </View>
 
           {isEditingLyrics ? (
-            <TextInput
-              style={styles.lyricsInputEditing}
-              value={editedLyrics}
-              onChangeText={setEditedLyrics}
-              multiline
-              textAlignVertical="top"
-            />
+            <View onLayout={(e) => { lyricsEditorYRef.current = e.nativeEvent.layout.y; }}>
+              <SectionLyricsEditor
+                value={editedLyrics}
+                onChange={setEditedLyrics}
+                onRequestScroll={scrollToLyricsEditorY}
+                inputStyle={styles.lyricsInputEditing}
+              />
+            </View>
           ) : (
             <View style={styles.lyricsBox}>
               <AppText style={styles.lyricsText} selectable={isGuest}>

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -66,7 +66,7 @@ interface ArtistEntry {
 const EXTRA_SLOT_COST_FALLBACK = FALLBACK_POINT_COSTS.extra_slot;
 const CHARACTER_COST_FALLBACK = FALLBACK_POINT_COSTS.character;
 
-export default function MyArtistsScreen({ navigation }: any) {
+export default function MyArtistsScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   // 레거시 카드 이름 폴백용 로컬 프로필(이름·성별) — 서버 카드에서는 서버 값 우선
@@ -86,6 +86,24 @@ export default function MyArtistsScreen({ navigation }: any) {
   const [addConfirm, setAddConfirm] = useState<{ forceKind?: SlotKind } | null>(null);
   // v3.217 ③: 대표 지정 진행 중인 cid — 중복 PATCH 방지 + 카드 버튼 스피너
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
+
+  // v3.281 [58]: 아티스트 저장 직후 진입(ArtistResult → savedNotice) — 목록 상단 1줄 안내, 4초 뒤 자동 숨김.
+  // savedAt 으로 같은 화면 재진입(popTo) 때도 다시 표시. 팝업(showAlert) 대신 비차단 배너.
+  const savedNoticeParam: string | undefined = route?.params?.savedNotice;
+  const savedAtParam: number | undefined = route?.params?.savedAt;
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!savedNoticeParam) return;
+    console.info('[MyArtists] 저장 완료 안내 표시', { savedAt: savedAtParam ?? null });
+    setSavedNotice(savedNoticeParam);
+    // 한 번 보여준 안내는 파라미터에서 지워 뒤로 왔다 다시 포커스될 때 반복되지 않게
+    navigation.setParams?.({ savedNotice: undefined, savedAt: undefined });
+  }, [savedNoticeParam, savedAtParam, navigation]);
+  useEffect(() => {
+    if (!savedNotice) return;
+    const t = setTimeout(() => setSavedNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [savedNotice]);
 
   // ArtistResult가 탭 헤더에 주입한 ‹ 가 남아 이중 화살표가 되지 않도록 정리 (VoiceManage 관행)
   useLayoutEffect(() => {
@@ -414,6 +432,13 @@ export default function MyArtistsScreen({ navigation }: any) {
         <View style={styles.backBtn} />
       </View>
 
+      {/* v3.281 [58]: 저장 완료 1줄 안내(비차단) */}
+      {savedNotice ? (
+        <View style={styles.savedNoticeWrap} accessibilityLiveRegion="polite">
+          <AppText style={styles.savedNoticeText} numberOfLines={2}>{savedNotice}</AppText>
+        </View>
+      ) : null}
+
       {/* v3.227 A-보완: 생성 중·도착·실패 공용 카드(목록 상단 — 로딩 중에도 표시) */}
       {!!user && <GenerationJobCard navigation={navigation} style={styles.jobCardWrap} />}
 
@@ -563,6 +588,15 @@ export default function MyArtistsScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
+  // v3.281 [58]: 저장 완료 안내 배너
+  savedNoticeWrap: {
+    marginHorizontal: 16, marginTop: 12,
+    paddingVertical: 10, paddingHorizontal: 14,
+    borderRadius: 12, borderWidth: 1,
+    borderColor: colors.accent.primary,
+    backgroundColor: colors.bg.surface1,
+  },
+  savedNoticeText: { fontSize: 13, fontWeight: '600', color: colors.text.primary, textAlign: 'center' },
   // v3.227: 생성 job 카드 영역(헤더 아래, 목록 위)
   jobCardWrap: { paddingHorizontal: 16, paddingTop: 12 },
   container: { flex: 1, backgroundColor: colors.bg.deepest },

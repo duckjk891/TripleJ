@@ -126,6 +126,24 @@ export async function ensureCreationSession(): Promise<string | null> {
   return sessionStartPromise;
 }
 
+/**
+ * v3.281 편곡: 서버가 만든 파생 세션(원곡 세션을 부모로 하는 새 세션)을 현재 세션으로 채택.
+ * 이후 LISTEN·CANDIDATE_SELECT·발매 FINALIZE(session_id)가 편곡 곡의 세션에 기록된다.
+ * 이전 세션의 미전송 큐는 먼저 비우고(순서 보존) 전환한다. id 없음이면 세션만 종료.
+ */
+export async function adoptCreationSession(id: string | null | undefined): Promise<void> {
+  try {
+    await flushCreationEvents();
+  } catch (err: any) {
+    console.warn('[CreationLog] 세션 전환 전 flush 실패(무시):', err?.message);
+  }
+  endCreationSession();
+  if (!id) return;
+  sessionId = String(id);
+  useMusicStore.getState().setCreationSessionId(sessionId);
+  if (__DEV__) console.log('[CreationLog] 세션 채택(편곡):', sessionId);
+}
+
 /** 세션 종료(FINALIZE 확정 후) — 다음 곡 흐름은 새 세션으로 시작 */
 export function endCreationSession(): void {
   if (__DEV__) console.log('[CreationLog] 세션 종료:', sessionId, '잔여 큐:', queue.length);

@@ -11,11 +11,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 // v3.204(④): 답변 편집 UX 통일 — 선택지형 스텝은 확인 팝업 없이 즉시 편집 모달(작사 디렉터 기준)
 import AnswerEditModal from '../components/AnswerEditModal';
+// v3.281 [SectionLyrics]: 가사 확인/수정 단계 — 곡 구성별 아코디언 편집기
+import SectionLyricsEditor from '../components/lyrics/SectionLyricsEditor';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
@@ -165,6 +168,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
   // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
   const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];
+  // v3.281 [SectionLyrics]: 하단 입력 영역의 구성별 편집기 카드 목록 최대 높이(키보드가 올라와도 진행바·확인 버튼이 남게)
+  const { height: windowHeight } = useWindowDimensions();
+  const sectionLyricsMaxHeight = Math.round(Math.min(300, Math.max(170, windowHeight * 0.32)));
   const musicStore = useMusicStore();
   const lyricsStore = useLyricsStore();
 
@@ -1924,15 +1930,17 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         // Lyrics editing
         return (
           <View style={inputAreaStyle}>
-            <TextInput
-              style={styles.lyricsInput}
-              value={editedLyrics}
-              onChangeText={setEditedLyrics}
-              multiline
-              textAlignVertical="top"
-              placeholder="가사를 입력하세요"
-              placeholderTextColor={colors.text.muted}
-            />
+            {/* v3.281 [SectionLyrics]: 구성별(벌스·후렴·브릿지) 아코디언 편집 — 하단 입력 영역이라 고정 높이(내부 스크롤).
+                태그 없는 가사는 기존 단일 입력(styles.lyricsInput) 폴백. 확정 로직(handleLyricsConfirm)은 그대로. */}
+            <View style={styles.sectionLyricsWrap}>
+              <SectionLyricsEditor
+                value={editedLyrics}
+                onChange={setEditedLyrics}
+                maxHeight={sectionLyricsMaxHeight}
+                inputStyle={[styles.lyricsInput, styles.sectionLyricsRawInput]}
+                placeholder="가사를 입력하세요"
+              />
+            </View>
             <TouchableOpacity
               style={[styles.confirmButton, !editedLyrics.trim() && styles.confirmButtonDisabled]}
               onPress={handleLyricsConfirm}
@@ -2907,6 +2915,13 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
     paddingHorizontal: 12,
     paddingTop: 10,
+  },
+  // v3.281 [SectionLyrics]: 편집기 래퍼가 하단 간격 담당(폴백 단일 입력의 marginBottom 중복 제거)
+  sectionLyricsWrap: {
+    marginBottom: 10,
+  },
+  sectionLyricsRawInput: {
+    marginBottom: 0,
   },
   // Lyrics input (step 0)
   lyricsInput: {

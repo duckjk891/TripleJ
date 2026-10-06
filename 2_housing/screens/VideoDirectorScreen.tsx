@@ -6,12 +6,16 @@
 // v3.209: ①배경 4번째 카드 「단색 배경」(center 전용) — 내부 solid 모드, API 는 bg=color&bgalpha=100 매핑,
 //   진하기 질문 생략 ②자막 테두리 신규 2단계 — 유무(기본 있음) → 테두리 색(팔레트 12색, 기본 검정).
 //   기본 조합(있음·검정)은 outlinecolor "" 정규화 — 레거시 캐시 적중.
+// v3.281 [59][52]: ①형식 카드에 길이 표기(전체 길이 / 15초 클립) + 결과 화면 길이 표시
+//   ②카톡(15초) 선택 시 'clipStart' 단계 — 시작점 슬라이더(1초)·[미리 듣기 15초]·[가사 시작]/[후렴] 칩.
+//   기본(가사 시작)은 clip_start 미전송 → 기존 캐시 키 그대로. 구 서버(clip-info 없음)는 기본만 노출.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
 } from 'react-native';
-import { Video, ResizeMode } from 'expo-av';
+import { Video, ResizeMode, Audio } from 'expo-av';
+import Slider from '@react-native-community/slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import { saveMediaToMaidolAlbum } from '../utils/nativeSave';
 import * as Sharing from 'expo-sharing';
@@ -51,6 +55,11 @@ import { failureBody, CHARGE_UNCONFIRMED_BODY, type GenJobSnapshot } from '../se
 import { fetchVideoJob, VIDEO_CAP_MS } from '../services/genJobs/video';
 import { useGenerationJobStore } from '../stores/generationJobStore';
 import { isVideoDraftResumable } from '../utils/directorResume';
+// v3.281 [52]: 15초 클립 구간 선택 — clip-info·클램프·시간 표기
+import { fetchVideoClipInfo, maxClipStart, clampClipStart, fmtSec, CLIP_SECONDS, type VideoClipInfo } from '../services/videoClip';
+import { savedTrackStreamUrl } from '../services/musicService';
+import { applyPlaybackAudioMode } from '../services/audioMode';
+import { usePlayerStore } from '../stores/playerStore';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -60,19 +69,24 @@ interface MyTrack {
 }
 
 type Step =
-  | 'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
+  | 'pick' | 'format' | 'clipStart' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
   | 'font' | 'fontStyle' | 'fontColor' | 'fontOutline' | 'outlineColor'
   | 'lyricsMode' | 'subPos' | 'making' | 'done';
 
 // user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
-interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
+// v3.281: clipStart — 'clipStart' 단계 답변에 고른 시작점(초, null=가사 시작 기본)을 함께 기록 →
+//   draft 복원 시에도 구간이 유지된다(musicStore 스키마 무변경 — chat 원소에 선택 필드로 실림).
+interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step; clipStart?: number | null }
 
-const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; ratioW: number; ratioH: number }[] = [
-  { key: 'sns', label: 'SNS용 세로', desc: '9:16 · 릴스/쇼츠/틱톡', ratioW: 36, ratioH: 64 },
-  { key: 'wide', label: '와이드 가로', desc: '16:9 · 유튜브/PC', ratioW: 64, ratioH: 36 },
-  // v3.248 B5(A-12): 15초의 의미(가사 시작부터 클립) 명시 — "왜 15초냐" 문의 선제 안내
-  { key: 'kakao', label: '카톡 프로필 배경', desc: '가사 시작부터 15초 클립 · 프로필 배경용', ratioW: 42, ratioH: 64 },
+// v3.281 [59]: 길이 차이(전체 vs 15초)를 카드 배지로 분리 표기 — "한 곡은 2:19, 한 곡은 15초" 혼란 방지
+const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; length: 'full' | 'clip'; ratioW: number; ratioH: number }[] = [
+  { key: 'sns', label: 'SNS용 세로', desc: '9:16 · 릴스/쇼츠/틱톡', length: 'full', ratioW: 36, ratioH: 64 },
+  { key: 'wide', label: '와이드 가로', desc: '16:9 · 유튜브/PC', length: 'full', ratioW: 64, ratioH: 36 },
+  // v3.248 B5(A-12) → v3.281 [52]: 15초 클립 · 시작 구간 직접 선택
+  { key: 'kakao', label: '카톡 프로필 배경', desc: '프로필 배경용 · 원하는 구간 선택', length: 'clip', ratioW: 42, ratioH: 64 },
 ];
+// 형식 질문 문구(선곡 직후·프리셋 진입 공용) — 길이 차이 선제 안내
+const FORMAT_QUESTION = '좋아요! 어떤 형태의 영상으로 만들까요?\nSNS 세로·와이드 가로는 곡 전체 길이로, 카톡 프로필 배경은 15초 클립으로 만들어져요.';
 
 const FONTS: { key: string; label: string }[] = [
   { key: 'basic', label: '기본 고딕' },
@@ -126,6 +140,11 @@ const logDupBlock = (reason: string, extra?: Record<string, unknown>) => {
 // v3.228 W0-2: 서버 상대 경로(/api/...) → 절대 URL
 const absVideoUrl = (p: string): string => (p.startsWith('http') ? p : `${BACKEND_BASE_URL}${p}`);
 const isVideoFormat = (f: unknown): f is 'sns' | 'wide' | 'kakao' => f === 'sns' || f === 'wide' || f === 'kakao';
+// v3.281: 결과(result/genResult)의 clip_start — number=지정 구간, null=가사 시작(기본), undefined=모름
+const clipStartOfResult = (r: any): number | null | undefined => {
+  if (!r || typeof r !== 'object' || !('clip_start' in r)) return undefined;
+  return typeof r.clip_start === 'number' ? r.clip_start : null;
+};
 
 type VideoTrackOutcome =
   | { kind: 'done'; videoUrl: string; format: string | null; serverJobId: string | null; result: any }
@@ -224,6 +243,30 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const [step, setStep] = useState<Step>(resumeDraft ? (resumeDraft.step as Step) : 'pick');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [madeFormat, setMadeFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
+  // v3.281 [52]: 15초 클립 시작점 — null = 가사 시작(기본, clip_start 미전송 → 기존 캐시 키).
+  // draft 복원 시 마지막 'clipStart' 답변 버블에 실린 값으로 복구.
+  const [pickedClipStart, setPickedClipStart] = useState<number | null>(() => {
+    const msgs = (resumeDraft?.chat as ChatMessage[] | undefined) ?? [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m.type === 'user' && m.step === 'clipStart') return typeof m.clipStart === 'number' ? m.clipStart : null;
+    }
+    return null;
+  });
+  const [clipInfo, setClipInfo] = useState<VideoClipInfo | null>(null);
+  const [clipInfoTrackId, setClipInfoTrackId] = useState<string | null>(null);
+  const [clipValue, setClipValue] = useState(0); // 슬라이더 현재값(초)
+  const [previewDurSec, setPreviewDurSec] = useState<number | null>(null); // clip-info duration 누락 시 보조
+  const [clipInfoLoading, setClipInfoLoading] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewSoundRef = useRef<Audio.Sound | null>(null);
+  const previewSoundTrackRef = useRef<string | null>(null);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewEndMsRef = useRef(0);
+  // 결과 화면 길이 표기 — 실제 영상 길이(onLoad)·구간 시작(undefined=모름, null=가사 시작 기본)
+  const [madeClipStart, setMadeClipStart] = useState<number | null | undefined>(undefined);
+  const [madeDurationSec, setMadeDurationSec] = useState<number | null>(null);
   // v3.219 [VideoDraft]: 복원 안내 버블(인라인 '처음부터' 액션) 노출 여부
   const [showResumeNotice, setShowResumeNotice] = useState(!!resumeDraft);
   // 스타일 선택값 — v3.219 [VideoDraft]: sticky 스타일이 있으면 기본값으로 복원
@@ -401,7 +444,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             } else {
               setSelected(preset);
               setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
-                { type: 'director', text: '좋아요! 어떤 형태의 영상으로 만들까요?' }]);
+                { type: 'director', text: FORMAT_QUESTION }]);
               setStep('format');
             }
             setLoadingTracks(false);
@@ -464,6 +507,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[VideoDraft] 처음부터 — draft 폐기·선곡부터');
     useMusicStore.getState().clearVideoDraft();
     setSelected(null);
+    setPickedClipStart(null);
     setVideoUrl(null);
     setChat([INITIAL_VIDEO_GREETING]);
     setStep('pick');
@@ -497,8 +541,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       return;
     }
     setSelected(t);
+    setPickedClipStart(null); // v3.281: 구간은 곡마다 새로
     pushUser(t.title, 'pick');
-    pushDirector('좋아요! 어떤 형태의 영상으로 만들까요?');
+    pushDirector(FORMAT_QUESTION);
     setStep('format');
   };
 
@@ -511,13 +556,162 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     if (!item || busyRef.current || step === 'making') return;
     console.info('[VideoDirector] 지난 영상 열기', { trackId: item.track_id, format: item.format ?? null });
     pushUser('지난번 만든 영상 보기', 'format');
-    showVideoDone(shareVideoObjectUrl(item.object_name), item.format);
+    // v3.281: object name `_t{0.1초}` 접미 = 사용자 지정 구간, 없으면 kakao 는 가사 시작(기본)
+    const tm = /_t(\d+)\.mp4$/.exec(item.object_name);
+    showVideoDone(
+      shareVideoObjectUrl(item.object_name), item.format,
+      item.format === 'kakao' ? (tm ? Number(tm[1]) / 10 : null) : undefined,
+    );
+  };
+
+  // ── v3.281 [52]: 15초 클립 구간 선택 ────────────────────────────────────────
+  // 선곡 시 clip-info 1회 조회(카드 길이 표기·구간 단계 공용). 실패·구 서버 = null → 기본(가사 시작)만.
+  const selectedId = selected?.id ?? null;
+  useEffect(() => {
+    setClipInfo(null);
+    setPreviewDurSec(null);
+    if (!selectedId) { setClipInfoLoading(false); return undefined; }
+    let alive = true;
+    setClipInfoLoading(true);
+    (async () => {
+      const info = await fetchVideoClipInfo(selectedId);
+      if (!alive) return;
+      setClipInfo(info);
+      setClipInfoLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [selectedId]);
+
+  const clipDuration: number | null = clipInfo?.duration ?? previewDurSec;
+  const clipSliderMax = maxClipStart(clipDuration);
+
+  // 슬라이더 초기값 — 이전 선택(롤백·복원) > 가사 시작 > 0
+  const clipInitRef = useRef<string | null>(null);
+  const initClipValue = useCallback(() => {
+    const base = pickedClipStart != null ? pickedClipStart : (clipInfo?.lyricStart ?? 0);
+    setClipValue(clipSliderMax > 0 ? clampClipStart(base, clipSliderMax) : 0);
+  }, [pickedClipStart, clipInfo, clipSliderMax]);
+  useEffect(() => {
+    // clip-info 가 단계 진입 뒤에 도착(복원·느린 망)하면 한 번만 초기화
+    if (step !== 'clipStart' || !clipInfo || !selectedId) return;
+    if (clipInitRef.current === selectedId) return;
+    clipInitRef.current = selectedId;
+    initClipValue();
+  }, [step, clipInfo, selectedId, initClipValue]);
+
+  const stopPreview = useCallback(async (why: string) => {
+    if (previewTimerRef.current) { clearTimeout(previewTimerRef.current); previewTimerRef.current = null; }
+    previewEndMsRef.current = 0;
+    const snd = previewSoundRef.current;
+    if (snd) { try { await snd.pauseAsync(); } catch { /* noop */ } }
+    setPreviewing(false);
+    if (__DEV__ && snd) console.info('[VideoDirector] 미리 듣기 정지', { why });
+  }, []);
+  const unloadPreview = useCallback(() => {
+    if (previewTimerRef.current) { clearTimeout(previewTimerRef.current); previewTimerRef.current = null; }
+    const snd = previewSoundRef.current;
+    previewSoundRef.current = null;
+    previewSoundTrackRef.current = null;
+    previewEndMsRef.current = 0;
+    if (snd) snd.unloadAsync().catch(() => {});
+    setPreviewing(false);
+  }, []);
+  // 단계 이탈 시 정지, 곡 변경·화면 이탈 시 해제
+  useEffect(() => { if (step !== 'clipStart') void stopPreview('step-leave'); }, [step, stopPreview]);
+  useEffect(() => () => unloadPreview(), [selectedId, unloadPreview]);
+
+  // [미리 듣기 15초] — 기존 스트림(stream-proxy, savedTrackStreamUrl) 재사용. 같은 곡이면 사운드 재사용.
+  const handlePreviewClip = async () => {
+    if (!selected) return;
+    if (previewing) { await stopPreview('toggle'); return; }
+    if (previewLoading) return;
+    const start = clipValue;
+    setPreviewLoading(true);
+    try {
+      // 전역 플레이어가 재생 중이면 일시정지 — 두 소리 겹침 방지
+      const ps = usePlayerStore.getState();
+      if (ps.sound && ps.isPlaying) {
+        try { await ps.sound.pauseAsync(); ps.setIsPlaying(false); } catch { /* noop */ }
+      }
+      let snd = previewSoundRef.current;
+      if (!snd || previewSoundTrackRef.current !== selected.id) {
+        if (snd) { try { await snd.unloadAsync(); } catch { /* noop */ } }
+        previewSoundRef.current = null;
+        const uri = await savedTrackStreamUrl(selected.id);
+        await applyPlaybackAudioMode();
+        const { sound, status } = await Audio.Sound.createAsync(
+          { uri }, { shouldPlay: false, progressUpdateIntervalMillis: 250 },
+          (st: any) => {
+            // 구간 끝(시작+15초) 도달 시 정지 — 버퍼링 지연에도 정확히 15초 구간만 들려준다
+            if (st?.isLoaded && previewEndMsRef.current > 0 && (st.positionMillis || 0) >= previewEndMsRef.current) {
+              void stopPreview('15s');
+            }
+          },
+        );
+        if (!mountedRef.current) { sound.unloadAsync().catch(() => {}); return; }
+        previewSoundRef.current = sound;
+        previewSoundTrackRef.current = selected.id;
+        snd = sound;
+        if (status.isLoaded && status.durationMillis) setPreviewDurSec(status.durationMillis / 1000);
+      }
+      await snd.setPositionAsync(Math.round(start * 1000));
+      previewEndMsRef.current = Math.round((start + CLIP_SECONDS) * 1000);
+      await snd.playAsync();
+      setPreviewing(true);
+      // 안전망 — 상태 콜백이 오지 않는 경우(웹 일부)에도 멈추도록 15초+여유
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = setTimeout(() => { void stopPreview('timer'); }, (CLIP_SECONDS + 3) * 1000);
+      if (__DEV__) console.info('[VideoDirector] 미리 듣기 15초', { trackId: selected.id, start });
+    } catch (err: any) {
+      console.error('[VideoDirector] 미리 듣기 실패', { trackId: selected.id, message: err?.message });
+      showAlert('미리 듣기 실패', '곡을 불러오지 못했어요. 잠시 후 다시 시도해주세요.');
+      setPreviewing(false);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const jumpClip = (sec: number, why: 'lyric' | 'chorus') => {
+    if (previewing) void stopPreview('jump');
+    const v = clipSliderMax > 0 ? clampClipStart(sec, clipSliderMax) : 0;
+    setClipValue(v);
+    if (__DEV__) console.info('[VideoDirector] 구간 이동', { why, sec: v });
+  };
+
+  // 구간 확정 — useDefault=true 또는 가사 시작점과 같은 값이면 null(clip_start 미전송 → 기존 캐시 재사용)
+  const handleConfirmClip = (useDefault: boolean) => {
+    if (!selected || step !== 'clipStart') return;
+    void stopPreview('confirm');
+    let cs: number | null = null;
+    if (!useDefault) {
+      cs = clampClipStart(clipValue, clipSliderMax > 0 ? clipSliderMax : clipValue);
+      const lyricStart = clipInfo?.lyricStart;
+      if (typeof lyricStart === 'number' && Math.abs(cs - lyricStart) < 0.05) cs = null;
+    }
+    setPickedClipStart(cs);
+    const label = cs == null ? '가사 시작부터 15초' : `${fmtSec(cs)} ~ ${fmtSec(cs + CLIP_SECONDS)} 구간`;
+    setShowResumeNotice(false);
+    setChat((p) => [...p, { type: 'user', text: label, step: 'clipStart', clipStart: cs }]);
+    if (__DEV__) console.info('[VideoDirector] 15초 구간 확정', { trackId: selected.id, clipStart: cs });
+    pushDirector('커버 이미지를 화면에 어떻게 넣을까요?');
+    setStep('layout');
   };
 
   const handlePickFormat = (fmt: 'sns' | 'wide' | 'kakao') => {
     if (!selected || step === 'making') return;
     setPickedFormat(fmt);
     pushUser(FORMATS.find((x) => x.key === fmt)!.label, 'format');
+    if (fmt === 'kakao') {
+      // v3.281 [52]: 15초 구간 시작점 선택 단계
+      clipInitRef.current = clipInfo ? selected.id : null;
+      if (clipInfo) initClipValue();
+      pushDirector(
+        '15초 클립은 어디서부터 자를까요?\n슬라이더로 시작 지점을 고르고 [미리 듣기]로 확인해보세요. 기본은 가사가 시작되는 부분이에요.'
+        + '\n(곡 전체를 받아서 카톡에서 직접 잘라 쓰고 싶다면 「SNS용 세로」로 만들어도 돼요.)'
+      );
+      setStep('clipStart');
+      return;
+    }
     pushDirector('커버 이미지를 화면에 어떻게 넣을까요?');
     setStep('layout');
   };
@@ -677,6 +871,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     fontoutline: pickedOutline ? '1' : '0',
     outlinecolor: pickedOutline && pickedOutlineColor !== '000000' ? pickedOutlineColor : '',
     subpos,
+    // v3.281 [52]: 카톡 15초 클립 + 사용자 지정 구간일 때만 — 미지정(가사 시작)은 키 자체를 빼서
+    // 기존 요청·캐시·과금 ref·시그니처와 바이트 동일 유지
+    ...(pickedFormat === 'kakao' && pickedClipStart != null ? { clip_start: pickedClipStart } : {}),
   });
 
   // v3.214 ⑤ 부수: 확인 팝업/게이트 취소 시 subPos 답변 버블 잔존 정리 — 마지막 user 버블 1개 제거
@@ -782,9 +979,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     return { kind: 'expired' };
   };
 
-  const showVideoDone = (url: string, format: string | null | undefined) => {
+  const showVideoDone = (url: string, format: string | null | undefined, clipStart?: number | null) => {
     setVideoUrl(url);
     if (isVideoFormat(format)) setMadeFormat(format);
+    setMadeClipStart(clipStart); // v3.281: 결과 길이 표기(undefined=모름)
+    setMadeDurationSec(null);
     pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
     setStep('done');
   };
@@ -809,7 +1008,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       }
       usePointsStore.getState().fetchBalance();
       refreshFatigue(); // v3.214 ⑨: 생성 완료 = 피로 적립(on_generation_completed) — 상태 재동기화
-      if (shown) showVideoDone(outcome.videoUrl, outcome.format ?? ctx.fallbackFormat);
+      if (shown) showVideoDone(outcome.videoUrl, outcome.format ?? ctx.fallbackFormat, clipStartOfResult(outcome.result));
       console.info('[GenJob:video] 결과 도착', { jobId: key, shown });
       return;
     }
@@ -846,7 +1045,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           costKey: 'share_video',
           cost: videoCost,
           action: '영상 만들기',
-          message: '같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요.',
+          message: pickedFormat === 'kakao'
+            ? '같은 곡·형식·스타일·구간을 이미 만들었다면 무료로 다시 받아요.'
+            : '같은 곡·형식·스타일을 이미 만들었다면 무료로 다시 받아요.',
         });
         if (!ok) { rollbackToSubPos(); return; }
       }
@@ -893,7 +1094,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         settleTracked(genKey, {
           kind: 'done', videoUrl: absVideoUrl(String(path)), format: fmt,
           serverJobId: ledger.genJobId,
-          result: { video_url: path, format: fmt, subtitles: res.data?.subtitles ?? null, track_id: track.id },
+          result: {
+            video_url: path, format: fmt, subtitles: res.data?.subtitles ?? null, track_id: track.id,
+            // v3.281: 서버 정규화값(구 서버는 키 없음 = clip_start 무시 → 가사 시작 기본)
+            clip_start: typeof res.data?.clip_start === 'number' ? res.data.clip_start : null,
+          },
         }, { sig, fallbackFormat: params.format, hasTrack: true });
       } catch (err: any) {
         const status = err?.response?.status;
@@ -998,7 +1203,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     const doneUrl = job.genResult?.video_url;
     if (job.lastStatus === 'done' && typeof doneUrl === 'string' && doneUrl) {
       setChat([INITIAL_VIDEO_GREETING]);
-      showVideoDone(absVideoUrl(doneUrl), fmt);
+      showVideoDone(absVideoUrl(doneUrl), fmt, clipStartOfResult(job.genResult));
       settleGenJob('video', key, 'done', { result: job.genResult }); // 사용자가 결과 화면을 연 순간 = 확인
       return;
     }
@@ -1187,6 +1392,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
 
   const handleAnotherTrack = () => {
     setSelected(null);
+    setPickedClipStart(null);
     setVideoUrl(null);
     pushDirector('다른 곡으로 만들어 볼까요? 곡을 골라주세요!');
     setStep('pick');
@@ -1194,13 +1400,32 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
 
   const coverUri = coverUriOf(selected);
 
-  const Card = ({ onPress, children, label, desc }: any) => (
+  const Card = ({ onPress, children, label, desc, badge }: any) => (
     <TouchableOpacity style={styles.formatCard} onPress={onPress} activeOpacity={0.8}>
       <View style={styles.ratioBoxWrap}>{children}</View>
       <AppText style={styles.formatLabel}>{label}</AppText>
+      {/* v3.281 [59]: 길이 배지 — 전체 길이 / 15초 클립 */}
+      {badge ? (
+        <View style={styles.lengthBadge}><AppText style={styles.lengthBadgeText}>{badge}</AppText></View>
+      ) : null}
       {desc ? <AppText style={styles.formatDesc}>{desc}</AppText> : null}
     </TouchableOpacity>
   );
+
+  // v3.281 [59]: 형식 카드 길이 배지 — 곡 길이를 알면 "전체 2:19"
+  const lengthBadgeOf = (len: 'full' | 'clip'): string =>
+    len === 'clip' ? '15초 클립' : clipDuration ? `곡 전체 ${fmtSec(clipDuration)}` : '곡 전체 길이';
+
+  // v3.281 [59]: 결과 화면 길이 표기
+  const resultLengthLabel = (): string => {
+    if (madeFormat === 'kakao') {
+      const range = typeof madeClipStart === 'number'
+        ? ` · ${fmtSec(madeClipStart)}~${fmtSec(madeClipStart + CLIP_SECONDS)} 구간`
+        : madeClipStart === null ? ' · 가사 시작부터' : '';
+      return `15초 클립${range}`;
+    }
+    return madeDurationSec ? `곡 전체 길이 · ${fmtSec(madeDurationSec)}` : '곡 전체 길이';
+  };
 
   return (
     <View style={styles.container}>
@@ -1271,7 +1496,21 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
               resizeMode={ResizeMode.CONTAIN}
               videoStyle={Platform.OS === 'web' ? ({ width: '100%', height: '100%', objectFit: 'contain' } as any) : undefined}
               onError={(e: any) => console.error('[VideoDirector] 미리보기 실패', { message: e?.message || String(e) })}
+              onLoad={(st: any) => {
+                // v3.281 [59]: 실제 영상 길이 — 결과 길이 표기
+                if (st?.isLoaded && st.durationMillis) setMadeDurationSec(st.durationMillis / 1000);
+              }}
             />
+            {/* v3.281 [59]: 결과 길이 표기 — 전체/15초 구분이 결과에서도 보이게 */}
+            <View style={styles.resultLengthRow}>
+              <Feather name="clock" size={12} color={colors.text.muted} />
+              <AppText style={styles.resultLengthText}>{resultLengthLabel()}</AppText>
+            </View>
+            {madeFormat === 'kakao' ? (
+              <AppText style={styles.resultLengthHint}>
+                곡 전체가 필요하면 [다른 형식으로] → 「SNS용 세로」를 골라주세요.
+              </AppText>
+            ) : null}
             {/* v3.182(대표): 기기 저장(사진 앨범) / 공유 — 서로 다른 기능이라 분리 */}
             <View style={{ flexDirection: 'row', gap: 8, width: 300, maxWidth: '100%' }}>
               <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={handleSaveToDevice} disabled={saving} activeOpacity={0.8}>
@@ -1333,12 +1572,79 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         {step === 'format' && (
           <View style={styles.formatRow}>
             {FORMATS.map((f) => (
-              <Card key={f.key} onPress={() => handlePickFormat(f.key)} label={f.label} desc={f.desc}>
+              <Card key={f.key} onPress={() => handlePickFormat(f.key)} label={f.label} desc={f.desc} badge={lengthBadgeOf(f.length)}>
                 <View style={[styles.ratioBox, { width: f.ratioW, height: f.ratioH }]}>
                   <Feather name="music" size={12} color={colors.accent.primary} />
                 </View>
               </Card>
             ))}
+          </View>
+        )}
+        {/* v3.281 [52]: 15초 클립 시작점 — 슬라이더(1초)·미리 듣기·가사 시작/후렴 칩 */}
+        {step === 'clipStart' && (
+          <View style={styles.clipBox}>
+            {clipInfoLoading ? (
+              <ActivityIndicator size="small" color={colors.accent.primary} />
+            ) : clipInfo && clipSliderMax > 0 ? (
+              <>
+                <AppText style={styles.clipRange}>
+                  {fmtSec(clipValue)} ~ {fmtSec(clipValue + CLIP_SECONDS)}
+                </AppText>
+                <Slider
+                  style={styles.clipSlider}
+                  minimumValue={0}
+                  maximumValue={clipSliderMax}
+                  step={1}
+                  value={clipValue}
+                  onValueChange={(v: number) => setClipValue(v)}
+                  onSlidingStart={() => { if (previewing) void stopPreview('slide'); }}
+                  minimumTrackTintColor={colors.accent.primary}
+                  maximumTrackTintColor={colors.border.subtle}
+                  thumbTintColor={colors.accent.primary}
+                  accessibilityLabel="15초 구간 시작 지점"
+                />
+                <View style={styles.clipTimeRow}>
+                  <AppText style={styles.clipTimeText}>0:00</AppText>
+                  <AppText style={styles.clipTimeText}>{fmtSec(clipDuration)}</AppText>
+                </View>
+                <View style={styles.clipChipRow}>
+                  <TouchableOpacity style={styles.clipChip} onPress={() => jumpClip(clipInfo.lyricStart, 'lyric')} activeOpacity={0.75}>
+                    <AppText style={styles.clipChipText}>가사 시작</AppText>
+                  </TouchableOpacity>
+                  {clipInfo.chorusStart != null ? (
+                    <TouchableOpacity style={styles.clipChip} onPress={() => jumpClip(clipInfo.chorusStart as number, 'chorus')} activeOpacity={0.75}>
+                      <AppText style={styles.clipChipText}>후렴부터</AppText>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={[styles.clipChip, styles.clipChipPreview]}
+                    onPress={handlePreviewClip}
+                    disabled={previewLoading}
+                    activeOpacity={0.75}
+                    accessibilityLabel={previewing ? '미리 듣기 정지' : '15초 미리 듣기'}
+                  >
+                    {previewLoading
+                      ? <ActivityIndicator size="small" color={colors.accent.primary} />
+                      : <Feather name={previewing ? 'pause' : 'play'} size={13} color={colors.accent.primary} />}
+                    <AppText style={styles.clipChipText}>{previewing ? '정지' : '미리 듣기 15초'}</AppText>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity style={styles.primaryBtn} onPress={() => handleConfirmClip(false)} activeOpacity={0.8}>
+                  <AppText style={styles.primaryBtnText}>이 구간으로 만들기</AppText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <AppText variant="footnote" tone="muted" center>
+                  {clipInfo
+                    ? '곡이 짧아서 구간을 고를 필요가 없어요. 가사가 시작되는 부분부터 만들어 드릴게요.'
+                    : '이 곡은 구간 정보를 불러오지 못했어요. 가사가 시작되는 부분부터 15초로 만들어 드릴게요.'}
+                </AppText>
+                <TouchableOpacity style={styles.primaryBtn} onPress={() => handleConfirmClip(true)} activeOpacity={0.8}>
+                  <AppText style={styles.primaryBtnText}>가사 시작부터 15초로 만들기</AppText>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         )}
         {step === 'layout' && (
@@ -1579,6 +1885,29 @@ const styles = StyleSheet.create({
   },
   formatLabel: { color: colors.text.primary, fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 4 },
   formatDesc: { color: colors.text.muted, fontSize: 10, marginTop: 2, textAlign: 'center' },
+  // v3.281 [59]: 형식 카드 길이 배지·결과 길이 표기
+  lengthBadge: {
+    marginTop: 4, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8,
+    backgroundColor: colors.accent.primary + '22',
+  },
+  lengthBadgeText: { color: colors.accent.primary, fontSize: 10, fontWeight: '700' },
+  resultLengthRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  resultLengthText: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  resultLengthHint: { color: colors.text.muted, fontSize: 11, marginTop: -4 },
+  // v3.281 [52]: 15초 구간 선택
+  clipBox: { gap: 8 },
+  clipRange: { color: colors.text.primary, fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  clipSlider: { width: '100%', height: 36 },
+  clipTimeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -6 },
+  clipTimeText: { color: colors.text.muted, fontSize: 11 },
+  clipChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  clipChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+    borderWidth: 1, borderColor: colors.accent.primary, backgroundColor: colors.bg.surface1,
+  },
+  clipChipPreview: { backgroundColor: colors.accent.primary + '18' },
+  clipChipText: { fontSize: 13, fontWeight: '600', color: colors.accent.primary },
   layoutFullDemo: { width: 36, height: 64, backgroundColor: colors.accent.primary + '55' },
   layoutCenterDemo: { width: 36, height: 64, justifyContent: 'center', alignItems: 'center' },
   layoutCenterInner: { width: 20, height: 20, borderRadius: 4, backgroundColor: colors.accent.primary + '88' },

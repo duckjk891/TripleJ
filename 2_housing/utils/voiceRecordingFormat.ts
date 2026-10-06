@@ -37,8 +37,14 @@ export function pickWebRecordingFormat(
   return null;
 }
 
-/** 서버 voice_clone.py 최소 샘플 길이(초) — 미만이면 422 "15초 이상의 명확한 보컬 음원" */
-export const MIN_SAMPLE_DURATION_S = 15;
+/**
+ * 서버 voice_clone.py 최소 샘플·구간 길이(초).
+ * v3.281: 15→30 — 실데이터(10-04) 클론 구간 18건 중 16건이 5~24초라 유사도가 낮았다(Suno 권장 1분 이상).
+ * 서버는 구간(끝-시작) 30초 미만을 400, 정규화 실패·5초 미만을 422 로 ⭐ 차감 전에 거절한다.
+ */
+export const MIN_SAMPLE_DURATION_S = 30;
+/** v3.281: 더 닮은 목소리를 위한 권장 길이(초) — 안내 문구용 */
+export const RECOMMENDED_SAMPLE_DURATION_S = 60;
 
 /**
  * 샘플 길이 부족 판정 — 길이를 아는 경우(녹음·프로브 성공)만 차단한다.
@@ -47,4 +53,13 @@ export const MIN_SAMPLE_DURATION_S = 15;
 export function isSampleTooShort(durationS: number | null | undefined): boolean {
   if (typeof durationS !== 'number' || !Number.isFinite(durationS) || durationS <= 0) return false;
   return durationS < MIN_SAMPLE_DURATION_S;
+}
+
+/**
+ * v3.281 — 보컬 구간(끝-시작) 길이 부족 판정. 서버 voice_clone.py MIN_VOCAL_SEGMENT_S(30초)와 동일 기준.
+ * 숫자가 아니거나 끝<=시작이면 false(그 경우는 호출부의 '구간 확인' 검증이 담당).
+ */
+export function isSegmentTooShort(startS: number, endS: number): boolean {
+  if (!Number.isFinite(startS) || !Number.isFinite(endS) || endS <= startS) return false;
+  return endS - startS < MIN_SAMPLE_DURATION_S;
 }

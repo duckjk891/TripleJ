@@ -8033,3 +8033,28 @@ tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2
 | 온보딩 | components/WelcomeGuide, TutorialOverlay, utils/bootAuth | 이미지형 웰컴(1회)·화면별 튜토리얼 전역 OFF | [WelcomeGuide] |
 | 유튜브 | server reference_link.py·main.py, MusicGenerationScreen·musicStore·musicService | 링크→oEmbed→스타일 힌트→reference_style | [RefLink] |
 | 피드백4 [54] | DmChatScreen | DM 사진 원본 뷰어 | [DmChat] |
+
+---
+
+## v3.281 — 2026-10-06 — 하이엔드 1번(목소리·구성별 가사·편곡) + 서버 압축 + 코디 보드 + 미처리 전건 (팀: MAIDOL-core)
+
+### 요청 원문
+"1번 우선 반영해주고 압축적용하고 입혀보기 적용하고 미처리건 모두 작업하자"
+- 1번 = 하이엔드 적용 순서(목소리 유사도 → 구성별 가사 편집 → 편곡), 목소리 설정 운영 반영 승인 포함.
+- 압축 = nginx gzip(JSON)+http2. 입혀보기 = 추천 1안 코디 보드. 미처리 = 피드백4 [56][57][58][59][61](+[52] 구간 선택). [53] 표절 신고는 대표 판단 사안(조치 보류).
+
+### Plan verification findings
+- 목소리: SUNO_VOICE_AUDIO_WEIGHT 스위치 존재·운영 미설정, 클론 구간 5~24초 다수, persona 곡 style 에 보컬 묘사 혼입(10-04 조사).
+- 가사: 최근 150건 전부 섹션 태그, 49% 후렴 반복, 듀엣 헤더·라벨 존재 → 왕복 불변 파서 필수.
+- 편곡: upload-cover(reference_audio_url+audioWeight+voice_persona) 경로 기존재 → create 경로 재사용으로 과금·원장·환불 동일.
+- 압축: nginx 1.24 — `http2 on` 미지원 → `listen 443 ssl http2`.
+
+### 변경 매트릭스(에이전트별 파일 소유권 — 충돌 방지)
+| 담당 | 서버 | 앱 | 추적자 |
+|---|---|---|---|
+| 작곡 품질(G·[56]·[57]) | suno_generator.py·voice_clone.py·lyrics_generator.py | VoiceCloneWizard·voiceRecordingFormat·lyricsPrompt | [suno]·[VoiceClone] |
+| 구성별 가사(D) | — | components/lyrics/SectionLyricsEditor·utils/lyricsSections·LyricsResult·MusicGeneration(가사 UI) | [SectionLyrics] |
+| 편곡 | routes/generate.py (/arrange) | MusicResultScreen·components/arrange·musicService | [Arrange] |
+| 아티스트([61]·[58]·코디 보드) | character*(필요 시) | Artist*·MyArtists·components/cody | [ArtistCody]/[ArtistResult] |
+| 영상([59]·[52]) | share_video.py·share-video 라우트 | VideoDirector·영상 컴포넌트 | [ShareVideo]/[VideoDirector] |
+| 오케스트레이터 | nginx gzip·http2 / .env 목소리 스위치 / 통합 배포·검증 | — | — |

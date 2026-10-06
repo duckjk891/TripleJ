@@ -24,6 +24,7 @@ import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 import {
   pickWebRecordingFormat,
   isSampleTooShort,
+  isSegmentTooShort,
   MIN_SAMPLE_DURATION_S,
   type WebRecordingFormat,
 } from '../utils/voiceRecordingFormat';
@@ -113,7 +114,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const [voiceSamples, setVoiceSamples] = useState<VoiceSample[]>([]);
   const [selectedSample, setSelectedSample] = useState<VoiceSample | null>(null);
   // v3.246 T1: 샘플 길이(초) — 녹음=타이머 실측, 업로드=미리듣기 로더 프로브(실패 시 null=서버 검증에 위임).
-  // 서버 최소 15초 미만을 ⭐ 확인 전에 차단(422 왕복·혼란 방지 — 차감은 서버도 검증 후라 이중 안전).
+  // 서버 최소 30초(v3.281) 미만을 ⭐ 확인 전에 차단(422 왕복·혼란 방지 — 차감은 서버도 검증 후라 이중 안전).
   const [sampleDurationS, setSampleDurationS] = useState<number | null>(null);
   const [vocalStartS, setVocalStartS] = useState('0');
   const [vocalEndS, setVocalEndS] = useState('60');
@@ -415,7 +416,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         if (target === 'sample') {
           setSampleSrc({ uri: file.uri, name: file.name });
           setSelectedSample(null); // v3.263 — 새 파일 선택 = 보관함 선택 해제
-          // v3.246 T1: 길이 프로브 — 15초 미만 조기 안내용(모르면 null=서버 검증 위임)
+          // v3.246 T1: 길이 프로브 — 최소 길이 미만 조기 안내용(모르면 null=서버 검증 위임)
           setSampleDurationS(null);
           probeAudioDurationS(file.uri).then((d) => {
             if (d != null) console.log('[VoiceCloneWizard] 샘플 길이 프로브:', Math.round(d), '초');
@@ -546,7 +547,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       showAlert('샘플이 너무 짧아요', `노래 샘플은 최소 ${MIN_SAMPLE_DURATION_S}초 이상이어야 해요.`);
       return;
     }
-    // v3.246 T1: 서버 최소 15초 — 길이를 아는 샘플은 ⭐ 확인 전에 차단(422 왕복 방지)
+    // v3.246 T1(v3.281 30초): 서버 최소 길이 — 길이를 아는 샘플은 ⭐ 확인 전에 차단(422 왕복 방지)
     if (!selectedSample && isSampleTooShort(sampleDurationS)) {
       showAlert(
         '샘플이 너무 짧아요',
@@ -558,6 +559,23 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     const endS = parseInt(vocalEndS, 10);
     if (!Number.isFinite(startS) || !Number.isFinite(endS) || startS < 0 || endS <= startS) {
       showAlert('구간 확인', '보컬 구간을 올바르게 입력해주세요.\n(끝 시각이 시작보다 커야 해요)');
+      return;
+    }
+    // v3.281: 서버 최소 구간 30초(400) — 구간 입력란으로 짧게 줄인 경우도 ⭐ 확인 전에 차단.
+    // 샘플 길이를 알면 서버와 같이 끝 시각을 샘플 길이로 잘라 실효 구간으로 판정한다.
+    const knownDurS =
+      selectedSample && selectedSample.duration_s > 0
+        ? selectedSample.duration_s
+        : !selectedSample && typeof sampleDurationS === 'number' && sampleDurationS > 0
+          ? sampleDurationS
+          : null;
+    const effEndS = knownDurS != null && startS < knownDurS ? Math.min(endS, Math.floor(knownDurS)) : endS;
+    if (isSegmentTooShort(startS, effEndS)) {
+      if (__DEV__) console.info('[VoiceCloneWizard] 구간 너무 짧음', { startS, endS, effEndS, knownDurS });
+      showAlert(
+        '구간이 너무 짧아요',
+        `보컬 구간은 최소 ${MIN_SAMPLE_DURATION_S}초 이상이어야 해요.\n(지금 구간은 약 ${Math.max(0, effEndS - startS)}초)\n반주 없이 노래로 1분 이상 녹음하면 더 닮은 목소리가 돼요.`
+      );
       return;
     }
     // v3.106: 비용 고지 confirm. v3.230 A5-3: 조건부(키 있을 때만) → 항상 확인(fail-closed) —
@@ -842,7 +860,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
             <View>
               <AppText style={styles.stepTitle}>노래 샘플 입력</AppText>
               <AppText style={styles.stepHint}>
-                최소 15초 ~ 2분 길이로 직접 부른 노래 음원이 필요해요. 잡음이 적을수록 결과가 좋아져요.
+                반주 없이 노래로 1분 이상 녹음하면 더 닮은 목소리가 돼요. (최소 {MIN_SAMPLE_DURATION_S}초 ~ 2분, 조용한 곳에서)
               </AppText>
 
               <AppText style={styles.fieldLabel}>목소리 이름 *</AppText>
@@ -903,7 +921,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
               <AppText style={styles.fieldLabel}>보컬 구간 (초) *</AppText>
               <AppText style={styles.stepHint}>
-                샘플에서 목소리가 잘 들리는 구간을 초 단위로 지정해주세요.
+                샘플에서 목소리가 잘 들리는 구간을 초 단위로 지정해주세요. (최소 {MIN_SAMPLE_DURATION_S}초, 1분 이상 권장)
               </AppText>
               <View style={styles.rangeRow}>
                 <View style={styles.rangeField}>

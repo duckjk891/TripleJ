@@ -16,17 +16,37 @@ interface Props {
   onJump: (cat: Cat) => void;
   /** v3.278: 칸의 × 버튼 = 그 카테고리 선택 해제 */
   onClear?: (cat: Cat) => void;
+  /** v3.281 [CodyBoard]: 있으면 요약 줄에 [보드로 보기]/[목록으로] 토글 */
+  onToggleBoard?: () => void;
+  boardOpen?: boolean;
 }
 
-export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJump, onClear }: Props) {
+export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJump, onClear, onToggleBoard, boardOpen }: Props) {
   const count = CATEGORIES.filter((c) => !!selected[c]).length;
   return (
     <View>
     {/* v3.278(대표): 내가 고른 옷이 잘 보이게 — 요약 줄 + 큰 썸네일·선택 강조·× 해제 */}
     <View style={s.summaryRow}>
       <AppText style={s.summaryText}>내가 고른 아이템 {count}/{CATEGORIES.length}</AppText>
-      <AppText style={s.summaryHint}>{count ? '× 로 해제 · 칸을 누르면 그 종류로 이동' : '아래에서 골라보세요'}</AppText>
+      {onToggleBoard ? (
+        <TouchableOpacity
+          style={s.boardBtn}
+          onPress={onToggleBoard}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityLabel={boardOpen ? '아이템 목록으로' : '코디 보드로 보기'}
+        >
+          <Feather name={boardOpen ? 'grid' : 'layout'} size={11} color={colors.accent.primary} />
+          <AppText style={s.boardBtnText}>{boardOpen ? '목록으로' : '보드로 보기'}</AppText>
+        </TouchableOpacity>
+      ) : (
+        <AppText style={s.summaryHint}>{count ? '× 로 해제 · 칸을 누르면 그 종류로 이동' : '아래에서 골라보세요'}</AppText>
+      )}
     </View>
+    {onToggleBoard ? (
+      <AppText style={[s.summaryHint, s.summaryHintLine]}>
+        {count ? '× 로 해제 · 칸을 누르면 그 종류로 이동' : '아래에서 골라보세요'}
+      </AppText>
+    ) : null}
     <View style={s.row}>
       {CATEGORIES.map((cat) => {
         const it = selected[cat];
@@ -91,6 +111,13 @@ const s = StyleSheet.create({
   },
   summaryText: { color: colors.text.primary, fontSize: 13, fontWeight: '800' },
   summaryHint: { color: colors.text.muted, fontSize: 10 },
+  summaryHintLine: { paddingHorizontal: 14, marginTop: 2 },
+  boardBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+    borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  boardBtnText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
   thumbSelected: { borderWidth: 2, borderColor: colors.accent.primary },
   clearBtn: {
     position: 'absolute', top: -4, right: '50%', marginRight: -34,

@@ -30,6 +30,7 @@ import { isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 // v3.227(D·E): 피커 모달은 components/cody/*, 타입·순수 함수는 utils/codyCatalog, 조회는 services/catalogService.
 import CodyPickerModal from '../components/cody/CodyPickerModal';
+import CodyBoard from '../components/cody/CodyBoard';
 import { getSampleItems } from '../components/cody/codyShared';
 import { getCatalog } from '../services/catalogService';
 import {
@@ -203,6 +204,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // 대상 있음(재생성·옷 갈아입히기)만 서버 성별. 죽은 apiResult.gender 폴백 제거(항상 비어 있음).
   const profileGender = useArtistProfileStore((s) => s.profiles[taskStore.characterKind]?.gender);
   const [serverGender, setServerGender] = useState<'남' | '여' | null>(null);
+  // v3.281 [CodyBoard]: 꾸미는 대상 아티스트 이름(보드 상단 "○○의 코디 보드" — 누구 옷인지 확인용)
+  const [targetName, setTargetName] = useState<string | null>(null);
   const isNewArtist = isSheetMode && !taskStore.targetCharacterId;
   // 초안 답은 같은 흐름(대상 없음) 초안일 때만 — 재생성 초안 답이 신규에 섞이지 않게
   const draftGender =
@@ -253,6 +256,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           characters.find((c) => !!normalizeArtistGender(c.gender));
         const g = normalizeArtistGender(pick?.gender);
         if (!cancelled) setServerGender(g);
+        // v3.281 [CodyBoard]: 대상(cid) 이름만 표기 — 대상 없는 폴백 pick(기본 캐릭터 등)의 이름은 쓰지 않는다
+        if (!cancelled) {
+          const target = targetId ? characters.find((c) => c.character_id === targetId) : undefined;
+          setTargetName(target?.name ? target.name : null);
+        }
         if (__DEV__) {
           console.info('[ArtistCody] 성별 자동 필터 — 서버 gender 폴백', {
             characterId: pick?.character_id ?? null,
@@ -861,6 +869,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
   const photoSource = hasArtistPhotoSource(taskStore);
 
+  // ── v3.281 [CodyBoard]: 코디 보드 "입혀보기" — 순수 UI ──────────────────────────
+  // 캐릭터 이미지 = 꾸미는 대상의 현재 시트(ArtistResult/커버 흐름이 completeApi 로 넣어 둔 미리보기 URL).
+  // 신규·다시 만들기(sheet 모드)는 아직 시트가 없거나 이전 아티스트 시트가 남아 있을 수 있어 실루엣으로 둔다
+  // (다른 캐릭터 얼굴을 보여주지 않기 — [61] 교훈).
+  const boardImageUrl = !isSheetMode ? apiResult?.preview_url || null : null;
+  const applyLabel = isSheetMode ? '이 옷으로 만들기' : '이 옷으로 입히기';
+  const [boardOpen, setBoardOpen] = useState(true);
+  const openPickerForSlot = (cat: Cat) => {
+    if (ACCESSORY_SUBCATS.includes(cat)) openAccessoryPicker(cat);
+    else openPicker(cat);
+  };
+
   return (
     <View style={styles.container}>
       <AppText style={[styles.title, { paddingTop: 12 }]}>
@@ -888,6 +908,34 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       ) : null}
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+        {/* v3.281 [CodyBoard]: 입혀보기 — 고른 아이템을 캐릭터 둘레 신체 위치에 배치(접기 가능) */}
+        <TouchableOpacity
+          style={styles.boardToggle}
+          onPress={() => {
+            console.info('[ArtistCody] 코디 보드 토글', { open: !boardOpen });
+            setBoardOpen((v) => !v);
+          }}
+          accessibilityLabel={boardOpen ? '코디 보드 접기' : '코디 보드 펼치기'}
+        >
+          <Feather name="layout" size={14} color={colors.accent.primary} />
+          <AppText style={styles.boardToggleText}>입혀보기 · 코디 보드</AppText>
+          <Feather name={boardOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.text.secondary} />
+        </TouchableOpacity>
+        {boardOpen ? (
+          <View style={styles.boardWrap}>
+            <CodyBoard
+              imageUrl={boardImageUrl}
+              characterLabel={!isSheetMode ? targetName : null}
+              selected={selected}
+              removedCats={removedCats}
+              staleIds={staleIds}
+              onPickSlot={openPickerForSlot}
+              onClear={clearItem}
+              applyLabel={applyLabel}
+            />
+          </View>
+        ) : null}
+
         <View style={styles.grid}>
           {GRID_BASIC_CATS.map((cat) => {
             const sel = selected[cat];
@@ -1112,6 +1160,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       {/* 카테고리별 아이템 선택 모달 — v3.227: components/cody/CodyPickerModal로 추출(동작 무변경) */}
       <CodyPickerModal
         onClearItem={clearItem}
+        board={{
+          imageUrl: boardImageUrl,
+          characterLabel: !isSheetMode ? targetName : null,
+          removedCats,
+          applyLabel,
+        }}
         pickerCat={pickerCat}
         accessoryMode={accessoryMode}
         pickerItems={pickerItems}
@@ -1138,6 +1192,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 }
 
 const styles = StyleSheet.create({
+  // v3.281 [CodyBoard]
+  boardToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 10, paddingHorizontal: 12, marginBottom: 10,
+    borderRadius: 12, backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  boardToggleText: { flex: 1, color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  boardWrap: { marginBottom: 16 },
   container: { flex: 1, backgroundColor: colors.bg.deepest },
   title: { color: colors.text.primary, fontSize: 18, fontWeight: '700', paddingHorizontal: 16 },
   subtitle: { color: colors.text.secondary, fontSize: 13, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },

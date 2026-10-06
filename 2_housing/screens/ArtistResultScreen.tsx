@@ -27,6 +27,7 @@ import {
   deleteArtist,
   artistSheetUrl,
   parseVoicePreset,
+  decideRealOutfitBase,
   type ServerArtist,
 } from '../services/characterService';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
@@ -469,6 +470,24 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     }, [user, slotParam, characterIdParam])
   );
 
+  // v3.281 [58]: 저장 완료 → 내 아티스트 목록으로 자동 이동(+ 목록 상단 1줄 안내).
+  // RN7 navigate 는 같은 이름 화면을 새로 쌓으므로, 스택에 목록이 있으면 popTo, 없으면(생성 직후 [Map, ArtistResult])
+  // replace — 목록의 ‹ 가 Map 으로 자연 복귀. 커버 복귀(outfit returnTo)는 finalize 단계에서 이미 분기되어 여기 오지 않는다.
+  const goMyArtistsAfterSave = (savedName: string | null, via: string) => {
+    const nameTrim = (savedName || '').trim();
+    const params = {
+      savedNotice: nameTrim
+        ? `'${nameTrim}' 저장 완료! 내 아티스트 목록에 담겼어요.`
+        : '아티스트를 저장했어요. 내 아티스트 목록에 담겼어요.',
+      savedAt: Date.now(),
+    };
+    const routes: any[] = navigation.getState?.()?.routes ?? [];
+    const inStack = routes.some((r) => r?.name === 'MyArtists');
+    console.info('[ArtistResult] 저장 완료 → 내 아티스트 목록', { via, inStack });
+    if (inStack) navigation.popTo('MyArtists', params);
+    else navigation.replace('MyArtists', params);
+  };
+
   const handleSave = async () => {
     if (!apiResult) return;
     setSaving(true);
@@ -498,19 +517,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         character_id: saveBody.character_id, kind: saveBody.kind,
       });
       await api.post('/character/save', saveBody);
-      showAlert('저장 완료', '아티스트 캐릭터를 저장했어요.', [
-        {
-          text: '확인',
-          onPress: () => {
-            taskStore.reset();
-            if (navigation.canGoBack()) {
-              navigation.popToTop();
-            } else {
-              navigation.navigate('Map');
-            }
-          },
-        },
-      ]);
+      // v3.281 [58]: 확인 팝업 대신 목록으로 바로 이동(목록 상단 1줄 안내)
+      taskStore.reset();
+      goMyArtistsAfterSave(serverArtist?.name || meeName || null, 'handleSave');
     } catch (err: any) {
       showAlert('오류', err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
@@ -564,6 +573,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       await api.post('/character/save', saveBody);
       if (__DEV__) console.info('[ArtistResult] 수동 재저장 완료');
       setManualSaved(true);
+      // v3.281 [58]: 생성 → 저장까지 끝나면 내 아티스트 목록으로 자동 이동
+      goMyArtistsAfterSave(serverArtist?.name || meeName || null, 'handleManualSave');
     } catch (err: any) {
       console.error('[ArtistResult] 수동 재저장 실패', {
         status: err?.response?.status, data: err?.response?.data, message: err?.message,
@@ -607,6 +618,26 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       return;
     }
     if (!apiResult) return;
+    if (serverArtist) {
+      // v3.281 [61] [ArtistOutfit]: 꾸미기 진입 전 얼굴 기준 판정 — 사진 없이 만든 실사 아티스트는
+      // 서버가 저장 시트 기준을 지원할 때만 진행(그 외엔 옷 고르기 전에 안내, ⭐ 요청 없음).
+      // 대상 cid·원본을 이 아티스트 것으로 고정 — 이전 대상/대표 아티스트 원본 캐시 잔존 차단.
+      const base = decideRealOutfitBase(serverArtist as any, useCharacterTaskStore.getState().originalPhotoObjectName);
+      console.info('[ArtistResult] 실사 꾸미기 진입 판정', {
+        characterId: serverArtist.character_id, base: base.kind, reason: base.kind === 'blocked' ? base.reason : null,
+      });
+      if (base.kind === 'blocked') {
+        showAlert('안내', base.message);
+        return;
+      }
+      useCharacterTaskStore.getState().setInput({
+        characterKind: 'real',
+        targetCharacterId: serverArtist.character_id,
+        originalPhotoObjectName: base.kind === 'original' ? base.objectName : null,
+      });
+      navigation.navigate('ArtistCody', { from: 'ArtistResult' });
+      return;
+    }
     // 실사 꾸미기: 가상 생성 잔존값(characterKind='virtual')이 outfit 분기를 오염시키지 않도록 정규화
     useCharacterTaskStore.getState().setInput({ characterKind: 'real' });
     // v3.248 B4(A-11): replace → navigate — 꾸미기 ←가 결과 화면으로 복귀(위 가상 분기와 동일 규약)

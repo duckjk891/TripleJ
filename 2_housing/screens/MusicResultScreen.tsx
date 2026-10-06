@@ -50,6 +50,21 @@ import {
   claimGuestCompose,
   setGuestComposeViewer,
 } from '../utils/guestTrial';
+// v3.281 편곡하기 — 완성 곡을 다른 장르·분위기로(서버 upload-cover, ⭐compose). 요청·오류는 기존 작곡 관행 재사용
+import ArrangeSheet, { ArrangeSelection } from '../components/arrange/ArrangeSheet';
+import { arrangeGeneration } from '../services/musicService';
+import { adoptCreationSession } from '../services/creationLogService';
+import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
+import { useIsChild } from '../utils/kidsMode';
+import { getPointCostSync } from '../services/pointCosts';
+import { confirmStarSpend } from '../utils/starSpendConfirm';
+import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { registerGenJob, adoptGenJob, guardGeneration, newRequestId } from '../services/generationTracker';
+import { parseGenInProgress } from '../services/genJobsService';
+import { CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
+import { MUSIC_TEXT } from '../services/genJobs/music';
+import type { FatigueStatus } from '../types';
 
 // v3.93: 2-variant 클립 비교 라벨 (버전 A/버전 B — Suno는 요청당 2클립 반환)
 const VARIANT_LABELS = ['버전 A', '버전 B', '버전 C', '버전 D'];
@@ -226,6 +241,12 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const pendingPlayRef = useRef(false); // variant 전환 직후 자동 재생 플래그
   // v3.104(B-5): 보관함에서 선택한 커버 — 미저장이면 발매 body cover_object_name으로 전송
   const [libraryCover, setLibraryCover] = useState<PickedCover | null>(null);
+  // v3.281 편곡하기 — 시트 열림·요청 중
+  const [arrangeOpen, setArrangeOpen] = useState(false);
+  const [arrangeBusy, setArrangeBusy] = useState(false);
+  const isChildAccount = useIsChild();
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
   const composerName = store.selectedModel === 'suno' ? 'Suno 작곡가' : 'Wondera 작곡가';
@@ -311,6 +332,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const effectiveSavedTrackId = effectiveSavedTrackIdOf(store);
   // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
   const showComparison = hasResult && variantCount > 1 && !isSaved && !effectiveSavedTrackId;
+  // v3.281 편곡하기 노출 — 로그인(비게스트)·비어린이·완성 곡(오류 없음). 게스트 체험 곡 화면은 claim 전이라 숨김
+  const showArrange =
+    !isGuest && !isChildAccount && !route.params?.guest && hasResult && !hasError && !!store.generationId;
 
   // Load audio
   useEffect(() => {
@@ -623,6 +647,121 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     // 남겨 다음 곡 결과 화면이 이전 발매곡을 재생·PUT하는 원인이었다(피드백 [13][16][24])
     store.beginNewGeneration();
     navigation.replace('MusicGeneration');
+  };
+
+  // ── v3.281 편곡하기 ──────────────────────────────────────────────────────────
+  // 서버 POST /generate/{id}/arrange 가 새 generation(201)을 만들면 기존 "이어보기" 폴링(MusicLoading
+  // resumeGenerationId)으로 이동 → 완료 시 MusicResult A/B 그대로. 게이트 응답(429 피로·409 진행 중·
+  // 402 잔액·응답 유실)은 MusicLoading 의 작곡 처리와 같은 문구 체계.
+  const openArrange = () => {
+    if (!store.generationId || arrangeBusy) return;
+    // 진행 중 작곡이 있으면 시트를 열기 전에 안내(서버 409 와 같은 결과 — 과금 전 차단)
+    if (guardGeneration('music', { navigation, where: 'MusicResult:arrange' })) return;
+    setArrangeOpen(true);
+  };
+
+  const runArrange = async (sel: ArrangeSelection) => {
+    const genId = store.generationId;
+    if (!genId) return;
+    setArrangeBusy(true);
+    const rid = newRequestId();
+    // 비교 중이면 고른 버전, 단일 플레이어(발매됨 등)면 서버가 발매 트랙의 버전으로 결정
+    const variantIndex = showComparison ? selectedVariant : undefined;
+    console.info('[Arrange] 시작', { genId, variantIndex: variantIndex ?? 'auto', genre: sel.genreKo, mood: sel.moodKo, keep: sel.keepMelody, hasStyle: !!sel.styleText });
+    try {
+      const doc = await arrangeGeneration(
+        genId,
+        { variantIndex, genreKo: sel.genreKo, moodKo: sel.moodKo, styleText: sel.styleText, keepMelody: sel.keepMelody },
+        { requestId: rid }
+      );
+      const newId = String(doc?.id || (doc as any)?.generation_id || '');
+      if (!newId) throw new Error('arrange: no generation id');
+      // 접수 즉시 전역 추적(이탈·재시작 후에도 작업실 알림으로 회수 — 작곡 201 관행)
+      registerGenJob({ kind: 'music', requestId: rid, serverJobId: newId, meta: { title: doc?.title ?? null } });
+      // 창작 기록: 원곡 세션의 남은 이벤트를 보낸 뒤 서버가 만든 파생 세션(부모=원곡 세션)으로 전환
+      await adoptCreationSession((doc as any)?.session_id || null);
+      // 결과 화면 상태를 새 곡으로 — 발매 귀속·가사·제목은 서버 문서 기준, 한글 장르/분위기·출처·스킵은 유지
+      const prev = useMusicStore.getState();
+      const prevGenre = prev.genre;
+      const prevMood = prev.mood;
+      const prevLyricsSource = prev.lyricsSource;
+      const prevSkip = prev.artistExplicitSkip;
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
+        setSound(null);
+      }
+      hydrateMusicStoresFromGeneration(doc);
+      const music = useMusicStore.getState();
+      music.setGenre(sel.genreKo || prevGenre || '');
+      music.setMood(sel.moodKo || (sel.genreKo ? '' : prevMood || ''));
+      music.setLyricsSource(prevLyricsSource);
+      music.setArtistExplicitSkip(prevSkip);
+      console.info('[Arrange] 접수 → 이어보기', { genId, newId });
+      setArrangeOpen(false);
+      navigation.replace('MusicLoading', { resumeGenerationId: newId });
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.warn('[Arrange] 실패', { genId, status: status ?? null, code: err?.response?.data?.code ?? null, message: err?.message });
+      if (!mountedRef.current) return;
+      if (isDirectorFatigued(err)) {
+        // 피로 429 — 과금 전 게이트. 휴식 단축 후 ⭐ 확인 1회 뒤 재시도(MusicLoading 관행)
+        const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+        let fatigueStatus: FatigueStatus | null = null;
+        try {
+          fatigueStatus = await getFatigueStatus();
+        } catch (statusErr: any) {
+          console.warn('[Arrange] [fatigue] 상태 조회 실패:', statusErr?.response?.status);
+        }
+        setArrangeOpen(false);
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+          cancelText: '닫기',
+          onCleared: async () => {
+            const ok = await confirmStarSpend({ source: 'MusicResult:arrange', costKey: 'compose', action: '편곡하기', variant: 'fatigue-chain' });
+            if (ok && mountedRef.current) void runArrange(sel);
+          },
+        });
+        return;
+      }
+      const busySnap = parseGenInProgress(err, 'music');
+      if (busySnap) {
+        adoptGenJob(busySnap); // 진행 중 곡을 추적기에 편입 — 완성되면 알림
+        setArrangeOpen(false);
+        showAlert(MUSIC_TEXT.busyTitle, MUSIC_TEXT.busyBody);
+        return;
+      }
+      if (status === 402) {
+        showAlert('스타 부족', err?.response?.data?.error || '스타(⭐)가 부족해요. 출석체크·추천으로 스타를 모아보세요.');
+        return;
+      }
+      if (!err?.response || (typeof status === 'number' && status >= 500)) {
+        // 응답 유실 — 실패로 단정하지 않고 요청 id로 추적(서버 원장 /jobs/req 회수 → 작업실 알림)
+        registerGenJob({ kind: 'music', requestId: rid, meta: { title: null } });
+        setArrangeOpen(false);
+        showAlert('편곡 요청 확인 중', `요청 결과를 바로 확인하지 못했어요. 접수됐다면 완성 시 알려드릴게요.\n${CHARGE_UNCONFIRMED_BODY}`);
+        return;
+      }
+      showAlert(
+        '편곡하지 못했어요',
+        err?.response?.data?.error || err?.response?.data?.detail || err?.message || '잠시 후 다시 시도해 주세요.'
+      );
+    } finally {
+      if (mountedRef.current) setArrangeBusy(false);
+    }
+  };
+
+  const handleArrangeSubmit = async (sel: ArrangeSelection) => {
+    if (arrangeBusy) return;
+    const ok = await confirmStarSpend({
+      source: 'MusicResult:arrange',
+      costKey: 'compose',
+      action: '편곡하기',
+      message: '가사와 목소리는 그대로, 새 장르·분위기의 곡을 만들어요.',
+    });
+    if (!ok) return;
+    await runArrange(sel);
   };
 
   const handleSave = async () => {
@@ -979,6 +1118,17 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
           </TouchableOpacity>
 
+          {/* v3.281 편곡하기 — 로그인 성인 사용자의 완성 곡(발매 여부 무관). 게스트·어린이 숨김 */}
+          {showArrange && (
+            <TouchableOpacity
+              style={[styles.regenerateButton, arrangeBusy && { opacity: 0.6 }]}
+              onPress={openArrange}
+              disabled={arrangeBusy}
+            >
+              <AppText style={styles.regenerateButtonText}>편곡하기 · 다른 장르로</AppText>
+            </TouchableOpacity>
+          )}
+
           {hasResult && (
             <TouchableOpacity
               style={[styles.saveButton, (isSaving || isSaved) && { opacity: 0.6 }]}
@@ -1064,6 +1214,15 @@ export default function MusicResultScreen({ navigation, route }: Props) {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      {/* v3.281 편곡하기 시트 */}
+      <ArrangeSheet
+        visible={arrangeOpen}
+        currentGenre={store.genre || null}
+        cost={getPointCostSync('compose')}
+        busy={arrangeBusy}
+        onClose={() => { if (!arrangeBusy) setArrangeOpen(false); }}
+        onSubmit={(sel) => { void handleArrangeSubmit(sel); }}
+      />
     </View>
   );
 }

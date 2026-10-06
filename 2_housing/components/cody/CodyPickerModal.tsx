@@ -3,8 +3,8 @@
 //   (전체) 필터 바(보기 전환·대분류·성별/색상/가격/브랜드) + 브랜드 모아보기/펼쳐보기 그리드 · (위시) 위시 그리드.
 // 피커 state(카테고리·탭·보기/필터·성별 토글·아이템·로딩)와 open/pick/close/jump 핸들러는 화면이 소유하고
 // props로 받는다(피커를 닫아도 카테고리별 보기·필터 유지 — PLAN D). 여기서는 파생 계산만 한다.
-import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
-import { View, TouchableOpacity, Image, Modal, FlatList, ActivityIndicator } from 'react-native';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { View, TouchableOpacity, Image, Modal, FlatList, ActivityIndicator, ScrollView } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../ui';
@@ -34,6 +34,7 @@ import CodyPickerTabs from './CodyPickerTabs';
 import CodyFilterBar from './CodyFilterBar';
 import BrandGroupGrid from './BrandGroupGrid';
 import SelectedItemsStrip from './SelectedItemsStrip';
+import CodyBoard from './CodyBoard';
 import { adImageUrl, getSampleItems, pickerStyles as styles } from './codyShared';
 
 interface Props {
@@ -60,6 +61,13 @@ interface Props {
   onClearItem?: (cat: Cat) => void;
   handleWishToggle: (item: { id: string }) => void;
   openItemLink: (item: { id: string; product_url?: string }) => void;
+  /** v3.281 [CodyBoard]: 있으면 스트립에 [보드로 보기] — 모달 안에서 코디 보드로 전환 */
+  board?: {
+    imageUrl: string | null;
+    characterLabel?: string | null;
+    removedCats: Cat[];
+    applyLabel: string;
+  };
 }
 
 export default function CodyPickerModal({
@@ -84,8 +92,14 @@ export default function CodyPickerModal({
   onClearItem,
   handleWishToggle,
   openItemLink,
+  board,
 }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.281 [CodyBoard]: 모달 안 보드 보기 — 모달이 닫히면 목록 보기로 초기화
+  const [showBoard, setShowBoard] = useState(false);
+  useEffect(() => {
+    if (pickerCat === null) setShowBoard(false);
+  }, [pickerCat]);
   const wished = useWishlistStore((s) => s.wished);
   const wishBusy = useWishlistStore((s) => s.busy);
   const wishItemsAll = useWishlistStore((s) => s.items);
@@ -200,9 +214,40 @@ export default function CodyPickerModal({
             selected={selected}
             currentCat={pickerCat}
             staleIds={staleIds}
-            onJump={jumpToCategory}
+            onJump={(cat) => {
+              if (showBoard) setShowBoard(false);
+              jumpToCategory(cat);
+            }}
             onClear={onClearItem}
+            boardOpen={showBoard}
+            onToggleBoard={
+              board
+                ? () => {
+                    console.info('[ArtistCody] 피커 보드 토글', { open: !showBoard, category: pickerCat });
+                    setShowBoard((v) => !v);
+                  }
+                : undefined
+            }
           />
+          {showBoard && board ? (
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+              <CodyBoard
+                imageUrl={board.imageUrl}
+                characterLabel={board.characterLabel}
+                selected={selected}
+                removedCats={board.removedCats}
+                staleIds={staleIds}
+                onPickSlot={(cat) => {
+                  setShowBoard(false);
+                  jumpToCategory(cat);
+                }}
+                onClear={(cat) => onClearItem?.(cat)}
+                applyLabel={board.applyLabel}
+                maxWidth={340}
+              />
+            </ScrollView>
+          ) : (
+          <>
           <CodyPickerTabs
             pickerTab={pickerTab}
             setPickerTab={setPickerTab}
@@ -329,6 +374,8 @@ export default function CodyPickerModal({
                 contentContainerStyle={{ padding: 12 }}
               />
             )
+          )}
+          </>
           )}
         </View>
       </View>

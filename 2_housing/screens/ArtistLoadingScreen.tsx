@@ -14,7 +14,7 @@ import {
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../services/api';
-import { spendExtraSlot, parseGenerationInProgress } from '../services/characterService';
+import { spendExtraSlot, parseGenerationInProgress, resolveRealOutfitBase } from '../services/characterService';
 import { useCharacterTaskStore, takeCoverWardrobeReturn, type CharacterTaskMode } from '../stores/characterTaskStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
@@ -424,8 +424,36 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
             }
             form.append('use_saved_sheet', 'true');
             endpoint = '/character/generate-sheet-cartoon-async';
+          } else if (outfitCid) {
+            // v3.281 [61] [ArtistOutfit]: 신 계약 — 얼굴 기준은 대상 아티스트(outfitCid) 문서에서만 해석.
+            // (구: store 캐시 → /character/me 폴백이 대표 아티스트 원본을 다른 아티스트에 입혔다 — 10-04 제보)
+            const base = await resolveRealOutfitBase(outfitCid, taskStore.originalPhotoObjectName);
+            if (base.kind === 'blocked') {
+              console.warn('[ArtistLoading] outfit 차단(요청 전·무과금)', { characterId: outfitCid, reason: base.reason });
+              throw new Error(base.message);
+            }
+            // 서버(v3.281 스테이징)는 purpose=outfit 이면 대상 doc 원본과 대조(불일치 409)·원본 없으면 저장 시트 기준.
+            // 구서버(미지원)는 미지 Form 필드를 무시 — 앱이 대상 원본만 보내므로 그대로 안전.
+            if (base.kind === 'original') {
+              if (taskStore.originalPhotoObjectName !== base.objectName) {
+                taskStore.setInput({ originalPhotoObjectName: base.objectName }); // 잔존 캐시를 대상 원본으로 교정
+              }
+              const cap = await ensureServerCapability();
+              if (cap === 'no') {
+                console.info('[ArtistLoading] 구서버 — 원본 인증 다운로드 폴백');
+                await appendAuthImageToForm(form, 'file', base.objectName);
+              } else {
+                form.append('purpose', 'outfit');
+                form.append('original_object_name', base.objectName);
+              }
+            } else {
+              // 사진 없이 만든 실사 아티스트 — 저장 시트가 얼굴 기준(서버 saved_sheet_outfit 지원 시에만 도달)
+              form.append('purpose', 'outfit');
+              form.append('use_saved_sheet', 'true');
+            }
+            endpoint = '/character/generate-sheet-async';
           } else {
-            // 실사: originalPhotoObjectName 확보 (store 캐시 우선, 없으면 /me)
+            // 레거시(cid 없는 단일 문서 계정 — 실사 1명): originalPhotoObjectName 확보 (store 캐시 우선, 없으면 /me)
             let origObjectName = taskStore.originalPhotoObjectName;
             if (!origObjectName) {
               try {
@@ -648,7 +676,11 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           return;
         }
         let msg: string;
-        if (status === 402) {
+        if (status === 409 && err.response?.data?.error === 'original_owner_mismatch') {
+          // v3.281 [61]: 서버 가드 — 보낸 얼굴 원본이 대상 아티스트 것이 아님(⭐ 차감 전 거절)
+          console.warn('[ArtistLoading] 409 original_owner_mismatch — 대상 아티스트 원본 불일치(무과금)', { mode });
+          msg = err.response?.data?.message || '이 아티스트의 사진이 아니에요. 아티스트 화면에서 다시 시도해주세요.';
+        } else if (status === 402) {
           msg = `별이 부족해요. 캐릭터 시트 생성에는 ⭐${getPointCostSync('character')}개가 필요합니다.`;
         } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
           msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
