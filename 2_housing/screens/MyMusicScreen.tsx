@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
+import ReputationCard from '../components/ReputationCard';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -815,6 +816,9 @@ export default function MyMusicScreen({ navigation }: any) {
           )}
         </LinearGradient>
       </View>
+
+      {/* v3.297 [Reputation] 피드백 온도·배지 */}
+      {user?.id ? <ReputationCard userId={String(user.id)} style={{ marginHorizontal: 16, marginTop: 12 }} /> : null}
 
       {/* v3.117: 내 아티스트 요약 행 — 대표 아티스트 썸네일+이름(여러 명이면 '외 N명'),
           탭 시 작업실 > 내 아티스트(MyArtists)로. list 빈 배열이면 /me 레거시 폴백 표시. */}

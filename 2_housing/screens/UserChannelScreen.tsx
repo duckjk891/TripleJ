@@ -6,6 +6,7 @@
 // 계약: GET /artists/{id}, /follows/summary/{id}(+POST/DELETE), /artists/{id}/tracks, /artists/{id}/albums,
 //       /artists/{id}/characters(v237), /feeds/user/{id}?kind=feed|community
 import { useState, useEffect, useCallback } from 'react';
+import ReputationCard from '../components/ReputationCard';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { View, ScrollView, Image, TouchableOpacity, ActivityIndicator, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -278,6 +279,8 @@ export default function UserChannelScreen() {
             />
           </View>
         ) : null}
+        {/* v3.297 [Reputation] 피드백 온도·배지 */}
+        {authorId ? <ReputationCard userId={String(authorId)} style={{ marginTop: spacing.md, alignSelf: 'stretch' }} /> : null}
       </View>
 
       {/* 탭 바 — v3.159: 마이페이지와 동일 스타일 */}
