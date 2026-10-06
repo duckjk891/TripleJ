@@ -5452,3 +5452,24 @@ ssh maidol-ec2 'sudo docker logs --since 5m maidol-app 2>&1 | grep -E "Traceback
 - 차트 커버 126개 전부 썸네일(원본 0) **PASS**
 ### 미실행(로그인 필요 — 운영 크리덴셜 미입력 원칙) → 대표 확인 권장
 - 게스트 가사 완성 후 가입 → 가사 승계·보관함 저장, 작곡 디렉터 유튜브 링크 UI, DM 사진 뷰어, 꾸미기 금액 숨김.
+
+---
+## v3.284 — 작사 연출 태그화·Suno 안전장치 / 커버 미세조정 단계 로딩 (2026-10-06)
+### 서버 [unit] (운영 이미지 + 스테이징 파일 마운트, `--network none`, Suno httpx 목)
+- U1 [unit] Given 괄호 안 문자열 When cues_of Then whisper/echo/spoken/ad-lib/harmonize/falsetto·한국어(속삭이듯·천천히·웃으며)·조합("whisper, echo") → 태그 목록, (oh oh)·(사랑해)·(우산 아래의 속삭임)·(Hey)·빈 괄호 → None
+- U2 [unit] lift: 줄 앞/줄 끝/단독 줄/줄 중간/한 줄 두 괄호/태그 줄 불변/들여쓰기·CRLF 유지/연출 없으면 바이트 동일/빈 문자열
+- U3 [unit] is_cue_tag_line: [Whispered]·[Spoken Word, Echo] True / [Verse]·[Verse: whispered]·[Female Vocal]·[Male] False
+- U4 [unit] lyrics_shape_stats: 연출 태그 줄이 섹션·가사 줄을 늘리지 않음, 연출 태그 없는 가사는 구버전과 결과 동일(실데이터 전수)
+- U5 [unit] 실데이터 전수(최근 가사): ① 변환 후 연출 괄호 0 ② 비연출 괄호 개수 보존 ③ 가사 글자 보존(태그 줄 제거·연출 괄호 제거·공백 정규화 후 동일) ④ 연출 없는 가사 바이트 동일
+- U6 [unit] generate_music_suno(httpx 목, OLD vs NEW): 연출 없는 솔로 → body 완전 동일 / 연출 있는 솔로 → prompt 만 다름·`[Whispered]` 포함·`(whisper)` 없음·style 동일 / 듀엣+연출 → 듀엣 정규화와 변환 모두 적용 / 연주곡 불변 / 참고 음원(upload-cover) 경로도 적용 / leadin 결과(첫 [Intro]) 보존
+- U7 [unit] lift 예외 → 작곡 계속, 변환 전 텍스트 전송 + warning 로그
+- U8 [unit] 프롬프트: SOLO 에 괄호 연출 지시 예시 제거·금지 규칙 포함, DUET 규칙 10 포함, `_system_prompt_for` 카테고리 치환 정상
+### 서버 [api] (배포 후)
+- A1 [api] 헬스 200, 배포 md5 = 스테이징 md5, 기동 로그 에러 0
+- A2 [api] 실 작사 3회(테스트 계정 경로 아닌 서비스 함수 직접, 속삭임 유도 프롬프트) → 결과에 괄호 연출 0(태그 줄은 허용)
+### 앱 [unit]
+- F1 [unit] refineStepIndex: 0/14.9/15/44.9/45/84.9/85/300초 → 0,0,1,1,2,2,3,3 · 음수/NaN → 0
+- F2 [unit] tsc 통과
+### [e2e] (핵심 여정만 — 실행 환경 치환)
+- E1 [e2e] 실 작곡 1회(팀 테스트 계정 test4, ⭐15): `(whisper)` 줄·`[Whispered]` 줄 포함 가사 → 서버 로그 `inline_directions lifted=` · 완성 후 두 버전 타임라인 상태 ok · 자막 세그먼트에 "whisper"/태그 텍스트 없음
+- E2 [e2e] 웹 배포본: 번들 해시 일치 + 번들에 미세조정 단계 문구 포함(웹 빌드 실기 구동 불가 제약 — 화면 조작 E2E 는 대표 실사용 확인으로 이월, 사유 명시)

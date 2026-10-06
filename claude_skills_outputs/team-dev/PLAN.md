@@ -8058,3 +8058,37 @@ tsc 0 / 신규 Node 하니스(각 dev) / 회귀: v3239 t1(109), v3238 app1·app2
 | 아티스트([61]·[58]·코디 보드) | character*(필요 시) | Artist*·MyArtists·components/cody | [ArtistCody]/[ArtistResult] |
 | 영상([59]·[52]) | share_video.py·share-video 라우트 | VideoDirector·영상 컴포넌트 | [ShareVideo]/[VideoDirector] |
 | 오케스트레이터 | nginx gzip·http2 / .env 목소리 스위치 / 통합 배포·검증 | — | — |
+
+---
+## v3.284 — 작사 연출 지시 태그화 + Suno 전송 안전장치 / 커버 미세조정 1~4단계 로딩 (2026-10-06)
+### 요청 원문
+"1번은 진행하고 2번은 화질은 바꾸지말되. 진행사항이 이미지 생성할때와 같이 1~4번 로딩창이 나오면 좋겠어."
+(1번 = 작사 프롬프트의 괄호 연출 지시를 태그로 옮기고 Suno 전송 직전 안전장치 / 2번 = 커버 미세조정 — 화질 불변, 진행 표시만)
+
+### 팀 구성 치환
+Expo RN 앱(웹 빌드 배포) + FastAPI(EC2 도커). E2E 는 웹 빌드 실기 미구동 제약(Worklets 크래시·iOS 시뮬 없음 — 메모리 app-runtime-testing-limits) →
+앱은 tsc + 순수 로직 Node 하니스 + 배포본 번들 확인, 서버는 컨테이너 내부 실데이터 드라이런 + 배포 후 실 작곡 1건(테스트 계정)으로 치환.
+
+### Plan verification findings (0단계 — 현재 코드 사실)
+- 작사 시스템 프롬프트 `services/lyrics_generator.py` SYSTEM_PROMPT_SOLO `## PERFORMANCE HINTS` 가 `(whisper)`·`(spoken)`·`(echo)`·`(ad-lib)`·`(harmonize)`·`(falsetto)` 를 **가사 줄 안에 넣으라고 지시** — 괄호 연출의 출처. DUET 프롬프트엔 없음(규칙 9: 스타일 힌트 금지).
+- 실데이터(최근 가사 187건): 34건(18%)에 괄호 연출 56회 — whisper 24·echo 9·harmonize 9·spoken 7·ad-lib 5 등. 위치: 줄 앞 44·줄 끝 50·단독 줄 25. (oh oh)·(사랑해) 같은 실제 코러스 괄호도 다수 → 어휘 화이트리스트 완전 일치만 변환해야 함.
+- 자막 타임스탬프 = Suno get-timestamped-lyrics 의 alignedWords(=우리가 보낸 prompt 텍스트 기준) → `suno_timestamp_service._words_to_segments` 가 줄 단위 세그먼트화 → `share_video._filter_segments`/`_repair_timeline` 이 `[...]` 단독 줄을 태그로 제외. ⇒ **전송본에서 괄호를 태그 줄로 바꾸면 자막에서도 빠지고 정렬도 가사 단어만으로 이뤄짐.**
+- 전송 경로 `suno_generator.generate_music_suno`: `_ensure_lyrics_structure` → `_normalize_duet_lyrics_for_suno`(v3.283c) → `_ensure_leadin_intro` → body.prompt. 줄 단위 단독 태그(`[Female Vocal]`)는 v3.283c 실곡 검증으로 Suno 가 노래하지 않음 확인됨. doc.lyrics 는 불변 원칙.
+- `_ensure_leadin_intro` 는 첫 섹션 뒤 첫 비빈 줄이 태그면 '가사 없음'으로 판정 → 변환은 leadin **뒤**에 적용해야 오판 없음.
+- `lyrics_shape_stats` 는 `[X]` 단독 줄을 섹션 경계로 셈 → 새 `[Whispered]` 줄이 섹션 수를 부풀려 분량 상한 경고 오탐 → 연출 태그 줄은 섹션·가사 줄에서 제외 필요.
+- 커버 미세조정 `screens/CoverGenerationScreen.tsx` handleRefine: 결과 화면에서 `refining` 동안 이미지 위 스피너 오버레이 + 하단 문구만. 커버 생성 로딩(mode='loading')은 LOADING_STEPS 4단계 점(구상·색감·디자인·마무리, 3초 간격) UI. 재진입(회수) 진행 중 refine 은 mode='loading' + 생성용 4단계 문구를 그대로 씀.
+- 실측 소요(서버 로그 10-06): 미세조정 110·112·118·138·125초, 최초 생성 127초 — 2048 high 전체 재생성(누적 아님). 화질 불변 지시 → 단계 진행은 경과 시간 기반(약 2분 분포)으로 페이싱.
+- 아티스트 미세조정(ArtistLoadingScreen)은 이미 모드별 4단계 로딩 보유 → 범위 제외.
+
+### 변경 매트릭스
+| # | 파일 | 변경 | 로그 추적자 |
+|---|---|---|---|
+| B1 | app/services/lyrics_directions.py (신규) | 연출 어휘 맵·`lift_inline_directions(text)->(text,stats)`·`is_cue_tag_line(line)` 순수 함수 | 호출부 generation_id |
+| B2 | app/services/suno_generator.py | leadin 뒤 전송본에 lift 적용(실패 시 원문 전송), 주석 갱신 | `[suno] generation_id=… inline_directions lifted= lines=` |
+| B3 | app/services/lyrics_generator.py | SOLO PERFORMANCE HINTS → 줄 단위 연출 태그 규칙 + 괄호 연출 금지, DUET 규칙 추가, shape stats 가 연출 태그 줄 무시 | 기존 `[lyrics] shape` |
+| F1 | screens/CoverGenerationScreen.tsx | REFINE_STEPS(4단계)·경과 기반 단계 계산·결과 이미지 위 단계 오버레이·회수 진입 refine 도 refine 단계 사용 | `[Cover] refine step` (DEV) |
+| F2 | utils/refineProgress.ts (신규) | 경과초→단계 인덱스 순수 함수(하니스 검증용) | — |
+
+### 리스크·회귀
+- 실제 코러스 괄호 변경 금지(화이트리스트 완전 일치), 듀엣 정규화·leadin 결과 불변(연출 없으면 바이트 동일), upload-cover 경로 동일 적용.
+- 커버 생성 로딩(3초 페이싱) 불변, 미세조정 비용·화질·요청 계약 불변.

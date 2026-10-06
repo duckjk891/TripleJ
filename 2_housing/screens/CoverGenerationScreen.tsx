@@ -58,6 +58,7 @@ import { useOutfitStore } from '../stores/outfitStore';
 import { finalizeArtistJob, type CoverReturnTarget } from '../services/generationTracker';
 // v3.229 [DirectorResume]: 보존 대화 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { isCoverPendingGeneration, hasCoverDialogueSnapshot, hasCoverUserProgress } from '../utils/directorResume';
+import { REFINE_STEPS, REFINE_TYPICAL_TEXT, refineStepIndex, type ProgressStep } from '../utils/refineProgress';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -595,6 +596,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     return () => { alive = false; };
   }, []);
   const [refining, setRefining] = useState(false);
+  // v3.284: 미세조정 1~4단계 진행 표시 — 시작 시각(⭐ 확인 뒤) 기준 경과로 단계 계산(utils/refineProgress)
+  const [refineStartedAt, setRefineStartedAt] = useState<number | null>(null);
+  // 회수 진입으로 로딩 화면에서 미세조정을 추적할 때 — 생성용 단계 대신 미세조정 단계를 보인다
+  const [loadingKind, setLoadingKind] = useState<'cover' | 'refine'>('cover');
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
+  const [progressNow, setProgressNow] = useState(() => Date.now());
   // v3.204(⑤): refine 이중 제출 봉인 — refining state는 ⭐ confirm await 대기 중의 재진입
   // (입력창 Enter·적용 버튼 재탭)을 못 막는다(setRefining이 confirm 뒤에 실행). 동기 ref 가드를
   // confirm await 전에 세우고 취소·완료·실패 모든 경로(finally)에서 해제한다.
@@ -738,6 +745,66 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     );
     return () => { pulse.stop(); clearInterval(msgInterval); };
   }, [mode]);
+
+  // v3.284: 미세조정 단계 진행 — 1초 틱(진행 중일 때만). 로딩 화면을 벗어나면 생성용 단계로 원복
+  const refineLoading = mode === 'loading' && loadingKind === 'refine';
+  useEffect(() => {
+    if (mode !== 'loading' && loadingKind !== 'cover') {
+      setLoadingKind('cover');
+      setLoadingStartedAt(null);
+    }
+  }, [mode, loadingKind]);
+  const refineTicking = (refining && refineStartedAt != null) || refineLoading;
+  useEffect(() => {
+    if (!refineTicking) return;
+    setProgressNow(Date.now());
+    const t = setInterval(() => setProgressNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [refineTicking]);
+  const refineStepIdx = refineStepIndex(
+    progressNow - ((refineLoading ? loadingStartedAt : refineStartedAt) ?? progressNow),
+  );
+  const refineStepLogRef = useRef(-1);
+  useEffect(() => {
+    if (!refineTicking) { refineStepLogRef.current = -1; return; }
+    if (refineStepLogRef.current === refineStepIdx) return;
+    refineStepLogRef.current = refineStepIdx;
+    if (__DEV__) console.info('[Cover] refine step', { step: refineStepIdx + 1, via: refineLoading ? 'recovery' : 'inline' });
+  }, [refineTicking, refineStepIdx, refineLoading]);
+
+  // 단계 점 줄(1~4) — 생성 로딩·미세조정 공용
+  const renderStepRow = (steps: ProgressStep[], activeIdx: number) => (
+    <View style={styles.stepRow}>
+      {steps.map((st, i) => {
+        const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
+        return (
+          <View key={st.label} style={styles.stepItem}>
+            <View
+              style={[
+                styles.stepDot,
+                state === 'active' && styles.stepDotActive,
+                state === 'done' && styles.stepDotDone,
+              ]}
+            >
+              <AppText style={styles.stepDotText}>
+                {state === 'done' ? '✓' : i + 1}
+              </AppText>
+            </View>
+            <AppText
+              style={[
+                styles.stepLabel,
+                state === 'active' && styles.stepLabelActive,
+                state === 'done' && styles.stepLabelDone,
+              ]}
+              numberOfLines={1}
+            >
+              {st.label}
+            </AppText>
+          </View>
+        );
+      })}
+    </View>
+  );
 
   // ── v3.228 W2: 화면 인스턴스·추적 뷰어 ──
   const tokenRef = useRef(0);
@@ -1114,6 +1181,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     console.info('[GenJob:cover] 회수 진입', { jobId: key, kind: job.kind, status: job.lastStatus });
     if (job.lastStatus === 'processing') {
       setMode('loading');
+      // v3.284: 미세조정 회수면 미세조정 단계(경과 = 접수 시각 기준)로 표시
+      setLoadingKind(job.kind === 'cover_refine' ? 'refine' : 'cover');
+      setLoadingStartedAt(job.kind === 'cover_refine' ? (job.startedAt || Date.now()) : null);
       setErrorMsg(null);
       setTrackNotice({
         text: job.kind === 'cover_refine' ? '요청하신 부분을 다듬는 중이에요' : '커버 이미지를 만들고 있어요',
@@ -2232,6 +2302,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       });
       if (!ok) return;
       setRefining(true);
+      setRefineStartedAt(Date.now());
       console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
       const t0 = Date.now();
       const baseVersion = currentVersion; // v3.204(⑤): 폴링 회수 판정 기준선 (요청 직전 버전)
@@ -2352,6 +2423,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         );
       } finally {
         setRefining(false);
+        setRefineStartedAt(null);
         if (viewerKeyRef.current === genKey) viewJob(null);
       }
     } finally {
@@ -2438,48 +2510,26 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </View>
           </Animated.View>
           {/* v3.202(I-lite): 네트워크 단절 복구 폴링 중에는 디렉터 대기 안내로 대체 */}
-          <AppText style={styles.loadingText}>{recoveryNotice ?? trackNotice?.text ?? LOADING_STEPS[loadingMsgIndex].message}</AppText>
+          {/* v3.284: 미세조정 회수 추적이면 미세조정 단계(경과 기반) */}
+          <AppText style={styles.loadingText}>
+            {recoveryNotice ?? (refineLoading
+              ? REFINE_STEPS[refineStepIdx].message
+              : trackNotice?.text ?? LOADING_STEPS[loadingMsgIndex].message)}
+          </AppText>
           <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
 
           {/* 스텝 인디케이터 */}
-          <View style={styles.stepRow}>
-            {LOADING_STEPS.map((s, i) => {
-              const state = i < loadingMsgIndex ? 'done' : i === loadingMsgIndex ? 'active' : 'pending';
-              return (
-                <View key={s.label} style={styles.stepItem}>
-                  <View
-                    style={[
-                      styles.stepDot,
-                      state === 'active' && styles.stepDotActive,
-                      state === 'done' && styles.stepDotDone,
-                    ]}
-                  >
-                    <AppText style={styles.stepDotText}>
-                      {state === 'done' ? '✓' : i + 1}
-                    </AppText>
-                  </View>
-                  <AppText
-                    style={[
-                      styles.stepLabel,
-                      state === 'active' && styles.stepLabelActive,
-                      state === 'done' && styles.stepLabelDone,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {s.label}
-                  </AppText>
-                </View>
-              );
-            })}
-          </View>
+          {refineLoading ? renderStepRow(REFINE_STEPS, refineStepIdx) : renderStepRow(LOADING_STEPS, loadingMsgIndex)}
 
           <View style={styles.loadingNote}>
             <AppText style={styles.loadingNoteText}>
               {recoveryNotice
                 ? '연결이 잠시 불안정했어요. 서버에서 완성된 이미지를 확인하고 있어요.\n추가 비용 없이 그대로 가져올게요.'
-                : trackNotice
-                  ? trackNotice.note
-                  : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
+                : refineLoading
+                  ? `이미지 디렉터가 커버 미세조정 ${refineStepIdx + 1}/${REFINE_STEPS.length} 단계를 진행 중이에요. ${REFINE_TYPICAL_TEXT}.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`
+                  : trackNotice
+                    ? trackNotice.note
+                    : `이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.`}
             </AppText>
           </View>
         </View>
@@ -2538,6 +2588,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               {refining && (
                 <View style={styles.refiningOverlay}>
                   <ActivityIndicator size="large" color={colors.accent.primary} />
+                  <AppText style={styles.refiningOverlayStep}>
+                    {refineStepIdx + 1}/{REFINE_STEPS.length}
+                  </AppText>
                 </View>
               )}
               {/* v3.89: 버전 히스토리 내비게이션 (◀ 버전 N ▶) */}
@@ -2578,7 +2631,19 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           )}
 
           {/* v3.89: 미세조정 입력 — 현재 버전을 보고 있을 때만 (refine은 서버 세션의 현재 커버 기반) */}
-          {canRefine && isViewingCurrent && (
+          {/* v3.284: 미세조정 진행 중 — 이미지 생성 로딩과 같은 1~4단계 진행 카드(입력창 대신) */}
+          {refining && !refinePollingNotice && (
+            <View style={styles.refineProgressBox}>
+              <AppText style={styles.refineTitle}>미세조정 진행 중</AppText>
+              <AppText style={styles.refineProgressText}>{REFINE_STEPS[refineStepIdx].message}</AppText>
+              {renderStepRow(REFINE_STEPS, refineStepIdx)}
+              <AppText style={styles.refineHint}>
+                {`이미지 디렉터가 ${refineStepIdx + 1}/${REFINE_STEPS.length} 단계를 진행 중이에요 · ${REFINE_TYPICAL_TEXT}\n다른 화면에 다녀와도 작업은 계속 진행돼요`}
+              </AppText>
+            </View>
+          )}
+
+          {canRefine && isViewingCurrent && !(refining && !refinePollingNotice) && (
             <View style={styles.refineBox}>
               <AppText style={styles.refineTitle}>미세조정</AppText>
               <View style={styles.inputRow}>
@@ -3009,6 +3074,13 @@ const styles = StyleSheet.create({
   },
   refineTitle: { color: colors.accent.primary, fontSize: 13, fontWeight: 'bold', marginBottom: 10 },
   refineHint: { color: colors.text.secondary, fontSize: 12, marginTop: 10, textAlign: 'center' },
+  // v3.284: 미세조정 진행 카드
+  refineProgressBox: {
+    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: colors.accent.primary, marginBottom: 24,
+  },
+  refineProgressText: { color: colors.text.primary, fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  refiningOverlayStep: { color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 8 },
   buttonContainer: { gap: 12 },
   regenerateButton: { backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
   regenerateButtonText: { color: colors.accent.primary, fontSize: 16, fontWeight: 'bold' },
