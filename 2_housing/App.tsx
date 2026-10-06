@@ -20,6 +20,7 @@ import { initRemoteLogger } from './utils/remoteLogger';
 initRemoteLogger();
 // 화면 사용 분석(관리자 대시보드 '사용 분석' — 화면별 체류시간·이탈률)
 import { initScreenAnalytics, trackScreen } from './utils/screenAnalytics';
+import { recordRoute } from './utils/routeHistory';
 initScreenAnalytics();
 // v3.227 A-보완: 생성 job 전역 추적기(화면과 무관한 폴링 — 하이드레이션·세션 복원 대기는 내부에서 처리)
 import { startGenerationTracker } from './services/generationTracker';
@@ -192,7 +193,8 @@ export type RootStackParamList = {
   MyReports: undefined;
   // v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역
   StarHistory: undefined;
-  // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
+  // prefill — 입력창 프리필(자동 전송 X). v3.247 클럽 삭제 요청 초안이 사용.
+  // v3.285: CS 오류신고 프리필(v3.95)은 폐지 — 오류 신고는 설정 IssueReportModal → POST /api/issues 전용 접수
   DmChat: { conversation: any; prefill?: string };
   // v3.252: 크루 채팅 풀스크린(자체 헤더 — DmChat 관행). isOwner 는 롱프레스 삭제 권한 판단용.
   ClubChat: { clubId: string; name?: string; isOwner?: boolean };
@@ -818,6 +820,8 @@ export default function App() {
     const name = navigationRef.getCurrentRoute()?.name;
     setCurrentRoute(name);
     trackScreen(name);
+    // v3.285: 최근 화면 동선 — 오류 신고(POST /api/issues) page_url·recent_pages 근거(라우트명만)
+    recordRoute(name);
     // v3.235 B5: Splash 이탈 첫 시점(컨테이너 ready + 라우트 ≠ Splash)에 대기 중인 링크 재생 소비
     tryConsumeTrackLink();
   };

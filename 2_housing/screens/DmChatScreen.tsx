@@ -101,7 +101,8 @@ export default function DmChatScreen() {
   const peer = conv?.peer || {};
   const [messages, setMessages] = useState<DmMessage[]>([]);
   const [loading, setLoading] = useState(true);
-  // v3.95(A-14): CS 오류신고 진입 시 "[오류신고: 사유] " 프리필(자동 전송 X — 사용자가 이어 작성)
+  // 입력창 프리필(자동 전송 X — 사용자가 이어 작성). v3.247 클럽 삭제 요청 초안이 사용.
+  // v3.285: CS 오류신고 프리필(v3.95)은 폐지 — 오류 신고는 설정 IssueReportModal → POST /api/issues
   const [text, setText] = useState<string>(route.params?.prefill ?? '');
   const [sending, setSending] = useState(false);
   // v3.207(⑥): 이미지 첨부 — 1장 첨부 → 업로드(상태 칩) → 전송 시 image_object_name 동봉
