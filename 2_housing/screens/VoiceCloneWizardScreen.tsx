@@ -42,6 +42,7 @@ import {
 // v3.254: 작곡 복귀 시 새 클론 자동 연결 — ArtistResultScreen v3.103(B-3)과 동일 계약
 // (PATCH persona_id=clone_id, ready 클론만).
 import { patchArtist } from '../services/characterService';
+import { friendlyVoiceFailure, friendlyVoiceApiError, isNoResponseError, VOICE_RETRY_HINT } from '../utils/voiceCloneErrors';
 
 // ── v3.83: Voice Clone 4단계 위저드 (MAIDOL VoiceCloneWizard.jsx 이식) ─────────
 // ① 노래 샘플(녹음/업로드) + 보컬 구간 + 이름 → POST /voice-clone/create
@@ -52,6 +53,9 @@ import { patchArtist } from '../services/characterService';
 // v3.254: route.params.returnTo==='compose'(+artistCharacterId) — 작곡 만료 다이얼로그의
 // '다시 학습하기' 진입. 학습 완료(ready) 시 새 클론을 해당 아티스트에 자동 연결하고
 // 앱 내 다이얼로그 안내 후 작곡 화면으로 복귀(goBack)한다.
+// v3.289: returnTo==='artist'(+artistCharacterId) — 아티스트 화면 '목소리 만들러 가기' 진입.
+// 생성 요청에 아티스트를 실어 보내 ready 시 서버가 자동 연결(화면 이탈해도 연결), 화면에 있으면
+// 완료 다이얼로그 후 아티스트 화면으로 복귀.
 
 type Props = NativeStackScreenProps<any, 'VoiceCloneWizard'>;
 
@@ -91,8 +95,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const resumeCloneId: string | undefined = (route.params as any)?.resumeCloneId;
   // v3.254: 작곡 만료 다이얼로그 '다시 학습하기' 진입 — 완료 시 자동 연결·작곡 복귀
-  const returnTo: 'compose' | undefined =
-    (route.params as any)?.returnTo === 'compose' ? 'compose' : undefined;
+  const returnTo: 'compose' | 'artist' | undefined =
+    (route.params as any)?.returnTo === 'compose' ? 'compose'
+      : (route.params as any)?.returnTo === 'artist' ? 'artist' : undefined;
   const composeArtistCid: string | null = (route.params as any)?.artistCharacterId ?? null;
   // v3.232 K14 [KidsGate]: 어린이 계정은 목소리 클로닝 진입 불가(진입점 숨김 — 방어). 성인은 false.
   const isChild = useIsChild();
@@ -280,10 +285,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           console.warn('[VoiceCloneWizard] 폴링 중 failed, clone_id=', cloneId, msg);
           setPhrasePolling(false);
           // v3.246 T1: failed 전이 = 서버가 ⭐ 원자 환불(voice_clone_service refund_clone_points) — 문구 고지
-          failBackToStep1(
-            '분석 실패',
-            `샘플 분석에 실패했어요.${msg && !/실패했어요/.test(msg) ? `\n(${msg})` : ''}\n사용한 ⭐은 자동 환불됐어요.\n음성 파일을 다시 등록해주세요.`
-          );
+          // v3.289 [VoiceMsg]: Suno 영문 원문 대신 재시도 안내(원문은 위 console.warn)
+          failBackToStep1('목소리 분석 실패', `${friendlyVoiceFailure(msg)}\n사용한 ⭐은 자동 환불됐어요.`);
           return;
         }
       } catch (err: any) {
@@ -291,7 +294,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       }
       if (tries >= POLL_MAX_TRIES) {
         setPhrasePolling(false);
-        failBackToStep1('응답 지연', '분석 응답이 오지 않았어요.\n음성 파일을 다시 등록해주세요.');
+        failBackToStep1('응답 지연', `목소리 분석 응답이 늦어지고 있어요.\n${VOICE_RETRY_HINT}`);
         return;
       }
       setTimeout(tick, POLL_INTERVAL_MS);
@@ -331,11 +334,10 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           const expired = clone.status === 'expired' || /expired|만료/i.test(raw);
           // v3.246 T1: 환불은 failed 전이에서만(서버 refund_clone_points — 만료는 무환불 정책)
           const refundNote = clone.status === 'failed' ? '\n사용한 ⭐은 자동 환불됐어요.' : '';
+          // v3.289 [VoiceMsg]: 원문(raw) 비노출 — 사유별 안내 + 재시도 권유
           failBackToStep1(
-            expired ? '인증 문구 만료' : '학습 실패',
-            (expired
-              ? '인증 문구가 만료됐어요.\n처음부터 다시 진행해주세요.'
-              : `목소리 학습에 실패했어요.\n처음부터 다시 진행해주세요.${raw ? `\n(${raw})` : ''}`) + refundNote
+            expired ? '인증 문구 만료' : '목소리 학습 실패',
+            friendlyVoiceFailure(expired ? 'phrase expired' : raw) + refundNote
           );
           return;
         }
@@ -619,6 +621,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         vocalStartS: startS,
         vocalEndS: endS,
         styleMode,
+        // v3.289: 아티스트/작곡 화면에서 시작한 학습 — ready 시 서버가 이 아티스트에 자동 연결
+        artistCharacterId: composeArtistCid,
       });
       if (!res.clone_id) throw new Error('clone_id missing in response');
       setCloneId(res.clone_id);
@@ -635,7 +639,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         usePointsStore.getState().fetchBalance();
         showAlert('⭐이 부족해요', `클로닝을 시작할 ⭐이 부족해요.${voiceCloneCost != null ? `\n(필요: ⭐${voiceCloneCost})` : ''}`);
       } else {
-        showAlert('만들기 시작 실패', `샘플 등록에 실패했어요.\n${detail}`);
+        showAlert('목소리 분석 시작 실패', friendlyVoiceApiError(err, '목소리 분석을 시작하지 못했어요.'));
       }
     } finally {
       setBusy(false);
@@ -654,7 +658,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       const detail =
         err?.response?.data?.detail || err?.response?.data?.error || err?.message || '알 수 없는 오류';
       console.error('[VoiceCloneWizard] regenerate-phrase 실패:', cloneId, detail);
-      showAlert('문구 요청 실패', `새 문구 요청에 실패했어요.\n${detail}`);
+      showAlert('문구 요청 실패', friendlyVoiceApiError(err, '새 문구를 받지 못했어요.'));
     }
   };
 
@@ -683,7 +687,22 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       const detail =
         err?.response?.data?.detail || err?.response?.data?.error || err?.message || '알 수 없는 오류';
       console.error('[VoiceCloneWizard] step3 실패:', cloneId, err?.response?.status, detail);
-      showAlert('검증 제출 실패', `검증 녹음 제출에 실패했어요.\n${detail}`);
+      // v3.289 [VoiceMsg]: 응답만 못 받은 경우 서버는 이미 처리했을 수 있다(10-06 실측: 앱 Network Error
+      // 직후 서버 200·학습 완료) — 상태 재확인 후 진행 중/완료면 실패 안내 없이 4단계로.
+      if (isNoResponseError(err)) {
+        try {
+          const clone = await getVoiceClone(cloneId);
+          console.info('[VoiceMsg] verify 응답 유실 — 상태 재확인', { cloneId, status: clone.status });
+          if (clone.status === 'generating' || clone.status === 'ready') {
+            setGenStatus(clone.status === 'ready' ? 'ready' : 'generating');
+            setStep(4);
+            return;
+          }
+        } catch (e2: any) {
+          console.error('[VoiceMsg] verify 상태 재확인 실패', { cloneId, status: e2?.response?.status, msg: e2?.message });
+        }
+      }
+      showAlert('검증 녹음 확인 실패', friendlyVoiceApiError(err, '검증 녹음을 확인하지 못했어요.'));
     } finally {
       setBusy(false);
     }
@@ -703,7 +722,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const composeReturnRanRef = useRef(false);
   const goBackToCompose = () => {
     if (navigation.canGoBack()) navigation.goBack();
-    else navigation.navigate('MusicGeneration' as any);
+    else navigation.navigate((returnTo === 'artist' ? 'MyArtists' : 'MusicGeneration') as any);
   };
   const handleComposeReturn = async () => {
     if (composeReturnRanRef.current) {
@@ -729,17 +748,19 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       console.warn('[Voice] compose 복귀 — 연결 대상 없음(연결 생략)', { cid: composeArtistCid, cloneId });
     }
     useVoiceStore.getState().fetchClones();
+    const backLabel = returnTo === 'artist' ? '아티스트 화면으로 돌아갈게요.' : '작곡하던 화면으로 돌아갈게요.';
+    const linkedLine = connected ? `"${voiceName || '내 목소리'}" 목소리를 아티스트에 연결했어요.\n` : '';
     showAlert(
       '목소리 준비 완료',
       connected || !canConnect
-        ? '작곡하던 화면으로 돌아갈게요.'
-        : '작곡하던 화면으로 돌아갈게요.\n아티스트 연결은 실패했어요 — 아티스트 화면에서 목소리를 다시 연결해주세요.',
+        ? `${linkedLine}${backLabel}`
+        : `${backLabel}\n아티스트 연결은 실패했어요 — 아티스트 화면에서 목소리를 다시 연결해주세요.`,
       [{ text: '확인', onPress: goBackToCompose }]
     );
   };
   // 학습 완료(ready) 도달 시 자동 실행 — resume로 곧장 ready에 진입한 경우 포함
   useEffect(() => {
-    if (returnTo !== 'compose' || step !== 4 || genStatus !== 'ready') return;
+    if (!returnTo || step !== 4 || genStatus !== 'ready') return;
     if (composeReturnRanRef.current) return;
     void handleComposeReturn();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1091,6 +1112,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                     {genSlow && (
                       <AppText style={[styles.doneDesc, { marginTop: 10 }]}>
                         조금 오래 걸리고 있어요. 이 화면을 나가면 목소리 목록에서 이어서 확인할 수 있어요.
+                        {composeArtistCid ? ' 완성되면 아티스트에 자동으로 연결돼요.' : ''}
                       </AppText>
                     )}
                   </>
@@ -1098,10 +1120,10 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
               </View>
               {/* v3.254: 작곡 복귀 진입이면 [목록으로] 대신 — ready에서만 복귀 버튼
                   (자동 다이얼로그의 보조 경로), 학습 중에는 버튼 없음(이탈=헤더 뒤로가기). */}
-              {returnTo === 'compose' ? (
+              {returnTo ? (
                 genStatus === 'ready' && (
                   <TouchableOpacity style={styles.primaryBtn} onPress={() => void handleComposeReturn()}>
-                    <AppText style={styles.primaryBtnText}>작곡으로 돌아가기</AppText>
+                    <AppText style={styles.primaryBtnText}>{returnTo === 'artist' ? '아티스트로 돌아가기' : '작곡으로 돌아가기'}</AppText>
                   </TouchableOpacity>
                 )
               ) : (

@@ -733,6 +733,16 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     });
   };
 
+  // v3.289 [VoiceLink]: 새 목소리 만들기 — 이 아티스트를 실어 위저드로 직행. 완성(ready) 시
+  // 서버가 이 아티스트에 자동 연결(화면을 떠나도), 위저드에 있으면 완료 후 이 화면으로 복귀.
+  // (종전: VoiceManage 경유 → 거기서 고르면 로컬 설정만 바뀌어 아티스트에 미반영, 다시 연결해야 했음)
+  const goCreateVoiceForArtist = () => {
+    setVoicePickerVisible(false);
+    const cid = serverArtist?.character_id;
+    console.info('[VoiceLink] 아티스트에서 새 목소리 만들기', { cid: cid ?? null });
+    navigation.navigate('VoiceCloneWizard' as any, cid ? { returnTo: 'artist', artistCharacterId: cid } : undefined);
+  };
+
   // ── v3.103(B-3): 목소리 연결/변경/해제 — PATCH persona_id ───────────────────
   // persona_id에는 클론의 clone_id를 넣는다(ready 클론만 — 서버 400 가드).
   // 서버가 persona_name/persona_voice_id를 조립하며, 곡 생성 주입은 persona_voice_id(기존 방식 유지).
@@ -1447,10 +1457,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 </AppText>
                 <TouchableOpacity
                   style={styles.pickerGoBtn}
-                  onPress={() => {
-                    setVoicePickerVisible(false);
-                    navigation.navigate('VoiceManage');
-                  }}
+                  onPress={goCreateVoiceForArtist}
                   activeOpacity={0.7}
                 >
                   <AppText style={styles.pickerGoBtnText}>목소리 만들러 가기</AppText>
@@ -1480,6 +1487,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                     </TouchableOpacity>
                   );
                 })}
+                {/* v3.289: 목소리가 이미 있어도 이 아티스트용 새 목소리를 바로 만들 수 있게 */}
+                <TouchableOpacity style={styles.pickerRow} onPress={goCreateVoiceForArtist} activeOpacity={0.7}>
+                  <AppText style={styles.pickerRowName}>
+                    ＋ 새 목소리 만들기 (⭐{getPointCostSync('voice_clone')})
+                  </AppText>
+                </TouchableOpacity>
               </ScrollView>
             )}
             <TouchableOpacity

@@ -142,6 +142,8 @@ export const createVoiceClone = async (params: {
   vocalEndS: number;
   language?: string;
   styleMode?: string; // sing | speak | rap (서버 ALLOWED_STYLE_MODES)
+  /** v3.289 — 아티스트 화면에서 시작한 학습: 완성(ready) 시 서버가 이 아티스트에 자동 연결 */
+  artistCharacterId?: string | null;
 }): Promise<{ clone_id: string; validate_task_id?: string; status?: string }> => {
   const formData = new FormData();
   if (params.sampleObjectName) {
@@ -157,6 +159,7 @@ export const createVoiceClone = async (params: {
   formData.append('vocal_end_s', String(params.vocalEndS));
   formData.append('language', params.language ?? 'ko');
   formData.append('style_mode', params.styleMode ?? 'sing');
+  if (params.artistCharacterId) formData.append('artist_character_id', params.artistCharacterId);
 
   if (__DEV__) {
     console.log('[voiceService] createVoiceClone 요청:', {
@@ -166,6 +169,7 @@ export const createVoiceClone = async (params: {
       vocalStartS: params.vocalStartS,
       vocalEndS: params.vocalEndS,
       styleMode: params.styleMode ?? 'sing',
+      artistCharacterId: params.artistCharacterId ?? null,
     });
   }
   try {
