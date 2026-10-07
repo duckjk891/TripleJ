@@ -370,24 +370,7 @@ export default function ChartScreen() {
         </ScrollView>
       </View>
 
-      {/* v3.230 A6: 차트 기준 안내(TOP100·일간·주간·월간) — 앱 내 팝업 */}
-      {isChartCriteriaTab(activeTab) ? (
-        <View style={styles.criteriaBar}>
-          <TouchableOpacity
-            style={styles.criteriaBtn}
-            onPress={() => {
-              console.info('[Chart] 차트 기준 안내 열기', { tab: activeTab });
-              const { title, message } = chartCriteriaText(activeTab);
-              showAlert(title, message);
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="차트 기준 안내"
-          >
-            <Feather name="info" size={13} color={colors.text.muted} />
-            <AppText variant="caption" tone="muted">차트 기준</AppText>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+      {/* v3.303: 차트 기준 안내는 전체 담기와 한 줄(목록 머리)로 이동 — 왼쪽 차트 기준 · 오른쪽 전체 담기 */}
 
       {(() => {
         const isQueue = activeTab === 'queue';
@@ -447,6 +430,22 @@ export default function ChartScreen() {
                     <>
                       {latestAlbumsHeader}
                       <View style={styles.addAllRow}>
+                        {/* v3.303 (대표 10-07): 왼쪽 차트 기준(TOP100·일간·주간·월간만) · 오른쪽 전체 담기 — 한 줄 */}
+                        {isChartCriteriaTab(activeTab) ? (
+                          <TouchableOpacity
+                            style={styles.criteriaBtn}
+                            onPress={() => {
+                              console.info('[Chart] 차트 기준 안내 열기', { tab: activeTab });
+                              const { title, message } = chartCriteriaText(activeTab);
+                              showAlert(title, message);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel="차트 기준 안내"
+                          >
+                            <Feather name="info" size={13} color={colors.text.muted} />
+                            <AppText variant="caption" tone="muted">차트 기준</AppText>
+                          </TouchableOpacity>
+                        ) : <View />}
                         <TouchableOpacity
                           style={styles.addAllBtn}
                           onPress={handleAddAllToQueue}
@@ -506,7 +505,6 @@ const styles = StyleSheet.create({
   chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
   chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   // v3.230 A6: 차트 기준 안내 진입(우측 작은 텍스트 버튼)
-  criteriaBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   criteriaBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2 },
   spinner: { marginTop: spacing.huge },
   // v3.96(A-20): 최신 앨범 섹션 — UserChannelScreen 앨범 카드와 동일 규격(120px)
@@ -524,7 +522,7 @@ const styles = StyleSheet.create({
   albumCoverImg: { width: '100%', height: '100%' },
   // v3.286 [ChartAddAll]
   addAllRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
