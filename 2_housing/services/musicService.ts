@@ -6,7 +6,10 @@ import {
   ensureCreationSession,
   commitLyricsVersion,
   getLastLyricsVersionId,
+  logCreationEvent,
+  flushCreationEvents,
 } from './creationLogService';
+import { buildComposeDirection } from '../utils/creationDirection';
 // v3.228 W1: 작곡 요청 추적 헤더(X-Gen-Request-Id)
 import { genRequestHeaders } from './genJobsService';
 import {
@@ -306,6 +309,11 @@ export const buildSunoGenerateBody = async (
   if (!opts.guest) {
     try {
       creationSessionId = await ensureCreationSession();
+      // v3.302 [CopyrightLog]: 작곡 디렉터에서 사람이 고른 값(장르·보컬·참고 등) — GEN_REQUEST 보다 먼저 기록
+      if (creationSessionId) {
+        logCreationEvent('DIRECTION', buildComposeDirection(params as any));
+        await flushCreationEvents();
+      }
       if (creationSessionId && (params.lyrics || '').trim()) {
         lyricsVersionId = await commitLyricsVersion('user_edit', params.lyrics || '');
       }

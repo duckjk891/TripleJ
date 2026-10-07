@@ -115,9 +115,10 @@ const STEPS: StepConfig[] = [
     choices: ['30초', '1분', '2분', '3분', '4분', '5분'],
   },
   {
-    question: '마지막이에요! 더 부탁하고 싶은 게 있다면 알려주세요.',
+    question: '마지막이에요! 더 부탁하고 싶은 게 있다면 알려주세요. (특정 곡·가수 이름보다 분위기·악기·창법으로 적어주시면 내 곡의 창작성을 인정받기 좋아요)',
     freeText: true,
-    freeTextPlaceholder: '예: IU - 밤편지 느낌, BTS Spring Day처럼',
+    // v3.302 [CopyrightLog]: 특정 곡·가수 이름 대신 분위기·악기·창법 같은 추상적 표현을 권장(저작권 등록·의거성 위험)
+    freeTextPlaceholder: '예: 잔잔한 피아노와 속삭이는 보컬, 비 오는 밤 분위기',
   },
 ];
 

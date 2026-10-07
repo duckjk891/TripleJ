@@ -17,7 +17,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useMusicStore } from '../stores/musicStore';
 
 // 문서 §5.1 앱 발생 이벤트 타입 (FINALIZE는 서버 훅이 기록 — 앱은 flush+session_id 동봉만)
-export type CreationEventType = 'LISTEN' | 'CANDIDATE_SELECT' | 'LYRIC_EDIT';
+export type CreationEventType = 'LISTEN' | 'CANDIDATE_SELECT' | 'LYRIC_EDIT' | 'DIRECTION'; // v3.302 DIRECTION
 export type LyricsVersionSource = 'ai_draft' | 'user_edit';
 
 // v3.200: 배포 서버 확정 스펙 — 봉투형 {"events":[...]} 배치, 이벤트 필드는 아래 6종만

@@ -41,6 +41,8 @@ import { showAlert } from '../utils/appAlert';
 import { openLoginModal } from '../utils/loginModal';
 import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
 import { STRUCTURE_EXAMPLES } from '../utils/lyricsStructureGuide';
+import { logCreationEvent, flushCreationEvents } from '../services/creationLogService';
+import { buildLyricsDirection } from '../utils/creationDirection';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -77,6 +79,11 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const startLyricsLoading = () => {
     // 프롬프트 원문은 사용자에게 노출하지 않고 전송 직전 조립 (generatedPrompt 는 세션 플래그 겸 기록)
     store.setGeneratedPrompt(buildLyricsRequest(useLyricsStore.getState()).prompt);
+    // v3.302 [CopyrightLog]: 작사 디렉터에게 준 사람의 지시(주제·키워드·구조 등)를 창작 기록에 — AI 초안보다 먼저
+    if (!isGuestNow()) {
+      logCreationEvent('DIRECTION', buildLyricsDirection(useLyricsStore.getState() as any));
+      void flushCreationEvents();
+    }
     console.log('[LyricsPromptReview] 작사 생성 시작 — LyricsLoading 직행');
     navigation.navigate('LyricsLoading' as any);
   };
@@ -420,7 +427,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
               <View style={styles.customRow}>
                 <TextInput
                   style={styles.customInput}
-                  placeholder="예: IU - 밤편지 느낌으로"
+                  placeholder="예: 잔잔한 피아노와 속삭이는 보컬, 비 오는 밤 분위기"
                   placeholderTextColor={colors.text.muted}
                   value={customInput}
                   onChangeText={setCustomInput}
