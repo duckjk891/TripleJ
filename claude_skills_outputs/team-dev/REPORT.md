@@ -4082,3 +4082,13 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 수정(services/lyrics_generator.py): 분량 하한 신설(2분 20·3분 32·4분 44·5분 56줄, 랩·힙합 +4 — 상한도 +4), 하한~상한 범위 안내, 구조 지정 시 "순서 유지·각 섹션 줄 수를 조절해 범위에 맞춤"(Verse·Chorus 4줄 이상), 3분 섹션 4~6줄, 시스템 규칙 2-6줄, 결과가 하한의 85% 미만이면 1회 자동 보강 재작성(더 긴·상한 이내 결과 채택, 실패 시 원본 유지). 1분 짧은 곡 규칙·상한(끝 잘림 방지)은 유지.
 - 검증: 격리 컨테이너 16/16. 실모델 — 대표 원본 요청(gen_jobs 보관 입력) 그대로 2회 생성 → 노래 줄 37·42줄(종전 22줄), 실측 기준 약 2분 40초~3분 예상. 배포: md5 가드 → 백업·pre-v3299-live → 사전 임포트 → 빌드 → 진행 중 곡 1건 완료 대기 → 0건 확인 → 재기동 → health·Traceback 0.
 - 미실측(정직 기재): 실제 Suno 곡 길이 — 다음 3분 작사·작곡에서 확인(서버 로그 [LyricsLen]·[lyrics] shape 로 줄 수 추적 가능).
+
+---
+
+## v3.300 — 2026-10-07 — '오리쟁이' 얼굴 인증 면제 (서버 배포 완료)
+
+대표 지시: "오리쟁이 사용자만 얼굴인증 없이 아티스트 만들게 해줘".
+- 대상: 닉네임 오리쟁이 1명(PG users 단일 일치, 2026-03-30 가입, 미성년 표기 없음).
+- 서버: face_verify_service.is_face_verify_exempt(Mongo face_verify_exemptions — user_id·reason·granted_by·created_at, revoked_at 지정 시 해제, 60초 캐시). 실사 사진 게이트(is_photo_verified)는 면제자면 통과하며 매번 [FaceExempt] 경고 로그. GET /face-verify/status 는 면제자에게 enabled=false·exempt=true → 앱이 동의·촬영 단계를 건너뜀(앱 수정·새 빌드 불필요).
+- 데이터: face_verify_exemptions 에 오리쟁이 1건 등록(사유 '대표 지시'). 활성 면제 1건. 해제: 해당 문서에 revoked_at 지정.
+- 검증: 격리 컨테이너 5/5(면제 통과·대조 조회 생략·타 사용자 기존 게이트·해제), 운영 재기동 후 면제 판별 True/타 사용자 False. 배포: md5 가드 → 백업·pre-v3300-live → 사전 임포트 → 빌드 → 진행 작업 0건 → 재기동 → health·Traceback 0.
