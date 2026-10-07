@@ -689,7 +689,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return lyricsStore.isDuet ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.' : DIRECTOR_MESSAGES[3];
       case 100: return '서브 보컬 성별을 선택해주세요!';
       case 101: return '서브 보컬 스타일을 선택해주세요!';
-      case 200: return '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)';
+      case 200: {
+        // v3.301 [ArtistInfo]: 질문에 내 아티스트 이름을 함께(카드만으론 누가 있는지 한눈에 안 보였음 — 대표 10-07)
+        const names = (artists || []).map((a) => (a.name || '').trim()).filter(Boolean);
+        const list = names.length ? ` 내 아티스트: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` 외 ${names.length - 5}명` : ''}.` : '';
+        return `함께할 아티스트를 선택해주세요!${list} 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)`;
+      }
       case 210: return '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!';
       case 220: return voiceModePrompt;
       case 300: return '이 곡은 어떤 장르로 만들까요?';
@@ -2112,7 +2117,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
                     )}
                     <View style={{ flex: 1 }}>
-                      <AppText style={styles.choiceText}>{a.name || '이름 없는 아티스트'}</AppText>
+                      <AppText style={[styles.choiceText, { fontWeight: '700' }]} numberOfLines={1}>{a.name || '이름 없는 아티스트'}</AppText>
+                      {/* v3.301 [ArtistInfo]: 기본 정보(성별·나이) */}
+                      {artistBasicLine(a) ? <AppText style={artistCardStyles.voiceTag} numberOfLines={1}>{artistBasicLine(a)}</AppText> : null}
                       <AppText style={artistCardStyles.voiceTag}>
                         {hasVoice
                           ? preset
@@ -3286,6 +3293,12 @@ const styles = StyleSheet.create({
 });
 
 // v3.137 — 아티스트 카드 전용 스타일
+// v3.301 [ArtistInfo] 아티스트 기본 정보 한 줄(성별·나이)
+function artistBasicLine(a: { gender?: string | null; age?: string | null }): string {
+  const age = a.age ? (/^\d+$/.test(String(a.age)) ? `${a.age}세` : String(a.age)) : null;
+  return [a.gender || null, age].filter(Boolean).join(' · ');
+}
+
 const artistCardStyles = StyleSheet.create({
   thumb: {
     width: 44, height: 60, borderRadius: 8, marginRight: 10,

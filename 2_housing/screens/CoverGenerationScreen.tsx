@@ -423,6 +423,27 @@ interface AlbumModeParams { albumId: string; albumTitle: string; trackTitles?: s
 // 화면 모드
 type ScreenMode = 'dialogue' | 'loading' | 'result';
 
+// v3.301 [CoverArtistInfo] 슬롯 아티스트 기본 정보
+type SlotArtistInfo = { name: string; gender: string | null; age: string | null };
+function toSlotInfo(a: ServerArtist | null | undefined): SlotArtistInfo | null {
+  if (!a) return null;
+  return { name: (a.name || '').trim(), gender: a.gender || null, age: a.age || null };
+}
+/** 받침 따라 조사 선택 — kind 'iga'(이/가) · 'ro'(으로/로, ㄹ받침은 로). 한글 아니면 뒤쪽(가/로) */
+function josa(word: string, kind: 'iga' | 'ro'): string {
+  const ch = (word || '').trim().slice(-1);
+  const code = ch ? ch.charCodeAt(0) - 0xac00 : -1;
+  if (code < 0 || code > 11171) return kind === 'iga' ? '가' : '로';
+  const jong = code % 28;
+  if (kind === 'iga') return jong ? '이' : '가';
+  return jong && jong !== 8 ? '으로' : '로';
+}
+function slotInfoLine(info: SlotArtistInfo | null | undefined): string {
+  if (!info) return '';
+  const age = info.age ? (/^\d+$/.test(info.age) ? `${info.age}세` : info.age) : null;
+  return [info.gender, age].filter(Boolean).join(' · ');
+}
+
 export default function CoverGenerationScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
@@ -501,6 +522,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // 대기 후 재진입 시 로컬 state가 초기화돼 "아티스트 포함"이 유실되던 버그의 근본 픽스)
   const [realObjName, setRealObjName] = useState<string | null>(null);
   const [virtualObjName, setVirtualObjName] = useState<string | null>(null);
+  // v3.301 [CoverArtistInfo]: 슬롯별 아티스트 기본 정보(이름·성별·나이) — 아티스트 질문·선택 카드·답변에 표시
+  // (종전엔 시트 이미지 + '아티스트①/②' 라벨만 있어 누구인지 알기 어려웠다 — 대표 지적 10-07)
+  const [slotInfo, setSlotInfo] = useState<{ real: SlotArtistInfo | null; virtual: SlotArtistInfo | null }>({ real: null, virtual: null });
   // 재생성 시 슬롯 선택 유지용 (doGenerate 정리부에서 store가 비워진 뒤 복원)
   const lastCharObjRef = useRef<string | null>(null);
 
@@ -536,6 +560,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     const isV = artist.kind === 'virtual';
     setRealObjName(isV ? null : artist.sheet_object_name);
     setVirtualObjName(isV ? artist.sheet_object_name : null);
+    const info = toSlotInfo(artist);
+    setSlotInfo({ real: isV ? null : info, virtual: isV ? info : null });
   };
   // /me 응답 → 두 슬롯 + 슬롯 cid(현행 흐름)
   const applyMeSlots = (ch: any) => {
@@ -545,6 +571,15 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       real: ch?.character_id ? String(ch.character_id) : null,
       virtual: ch?.virtual_character_id ? String(ch.virtual_character_id) : null,
     };
+    // v3.301 [CoverArtistInfo]: /me 는 대표 1명 프로필만 — 슬롯별 이름은 cid 로 각각 조회(실패해도 진행)
+    setSlotInfo({ real: null, virtual: null });
+    (['real', 'virtual'] as const).forEach((slot) => {
+      const cid = meCidsRef.current[slot];
+      if (!cid) return;
+      getArtist(cid)
+        .then((a) => setSlotInfo((prev) => ({ ...prev, [slot]: toSlotInfo(a) })))
+        .catch((err: any) => console.warn('[CoverArtistInfo] 슬롯 아티스트 조회 실패', { slot, status: err?.response?.status }));
+    });
   };
   const wardrobeBusyRef = useRef(false);
 
@@ -1262,7 +1297,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         console.info(`[CoverArtist] source=${pick.source} cid=${pick.cid}`, { via: pick.via, kind: artist.kind, trackId: track?.id ?? null });
         setChatHistory((prev) => [
           ...prev,
-          { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?', echoOfStep: 0 },
+          {
+            type: 'director',
+            text: artist.name
+              ? `이 곡의 아티스트 '${artist.name}'${josa(artist.name, 'iga')} 있네요! '${artist.name}'${josa(artist.name, 'iga')} 포함된 커버 이미지로 만드시겠어요?`
+              : '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?',
+            echoOfStep: 0,
+          },
         ]);
         setStep(1);
         return;
@@ -1774,7 +1815,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const editChoicesForStep = (s: number): string[] => {
     switch (s) {
       case 1: return ['네, 아티스트 포함', '아니요, 빼고'];
-      case 1.5: return ['아티스트①로', '아티스트②로'];
+      case 1.5: return [slotChoiceLabel('real'), slotChoiceLabel('virtual')];
       case 1.7: return ['이 의상 그대로'];
       case 1.75: return ['가사 내용 반영하기', '아니요, 직접 정할게요'];
       case 1.8:
@@ -1821,7 +1862,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setEditStep(null); // 커밋/연쇄 여부와 무관하게 일단 닫기 — 연쇄면 effect가 다시 연다
     switch (s) {
       case 1: handleArtistChoice(choice === '네, 아티스트 포함'); break;
-      case 1.5: handleSlotSelect(choice === '아티스트①로' ? 'real' : 'virtual'); break;
+      case 1.5: handleSlotSelect(choice === slotChoiceLabel('real') ? 'real' : 'virtual'); break;
       case 1.7: handleWardrobeKeep(); break;
       case 1.75:
         if (choice === '가사 내용 반영하기') handleLyricsUse();
@@ -1935,6 +1976,16 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   // v3.80: step 1.5 — 실사화/가상화 슬롯 선택
+  // v3.301 [CoverArtistInfo]: 슬롯 선택 라벨 — 이름이 있으면 '이름로', 없으면 종전 '아티스트①/②로'
+  // (두 아티스트 이름이 같으면 번호를 붙여 구분 — 편집 모달 매핑이 라벨 일치로 동작)
+  function slotChoiceLabel(slot: 'real' | 'virtual'): string {
+    const n = slotInfo[slot]?.name?.trim();
+    const other = slotInfo[slot === 'real' ? 'virtual' : 'real']?.name?.trim();
+    const num = slot === 'real' ? '①' : '②';
+    if (!n) return `아티스트${num}로`;
+    return n === other ? `${n}${num}로` : `${n}${josa(n, 'ro')}`;
+  }
+
   const handleSlotSelect = (slot: 'real' | 'virtual') => {
     const obj = slot === 'real' ? realObjName : virtualObjName;
     if (!obj) return;
@@ -1944,10 +1995,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       // v3.202(H-④): 되감기 중 슬롯 변경 — 값 반영 + 버블 치환 후 원위치 복귀
       applyExtras({ charKind: slot, ...slotCidPatch(slot) });
       setChosenSlot(slot);
-      commitRewindAnswer(slot === 'real' ? '아티스트①로' : '아티스트②로');
+      commitRewindAnswer(slotChoiceLabel(slot));
       return;
     }
-    setChatHistory((prev) => [...prev, { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로', step: 1.5 }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: slotChoiceLabel(slot), step: 1.5 }]);
     goWardrobe(slot); // v3.150: 의상 확인 단계
   };
 
@@ -2776,6 +2827,24 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           )
         ) : step === 1 ? (
           // 9004: 아티스트 포함 여부 선택 (캐릭터 시트 있을 때만 보임)
+          <View>
+          {/* v3.301 [CoverArtistInfo]: 누구를 넣는지 — 아티스트 카드(시트·이름·성별·나이) */}
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+            {(['real', 'virtual'] as const).map((slot) => {
+              const obj = slot === 'real' ? realObjName : virtualObjName;
+              if (!obj) return null;
+              const info = slotInfo[slot];
+              return (
+                <View key={slot} style={styles.artistInfoCard}>
+                  <Image source={{ uri: `${BACKEND_BASE_URL}/api/character/preview/${obj}` }} style={styles.artistInfoThumb} />
+                  <View style={{ flex: 1 }}>
+                    <AppText style={styles.slotCardLabel} numberOfLines={1}>{info?.name || '내 아티스트'}</AppText>
+                    {slotInfoLine(info) ? <AppText style={styles.artistInfoSub} numberOfLines={1}>{slotInfoLine(info)}</AppText> : null}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity
               style={[styles.chip, styles.choiceChip]}
@@ -2790,6 +2859,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <AppText style={styles.choiceChipTextAlt}>아니요, 빼고</AppText>
             </TouchableOpacity>
           </View>
+          </View>
         ) : step === 1.5 ? (
           // v3.81: 아티스트 선택 카드 (두 명 있을 때만 진입) — v3.82: kind 병기 제거, 썸네일로 구분
           <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -2800,7 +2870,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                   style={styles.slotCardImg}
                 />
               ) : null}
-              <AppText style={styles.slotCardLabel}>아티스트①</AppText>
+              <AppText style={styles.slotCardLabel} numberOfLines={1}>{slotInfo.real?.name || '아티스트①'}</AppText>
+              {slotInfoLine(slotInfo.real) ? <AppText style={styles.artistInfoSub} numberOfLines={1}>{slotInfoLine(slotInfo.real)}</AppText> : null}
             </TouchableOpacity>
             <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('virtual')} activeOpacity={0.8}>
               {virtualObjName ? (
@@ -2809,7 +2880,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                   style={styles.slotCardImg}
                 />
               ) : null}
-              <AppText style={styles.slotCardLabel}>아티스트②</AppText>
+              <AppText style={styles.slotCardLabel} numberOfLines={1}>{slotInfo.virtual?.name || '아티스트②'}</AppText>
+              {slotInfoLine(slotInfo.virtual) ? <AppText style={styles.artistInfoSub} numberOfLines={1}>{slotInfoLine(slotInfo.virtual)}</AppText> : null}
             </TouchableOpacity>
           </View>
         ) : step === 1.7 ? (
@@ -3114,6 +3186,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2, resizeMode: 'cover',
   },
   slotCardLabel: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  // v3.301 [CoverArtistInfo]
+  artistInfoCard: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, borderRadius: 12,
+    backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  artistInfoThumb: { width: 44, height: 56, borderRadius: 6, backgroundColor: colors.bg.surface2, resizeMode: 'cover' } as any,
+  artistInfoSub: { color: colors.text.secondary, fontSize: 11, marginTop: 2 },
   chipTextSelected: { color: colors.text.primary, fontWeight: 'bold' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   textInput: { flex: 1, backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, color: colors.text.primary, fontSize: 14 },
