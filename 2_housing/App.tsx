@@ -51,6 +51,8 @@ import HomeHeaderActions from './components/HomeHeaderActions';
 import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
+import { showAlert } from './utils/appAlert';
+import { useEarnGuideStore, EARN_GUIDE_VERSION, EARN_GUIDE_NEWS, EARN_GUIDE_NEWS_TITLE } from './stores/earnGuideStore';
 import { useAuthStore, restoreSession } from './stores/authStore';
 import { isAccountSuspendedCallback, notifyAccountSuspended } from './utils/kidsRestricted';
 import { startKidsForegroundRefresh } from './utils/kidsRefresh';
@@ -585,6 +587,24 @@ function GlobalModals() {
   const prevUserRef = useRef<any>(null);
   // v3.230 A7-2: 가입 선물·추천 보상 1회 안내(로그인 직후·앱 복귀)
   useRewardNotice();
+  // v3.304 [EarnNews]: 새 ⭐ 얻는 방법·미션 1회 안내 — 로그인 사용자, 버전당 1회(⭐ 안내를 이미 열어봤으면 생략)
+  const earnGuide = useEarnGuideStore();
+  const openStarGuideGlobal = useUiStore((s) => s.openStarGuide);
+  useEffect(() => { void earnGuide.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!user || !earnGuide.loaded) return;
+    if (earnGuide.seenVersion === EARN_GUIDE_VERSION || earnGuide.promptedVersion === EARN_GUIDE_VERSION) return;
+    const t = setTimeout(() => {
+      earnGuide.markPrompted();
+      console.info('[EarnNews] 새 소식 1회 안내', { v: EARN_GUIDE_VERSION });
+      showAlert(EARN_GUIDE_NEWS_TITLE, EARN_GUIDE_NEWS, [
+        { text: '나중에', style: 'cancel' },
+        { text: '자세히 보기', onPress: () => openStarGuideGlobal() },
+      ]);
+    }, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, earnGuide.loaded, earnGuide.seenVersion, earnGuide.promptedVersion]);
   useEffect(() => {
     const wasLoggedOut = !prevUserRef.current;
     prevUserRef.current = user;

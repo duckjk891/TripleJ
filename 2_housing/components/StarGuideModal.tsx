@@ -1,6 +1,6 @@
 // [StarGuideModal] 스타(⭐) 안내 — 헤더 배지 클릭 시 팝업. v3.58: 재화명 '별'→'스타' 리브랜딩,
 // '모으는 법'·'내 별' 문구 제거(사용자 지시). 각 항목 클릭 시 해당 기능으로 이동/실행.
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useUiStore } from '../stores/uiStore';
@@ -11,6 +11,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 import WeeklyMissionCard from './WeeklyMissionCard';
+import { useEarnGuideStore, selectEarnGuideIsNew, EARN_GUIDE_NEWS } from '../stores/earnGuideStore';
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
@@ -32,6 +33,16 @@ export default function StarGuideModal() {
   const openInvite = useUiStore((s) => s.openInvite);
   const openAttendance = useUiStore((s) => s.openAttendance);
   const balance = usePointsStore((s) => s.balance);
+  // v3.304 [EarnNews]: 팝업을 열면 새 소식 확인 처리 + 상단에 '새로 생겼어요' 한 줄
+  const earnNew = useEarnGuideStore(selectEarnGuideIsNew);
+  const markSeen = useEarnGuideStore((s) => s.markSeen);
+  const [showNews, setShowNews] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    if (earnNew) setShowNews(true);
+    markSeen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const handleAction = (action?: EarnAction) => {
     if (!action) return;
@@ -78,6 +89,12 @@ export default function StarGuideModal() {
             <Feather name="chevron-right" size={14} color={colors.text.muted} />
           </TouchableOpacity>
 
+          {showNews ? (
+            <View style={styles.newsBox}>
+              <AppText variant="caption" style={{ color: colors.status.error, fontWeight: '700' }}>NEW</AppText>
+              <AppText variant="caption" tone="secondary" style={{ flex: 1 }}>{EARN_GUIDE_NEWS}</AppText>
+            </View>
+          ) : null}
           {/* v3.293 [WeeklyMission] 이번 주 미션(로그인 시) */}
           <WeeklyMissionCard onGo={() => { close(); navigateGlobal('Studio'); }} />
 
@@ -124,5 +141,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border.subtle,
   },
   rowIcon: { width: 26, alignItems: 'center' },
+  newsBox: {
+    flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start',
+    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.lg,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, marginBottom: spacing.md,
+  },
   rowMid: { flex: 1 },
 });

@@ -75,6 +75,7 @@ import { registerGenJob, adoptGenJob, guardGeneration, newRequestId } from '../s
 import { parseGenInProgress } from '../services/genJobsService';
 import { CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
 import { MUSIC_TEXT } from '../services/genJobs/music';
+import { weeklyMissionLine } from '../services/missionService';
 import type { FatigueStatus } from '../types';
 
 // v3.93: 2-variant 클립 비교 라벨 (버전 A/버전 B — Suno는 요청당 2클립 반환)
@@ -969,12 +970,12 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       // v3.200: 발매 확정 — 창작 세션 종료(다음 곡은 새 세션)
       endCreationSession();
       // v3.200(F6): 보컬 포함 곡 발매 완료 시 AI 음성 합성 고지 1줄(법정 고지 — 문구 서버 설정화는 후속)
-      showAlert(
-        '저장 완료',
-        store.vocal
-          ? '마이뮤직에서 확인할 수 있어요!\n\n이 곡의 음성은 AI로 합성되었습니다.'
-          : '마이뮤직에서 확인할 수 있어요!'
-      );
+      // v3.304 [EarnNews]: 내 아티스트 곡이면 주간 미션 진행을 함께 안내(일반 사용자가 미션을 알 수 있게)
+      const baseMsg = store.vocal
+        ? '마이뮤직에서 확인할 수 있어요!\n\n이 곡의 음성은 AI로 합성되었습니다.'
+        : '마이뮤직에서 확인할 수 있어요!';
+      const missionLine = (store.artistCharacterId || characterId) ? await weeklyMissionLine('artist_songs') : null;
+      showAlert('저장 완료', missionLine ? `${baseMsg}\n\n${missionLine}` : baseMsg);
     } catch (err: any) {
       const status = err?.response?.status;
       const data = err?.response?.data;

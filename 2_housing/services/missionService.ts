@@ -40,3 +40,23 @@ export async function getWeeklyMissions(): Promise<WeeklyMissionStatus> {
     throw err;
   }
 }
+
+/**
+ * v3.304 [EarnNews] 발매·커버 직후 안내에 붙일 주간 미션 진행 한 줄.
+ * 실패·지연(timeoutMs) 시 null — 호출부는 기존 문구만 띄운다(안내 지연 방지).
+ */
+export async function weeklyMissionLine(key: string, timeoutMs = 2500): Promise<string | null> {
+  try {
+    const status = await Promise.race([
+      getWeeklyMissions(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+    const m = status?.missions.find((x) => x.key === key);
+    if (!m || m.target <= 0) return null;
+    if (m.rewarded || m.count >= m.target) return `🎯 주간 미션 달성! ${m.title} ⭐${m.reward}`;
+    return `🎯 주간 미션 ${Math.min(m.count, m.target)}/${m.target} — ${m.title} (달성 시 ⭐${m.reward})`;
+  } catch (err: any) {
+    console.warn('[WeeklyMission] 진행 한 줄 생략', { key, msg: err?.message });
+    return null;
+  }
+}
