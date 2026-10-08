@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import {
   StyleSheet,
   View,
@@ -383,7 +384,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
           ) : (
             <View style={styles.lyricsBox}>
               <AppText style={styles.lyricsText} selectable={isGuest}>
-                {hasLyrics ? editedLyrics : '가사가 없습니다.'}
+                {hasLyrics ? cleanLyricsForDisplay(editedLyrics) : '가사가 없습니다.'}
               </AppText>
             </View>
           )}

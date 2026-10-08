@@ -52,7 +52,7 @@ import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { showAlert } from './utils/appAlert';
-import { useEarnGuideStore, EARN_GUIDE_VERSION, EARN_GUIDE_NEWS, EARN_GUIDE_NEWS_TITLE } from './stores/earnGuideStore';
+import { useEarnGuideStore, unpromptedEarnNews } from './stores/earnGuideStore';
 import { useAuthStore, restoreSession } from './stores/authStore';
 import { isAccountSuspendedCallback, notifyAccountSuspended } from './utils/kidsRestricted';
 import { startKidsForegroundRefresh } from './utils/kidsRefresh';
@@ -619,18 +619,20 @@ function GlobalModals() {
   useEffect(() => { void earnGuide.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!user || !earnGuide.loaded) return;
-    if (earnGuide.seenVersion === EARN_GUIDE_VERSION || earnGuide.promptedVersion === EARN_GUIDE_VERSION) return;
+    const items = unpromptedEarnNews(earnGuide);
+    if (!items.length) return;
     const t = setTimeout(() => {
       earnGuide.markPrompted();
-      console.info('[EarnNews] 새 소식 1회 안내', { v: EARN_GUIDE_VERSION });
-      showAlert(EARN_GUIDE_NEWS_TITLE, EARN_GUIDE_NEWS, [
+      console.info('[EarnNews] 새 소식 1회 안내', { ids: items.map((i) => i.id) });
+      // v3.306: 짧게 — 항목명·한 줄 요약만, 상세는 상단 ⭐ 팝업(같은 화면)
+      showAlert(`새 미션 ${items.length}개가 생겼어요`, items.map((i) => `• ${i.title}: ${i.short}`).join('\n'), [
         { text: '나중에', style: 'cancel' },
-        { text: '자세히 보기', onPress: () => openStarGuideGlobal() },
+        { text: '미션 보기', onPress: () => openStarGuideGlobal() },
       ]);
     }, 4000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, earnGuide.loaded, earnGuide.seenVersion, earnGuide.promptedVersion]);
+  }, [user, earnGuide.loaded, earnGuide.seenIds, earnGuide.promptedIds]);
   useEffect(() => {
     const wasLoggedOut = !prevUserRef.current;
     prevUserRef.current = user;

@@ -8,6 +8,7 @@
 //      "기존에 작사했던 내용들이 안 보인다" — 구 가사는 자산 DB가 아니라 트랙에만 존재)
 // (레거시 로컬 보관함 항목도 ② 뒤에 병합)
 import { useEffect, useRef, useState } from 'react';
+import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import {
   StyleSheet,
   View,
@@ -309,7 +310,7 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
                   {[entry.genre, entry.mood].filter(Boolean).join(' · ')}
                 </AppText>
               )}
-              <AppText style={styles.cardPreview} numberOfLines={expanded ? undefined : 2}>{entry.lyrics}</AppText>
+              <AppText style={styles.cardPreview} numberOfLines={expanded ? undefined : 2}>{cleanLyricsForDisplay(entry.lyrics)}</AppText>
               <View style={styles.cardBtnRow}>
                 <TouchableOpacity
                   style={styles.viewBtn}

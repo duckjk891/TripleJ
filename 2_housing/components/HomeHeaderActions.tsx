@@ -8,7 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../stores/authStore';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
-import { useEarnGuideStore, selectEarnGuideIsNew } from '../stores/earnGuideStore';
+import { useEarnGuideStore, selectEarnNewsCount } from '../stores/earnGuideStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
@@ -34,8 +34,8 @@ export default function HomeHeaderActions({
   const openInvite = useUiStore((s) => s.openInvite);
   const openStarGuide = useUiStore((s) => s.openStarGuide);
   const balance = usePointsStore((s) => s.balance);
-  // v3.304 [EarnNews] 새 ⭐ 얻는 방법·미션이 생기면 ⭐ 배지에 NEW 점
-  const earnNew = useEarnGuideStore(selectEarnGuideIsNew);
+  // v3.304 [EarnNews] 새 ⭐ 얻는 방법·미션 → v3.306: 안 본 개수를 숫자 배지로(메시지 배지 관행)
+  const earnNewCount = useEarnGuideStore(selectEarnNewsCount);
   const fetchBalance = usePointsStore((s) => s.fetchBalance);
 
   // 로그인 상태에서 별 잔액 로드(헤더 마운트 시)
@@ -111,11 +111,16 @@ export default function HomeHeaderActions({
           >
             <AppText variant="footnote">⭐</AppText>
             <AppText variant="footnote" tone="accent">{balance ?? 0}</AppText>
-            {earnNew ? (
+            {earnNewCount > 0 ? (
               <View
-                style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.status.error }}
-                accessibilityLabel="새 소식 있음"
-              />
+                style={{
+                  position: 'absolute', top: -6, right: -6, minWidth: 16, height: 16, borderRadius: 8,
+                  backgroundColor: colors.status.error, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3,
+                }}
+                accessibilityLabel={`새 미션 ${earnNewCount}개`}
+              >
+                <AppText style={{ fontSize: 9, color: '#fff', fontWeight: '700' }}>{earnNewCount}</AppText>
+              </View>
             ) : null}
           </TouchableOpacity>
           <TouchableOpacity ref={anchorRef('topbar-attendance')} onLayout={anchorLayout('topbar-attendance')} onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { cleanLyricsForDisplay, cleanLyricLine } from '../utils/lyricsDisplay';
 import {
   StyleSheet,
   View,
@@ -463,13 +464,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   })();
 
   // v3.156(대표): 가사의 [Verse]/[Chorus] 같은 섹션 마커 줄은 표시에서 숨긴다 (원본 데이터는 유지)
-  const stripLyricMarkers = (s: string): string =>
-    s
-      .split('\n')
-      .filter((line) => !/^\s*\[[^\]\n]*\]\s*$/.test(line))
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+  // v3.306: 듀엣 파트 [Female]/[Male]/[Both]·=== 구분선까지 숨김(공용 utils/lyricsDisplay)
+  const stripLyricMarkers = (s: string): string => cleanLyricsForDisplay(s);
 
   const getCoverUri = (): string | null => trackCoverUri(track);
 
@@ -773,7 +769,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       const res = await api.get(`/tracks/${tid}/lyrics-timeline`);
       const segs = res.data?.has_timestamps ? (res.data?.segments || []) : [];
       // v3.156(대표): [Verse]/[Chorus] 같은 섹션 마커 세그먼트는 가사 싱크에서 숨김
-      setLyricsTimeline(segs.filter((s: LyricSegment) => !/^\s*\[[^\]]*\]\s*$/.test(s?.text || '')));
+      // v3.306: 싱크 가사도 [..]·=== 제거 후 빈 줄은 제외
+      setLyricsTimeline(segs
+        .map((s: LyricSegment) => ({ ...s, text: cleanLyricLine(s?.text || '') }))
+        .filter((s: LyricSegment) => !!s.text));
     } catch (err: any) {
       console.error('[PlayerScreen] lyrics-timeline 실패', { status: err?.response?.status });
       setLyricsTimeline([]);

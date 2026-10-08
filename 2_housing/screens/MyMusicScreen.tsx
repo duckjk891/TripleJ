@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
+import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import ReputationCard from '../components/ReputationCard';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -1014,7 +1015,7 @@ export default function MyMusicScreen({ navigation }: any) {
                 {lyricsStore.genre ? <View style={styles.tag}><AppText style={styles.tagText}>{lyricsStore.genre}</AppText></View> : null}
                 {lyricsStore.mood ? <View style={[styles.tag, styles.moodTag]}><AppText style={styles.tagText}>{lyricsStore.mood}</AppText></View> : null}
               </View>
-              <AppText style={styles.lyricsPreview} numberOfLines={expandedLyrics.has('draft') ? undefined : 3}>{lyricsStore.generatedLyrics}</AppText>
+              <AppText style={styles.lyricsPreview} numberOfLines={expandedLyrics.has('draft') ? undefined : 3}>{cleanLyricsForDisplay(lyricsStore.generatedLyrics)}</AppText>
               {!expandedLyrics.has('draft') && <AppText style={styles.lyricsHint}>탭하여 전체 가사 보기</AppText>}
             </TouchableOpacity>
           ) : null}
@@ -1048,7 +1049,7 @@ export default function MyMusicScreen({ navigation }: any) {
                     <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}><AppText style={styles.tagText}>{m}</AppText></View>
                   ))}
                 </View>
-                <AppText style={styles.lyricsPreview} numberOfLines={isExpanded ? undefined : 3}>{track.lyrics}</AppText>
+                <AppText style={styles.lyricsPreview} numberOfLines={isExpanded ? undefined : 3}>{cleanLyricsForDisplay(track.lyrics)}</AppText>
               </TouchableOpacity>
             );
           })}

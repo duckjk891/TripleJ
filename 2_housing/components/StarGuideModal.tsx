@@ -1,6 +1,7 @@
 // [StarGuideModal] 스타(⭐) 안내 — 헤더 배지 클릭 시 팝업. v3.58: 재화명 '별'→'스타' 리브랜딩,
 // '모으는 법'·'내 별' 문구 제거(사용자 지시). 각 항목 클릭 시 해당 기능으로 이동/실행.
 import { ReactNode, useEffect, useState } from 'react';
+import { ScrollView, useWindowDimensions } from 'react-native';
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useUiStore } from '../stores/uiStore';
@@ -11,14 +12,14 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 import WeeklyMissionCard from './WeeklyMissionCard';
-import { useEarnGuideStore, selectEarnGuideIsNew, EARN_GUIDE_NEWS } from '../stores/earnGuideStore';
+import { useEarnGuideStore, unseenEarnNewsIds } from '../stores/earnGuideStore';
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
 type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio' | 'community';
 const ROW_ICON_SIZE = 18;
 const ROW_ICON_COLOR = colors.text.secondary;
-const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string; action?: EarnAction }[] = [
+const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string; action?: EarnAction; newsId?: string }[] = [
   { icon: <Feather name="gift" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '첫 가입 보너스', amount: '+50', sub: '한 번만' },
   { icon: <Feather name="shield" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '보호자 동의 완료', amount: '+30', sub: '만 14세 미만 · 한 번만' }, // v3.230 A8: 본인인증 유도 제거(추후 적용)
   { icon: <Feather name="users" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '친구 초대', amount: '+50', sub: '눌러서 공유하기', action: 'invite' },
@@ -26,7 +27,7 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
   { icon: <Feather name="headphones" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '남의 곡 듣기', amount: '+1', sub: '눌러서 차트로 이동', action: 'chart' },
   { icon: <MaterialCommunityIcons name="rocket-launch-outline" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '내 곡 발매', amount: '+5', sub: '눌러서 작업실로 이동', action: 'studio' },
   // v3.305 [ClubAlbum] 크루 앨범 참여 미션 — 앨범당 1회, 주 최대 ⭐15
-  { icon: <Feather name="disc" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 앨범에 곡 내기', amount: '+5', sub: '크루장이 수록하면 · 눌러서 커뮤니티로', action: 'community' },
+  { icon: <Feather name="disc" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 앨범에 곡 내기', amount: '+5', sub: '크루장이 수록하면 · 눌러서 커뮤니티로', action: 'community', newsId: 'club_album' },
 ];
 
 export default function StarGuideModal() {
@@ -35,13 +36,14 @@ export default function StarGuideModal() {
   const openInvite = useUiStore((s) => s.openInvite);
   const openAttendance = useUiStore((s) => s.openAttendance);
   const balance = usePointsStore((s) => s.balance);
-  // v3.304 [EarnNews]: 팝업을 열면 새 소식 확인 처리 + 상단에 '새로 생겼어요' 한 줄
-  const earnNew = useEarnGuideStore(selectEarnGuideIsNew);
+  // v3.304 [EarnNews] → v3.306: 열 때 '안 본 항목'을 기억해 해당 줄 옆에 NEW 표시 후 확인 처리.
+  //   (긴 안내 상자 제거 — 대표 지적: 세로로 길어 스크롤 안 됨. 내용이 길어도 팝업 안에서 스크롤)
   const markSeen = useEarnGuideStore((s) => s.markSeen);
-  const [showNews, setShowNews] = useState(false);
+  const [newIds, setNewIds] = useState<string[]>([]);
+  const { height: winH } = useWindowDimensions();
   useEffect(() => {
     if (!open) return;
-    if (earnNew) setShowNews(true);
+    setNewIds(unseenEarnNewsIds(useEarnGuideStore.getState()));
     markSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -62,7 +64,7 @@ export default function StarGuideModal() {
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={close}>
-        <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
+        <TouchableOpacity style={[styles.modal, { maxHeight: Math.round(winH * 0.86) }]} activeOpacity={1} onPress={() => {}}>
           <View style={styles.head}>
             <AppText variant="title2">{CURRENCY_ICON} {CURRENCY}</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
@@ -70,6 +72,7 @@ export default function StarGuideModal() {
             </TouchableOpacity>
           </View>
 
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xs }}>
           {/* 보유 잔액 */}
           <View style={styles.balanceBox}>
             <AppText variant="footnote" tone="secondary">보유 {CURRENCY}</AppText>
@@ -92,12 +95,7 @@ export default function StarGuideModal() {
             <Feather name="chevron-right" size={14} color={colors.text.muted} />
           </TouchableOpacity>
 
-          {showNews ? (
-            <View style={styles.newsBox}>
-              <AppText variant="caption" style={{ color: colors.status.error, fontWeight: '700' }}>NEW</AppText>
-              <AppText variant="caption" tone="secondary" style={{ flex: 1 }}>{EARN_GUIDE_NEWS}</AppText>
-            </View>
-          ) : null}
+          {newIds.includes('weekly_mission') ? <NewChip style={{ alignSelf: 'flex-start', marginBottom: 4 }} /> : null}
           {/* v3.293 [WeeklyMission] 이번 주 미션(로그인 시) */}
           <WeeklyMissionCard onGo={() => { close(); navigateGlobal('Studio'); }} />
 
@@ -112,7 +110,10 @@ export default function StarGuideModal() {
               >
                 <View style={styles.rowIcon}>{r.icon}</View>
                 <View style={styles.rowMid}>
-                  <AppText variant="body">{r.label}</AppText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <AppText variant="body">{r.label}</AppText>
+                    {r.newsId && newIds.includes(r.newsId) ? <NewChip /> : null}
+                  </View>
                   {r.sub ? <AppText variant="caption" tone={pressable ? 'accent' : 'muted'}>{r.sub}</AppText> : null}
                 </View>
                 <AppText variant="body" tone="accent">{r.amount}</AppText>
@@ -120,9 +121,19 @@ export default function StarGuideModal() {
               </Row>
             );
           })}
+          </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
+  );
+}
+
+// v3.306 [EarnNews] 새 항목 표시 칩
+function NewChip({ style }: { style?: any }) {
+  return (
+    <View style={[{ backgroundColor: colors.status.error, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }, style]}>
+      <AppText style={{ fontSize: 10, color: '#fff', fontWeight: '700' }}>NEW</AppText>
+    </View>
   );
 }
 
@@ -144,10 +155,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border.subtle,
   },
   rowIcon: { width: 26, alignItems: 'center' },
-  newsBox: {
-    flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start',
-    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.lg,
-    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, marginBottom: spacing.md,
-  },
   rowMid: { flex: 1 },
 });
