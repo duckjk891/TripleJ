@@ -60,6 +60,8 @@ export interface Club {
   genres?: string[];
   /** v3.296 추천 응답 전용 — 내 곡 장르와 겹친 태그 */
   matched_genres?: string[];
+  /** v3.305 [ClubInvite] 초대 링크로 온 사람 바로 가입(기본 true) — 크루장 설정 */
+  invite_auto_approve?: boolean;
 }
 
 // v3.296 [ClubGenre] 크루 장르(서버 CLUB_GENRES 와 동일 순서) — 칩 렌더용 상수(요청 없이 즉시 표시)
@@ -121,7 +123,7 @@ export async function createClub(name: string, description: string, genres: stri
 }
 
 /** v3.296 [ClubGenre] 크루장 정보 수정 — 장르·소개(이름은 변경 불가) */
-export async function updateClub(clubId: string, patch: { genres?: string[]; description?: string }): Promise<Club> {
+export async function updateClub(clubId: string, patch: { genres?: string[]; description?: string; invite_auto_approve?: boolean }): Promise<Club> {
   if (__DEV__) console.info('[ClubEdit] updateClub', { clubId, genres: patch.genres, descLen: patch.description?.length });
   try {
     const res = await api.patch(`/clubs/${clubId}`, patch);
@@ -168,13 +170,28 @@ export async function getClub(clubId: string): Promise<Club> {
 //   POST /clubs/{id}/join → 202 {status:'pending'}(신서버 승인제) | 200(구서버 즉시 가입)
 //   DELETE /clubs/{id}/join → 탈퇴(member) 또는 신청 철회(pending) 겸용
 export type JoinResult = 'member' | 'pending';
-export async function joinClub(clubId: string): Promise<JoinResult> {
-  if (__DEV__) console.info('[Club] joinClub', { clubId });
-  const res = await api.post(`/clubs/${clubId}/join`);
+export async function joinClub(clubId: string, opts: { inviteCode?: string } = {}): Promise<JoinResult> {
+  if (__DEV__) console.info('[Club] joinClub', { clubId, invite: !!opts.inviteCode });
+  // v3.305 [ClubInvite] 초대 코드 — 크루 설정이 자동 승인이면 서버가 즉시 멤버(200)로 응답
+  const res = opts.inviteCode
+    ? await api.post(`/clubs/${clubId}/join`, { invite_code: opts.inviteCode })
+    : await api.post(`/clubs/${clubId}/join`);
   // 202 또는 body status 'pending' → 승인 대기(둘 다 방어 — 프록시가 상태코드를 뭉갤 수 있음)
   const pending = res?.status === 202 || res?.data?.status === 'pending';
   if (__DEV__) console.info('[Club] joinClub 결과', { clubId, pending });
   return pending ? 'pending' : 'member';
+}
+
+/** v3.305 [ClubInvite] 초대 링크(멤버 전용) — {code, url(공유 랜딩), autoApprove} */
+export async function getClubInvite(clubId: string): Promise<{ code: string; url: string; autoApprove: boolean }> {
+  if (__DEV__) console.info('[ClubInvite] 초대 링크 요청', { clubId });
+  try {
+    const res = await api.post(`/clubs/${clubId}/invite`);
+    return { code: String(res.data?.code ?? ''), url: String(res.data?.url ?? ''), autoApprove: res.data?.auto_approve !== false };
+  } catch (err: any) {
+    console.error('[ClubInvite] 초대 링크 실패', { clubId, status: err?.response?.status });
+    throw err;
+  }
 }
 
 export async function leaveClub(clubId: string): Promise<void> {

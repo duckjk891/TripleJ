@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl,
-  StyleSheet, Modal, TextInput, KeyboardAvoidingView, ScrollView,
+  StyleSheet, Modal, TextInput, KeyboardAvoidingView, ScrollView, Switch, Image,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -22,7 +22,13 @@ import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock'
 import TrackRow from '../components/TrackRow';
 import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
 import ClubGenrePicker from '../components/ClubGenrePicker'; // v3.296 [ClubGenre]
-import { updateClub } from '../services/clubService';
+import { updateClub, getClubInvite } from '../services/clubService';
+// v3.305 [ClubAlbum·ClubLink] 크루 앨범(플리·앨범 함께 표시) + 초대 링크·로그인 후 자동 가입
+import ClubAlbumCreateModal from '../components/club/ClubAlbumCreateModal';
+import { listClubAlbums, type ClubAlbum } from '../services/clubAlbumService';
+import { getTrackCoverUri } from '../components/TrackRow';
+import { joinClubFlow, joinResultMessage, shareOrCopy } from '../utils/clubJoin';
+import { loadClubInviteCode, saveClubInvite } from '../utils/clubLink';
 // v3.257: v3.253 크루 인지도 레벨 배지(CrewLevelBadge) 제거 — 대표 확정 "크루는 인지도가 필요없어.
 // 크루원들한테 혜택이 가는 형태면 되." 실적 축적(queueSource·play-start)은 그대로 유지.
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
@@ -55,7 +61,7 @@ const MEMBERS_LIMIT = 30; // v3.249 — 멤버 목록 페이지 크기(before �
 const TABS: { key: ClubTab; label: string }[] = [
   { key: 'chat', label: '채팅' },
   { key: 'board', label: '게시판' },
-  { key: 'playlists', label: '플레이리스트' },
+  { key: 'playlists', label: '플리·앨범' }, // v3.305 플레이리스트와 크루 앨범 함께
   { key: 'info', label: '정보' },
 ];
 
@@ -71,6 +77,10 @@ export default function ClubHomeScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const { clubId, name } = route.params || {};
+  // v3.305 [ClubLink]: 초대 링크 진입(inviteCode) · 알림/삭제 복귀(initialTab·refreshAt)
+  const routeInvite: string | undefined = route.params?.inviteCode;
+  const initialTab: ClubTab | undefined = route.params?.initialTab;
+  const refreshAt = route.params?.refreshAt;
   const { user } = useAuthStore();
   const playerStore = usePlayerStore();
   // 어린이 — 보호자 허용 없으면 글쓰기 숨김(FeedScreen 관행). 이미지 게이트는 FeedCompose 기존 로직.
@@ -82,7 +92,13 @@ export default function ClubHomeScreen() {
   const [detailFailed, setDetailFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<ClubTab>('chat'); // v3.252: 채팅이 첫 탭
+  // v3.252: 채팅이 첫 탭 · v3.305: 초대 링크·앨범 알림 진입은 플리·앨범 탭(대표곡 바로 듣기)
+  const [tab, setTab] = useState<ClubTab>(initialTab || (routeInvite ? 'playlists' : 'chat'));
+  // v3.305 [ClubAlbum] 크루 앨범 + 초대 코드(링크로 온 비회원 표시·가입에 사용)
+  const [albums, setAlbums] = useState<ClubAlbum[]>([]);
+  const [albumCreateOpen, setAlbumCreateOpen] = useState(false);
+  const [inviteCode, setInviteCode] = useState<string>(routeInvite || '');
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [joinBusy, setJoinBusy] = useState(false);
   const [ctaVisible, setCtaVisible] = useState(false); // 비로그인 액션 → 로그인 오버레이
 
@@ -238,15 +254,38 @@ export default function ClubHomeScreen() {
     }
   }, [clubId]);
 
+  // v3.305 [ClubAlbum] 크루 앨범 — 실패는 빈 목록(구서버 404 포함, 플리 탭은 그대로)
+  const fetchAlbums = useCallback(async () => {
+    try {
+      setAlbums(await listClubAlbums(String(clubId)));
+    } catch {
+      setAlbums([]);
+    }
+  }, [clubId]);
+
   const fetchAll = useCallback(async () => {
     if (__DEV__) console.info('[Club] ClubHome fetchAll', { clubId });
     setLoading(true);
-    await Promise.allSettled([fetchDetail(), fetchBoard(), fetchPlaylists(), fetchMembers()]);
+    await Promise.allSettled([fetchDetail(), fetchBoard(), fetchPlaylists(), fetchMembers(), fetchAlbums()]);
     setLoading(false);
     setRefreshing(false);
-  }, [fetchDetail, fetchBoard, fetchPlaylists, fetchMembers]);
+  }, [fetchDetail, fetchBoard, fetchPlaylists, fetchMembers, fetchAlbums]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // v3.305: 로그인 전환·자동 가입 복귀(refreshAt) 시에도 다시 불러온다(가입 상태 반영)
+  useEffect(() => { fetchAll(); }, [fetchAll, user?.id, refreshAt]);
+
+  // v3.305 [ClubLink]: 초대 코드 — 진입 파라미터 우선(7일 보관), 없으면 이 크루의 보관 코드
+  useEffect(() => {
+    if (routeInvite) {
+      setInviteCode(routeInvite);
+      saveClubInvite(String(clubId), routeInvite).catch(() => {});
+      if (initialTab) setTab(initialTab);
+      else setTab('playlists');
+      return;
+    }
+    if (initialTab) setTab(initialTab);
+    loadClubInviteCode(String(clubId)).then((c) => setInviteCode(c)).catch(() => {});
+  }, [clubId, routeInvite, initialTab, refreshAt]);
 
   // v3.252 — owner 확인 후 신청 목록 로드(비owner 는 왕복 자체 생략)
   useEffect(() => {
@@ -303,25 +342,64 @@ export default function ClubHomeScreen() {
   };
 
   // v3.252 가입 승인제 — 202 {status:'pending'}(신서버) 은 신청 접수, 200(구서버) 은 즉시 가입(기존 흐름)
+  // v3.305 [ClubLink]: 비로그인 = 가입 예약 후 로그인 모달(로그인 직후 App 전역이 자동 가입·복귀),
+  //   로그인 = 초대 코드로 가입(크루 설정 자동 승인이면 즉시 멤버, 아니면 승인 대기 — 기존 202 흐름)
   const handleJoin = async () => {
-    if (!requireLogin() || joinBusy) return;
+    if (joinBusy) return;
     setJoinBusy(true);
     try {
-      const result = await joinClub(String(clubId));
+      const result = await joinClubFlow(String(clubId), { inviteCode: inviteCode || undefined, reason: inviteCode ? 'club_invite_join' : 'club_join' });
+      if (result === 'login') return;
       if (result === 'pending') {
         console.info('[Club] 가입 신청 접수', { clubId });
         setDetail((d) => d ? { ...d, join_status: 'pending' } : d);
-        showAlert('가입 신청', '가입 신청을 보냈어요. 운영자 승인 후 함께할 수 있어요.');
       } else {
-        console.info('[Club] 가입 성공', { clubId });
+        console.info('[Club] 가입 성공', { clubId, invite: !!inviteCode });
         setDetail((d) => d ? { ...d, is_member: true, join_status: 'member', role: d.role === 'owner' ? d.role : 'member', member_count: (d.member_count ?? 0) + 1 } : d);
+        setInviteCode('');
         fetchMembers(); // v3.249 — 멤버가 되면 멤버 목록 열람 가능(정보 탭 동기화)
+        fetchAlbums(); // v3.305 — 앨범 잠금 해제 반영
       }
+      const m = joinResultMessage(result, detail?.name);
+      showAlert(m.title, m.body);
     } catch (err: any) {
       console.error('[Club] 가입 실패', { clubId, status: err?.response?.status, code: getClubErrorCode(err) });
       showAlert('오류', `${CLUB_LABEL}에 가입하지 못했어요. 잠시 후 다시 시도해주세요.`);
     } finally {
       setJoinBusy(false);
+    }
+  };
+
+  // v3.305 [ClubLink] 초대 링크 공유(멤버) — 공유 시트 또는 링크 복사
+  const handleInvite = async () => {
+    if (inviteBusy) return;
+    setInviteBusy(true);
+    try {
+      const inv = await getClubInvite(String(clubId));
+      console.info('[ClubInvite] 공유', { clubId, autoApprove: inv.autoApprove });
+      await shareOrCopy(`MAIDOL 「${detail?.name ?? CLUB_LABEL}」 크루에 초대해요!\n함께 AI로 곡을 만들고, 크루 앨범에 참여해 ⭐도 받아요.\n${inv.url}`, inv.url);
+    } catch (err: any) {
+      showAlert('알림', err?.response?.data?.error || '초대 링크를 만들지 못했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const openAlbum = (a: ClubAlbum) => {
+    if (__DEV__) console.info('[ClubAlbum] 열기', { clubId, albumId: a.id });
+    navigation.navigate('ClubAlbum', { clubId: String(clubId), albumId: String(a.id), clubName: detail?.name });
+  };
+
+  // v3.305 크루장 — 초대 링크 자동 승인 토글
+  const toggleInviteAuto = async (v: boolean) => {
+    if (!detail?.id) return;
+    setDetail((d) => (d ? { ...d, invite_auto_approve: v } : d));
+    try {
+      await updateClub(String(detail.id), { invite_auto_approve: v });
+      console.info('[ClubInvite] 자동 승인 설정', { clubId, v });
+    } catch {
+      setDetail((d) => (d ? { ...d, invite_auto_approve: !v } : d));
+      showAlert('알림', '설정을 바꾸지 못했어요. 잠시 후 다시 시도해주세요.');
     }
   };
 
@@ -572,7 +650,9 @@ export default function ClubHomeScreen() {
   };
 
   const handleMembershipPress = () => {
-    if (!requireLogin() || joinBusy) return;
+    if (joinBusy) return;
+    // v3.305 [ClubLink]: 비로그인 가입 = 가입 예약 + 로그인 모달(로그인 후 자동 가입·복귀)
+    if (!user) { handleJoin(); return; }
     if (isPending) return; // v3.252: 승인 대기 — 버튼 비활성(철회는 별도 '신청 취소' 행)
     if (isOwner) {
       // v3.247: owner 탈퇴 시도 — 위임 선행 안내(계약: 위임 후 leave 가능). 서버 왕복 없음.
@@ -867,6 +947,18 @@ export default function ClubHomeScreen() {
           <Feather name="chevron-right" size={16} color={colors.text.muted} />
         </TouchableOpacity>
       ) : null}
+      {/* v3.305 [ClubInvite] 초대 링크 자동 승인 — owner 전용(기본 켜짐, 강퇴 이력자는 항상 승인 대기) */}
+      {isOwner ? (
+        <View style={styles.promoRow}>
+          <Feather name="link" size={16} color={colors.accent.primary} />
+          <View style={{ flex: 1 }}>
+            <AppText variant="body">초대 링크로 오면 바로 가입</AppText>
+            <AppText variant="caption" tone="muted">끄면 초대 링크로 와도 승인 후 가입돼요</AppText>
+          </View>
+          <Switch value={detail?.invite_auto_approve !== false} onValueChange={toggleInviteAuto}
+            trackColor={{ true: colors.accent.primary, false: colors.bg.surface3 }} accessibilityLabel="초대 링크 자동 승인" />
+        </View>
+      ) : null}
       {/* v3.261: 크루 홍보하기 — owner 전용 행(취향 매칭 유저에게 알림, 7일 1회) */}
       {isOwner ? (
         <TouchableOpacity style={styles.promoRow} activeOpacity={0.7} onPress={openPromoSheet} accessibilityLabel={`${CLUB_LABEL} 홍보하기`}>
@@ -981,6 +1073,24 @@ export default function ClubHomeScreen() {
             {detail.description}
           </AppText>
         ) : null}
+        {/* v3.305 [ClubLink] 초대 링크로 온 비회원 — 가입 혜택 안내 + 큰 가입 버튼 */}
+        {!isMember && !isPending && inviteCode ? (
+          <View style={styles.inviteBanner}>
+            <AppText variant="callout">{`「${detail?.name ?? CLUB_LABEL}」 크루에 초대받았어요`}</AppText>
+            <AppText variant="caption" tone="secondary" style={{ marginTop: 2 }}>
+              가입하면 채팅·크루 앨범 전 곡 듣기, 테마 곡을 내면 참여 미션 ⭐5
+            </AppText>
+            <View style={{ marginTop: spacing.sm }}>
+              <Button label={user ? '크루 가입하기' : '로그인하고 크루 가입하기'} fullWidth loading={joinBusy} onPress={handleJoin} />
+            </View>
+          </View>
+        ) : null}
+        {isMember ? (
+          <TouchableOpacity style={styles.inviteRow} activeOpacity={0.7} onPress={handleInvite} disabled={inviteBusy} accessibilityLabel={`${CLUB_LABEL} 초대 링크 공유`}>
+            <Feather name="user-plus" size={14} color={colors.accent.primary} />
+            <AppText variant="footnote" tone="accent">친구 초대하기</AppText>
+          </TouchableOpacity>
+        ) : null}
         {/* v3.252: 신청 철회 행 — pending 전용(DELETE /join 겸용 계약) */}
         {isPending ? (
           <TouchableOpacity style={styles.cancelReqRow} activeOpacity={0.7} onPress={confirmCancelJoinRequest} accessibilityLabel="가입 신청 취소">
@@ -1034,13 +1144,49 @@ export default function ClubHomeScreen() {
             </TouchableOpacity>
             <AppText variant="title3" style={{ marginTop: spacing.sm }} numberOfLines={1}>{selectedPl.title || selectedPl.name}</AppText>
             <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>{`${plTracks.length}곡 · ${CLUB_LABEL} 멤버가 함께 채워요`}</AppText>
+            {/* v3.305 [ClubAlbum] 크루장 — 이 플레이리스트로 테마 앨범 만들기 */}
+            {isOwner && plTracks.length > 0 ? (
+              <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setAlbumCreateOpen(true)} accessibilityLabel="이 플레이리스트로 앨범 만들기">
+                <Feather name="disc" size={16} color={colors.accent.primary} />
+                <AppText style={styles.composeText}>이 플레이리스트로 앨범 만들기</AppText>
+              </TouchableOpacity>
+            ) : null}
           </View>
-        ) : isMember ? (
-          <TouchableOpacity style={styles.composeBtn} activeOpacity={0.8} onPress={() => setShowPlCreate(true)} accessibilityLabel={`${CLUB_LABEL} 플레이리스트 만들기`}>
-            <Feather name="plus" size={16} color={colors.accent.primary} />
-            <AppText style={styles.composeText}>플레이리스트 만들기</AppText>
-          </TouchableOpacity>
-        ) : null
+        ) : (
+          <View>
+            {/* v3.305 [ClubAlbum] 크루 앨범(위) + 플레이리스트(아래) 함께 표시 */}
+            {albums.length > 0 ? (
+              <View style={{ paddingTop: spacing.md }}>
+                <AppText variant="callout" style={styles.sectionLabel}>{`${CLUB_LABEL} 앨범`}</AppText>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.md }}>
+                  {albums.map((a) => {
+                    const cover = a.representative_track ? getTrackCoverUri({ ...(a.representative_track as any), id: String(a.representative_track.id) }) : null;
+                    return (
+                      <TouchableOpacity key={a.id} style={styles.albumCard} activeOpacity={0.8} onPress={() => openAlbum(a)} accessibilityLabel={`크루 앨범 ${a.title}`}>
+                        {cover ? <Image source={{ uri: cover }} style={styles.albumCover} /> : (
+                          <View style={[styles.albumCover, { alignItems: 'center', justifyContent: 'center' }]}><Feather name="disc" size={28} color={colors.text.muted} /></View>
+                        )}
+                        <AppText variant="footnote" numberOfLines={1} style={{ marginTop: spacing.xs }}>{a.title}</AppText>
+                        <AppText variant="caption" tone="muted" numberOfLines={1}>{`${a.track_count}곡${a.theme ? ` · ${a.theme}` : ''}`}</AppText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : isOwner ? (
+              <AppText variant="caption" tone="muted" style={[styles.sectionLabel, { marginTop: spacing.md }]}>
+                플레이리스트를 열어 「앨범 만들기」로 테마 앨범을 만들 수 있어요. 멤버가 테마 곡을 내면 ⭐5를 받아요.
+              </AppText>
+            ) : null}
+            <AppText variant="callout" style={[styles.sectionLabel, { marginTop: spacing.md }]}>플레이리스트</AppText>
+            {isMember ? (
+              <TouchableOpacity style={styles.composeBtn} activeOpacity={0.8} onPress={() => setShowPlCreate(true)} accessibilityLabel={`${CLUB_LABEL} 플레이리스트 만들기`}>
+                <Feather name="plus" size={16} color={colors.accent.primary} />
+                <AppText style={styles.composeText}>플레이리스트 만들기</AppText>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )
       ) : null}
 
       {/* v3.249: 정보 탭 — 소개·개설일·운영자(+owner 삭제 요청)는 헤더, 멤버 행은 리스트 데이터 */}
@@ -1118,6 +1264,24 @@ export default function ClubHomeScreen() {
           />
         }
         contentContainerStyle={{ flexGrow: 1, paddingBottom: playerStore.track ? 140 : 80 }}
+      />
+
+      {/* v3.305 [ClubAlbum] 크루장 — 플레이리스트로 앨범 만들기 */}
+      <ClubAlbumCreateModal
+        visible={albumCreateOpen}
+        clubId={String(clubId)}
+        playlist={selectedPl as any}
+        tracks={plTracks}
+        onClose={() => setAlbumCreateOpen(false)}
+        onCreated={(a) => {
+          setAlbumCreateOpen(false);
+          setSelectedPl(null);
+          fetchAlbums();
+          showAlert('앨범 완성', `「${a.title}」 앨범을 만들었어요.\n앨범을 공유하면 비회원은 대표곡을 먼저 들어볼 수 있어요.`, [
+            { text: '닫기', style: 'cancel' },
+            { text: '앨범 보기', onPress: () => openAlbum(a) },
+          ]);
+        }}
       />
 
       {/* 클럽 플레이리스트 만들기 — PlaylistScreen 이름 변경 모달 관행(KAV padding) */}
@@ -1365,6 +1529,15 @@ export default function ClubHomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  // v3.305 [ClubAlbum·ClubLink]
+  sectionLabel: { paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
+  albumCard: { width: 128 },
+  albumCover: { width: 128, height: 128, borderRadius: radius.lg, backgroundColor: colors.bg.surface2 },
+  inviteBanner: {
+    marginTop: spacing.md, padding: spacing.md, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border.accent, backgroundColor: colors.bg.surface1,
+  },
+  inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, alignSelf: 'flex-start' },
   infoBox: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md },
   infoTopRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },

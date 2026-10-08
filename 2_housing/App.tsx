@@ -88,6 +88,9 @@ import CommunityScreen from './screens/CommunityScreen';
 import ClubCreateScreen from './screens/ClubCreateScreen';
 import ClubHomeScreen from './screens/ClubHomeScreen';
 import ClubChatScreen from './screens/ClubChatScreen'; // v3.252 크루 단톡방
+import ClubAlbumScreen from './screens/ClubAlbumScreen'; // v3.305 크루 앨범(대표곡·참여 미션)
+import { captureWebClubLink, captureNativeClubLink, peekPendingClubLink, takePendingClubLink } from './utils/clubLink';
+import { processPendingClubJoin } from './utils/clubJoin';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -550,6 +553,29 @@ function MainTabs() {
           ),
         })}
       />
+      {/* v3.305 [ClubAlbum] 크루 앨범 — 숨김 탭(하단 탭바 유지). ← 는 그 크루 화면(플리·앨범 탭)으로 */}
+      <Tab.Screen
+        name="ClubAlbum"
+        component={ClubAlbumScreen}
+        options={({ navigation, route }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          headerTitle: () => <AppText variant="subtitle">크루 앨범</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('ClubHome', { clubId: (route.params as any)?.clubId, name: (route.params as any)?.clubName, initialTab: 'playlists' })}
+              style={{ marginLeft: 12 }}
+              accessibilityLabel="뒤로"
+            >
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
+            </TouchableOpacity>
+          ),
+        })}
+      />
       {/* v3.220 ①: 앨범 상세 — RootStack에서 이 숨김 탭으로 이동(하단 탭바 유지, MyMusic 관행).
           ← 는 goBack이 firstRoute(차트)로 떨어지므로 from 파라미터 기반 exitAlbum으로 origin 복귀.
           진입: 차트 2곳·마이페이지 2곳(탭 형제 navigate)·채널(MainTabs 중첩 navigate). */}
@@ -609,6 +635,11 @@ function GlobalModals() {
     const wasLoggedOut = !prevUserRef.current;
     prevUserRef.current = user;
     if (!user || !wasLoggedOut) return; // 로그인 전환(null→user)일 때만
+    // v3.305 [ClubLink]: 비로그인 때 누른 '크루 가입하기' 이어서 처리 — 로그인 착지(차트 리셋) 뒤에 크루 화면으로
+    setTimeout(() => {
+      processPendingClubJoin((name, params) => (navigationRef.navigate as any)(name, params))
+        .catch((err: any) => console.error('[ClubLink] 자동 가입 처리 실패', { message: err?.message }));
+    }, 900);
     (async () => {
       if (__DEV__) console.info('[GlobalModals] 로그인 감지 — 별 잔액 + 출석 상태 확인');
       fetchBalance(); // 별 배지 즉시 갱신
@@ -635,6 +666,8 @@ function GlobalModals() {
 // v3.235 B5 [TrackLink] 웹 `?track=` 캡처 — 모듈 로드 시 1회(React Navigation 이 주소를 바꾸기 전).
 // `?ref=` 추천코드 캡처(AuthPanel 모듈 로드)와 독립 — 서로의 파라미터를 건드리지 않는다.
 captureWebTrackLink();
+// v3.305 [ClubLink] 웹 `?club=&i=&album=` 캡처 — 트랙 링크와 같은 시점(주소 변경 전). 초대 코드는 7일 보관.
+captureWebClubLink();
 
 // v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
 //  로그인 복원(restoreQueueFor)이 재생목록을 계정 보관함으로 교체하므로 그 뒤에 붙여야 링크 곡이 남고,
@@ -649,6 +682,30 @@ function markBootAuthSettled(reason: string) {
   notifyBootAuthSettled(); // v3.276: WelcomeGuide 등 "비로그인 전용 첫 실행 UI" 대기 해제
   if (peekPendingTrackLink()) console.info('[TrackLink] auth-settled', { reason });
   tryConsumeTrackLink();
+  tryConsumeClubLink();
+}
+
+// v3.305 [ClubLink] 크루 링크 착지 — Splash 뒤·부팅 세션 정착 뒤 1회. 앨범 링크면 앨범 화면, 아니면 크루 화면(플리·앨범 탭).
+//  로그인 착지(OAuth = 차트 리셋) 이후에 이동하도록 정착 신호 뒤에 소비한다.
+function tryConsumeClubLink() {
+  if (!peekPendingClubLink()) return;
+  try {
+    if (!navigationRef.isReady()) return;
+    const routeName = navigationRef.getCurrentRoute()?.name;
+    if (!routeName || routeName === 'Splash') return;
+    if (!bootAuthSettled && Date.now() - appBootAt < TRACK_LINK_AUTH_WAIT_MAX_MS) return;
+  } catch {
+    return;
+  }
+  const link = takePendingClubLink();
+  if (!link) return;
+  console.info('[ClubLink] 착지', { club: link.clubId.slice(0, 8), album: link.albumId?.slice(0, 8) ?? null, code: !!link.code });
+  const nav = navigationRef.navigate as any;
+  if (link.albumId) {
+    nav('MainTabs', { screen: 'ClubAlbum', params: { clubId: link.clubId, albumId: link.albumId, refreshAt: Date.now() } });
+  } else {
+    nav('MainTabs', { screen: 'ClubHome', params: { clubId: link.clubId, ...(link.code ? { inviteCode: link.code } : {}), initialTab: 'playlists', refreshAt: Date.now() } });
+  }
 }
 function tryConsumeTrackLink() {
   if (!peekPendingTrackLink()) return;
@@ -668,10 +725,11 @@ function tryConsumeTrackLink() {
 function useTrackLinkCapture() {
   useEffect(() => {
     // 정착 신호 유실 대비 — 상한 대기 뒤 1회 재시도(웹·네이티브 공통)
-    const t = setTimeout(tryConsumeTrackLink, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
+    const t = setTimeout(() => { tryConsumeTrackLink(); tryConsumeClubLink(); }, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
     if (Platform.OS === 'web') return () => clearTimeout(t); // 웹은 모듈 로드 시 캡처
     const onUrl = (url: string | null) => {
       if (captureNativeTrackLink(url)) tryConsumeTrackLink();
+      else if (captureNativeClubLink(url)) tryConsumeClubLink(); // v3.305 [ClubLink]
     };
     Linking.getInitialURL().then(onUrl).catch((err: any) =>
       console.error('[TrackLink] 초기 딥링크 조회 실패', { message: err?.message }));
@@ -846,6 +904,7 @@ export default function App() {
     recordRoute(name);
     // v3.235 B5: Splash 이탈 첫 시점(컨테이너 ready + 라우트 ≠ Splash)에 대기 중인 링크 재생 소비
     tryConsumeTrackLink();
+    tryConsumeClubLink(); // v3.305 [ClubLink]
   };
   return (
     <SafeAreaProvider>

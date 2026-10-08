@@ -15,7 +15,7 @@ import { useEarnGuideStore, selectEarnGuideIsNew, EARN_GUIDE_NEWS } from '../sto
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
-type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio';
+type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio' | 'community';
 const ROW_ICON_SIZE = 18;
 const ROW_ICON_COLOR = colors.text.secondary;
 const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string; action?: EarnAction }[] = [
@@ -25,6 +25,8 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
   { icon: <Feather name="calendar" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '매일 출석체크', amount: '+10', sub: '5일차 +30 · 10일차 +100', action: 'attendance' },
   { icon: <Feather name="headphones" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '남의 곡 듣기', amount: '+1', sub: '눌러서 차트로 이동', action: 'chart' },
   { icon: <MaterialCommunityIcons name="rocket-launch-outline" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '내 곡 발매', amount: '+5', sub: '눌러서 작업실로 이동', action: 'studio' },
+  // v3.305 [ClubAlbum] 크루 앨범 참여 미션 — 앨범당 1회, 주 최대 ⭐15
+  { icon: <Feather name="disc" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 앨범에 곡 내기', amount: '+5', sub: '크루장이 수록하면 · 눌러서 커뮤니티로', action: 'community' },
 ];
 
 export default function StarGuideModal() {
@@ -53,6 +55,7 @@ export default function StarGuideModal() {
       case 'attendance': openAttendance(); break;
       case 'chart': navigateGlobal('Chart'); break;
       case 'studio': navigateGlobal('Studio'); break;
+      case 'community': navigateGlobal('Community'); break;
     }
   };
 

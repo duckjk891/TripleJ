@@ -4,10 +4,10 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const EARN_GUIDE_VERSION = '2026-10-08-weekly-mission';
+export const EARN_GUIDE_VERSION = '2026-10-08-club-album';
 export const EARN_GUIDE_NEWS_TITLE = '새로운 ⭐ 얻는 방법';
 export const EARN_GUIDE_NEWS =
-  '주간 미션이 생겼어요!\n• 내 아티스트로 곡 3곡 발매 → ⭐15\n• 내 아티스트 곡에 커버 이미지 3개 넣기 → ⭐5\n매주 월요일 0시에 새로 시작해요.';
+  '새 미션이 생겼어요!\n• 주간 미션: 내 아티스트로 곡 3곡 발매 → ⭐15, 커버 이미지 3개 넣기 → ⭐5 (매주 월요일 0시 새로 시작)\n• 크루 앨범 참여: 크루장이 만든 테마 앨범에 새 곡을 내서 수록되면 → ⭐5 (앨범당 1회)';
 
 const SEEN_KEY = 'maidol-earn-guide-seen';
 const PROMPTED_KEY = 'maidol-earn-guide-prompted';

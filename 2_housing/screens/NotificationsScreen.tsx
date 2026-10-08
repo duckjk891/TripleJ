@@ -12,7 +12,7 @@ import { spacing } from '../theme/spacing';
 
 interface Notification {
   id: string;
-  type: 'follow' | 'comment' | 'reply' | 'like' | 'feed' | 'star';
+  type: 'follow' | 'comment' | 'reply' | 'like' | 'feed' | 'star' | 'club_promo' | 'club_album';
   actor_id: string;
   actor_nickname?: string;
   target_id?: string | null;
@@ -37,6 +37,8 @@ const TYPE_META: Record<string, { icon: any; label: (n: Notification) => string 
       ? `스타 ${(n.amount ?? 0).toLocaleString()}개가 차감되었어요`
       : `스타 ${(n.amount ?? 0).toLocaleString()}개를 받았어요`),
   },
+  // v3.305 [ClubAlbum] 크루 앨범 참여곡 제출(→크루장)·수록/미수록(→멤버) — 상세는 preview 줄
+  club_album: { icon: 'disc', label: (n) => `크루 앨범 소식 · ${n.actor_nickname ?? ''}님` },
 };
 
 const parseUtc = (iso: string) => new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z');
@@ -111,11 +113,11 @@ export default function NotificationsScreen() {
       navigation.navigate('UserChannel', { authorId: n.actor_id, name: n.actor_nickname });
     } else if (n.type === 'star') {
       navigation.navigate('StarHistory');
-    } else if (n.target_type === 'club_promo' && n.target_id) {
+    } else if ((n.target_type === 'club_promo' || n.target_type === 'club_album') && n.target_id) {
       // v3.261→v3.274 [39]②: ClubHome 은 MainTabs 숨김 탭 — RN7 은 중첩 네비게이션이 기본 꺼져 있어
       // 최상위 'ClubHome' 직접 navigate 가 조용히 무시됐다(알림 탭 무반응). 탭 경유로 명시.
-      if (__DEV__) console.info('[Notifications] open club_promo', { clubId: n.target_id });
-      navigation.navigate('MainTabs', { screen: 'ClubHome', params: { clubId: n.target_id } });
+      if (__DEV__) console.info('[Notifications] open club', { clubId: n.target_id, kind: n.target_type });
+      navigation.navigate('MainTabs', { screen: 'ClubHome', params: { clubId: n.target_id, ...(n.target_type === 'club_album' ? { initialTab: 'playlists' } : {}) } });
     } else if (n.target_type === 'track' && n.target_id) {
       // v3.177→v3.274 [39]③: 곡 댓글 알림 — 플레이어만 열리고 댓글이 안 보이던 결함.
       // openComments 파라미터로 플레이어가 댓글 탭을 바로 연다.

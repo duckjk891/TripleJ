@@ -13,6 +13,7 @@ import { AppText } from './ui';
 import { useAuthStore } from '../stores/authStore';
 import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
 import { whenBootAuthSettled } from '../utils/bootAuth';
+import { isClubLinkEntry } from '../utils/clubLink';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -72,6 +73,9 @@ export default function WelcomeGuide() {
         // 세션 복원 완료까지 대기 — 복원 전 user=null 을 게스트로 오판해 기존 회원에게 번쩍 뜨는 것 방지
         await whenBootAuthSettled();
         if (useAuthStore.getState().user) return; // 로그인 사용자는 대상 아님
+        // v3.305 [ClubLink]: 크루·크루 앨범 링크로 처음 온 사람은 크루 화면으로 바로(대표 확정 — 체험은 가입 후).
+        //   seen 기록은 하지 않는다 — 다음 일반 방문 때 첫 실행 안내를 정상 노출.
+        if (isClubLinkEntry()) { console.info('[WelcomeGuide] 크루 링크 진입 — 이번엔 생략'); return; }
         const seen = await AsyncStorage.getItem(WELCOME_GUIDE_SEEN_KEY);
         if (seen) return;
         console.info('[WelcomeGuide] 첫 실행 — 노출');
