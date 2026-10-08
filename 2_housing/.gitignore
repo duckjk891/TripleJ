@@ -44,3 +44,7 @@ yarn-error.*
 KakaoTalk_Photo_*
 image (*).png
 스크린샷*.png
+
+# Firebase 설정(FCM) — 로컬 보관, EAS 빌드엔 .easignore 기준으로 포함
+google-services.json
+GoogleService-Info.plist
