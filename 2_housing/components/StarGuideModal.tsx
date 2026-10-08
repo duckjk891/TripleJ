@@ -12,6 +12,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 import WeeklyMissionCard from './WeeklyMissionCard';
+import StarHistoryPanel from './StarHistoryPanel';
 import { useEarnGuideStore, unseenEarnNewsIds } from '../stores/earnGuideStore';
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
@@ -41,8 +42,13 @@ export default function StarGuideModal() {
   const markSeen = useEarnGuideStore((s) => s.markSeen);
   const [newIds, setNewIds] = useState<string[]>([]);
   const { height: winH } = useWindowDimensions();
+  // v3.307 [StarHistory]: '내역 보기'는 새 페이지 대신 이 팝업 안 화면 전환(‹ 이전 = 별 안내로 복귀)
+  const [view, setView] = useState<'main' | 'history'>('main');
+  const modalMaxH = Math.round(winH * 0.86);
+  const bodyMaxH = modalMaxH - 90; // 헤더 줄 + 패딩 — 내부 스크롤 영역 높이(웹·앱 공통으로 명시)
   useEffect(() => {
     if (!open) return;
+    setView('main');
     setNewIds(unseenEarnNewsIds(useEarnGuideStore.getState()));
     markSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -64,7 +70,23 @@ export default function StarGuideModal() {
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={close}>
-        <TouchableOpacity style={[styles.modal, { maxHeight: Math.round(winH * 0.86) }]} activeOpacity={1} onPress={() => {}}>
+        <TouchableOpacity style={[styles.modal, { maxHeight: modalMaxH }]} activeOpacity={1} onPress={() => {}}>
+          {view === 'history' ? (
+            <>
+              <View style={styles.head}>
+                <TouchableOpacity onPress={() => setView('main')} style={styles.backBtn} accessibilityLabel="이전">
+                  <Feather name="chevron-left" size={20} color={colors.text.primary} />
+                  <AppText variant="body">이전</AppText>
+                </TouchableOpacity>
+                <AppText variant="subtitle">{CURRENCY} 내역</AppText>
+                <TouchableOpacity onPress={close} accessibilityLabel="닫기">
+                  <Feather name="x" size={20} color={colors.text.muted} />
+                </TouchableOpacity>
+              </View>
+              <StarHistoryPanel maxHeight={bodyMaxH} />
+            </>
+          ) : (
+          <>
           <View style={styles.head}>
             <AppText variant="title2">{CURRENCY_ICON} {CURRENCY}</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
@@ -72,7 +94,7 @@ export default function StarGuideModal() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xs }}>
+          <ScrollView style={{ maxHeight: bodyMaxH, flexGrow: 0 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xs }}>
           {/* 보유 잔액 */}
           <View style={styles.balanceBox}>
             <AppText variant="footnote" tone="secondary">보유 {CURRENCY}</AppText>
@@ -83,9 +105,8 @@ export default function StarGuideModal() {
           <TouchableOpacity
             style={styles.historyBtn}
             onPress={() => {
-              console.info('[StarHistory] 안내 팝업 내역 보기 탭');
-              close();
-              navigateGlobal('StarHistory');
+              console.info('[StarHistory] 안내 팝업 내역 보기 탭(팝업 안 전환)');
+              setView('history');
             }}
             accessibilityLabel="스타 내역 보기"
             activeOpacity={0.7}
@@ -122,6 +143,8 @@ export default function StarGuideModal() {
             );
           })}
           </ScrollView>
+          </>
+          )}
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
@@ -141,6 +164,7 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
   modal: { width: '100%', maxWidth: 380, backgroundColor: colors.bg.surface1, borderRadius: radius.xxl, padding: spacing.xl },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingVertical: 4, paddingRight: spacing.sm },
   balanceBox: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: colors.bg.deepest, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.accent,

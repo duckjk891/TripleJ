@@ -63,13 +63,15 @@ interface FeedPost {
   kind?: string;       // 'feed' | 'community'
 }
 
-// v3.210 ①: 상단 세그먼트 탭 — [전체]=기존 timeline, [내 피드]/[내 공지]=/feeds/user/{me}?kind=
-// (서버 v137: viewer==owner면 비공개 글 포함 — MyMusicScreen fetchFeeds와 동일 계약)
+// v3.210 ①: 상단 세그먼트 탭 → v3.307(대표 10-08) [전체]·[내 글]·[공지]
+//  [전체] = 공식 계정 제외 사용자 피드·공지(timeline?exclude_official=true)
+//  [내 글] = 내 피드+내 공지(/feeds/user/{me}?kind=all — 비공개 포함)
+//  [공지] = maidol_official 공식 계정 글(/feeds/notices) — 비로그인도 열람
 type FeedTab = 'all' | 'mine' | 'notice';
-const FEED_TABS: { key: FeedTab; label: string }[] = [
-  { key: 'all', label: '전체' },
-  { key: 'mine', label: '내 피드' },
-  { key: 'notice', label: '내 공지' },
+const FEED_TABS: { key: FeedTab; label: string; guest: boolean }[] = [
+  { key: 'all', label: '전체', guest: true },
+  { key: 'mine', label: '내 글', guest: false },
+  { key: 'notice', label: '공지', guest: true },
 ];
 
 // v3.70: 착장 아이템 첨부(공구 광고) — 서버 블록 화이트리스트가 text|track뿐이라
@@ -103,6 +105,9 @@ export default function FeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // v3.210 ①: 세그먼트 탭 — 비로그인은 [전체]만(탭바 숨김)
   const [tab, setTab] = useState<FeedTab>('all');
+  // v3.307: 공식 계정 id(공지 응답 동봉) — 공식 계정으로 로그인했을 때만 [공지] 탭 작성 버튼
+  const [officialId, setOfficialId] = useState<string | null>(null);
+  const isOfficial = !!user && !!officialId && String(user.id) === officialId;
   // 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님)
   const [ctaVisible, setCtaVisible] = useState(false);
   // v3.69: 트랙 스탯(재생수·좋아요) 병합 캐시 + ⋮ 액션시트 대상
@@ -138,7 +143,7 @@ export default function FeedScreen() {
 
   // v3.210 ①: 로그아웃 시 내 글 탭에 남지 않도록 [전체]로 복귀
   useEffect(() => {
-    if (!user && tab !== 'all') setTab('all');
+    if (!user && tab === 'mine') setTab('all');
   }, [user, tab]);
 
   const fetchFeed = useCallback(async () => {
@@ -148,9 +153,12 @@ export default function FeedScreen() {
     try {
       setLoading(true);
       const uid = useAuthStore.getState().user?.id;
-      const res = tab !== 'all' && uid
-        ? await api.get(`/feeds/user/${uid}`, { params: { kind: tab === 'notice' ? 'community' : 'feed', limit: 50 } })
-        : await api.get('/feeds/timeline');
+      const res = tab === 'mine' && uid
+        ? await api.get(`/feeds/user/${uid}`, { params: { kind: 'all', limit: 50 } })
+        : tab === 'notice'
+        ? await api.get('/feeds/notices', { params: { limit: 50 } })
+        : await api.get('/feeds/timeline', { params: { exclude_official: true } });
+      if (tab === 'notice' && res.data?.official_id) setOfficialId(String(res.data.official_id));
       const data: FeedPost[] = Array.isArray(res.data)
         ? res.data
         : (res.data?.feeds || res.data?.items || res.data?.posts || []);
@@ -305,10 +313,10 @@ export default function FeedScreen() {
 
   return (
     <ScreenLayout>
-      {/* v3.210 ①: 세그먼트 탭 — MyMusicScreen tabBar 스타일 재사용. 비로그인은 [전체]만이라 탭바 숨김 */}
-      {user ? (
+      {/* v3.210 ①: 세그먼트 탭 — MyMusicScreen tabBar 스타일 재사용. v3.307: 비로그인은 [전체]·[공지] */}
+      {(
         <View style={styles.tabBar}>
-          {FEED_TABS.map((t) => (
+          {FEED_TABS.filter((t) => user || t.guest).map((t) => (
             <TouchableOpacity
               key={t.key}
               style={[styles.tab, tab === t.key && styles.tabActive]}
@@ -324,7 +332,7 @@ export default function FeedScreen() {
             </TouchableOpacity>
           ))}
         </View>
-      ) : null}
+      )}
       {loading && posts.length === 0 ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
       ) : posts.length > 0 ? (
@@ -353,20 +361,20 @@ export default function FeedScreen() {
             />
           }
         />
-      ) : !user ? (
+      ) : !user && tab !== 'notice' ? (
         <View style={{ flex: 1 }} />
       ) : tab === 'mine' ? (
         // v3.210 ①: 내 글 탭 빈 상태 — MyMusicScreen 피드/커뮤니티 탭 문구 관행
         <EmptyState
           icon={<Feather name="edit-3" size={44} color={colors.text.muted} />}
-          title="아직 작성한 피드가 없어요"
+          title="아직 작성한 글이 없어요"
           hint="오른쪽 아래 버튼으로 내 곡과 소식을 알려보세요!"
         />
       ) : tab === 'notice' ? (
         <EmptyState
           icon={<Feather name="bell" size={44} color={colors.text.muted} />}
-          title="아직 작성한 공지가 없어요"
-          hint="오른쪽 아래 버튼으로 구독자에게 소식을 전해보세요!"
+          title="아직 공지가 없어요"
+          hint="MAIDOL 공식 소식이 올라오면 여기서 볼 수 있어요."
         />
       ) : (
         <EmptyState
@@ -391,7 +399,8 @@ export default function FeedScreen() {
       {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
       {/* v3.210 ①: [내 공지] 탭에서는 kind='community'로 작성 진입(MyMusicScreen 새 공지 작성 관행) */}
       {/* v3.232 K8(B4): 어린이(보호자 허용 없음)는 글쓰기 Fab 숨김 */}
-      {user && !feedWriteBlocked ? (
+      {/* v3.307: [공지] 탭은 공식 계정만 작성(공지 글) — 일반 사용자는 Fab 숨김 */}
+      {user && !feedWriteBlocked && (tab !== 'notice' || isOfficial) ? (
         <Fab
           onPress={() => {
             const kind = tab === 'notice' ? 'community' : 'feed';
