@@ -4249,3 +4249,9 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 대표 지적: "마이페이지에서 스크롤하면 내 아티스트가 고정돼 따라 내려옴 — 곡·앨범/피드/커뮤니티가 고정돼야".
 - 원인: ScrollView stickyHeaderIndices={[2]}(자식 순번 고정) — v3.297 피드백 온도 카드(ReputationCard) 추가로 순서가 밀려 2번이 내 아티스트 블록이 됨.
 - 수정(MyMusicScreen): 성장 카드·피드백 온도·내 아티스트를 한 블록으로 묶어 탭 블록이 항상 1번 자식 → stickyHeaderIndices={[1]}. 이후 상단 카드가 늘어도 고정 대상 불변. tsc 0.
+
+## v3.321 — 2026-10-09 — 이미지 모델 GPT Image 2 → 2.5 sunburst (서버 배포)
+
+대표 지시: "이미지 디렉터가 gpt 이미지 2.0 — 2.5로 올려줘(아티스트를 잘 반영 못함)" + "아티스트 생성할 때도 2.0이면 2.5로".
+- 서버 services/openai_image.py OPENAI_IMAGE_MODEL: gpt-image-2-2026-04-21 → gpt-image-2.5-sunburst-2026-09-08(이미지 디렉터 커버·아티스트 생성·MV 이미지 공용 경로). 계정 사용 가능 모델 조회로 확인(flare/sunburst). sunburst = 참조 이미지 편집·디테일 보존 최상(flare 와 같은 가격, 더 느림).
+- 운영 실측: edits(2048·high·참조 시트 1장) 57초 성공·얼굴·착장 동일성 양호, generations 1024·low 14초 성공. 요청 형식 무변경. 진행 작업(gen_jobs 1) 완료 대기 후 재기동, 운영 모델 확인. 롤백 = 백업 openai_image.py.bak_pre_v3321 / 이미지 pre-v3321-live.
