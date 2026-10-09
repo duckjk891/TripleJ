@@ -131,10 +131,13 @@ export default function DmInboxScreen() {
     }
   }, []);
   useFocusEffect(useCallback(() => {
-    if (!childFriendsDm || !user) return;
-    console.info('[KidsDM] friends mode');
+    if (!user) return;
+    // v3.318 (대표 10-09 "서로 팔로우하면 DM 창에 자동으로 목록이 떠야"): 성인도 맞팔 목록을 불러와 메시지 탭 상단·새 메시지에 표시.
+    // 어린이는 보호자 dm_friends 허용일 때만(v3.233 그대로).
+    if (isChild && !childFriendsDm) return;
+    if (childFriendsDm) console.info('[KidsDM] friends mode');
     loadFriends();
-  }, [childFriendsDm, user, loadFriends]));
+  }, [childFriendsDm, isChild, user, loadFriends]));
 
   const openFriendPicker = () => {
     console.info('[KidsDM] friend picker open');
@@ -411,6 +414,25 @@ export default function DmInboxScreen() {
         ))}
       </View>
 
+      {/* v3.318: 서로 팔로우 — 메시지 탭 상단 가로 목록(탭하면 바로 대화) */}
+      {tab === 'messages' && friends && friends.length > 0 ? (
+        <View style={styles.friendStripBox}>
+          <AppText variant="caption" tone="secondary" style={{ paddingHorizontal: spacing.lg, marginBottom: spacing.sm }}>서로 팔로우</AppText>
+          <FlatList
+            horizontal
+            data={friends}
+            keyExtractor={(f) => String(f.id)}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.md }}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.friendChip} onPress={() => startConversation(String(item.id))} accessibilityLabel={`${item.nickname}에게 메시지`}>
+                <Avatar name={item.nickname || '?'} uri={profileUri(item.profile_image)} seed={String(item.id)} size={52} />
+                <AppText variant="caption" numberOfLines={1} style={{ marginTop: 4, maxWidth: 60 }}>{item.nickname}</AppText>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      ) : null}
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
       ) : error ? (
@@ -421,20 +443,15 @@ export default function DmInboxScreen() {
         <FlatList data={data} keyExtractor={(it) => it.conversation_id} renderItem={renderConv} />
       )}
 
-      {/* v3.216 ②: 새 메시지 — 전체화면 Modal 폐지, 헤더 하단 시트(PolicySheet 'sheet' v3.214 선례).
-          transparent+statusBarTranslucent — 네이티브 헤더('메시지'·뒤로가기·edit)가 항상 보인다. */}
-      <Modal visible={composeOpen} transparent statusBarTranslucent animationType="slide" onRequestClose={closeCompose}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeCompose} accessibilityLabel="닫기 배경">
-          <TouchableOpacity
-            style={[styles.sheet, { height: composeSheetHeight, paddingBottom: insets.bottom }]}
-            activeOpacity={1}
-            onPress={() => {}}
-          >
-            <View style={styles.header}>
-              <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
-              <TouchableOpacity onPress={closeCompose} accessibilityLabel="닫기" style={{ padding: 4 }}>
-                <Feather name="x" size={22} color={colors.text.muted} />
+      {/* v3.318 (대표 10-09 "새 메시지 누르면 상단바가 내려오며 UI가 이상해지고 이전 아이콘이 없음"):
+          헤더 아래 반투명 시트(v3.216) → 전체 화면 + 앱 상단바와 같은 헤더(‹ 뒤로 · 새 메시지). */}
+      <Modal visible={composeOpen} animationType="slide" onRequestClose={closeCompose}>
+        <View style={[styles.composeScreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+            <View style={styles.composeHeader}>
+              <TouchableOpacity onPress={closeCompose} accessibilityLabel="뒤로" style={{ padding: 4, marginRight: spacing.sm }}>
+                <Feather name="arrow-left" size={22} color={colors.text.primary} />
               </TouchableOpacity>
+              <AppText variant="subtitle" style={{ flex: 1 }}>새 메시지</AppText>
             </View>
             <AppText variant="caption" tone="secondary" style={styles.composeHint}>
               {peerDmLimited
@@ -460,19 +477,37 @@ export default function DmInboxScreen() {
                   {peerDmLimited ? DM_UNAVAILABLE_MESSAGE : '검색에 실패했습니다.'}
                 </AppText>
               ) : !query.trim() ? (
-                // v3.216 ③: 빈 검색어 — maidol_official 고정 행(조회 실패 시 현행 빈 목록 폴백).
-                // 검색어 입력 시엔 검색 결과만 노출되므로 고정 행과의 중복은 구조적으로 없다.
-                official ? (
-                  <TouchableOpacity style={styles.convRow} onPress={() => startConversation(official.official_id)}>
-                    <Avatar name={official.nickname || 'maidol_official'} size={40} />
-                    <AppText variant="body" style={{ marginLeft: spacing.md }}>
-                      {official.nickname || 'maidol_official'}
-                    </AppText>
-                    <View style={styles.officialBadge}>
-                      <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
-                    </View>
-                  </TouchableOpacity>
-                ) : null
+                // v3.216 ③: 빈 검색어 — maidol_official 고정 행 + v3.318 서로 팔로우 목록(공식 계정 제외).
+                <FlatList
+                  data={(friends || []).filter((f) => !official || String(f.id) !== String(official.official_id))}
+                  keyExtractor={(f) => String(f.id)}
+                  ListHeaderComponent={
+                    <>
+                      {official ? (
+                        <TouchableOpacity style={styles.convRow} onPress={() => startConversation(official.official_id)}>
+                          <Avatar name={official.nickname || 'maidol_official'} size={40} />
+                          <AppText variant="body" style={{ marginLeft: spacing.md }}>
+                            {official.nickname || 'maidol_official'}
+                          </AppText>
+                          <View style={styles.officialBadge}>
+                            <AppText variant="caption" style={styles.officialBadgeText}>공식</AppText>
+                          </View>
+                        </TouchableOpacity>
+                      ) : null}
+                      {friends && friends.length > 0 ? (
+                        <AppText variant="caption" tone="secondary" style={styles.sectionLabel}>서로 팔로우</AppText>
+                      ) : friendsLoading ? (
+                        <ActivityIndicator color={colors.accent.primary} style={{ marginTop: spacing.lg }} />
+                      ) : null}
+                    </>
+                  }
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.convRow} onPress={() => startConversation(String(item.id))}>
+                      <Avatar name={item.nickname || '?'} uri={profileUri(item.profile_image)} seed={String(item.id)} size={40} />
+                      <AppText variant="body" style={{ marginLeft: spacing.md }}>{item.nickname}</AppText>
+                    </TouchableOpacity>
+                  )}
+                />
               ) : !results.length ? (
                 <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 결과가 없어요.</AppText>
               ) : (
@@ -494,8 +529,7 @@ export default function DmInboxScreen() {
             {myCode ? (
               <AppText variant="caption" tone="muted" style={styles.myTag}>내 태그: #{myCode}</AppText>
             ) : null}
-          </TouchableOpacity>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </View>
   );
@@ -503,6 +537,15 @@ export default function DmInboxScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.318 새 메시지 전체 화면 + 앱 상단바 규격 헤더 · 서로 팔로우 목록
+  composeScreen: { flex: 1, backgroundColor: colors.bg.deepest },
+  composeHeader: {
+    flexDirection: 'row', alignItems: 'center', height: 56, paddingHorizontal: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  sectionLabel: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xs },
+  friendStripBox: { paddingBottom: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+  friendChip: { alignItems: 'center', width: 60 },
   // v3.216 ②: 새 메시지 시트 — PolicySheet 'sheet'/TrackActionSheet 관행(backdrop 0.6 + flex-end + 상단 radius)
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   sheet: {
