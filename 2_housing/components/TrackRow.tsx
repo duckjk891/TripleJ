@@ -47,11 +47,13 @@ interface Props {
   footer?: ReactNode;
   /** v3.70: 커버 우하단 소형 재생 배지 — 탭하면 재생됨을 시각화(피드 등). 'pause'=재생 중 표시 */
   playBadge?: 'play' | 'pause';
+  /** v3.310: TOP100 — 재생수 대신 '들은 사람 수'(순위 기준) 표시 */
+  listenerCount?: number;
   /** v3.207 ①: 이 행의 더보기(⋮) 버튼을 튜토리얼 anchor로 등록(보통 첫 행 index 0만) */
   moreAnchorKey?: TutorialAnchorKey;
 }
 
-export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge, moreAnchorKey }: Props) {
+export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge, moreAnchorKey, listenerCount }: Props) {
   // v3.207 ①: ⋮ anchor 등록 — onLayout 시 창 좌표 측정, unmount 시 해제(오버레이는 fallback으로 강등)
   const moreRef = useRef<View>(null);
   useEffect(() => {
@@ -78,10 +80,17 @@ export default function TrackRow({ track, left, liked, onPress, onMore, footer, 
       </View>
       {/* 재생수 · 좋아요수 — 좋아요 실행은 ⋮ 액션시트에서 */}
       <View style={styles.statCol}>
-        <View style={styles.statLine}>
-          <Feather name="play" size={11} color={colors.text.muted} />
-          <AppText variant="caption" tone="muted">{(track.play_count ?? 0).toLocaleString()}</AppText>
-        </View>
+        {typeof listenerCount === 'number' ? (
+          <View style={styles.statLine} accessibilityLabel={`들은 사람 ${listenerCount}명`}>
+            <Feather name="user" size={11} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted">{`${listenerCount.toLocaleString()}명`}</AppText>
+          </View>
+        ) : (
+          <View style={styles.statLine}>
+            <Feather name="play" size={11} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted">{(track.play_count ?? 0).toLocaleString()}</AppText>
+          </View>
+        )}
         <View style={styles.statLine}>
           <Feather name="heart" size={11} color={liked ? colors.accent.primary : colors.text.muted} />
           <AppText variant="caption" tone={liked ? 'accent' : 'muted'}>{(track.like_count ?? 0).toLocaleString()}</AppText>

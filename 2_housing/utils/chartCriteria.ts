@@ -21,15 +21,17 @@ const PERIOD_LABEL: Record<Exclude<ChartCriteriaTab, 'top100'>, string> = {
 };
 
 export function chartCriteriaText(tab: ChartCriteriaTab): { title: string; message: string } {
+  // v3.310 (대표 10-09 "한 사람이 여러 번 듣는 것도 빼줘"): TOP100 = 들은 사람 수 순(행 숫자 = 순위 기준)
   if (tab === 'top100') {
     return {
       title: 'TOP 100 차트 기준',
       message: [
-        '점수 = 순 청취자 40% + 순 다운로더 60%',
+        '순위 = 들은 사람 수 (곡 옆 사람 아이콘 숫자)',
         '· 지금까지 쌓인 전체 기록(누적)으로 순위를 정해요.',
-        ...COMMON_LINES,
-        '',
-        '점수 기록이 없는 곡은 총 재생수 순으로 그 뒤에 이어서 보여드려요.',
+        '· 로그인한 사용자가 곡을 70% 이상 들으면 1명으로 세요.',
+        '· 한 사람이 여러 번 들어도 1명이에요.',
+        '· 내 곡을 내가 들은 것은 세지 않아요.',
+        '· 들은 사람 수가 같으면 다운로드한 사람 수, 재생수 순이에요.',
       ].join('\n'),
     };
   }
