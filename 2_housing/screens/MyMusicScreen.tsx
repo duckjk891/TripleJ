@@ -749,7 +749,10 @@ export default function MyMusicScreen({ navigation }: any) {
           ScrollView로 묶고, 성장카드·내 아티스트는 스크롤과 함께 접히며 탭바(+칩)만
           상단에 고정(sticky). 내부 FlatList/ScrollView는 inline 렌더로 전환(목록 소규모). */}
       <ScrollView
-        stickyHeaderIndices={[2]}
+        // v3.320 (대표 10-09 "내 아티스트가 고정돼 따라 내려옴 — 곡·앨범/피드/커뮤니티가 고정돼야"): v3.297 피드백 온도 카드
+        //   추가로 자식 순서가 밀려 [2]가 내 아티스트를 가리켰다. 상단 요약(성장·온도·내 아티스트)을 한 블록으로 묶어
+        //   탭 블록이 항상 1번 자식 — 위쪽 카드가 늘어나도 고정 대상이 바뀌지 않는다.
+        stickyHeaderIndices={[1]}
         showsVerticalScrollIndicator={false}
         automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
@@ -766,6 +769,7 @@ export default function MyMusicScreen({ navigation }: any) {
           />
         }
       >
+      <View>
       {/* 성장 카드 */}
       <View style={styles.growthWrap}>
         <LinearGradient
@@ -864,6 +868,7 @@ export default function MyMusicScreen({ navigation }: any) {
         )}
         {/* v3.179(대표): '내 목소리' 카드 제거 — 목소리는 아티스트 생성/상세의 목소리 연결에서
             관리(중복 진입점 정리). VoiceManage 라우트·화면은 보존(ArtistResult 등에서 사용). */}
+      </View>
       </View>
 
       {/* 탭 바 — v3.115 3탭. v3.179: sticky 블록(칩 포함) — 스크롤해도 상단 고정 */}
