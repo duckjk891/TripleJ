@@ -2,9 +2,11 @@
 //  · [Verse]/[Chorus: …]/[This song is a duet …] 같은 줄 전체 마커 → 줄 삭제
 //  · 듀엣 파트 표시 [Female]/[Male]/[Both] 등 줄 안의 [..] → 지움(가사만 남김)
 //  · === / == 1절 == 같은 구분 표시 → 지움
-//  · (SFX: …) 같은 효과음 지시 줄 → 줄 삭제(v3.314)
+//  · (SFX: …) 같은 효과음 지시 줄 → 줄 삭제(v3.314) · v3.315: ( ) 안 텍스트 전부 지움(추임새 포함)
 //  · 원래 있던 빈 줄(문단 구분)은 1줄로 유지, 마커 삭제로 생긴 빈 줄은 남기지 않음
 const BRACKET_RE = /\[[^\]\n]*\]/g;
+// v3.315 (대표 10-09 "() 안의 텍스트도 다 지워야 돼. 가사에"): 소괄호(전각 포함) 안 텍스트 전부 표시 제외
+const PAREN_RE = /[(（][^)）\n]*[)）]/g;
 const OPEN_BRACKET_TAIL_RE = /\[[^\]\n]*$/; // 닫히지 않은 [ … (줄 끝까지)
 const EQ_RE = /={2,}/g;
 const SEPARATOR_LINE_RE = /^\s*[=\-_~*#]{2,}\s*$/;
@@ -16,6 +18,7 @@ export function cleanLyricLine(line: string): string {
   if (SEPARATOR_LINE_RE.test(line) || DIRECTION_LINE_RE.test(line)) return '';
   return line
     .replace(BRACKET_RE, '')
+    .replace(PAREN_RE, '')
     .replace(OPEN_BRACKET_TAIL_RE, '')
     .replace(EQ_RE, '')
     .replace(/[ \t]{2,}/g, ' ')
