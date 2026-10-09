@@ -60,6 +60,8 @@ interface AdLite {
   brand?: string;
   advertiser_nickname?: string;
   category?: string;
+  /** v3.317 /business/ads/lookup — 활성(is_active·관리자 숨김 아님) 여부 */
+  active?: boolean;
 }
 
 // 화면 표시용 착용 아이템 (서버 used_items·레거시 outfitStore 공통 정규화)
@@ -154,24 +156,38 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // (두 곳에서 비용을 묻지 않는다). 기존 /points/costs 직조회도 제거.
   const [regenConfirmVisible, setRegenConfirmVisible] = useState(false);
 
-  // v3.121: 착용 제품 매핑 — /business/ads/active 전체(무인증 GET, 카테고리 미지정=전체).
-  // 실패 시 null 유지 → 판매종료 배지 판단 보류(used_items 자체 정보로만 표시).
+  // v3.121: 착용 제품 매핑 → v3.317(대표 10-09 "대부분 판매종료로 표시되는데 실제 판매 중"):
+  // 종전 /business/ads/active 는 무작위 500개 표본(활성 8천여 개)이라 표본에 없는 착용 아이템을 판매종료로 오표시.
+  // 착용 아이템만 POST /business/ads/lookup 으로 정확 조회 — 없거나 비활성일 때만 판매종료.
+  // 실패(구서버 404 등) 시 null 유지 → 판매종료 배지 판단 보류(used_items 자체 정보로만 표시).
+  const wornLookup = (() => {
+    const src: any[] = [
+      ...((serverArtist as any)?.used_items || []),
+      ...legacyVirtualWorn.map((w) => ({ id: w.adId, image_object_name: w.imageObjectName })),
+      ...outfitItems.map((o: any) => ({ id: o.id, image_object_name: o.imageObjectName })),
+    ];
+    const ids = [...new Set(src.map((x) => (x?.id ? String(x.id) : '')).filter((x) => /^[0-9a-f]{24}$/i.test(x)))];
+    const names = [...new Set(src.map((x) => x?.image_object_name || '').filter((x: string) => x.startsWith('ads/')))];
+    return { ids, names, key: `${ids.join(',')}|${names.join(',')}` };
+  })();
   useEffect(() => {
+    if (!wornLookup.ids.length && !wornLookup.names.length) return;
     let alive = true;
     (async () => {
       try {
-        const res = await api.get('/business/ads/active');
+        const res = await api.post('/business/ads/lookup', { ids: wornLookup.ids, image_object_names: wornLookup.names });
         if (alive) {
           const items: AdLite[] = Array.isArray(res.data?.items) ? res.data.items : [];
           setAdItems(items);
-          if (__DEV__) console.info('[ArtistResult] ads/active 로드', { count: items.length });
+          if (__DEV__) console.info('[ArtistResult] ads/lookup', { asked: wornLookup.ids.length + wornLookup.names.length, found: items.length });
         }
       } catch (err: any) {
-        console.warn('[ArtistResult] /business/ads/active 조회 실패(제품 매핑 보류):', err?.response?.status);
+        console.warn('[ArtistResult] /business/ads/lookup 실패(판매종료 판단 보류):', err?.response?.status);
       }
     })();
     return () => { alive = false; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wornLookup.key]);
 
   // v3.80: 실사/가상 2슬롯 — /me 하이드레이션에서 각각 보관
   const [realSheet, setRealSheet] = useState<{ objectName: string; url: string } | null>(null);
@@ -944,7 +960,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               (!!it.imageObjectName && a.image_object_name === it.imageObjectName)
           ) || null
         : null;
-      const discontinued = adItems !== null && !ad;
+      const discontinued = adItems !== null && (!ad || ad.active === false);
       return {
         ...it,
         adId: ad?.id || it.adId,

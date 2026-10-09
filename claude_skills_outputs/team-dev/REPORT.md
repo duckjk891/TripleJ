@@ -4224,3 +4224,9 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 대표 지시: "대머리 김부장 최근곡 이미지만 이걸로 시스템으로 바꿔줘, 다른 건 건드리지 말고".
 - 대상: 오리쟁이 '대머리 김부장' 2곡 중 최근곡 6ac47eef…(10-06, 아티스트 서은하). 10-04 곡(6ac1f72a…)은 미변경.
 - 대표 제공 이미지(webp 1254×1254) → PNG 변환 → images 버킷 covers/manual/{uploader}/{track}/{uuid}.png 업로드 → cover_image_url 만 교체(제목·가사·아티스트·착장 등 무변경). 스타일링은 원래도 미노출(cover_other_artist)이라 영향 없음. 이전 커버 경로 백업 /home/ubuntu/maidol/logs/cover_swap_kbj_20261009.json, 곡 캐시 삭제. 운영 플레이어 화면 확인.
+
+## v3.317 — 2026-10-09 — 착용 제품 '판매종료' 오표시 수정 + '대머리 김부장' 서은하 스타일링 (서버·데이터·웹 배포)
+
+- 대표 지적 "대부분의 꾸미기 아이템이 품절·판매종료로 표시되는데 실제 판매 중": 원인 = 아티스트 결과 화면 '착용한 제품'이 GET /business/ads/active(무작위 500개 표본, 활성 8,640개)에 없으면 판매종료로 표시 → 약 94% 오표시. 서버 business.py POST /business/ads/lookup(ids·image_object_names 각 ≤50, 정확 조회 + active 플래그) 신설(격리 4/4, 운영 확인). 앱 ArtistResultScreen: 착용 아이템만 lookup → 없거나 비활성일 때만 판매종료. 꾸미기 카테고리 카탈로그(/ads/catalog 전량)·위시 탭(is_active)은 원래 정상.
+- 대표 지시 "이 곡(대머리 김부장 최근곡) 서은하 아티스트 스타일링으로 표시": 곡 아티스트는 서은하인데 착장 스냅샷이 이유나 것(cover_other_artist 미노출). 스냅샷 = 서은하 현재 착장 4종(새 커버와 일치: PBA 울 니트·트레이닝 와이드 팬츠·아일라 스니커즈 크림·앙고라 비니) + styling_override. 이전 스냅샷 백업 /home/ubuntu/maidol/logs/styling_fix_kbj_20261009.json.
+- 검증: tsc 0, 운영 API 확인(styling manual_override · 서은하 4종).
