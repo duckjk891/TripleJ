@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { AppText } from '../components/ui';
-import AnswerEditModal from '../components/AnswerEditModal'; // v3.308 발매 전 곡 제목 수정
+import ReleaseTitleConfirmModal from '../components/ReleaseTitleConfirmModal'; // v3.309 발매 전 제목 확인
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
@@ -214,9 +214,6 @@ function effectiveSavedTrackIdOf(s: {
 
 type Props = NativeStackScreenProps<any, 'MusicResult'>;
 
-// v3.308 [TitleEdit] 곡 제목 최대 길이(표시·공유 카드 기준)
-const TITLE_MAX = 50;
-
 export default function MusicResultScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const store = useMusicStore();
@@ -232,8 +229,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   // v3.93: 생성 이력에서 이미 트랙 확정(발매)된 생성으로 진입 시 재저장(중복 트랙) 방지
   const [isSaved, setIsSaved] = useState(!!route.params?.alreadySaved);
-  // v3.308 [TitleEdit](사용자 의견 10-09): 차트 업로드(발매) 전에는 곡 제목을 바꿀 수 있게
-  const [titleEditOpen, setTitleEditOpen] = useState(false);
+  // v3.309 [ReleaseTitle](대표 10-09): 저장=발매(차트 공개) 직전 제목 확인 팝업 — 발매 후 제목 수정 불가 안내 + 한 번 편집 기회.
+  //   'save' = 저장하기, 'cover' = 커버 만들기(미저장 곡은 저장 경유)
+  const [releaseConfirm, setReleaseConfirm] = useState<null | 'save' | 'cover'>(null);
   // v3.274 [46]: RN7 은 같은 MusicResult 를 재사용(push 안 함) — 발매된 곡을 보던 화면이
   // "완성 알림 [지금 보기]"로 새 곡을 받으면 isSaved=true 가 잔존해 A/B 비교가 통째로 숨었다.
   // 곡(generationId)·진입 파라미터가 바뀌면 저장/variant 상태를 재초기화한다.
@@ -353,15 +351,6 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const effectiveSavedTrackId = effectiveSavedTrackIdOf(store);
   // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
   const showComparison = hasResult && variantCount > 1 && !isSaved && !effectiveSavedTrackId;
-  // v3.308 [TitleEdit] 발매(저장) 전까지만 제목 수정 — 발매 후는 마이뮤직 관리 경로
-  const canEditTitle = hasResult && !isSaved && !effectiveSavedTrackId;
-  const handleTitlePick = (text: string) => {
-    const t = (text || '').replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
-    setTitleEditOpen(false);
-    if (!t) { showAlert('알림', '곡 제목을 입력해 주세요.'); return; }
-    console.info('[TitleEdit] 발매 전 제목 변경', { len: t.length });
-    lyricsStore.setGeneratedTitle(t);
-  };
   // v3.281 편곡하기 노출 — 로그인(비게스트)·비어린이·완성 곡(오류 없음). 게스트 체험 곡 화면은 claim 전이라 숨김
   const showArrange =
     !isGuest && !isChildAccount && !route.params?.guest && hasResult && !hasError && !!store.generationId;
@@ -897,7 +886,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     await runArrange(sel);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (titleConfirmed = false) => {
     if (!store.generationId) {
       console.error('[Save] generationId가 없습니다. store:', JSON.stringify({
         generationId: store.generationId,
@@ -910,6 +899,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     if (isSaving || isSaved) return;
     // v3.277 [GuestCompose]: 게스트 → 로그인 → 체험 곡 claim → 발매(저장)
     if (requireLoginForGuest('guest_compose_save', () => { void handleSave(); })) return;
+    // v3.309 [ReleaseTitle]: 발매 전 제목 확인(확인 후 handleSave(true) 로 재진입)
+    if (!titleConfirmed) { setReleaseConfirm('save'); return; }
 
     setIsSaving(true);
     // 저장 직전 캐릭터 스냅샷/character_id 시도 (실패/미보유 시 기존 페이로드 그대로)
@@ -919,7 +910,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     const payload = {
       generation_id: store.generationId,
       ...(snapshot ? { user_character_snapshot: snapshot } : {}),
-      title: lyricsStore.generatedTitle
+      title: useLyricsStore.getState().generatedTitle
         || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
       genre: store.genre || undefined,
       mood: store.mood || undefined,
@@ -1002,9 +993,11 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     }
   };
 
-  const handleGenerateCover = async () => {
+  const handleGenerateCover = async (titleConfirmed = false) => {
     // v3.277 [GuestCompose]: 게스트 → 로그인 → 체험 곡 claim → 커버(저장 경유)
     if (requireLoginForGuest('guest_compose_cover', () => { void handleGenerateCover(); })) return;
+    // v3.309 [ReleaseTitle]: 아직 발매 전이면 커버도 저장(발매)을 거치므로 제목 확인 먼저
+    if (!isSaved && store.generationId && !titleConfirmed) { setReleaseConfirm('cover'); return; }
     // 곡이 아직 저장 안 되었으면 먼저 저장
     if (!isSaved && store.generationId) {
       try {
@@ -1015,7 +1008,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         const payload = {
           generation_id: store.generationId,
           ...(snapshot ? { user_character_snapshot: snapshot } : {}),
-          title: lyricsStore.generatedTitle
+          title: useLyricsStore.getState().generatedTitle
             || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
           genre: store.genre || undefined,
           mood: store.mood || undefined,
@@ -1180,11 +1173,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               <AppText style={styles.trackTitle}>
                 {lyricsStore.generatedTitle || `${store.genre} - ${store.mood}`}
               </AppText>
-              {canEditTitle ? (
-                <TouchableOpacity onPress={() => setTitleEditOpen(true)} style={styles.titleEditBtn} accessibilityLabel="곡 제목 수정">
-                  <AppText style={styles.titleEditText}>✎ 제목 수정</AppText>
-                </TouchableOpacity>
-              ) : null}
+
               <AppText style={styles.compareHint}>
                 두 가지 버전이 만들어졌어요.{'\n'}
                 들어보고 마음에 드는 버전을 선택하세요.{'\n'}
@@ -1259,11 +1248,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               <AppText style={styles.trackTitle}>
                 {lyricsStore.generatedTitle || `${store.genre} - ${store.mood}`}
               </AppText>
-              {canEditTitle ? (
-                <TouchableOpacity onPress={() => setTitleEditOpen(true)} style={styles.titleEditBtn} accessibilityLabel="곡 제목 수정">
-                  <AppText style={styles.titleEditText}>✎ 제목 수정</AppText>
-                </TouchableOpacity>
-              ) : null}
+
               <AppText style={styles.trackSubtitle}>
                 {composerName} | {store.tempo} 템포
               </AppText>
@@ -1353,7 +1338,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
                       ? `${VARIANT_LABELS[selectedVariant] || `버전 ${selectedVariant + 1}`}로 저장`
                       : '저장하기'
               }
-              onPrimary={handleSave}
+              onPrimary={() => { void handleSave(); }}
               primaryDisabled={isSaving || isSaved}
             />
           ) : (
@@ -1369,14 +1354,20 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         <View style={{ height: 40 }} />
       </ScrollView>
       {/* v3.281 편곡하기 시트 */}
-      <AnswerEditModal
-        visible={titleEditOpen}
-        title="곡 제목 바꾸기"
-        choices={[]}
-        freeText
-        currentValue={lyricsStore.generatedTitle || ''}
-        onPick={handleTitlePick}
-        onCancel={() => setTitleEditOpen(false)}
+      <ReleaseTitleConfirmModal
+        visible={releaseConfirm !== null}
+        initialTitle={lyricsStore.generatedTitle || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡')}
+        onCancel={() => setReleaseConfirm(null)}
+        onConfirm={(title) => {
+          const next = releaseConfirm;
+          setReleaseConfirm(null);
+          if (title !== (useLyricsStore.getState().generatedTitle || '')) {
+            console.info('[ReleaseTitle] 발매 전 제목 변경', { len: title.length, via: next });
+          }
+          useLyricsStore.getState().setGeneratedTitle(title);
+          if (next === 'cover') void handleGenerateCover(true);
+          else void handleSave(true);
+        }}
       />
       <ArrangeSheet
         visible={arrangeOpen}
@@ -1570,8 +1561,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
   },
-  titleEditBtn: { alignSelf: 'center', paddingHorizontal: 10, paddingVertical: 4, marginTop: 2, marginBottom: 4 },
-  titleEditText: { fontSize: 13, color: colors.accent.primary },
   trackTitle: {
     fontSize: 18,
     fontWeight: 'bold',
