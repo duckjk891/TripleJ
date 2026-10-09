@@ -4155,3 +4155,9 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 서버(feeds.py): GET /feeds/timeline?exclude_official=true(구버전 앱은 파라미터 없음 → 기존 그대로), GET /feeds/notices(공식 계정 공개 글 최신순 + official_id), GET /feeds/user/{id}?kind=all(피드+공지, 보드 전용 클럽글 제외). 격리 테스트 7/7. 진행 중 곡 생성 1건 완료 대기 후 재기동, 운영 응답 확인(공지=maidol_official 4건, 전체=일반 사용자).
 - 앱(FeedScreen): 탭 [전체]·[내 글]·[공지], 비로그인도 [전체]·[공지] 열람. [공지] 탭 글쓰기 버튼은 공식 계정 로그인 때만.
 - 앱(StarGuideModal + StarHistoryPanel 신설): '내역 보기' → 같은 팝업 안 내역 화면(‹ 이전 = 별 안내 복귀, ✕ 닫기), 내부 스크롤 높이 명시. 알림의 스타 항목은 기존 내역 화면 유지.
+
+## v3.308 — 2026-10-09 — 발매 전 곡 제목 수정 + 오류 신고 사진 첨부 복원 (웹 배포)
+
+- 사용자 의견 "곡을 만들고 차트 업로드 전에 제목을 바꿀 수 있게": MusicResult(A/B 비교 카드·플레이어 카드) 제목 아래 '✎ 제목 수정' — 발매(저장) 전까지만 노출, AnswerEditModal 자유 입력(현재 제목 프리필), 공백 정리·최대 50자 → lyricsStore.generatedTitle 갱신(발매 payload title 에 반영).
+- 대표 지적 "신고 이미지 첨부가 왜 없어졌나": 원인 = v3.285 오류 신고를 공식 DM(v3.273 사진 5장)에서 전용 접수(POST /api/issues, 텍스트 전용)로 바꾸며 첨부가 빠짐. 복원: IssueReportModal 사진 최대 5장(jpg/png/webp ≤15MB, /upload/dm-image 업로드·실패 재시도·X 제거, 어린이 숨김) → 공식 계정 DM 에 한 메시지로 전송 후 신고에 dm_conversation_id 연결 + 본문에 '(사진 N장 첨부 — DM 대화에서 확인)'. 관리자 웹 '오류 신고' → [DM 대화에서 답장]에서 사진 확인(관리자 웹·서버 무변경). DM 문구에 '[오류신고' 머리말 미사용 → 서버 DM→신고 자동 접수 중복 없음. 사진 전송 실패해도 신고는 접수.
+- 검증: tsc 0.
