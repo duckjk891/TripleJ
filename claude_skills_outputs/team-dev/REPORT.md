@@ -4213,3 +4213,8 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 대표 지시: "이야기에 있는 가사 형식 그대로 — 지금 개행이 너무 많음. 이야기 내용 다 지워줘. () 안 텍스트도 다 지워야 돼, 가사에".
 - 데이터(트랙 6a1957b7…): 가사 = 이야기 원문에서 ( ) 텍스트 삭제, 섹션 안 빈 줄 제거·섹션 사이만 빈 줄 1개, 내용 없는 섹션([Intro]/[Outro] 효과음뿐) 제거 → 79줄. prompt(이야기) = "". 백업 /home/ubuntu/maidol/logs/lyrics_fix_emotion_robot_20261009_v2.json(이전 가사·이야기).
 - 앱 utils/lyricsDisplay: 가사 표시에서 소괄호(전각 포함) 안 텍스트 전부 제거(추임새 포함) — 원본은 그대로. 하네스 3/3, tsc 0.
+
+## v3.316 — 2026-10-09 — 카카오 기본 프로필 → 랜덤 색·이니셜 아바타 + '쉬었음 청년' 스타일링 복구 (서버·데이터)
+
+- 대표 지적 "가입하면 기본 프로필 이미지가 다 같은 색 — 랜덤 색 + 글자 하나로 하라고 했잖아": 앱 Avatar(v3.181 seed 8색 팔레트+이니셜)는 정상. 원인 = 카카오 로그인 시 '사진 미설정' 계정의 카카오 공용 기본 이미지(account_images/default_profile)를 profile_image 로 저장 → 모두 같은 그림. 서버 oauth.py: 카카오 기본 이미지는 저장하지 않음(_is_provider_default_avatar). 데이터: 해당 7명 profile_image NULL(+로그인 세션 4건 갱신), 백업 /home/ubuntu/maidol/logs/kakao_default_avatar_clear_v3316.json. 구글 기본 이미지는 구글이 글자·색 아바타를 이미 만들어 줌 — 유지. 이메일 가입자는 원래 이니셜 아바타.
+- 대표 지시 "쉬었음 청년은 오래전에 만든 곡이라 스타일링 파이프라인이 꼬여서 안 나옴 — 이 곡만 살려줘": 원인 = 커버 인물 기록이 없던 초기 곡이라 v3.238 판정이 cover_no_artist 로 미노출(착장 3건은 보관 중). 서버 tracks.py: tracks.styling_override=True 곡은 노출(manual_override, 착장 데이터 있을 때만). 데이터: 쉬었음 청년(6a4e145c…)만 지정. 운영 화면 확인(후드집업·니트 팬츠·클럽 C 85).
