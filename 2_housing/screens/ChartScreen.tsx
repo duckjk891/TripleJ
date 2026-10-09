@@ -333,8 +333,8 @@ export default function ChartScreen() {
         onPress={() => handleTrackPress(item)}
         onMore={() => setActionTrack(item)}
         footer={footer}
-        // v3.311: TOP100 행 재생수 = 순위 기준인 차트 재생수(서버 chart_plays — 없으면 총 재생수)
-        playCountOverride={activeTab === 'top100' && typeof item.chart_plays === 'number' ? item.chart_plays : undefined}
+        // v3.311→v3.313: TOP100·일간·주간·월간 행 재생수 = 그 차트의 순위 기준 재생수(서버 chart_plays — 없으면 총 재생수)
+        playCountOverride={isChartCriteriaTab(activeTab) && typeof item.chart_plays === 'number' ? item.chart_plays : undefined}
         // v3.207 ①: 튜토리얼 '곡 담기' 스포트라이트 — 첫 행 ⋮만 anchor 등록
         moreAnchorKey={index === 0 ? 'chart-row-more' : undefined}
       />
