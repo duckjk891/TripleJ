@@ -68,7 +68,7 @@ const formatReleasedAgo = (iso?: string): string | null => {
 
 interface ChartTrack {
   id: string;
-  listeners_total?: number; // v3.310 TOP100 들은 사람 수(순위 기준)
+  chart_plays?: number; // v3.311 TOP100 차트 재생수(1인·1곡·하루 1회, 본인 포함) = 순위 기준
   title: string;
   artist_name?: string;
   cover_image?: string;
@@ -333,8 +333,8 @@ export default function ChartScreen() {
         onPress={() => handleTrackPress(item)}
         onMore={() => setActionTrack(item)}
         footer={footer}
-        // v3.310: TOP100 은 순위 기준인 '들은 사람 수'를 표시(서버 listeners_total — 구서버면 재생수 그대로)
-        listenerCount={activeTab === 'top100' && typeof item.listeners_total === 'number' ? item.listeners_total : undefined}
+        // v3.311: TOP100 행 재생수 = 순위 기준인 차트 재생수(서버 chart_plays — 없으면 총 재생수)
+        playCountOverride={activeTab === 'top100' && typeof item.chart_plays === 'number' ? item.chart_plays : undefined}
         // v3.207 ①: 튜토리얼 '곡 담기' 스포트라이트 — 첫 행 ⋮만 anchor 등록
         moreAnchorKey={index === 0 ? 'chart-row-more' : undefined}
       />
