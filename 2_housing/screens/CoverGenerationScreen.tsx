@@ -2737,6 +2737,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <ResultSecondaryButton label="다시 생성하기" onPress={handleRegenerate} disabled={busy} />
             </View>
             <ResultActionBar
+              aiNotice // v3.322: 커버 결과 화면 — 적용(저장) 전 AI 확인 안내
               screen="CoverGeneration"
               onBack={() => {
                 if (albumMode) navigation.goBack();

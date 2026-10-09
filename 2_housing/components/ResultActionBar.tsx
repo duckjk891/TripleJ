@@ -16,7 +16,12 @@ type Props = {
   primaryDisabled?: boolean;
   primaryBusy?: boolean;
   style?: StyleProp<ViewStyle>;
+  /** v3.322 저장 단계 AI 확인 안내 — 미지정 = 주요 버튼이 있고 '다시 생성'이 아닐 때 자동 표시 */
+  aiNotice?: boolean;
 };
+
+// v3.322 (대표 10-09): 각 디렉터 저장 단계 — AI 결과는 틀릴 수 있으니 확인 후 저장하도록 안내
+export const AI_SAVE_NOTICE = 'AI는 실수를 할 수 있어요. 내용을 꼭 확인한 뒤 저장해 주세요.';
 
 export default function ResultActionBar({
   screen,
@@ -27,10 +32,18 @@ export default function ResultActionBar({
   primaryDisabled,
   primaryBusy,
   style,
+  aiNotice,
 }: Props) {
   const hasPrimary = !!primaryLabel && !!onPrimary;
+  const showNotice = aiNotice ?? (hasPrimary && !/다시 생성/.test(primaryLabel || ''));
   return (
-    <View style={[styles.row, style]}>
+    <View style={[{ width: '100%' }, style]}>
+    {showNotice ? (
+      <View style={styles.noticeRow} accessibilityRole="text">
+        <AppText style={styles.noticeText}>ⓘ {AI_SAVE_NOTICE}</AppText>
+      </View>
+    ) : null}
+    <View style={styles.row}>
       <TouchableOpacity
         style={[styles.backBtn, !hasPrimary && { flex: 1 }]}
         onPress={() => {
@@ -59,6 +72,7 @@ export default function ResultActionBar({
           )}
         </TouchableOpacity>
       )}
+    </View>
     </View>
   );
 }
@@ -92,6 +106,8 @@ export const resultBarStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  noticeRow: { width: '100%', paddingHorizontal: 4, marginBottom: 8 },
+  noticeText: { color: colors.text.muted, fontSize: 12, lineHeight: 17, textAlign: 'center' },
   row: { flexDirection: 'row', gap: 8, width: '100%', alignItems: 'stretch' },
   backBtn: {
     minWidth: 96,
