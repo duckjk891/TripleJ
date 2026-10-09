@@ -68,6 +68,9 @@ export default function DmInboxScreen() {
   const [friendsLoading, setFriendsLoading] = useState(false);
   // v3.230 A8: 서버 DM 게이트가 막는 기능(일반 회원 검색·대화 시작) 여부 — 표시용(차단 화면 아님)
   const [peerDmLimited, setPeerDmLimited] = useState(false);
+  // v3.319 (대표 10-09 "본인인증하고 서로 팔로우해야 떠"): 서로 팔로우 목록은 본인인증(서버 eligibility) 확인된 회원에게만.
+  //   null = 확인 전(목록 숨김 — 깜빡임 방지), true = DM 가능(인증 또는 서버가 인증 불요), false = 미인증.
+  const [dmVerified, setDmVerified] = useState<boolean | null>(null);
   const [tab, setTab] = useState<'messages' | 'requests'>('messages');
   const [convs, setConvs] = useState<DmConversation[]>([]);
   const [requests, setRequests] = useState<DmConversation[]>([]);
@@ -95,6 +98,7 @@ export default function DmInboxScreen() {
         .then((el) => {
           const limited = !el.data?.is_verified && el.data?.identity_required !== false;
           setPeerDmLimited(limited);
+          setDmVerified(!limited);
           console.info('[IdentityBypass] dm eligibility', { limited });
         })
         .catch((e: any) => console.error('[DmInbox] eligibility 조회 실패(무시)', { status: e?.response?.status }));
@@ -218,7 +222,7 @@ export default function DmInboxScreen() {
         console.error('[DmInbox] 사용자 검색 실패', { status: err?.response?.status });
         if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
           console.info('[IdentityBypass] dm search 403 identity — 준비 중 안내');
-          setPeerDmLimited(true);
+          setPeerDmLimited(true); setDmVerified(false);
         }
         setSearchFailed(true); setResults([]);
       } finally {
@@ -238,7 +242,7 @@ export default function DmInboxScreen() {
       console.error('[DmInbox] 대화 시작 실패', { peerId, status: err?.response?.status });
       if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
         console.info('[IdentityBypass] dm start 403 identity — 준비 중 안내');
-        setPeerDmLimited(true);
+        setPeerDmLimited(true); setDmVerified(false);
         showAlert('알림', DM_UNAVAILABLE_MESSAGE);
         return;
       }
@@ -415,7 +419,7 @@ export default function DmInboxScreen() {
       </View>
 
       {/* v3.318: 서로 팔로우 — 메시지 탭 상단 가로 목록(탭하면 바로 대화) */}
-      {tab === 'messages' && friends && friends.length > 0 ? (
+      {tab === 'messages' && dmVerified === true && friends && friends.length > 0 ? (
         <View style={styles.friendStripBox}>
           <AppText variant="caption" tone="secondary" style={{ paddingHorizontal: spacing.lg, marginBottom: spacing.sm }}>서로 팔로우</AppText>
           <FlatList
@@ -479,7 +483,7 @@ export default function DmInboxScreen() {
               ) : !query.trim() ? (
                 // v3.216 ③: 빈 검색어 — maidol_official 고정 행 + v3.318 서로 팔로우 목록(공식 계정 제외).
                 <FlatList
-                  data={(friends || []).filter((f) => !official || String(f.id) !== String(official.official_id))}
+                  data={dmVerified === true ? (friends || []).filter((f) => !official || String(f.id) !== String(official.official_id)) : []}
                   keyExtractor={(f) => String(f.id)}
                   ListHeaderComponent={
                     <>
@@ -494,9 +498,9 @@ export default function DmInboxScreen() {
                           </View>
                         </TouchableOpacity>
                       ) : null}
-                      {friends && friends.length > 0 ? (
+                      {dmVerified === true && friends && friends.length > 0 ? (
                         <AppText variant="caption" tone="secondary" style={styles.sectionLabel}>서로 팔로우</AppText>
-                      ) : friendsLoading ? (
+                      ) : dmVerified === true && friendsLoading ? (
                         <ActivityIndicator color={colors.accent.primary} style={{ marginTop: spacing.lg }} />
                       ) : null}
                     </>
