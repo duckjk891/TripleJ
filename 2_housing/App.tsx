@@ -63,6 +63,7 @@ import {
   syncTutorialSeenFromServer,
 } from './utils/tutorialGate';
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
+import { initNativePush, onNativePushOpened, syncNativePushOnLogin } from './services/pushService';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
@@ -885,6 +886,41 @@ export default function App() {
     if (authUserId) syncTutorialSeenFromServer();
     else clearServerTutorialSeen();
   }, [authUserId]);
+  // [FCM] 앱 푸시 — 로그인 계정 확정 시 토큰 (재)등록, 처음이면 앱 내 안내 후 권한 요청(1회). web·구버전 앱은 no-op
+  useEffect(() => {
+    if (!authUserId) return;
+    const t = setTimeout(() => {
+      void syncNativePushOnLogin(() => new Promise<boolean>((resolve) => {
+        showAlert('알림 받기', '댓글·좋아요·팔로우·스타 소식을 앱이 꺼져 있어도 알려드릴까요?', [
+          { text: '나중에', style: 'cancel', onPress: () => resolve(false) },
+          { text: '알림 받기', onPress: () => resolve(true) },
+        ]);
+      }));
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [authUserId]);
+  // [FCM] 알림 채널·포그라운드 표시 1회 + 알림 탭 → 알림함(스플래시가 끝난 뒤 이동)
+  useEffect(() => {
+    void initNativePush();
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const off = onNativePushOpened(() => {
+      if (timer) clearInterval(timer);
+      let tries = 0;
+      timer = setInterval(() => {
+        tries += 1;
+        const route = navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined;
+        if (route && route !== 'Splash') {
+          if (timer) clearInterval(timer);
+          timer = null;
+          if (route !== 'Notifications') (navigationRef.navigate as any)('Notifications');
+        } else if (tries > 40) {
+          if (timer) clearInterval(timer);
+          timer = null;
+        }
+      }, 250);
+    });
+    return () => { off(); if (timer) clearInterval(timer); };
+  }, []);
   // v3.208: AdMob MobileAds 초기화 + 테스트 기기 등록 1회 — Expo Go/web 은 내부에서 안전 no-op
   useEffect(() => { initRewardedAds(); }, []);
   // v3.227 A-보완: 생성 job 추적기 1회 기동(멱등)

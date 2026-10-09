@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
-import { webPushSupport, isWebPushEnabled } from '../services/pushService';
+import { webPushSupport, isWebPushEnabled, nativePushSupported, isNativePushEnabled } from '../services/pushService';
 import { turnOnPushWithFeedback, PUSH_IOS_GUIDE } from './PushToggleRow';
 
 const DISMISS_KEY = 'maidol-push-banner-dismissed-v1';
@@ -18,8 +18,14 @@ export default function PushBanner() {
   const [show, setShow] = useState(false);
   const support = webPushSupport();
   useEffect(() => {
-    if (support === 'native' || support === 'unsupported' || dismissed()) return;
+    if (support === 'unsupported' || dismissed()) return;
     if (support === 'ios_needs_install') { setShow(true); return; }
+    if (support === 'native') {
+      // [FCM] 앱 푸시 지원 빌드에서만(구버전 앱은 배너 없음)
+      if (!nativePushSupported()) return;
+      isNativePushEnabled().then((on) => setShow(!on)).catch(() => setShow(false));
+      return;
+    }
     isWebPushEnabled().then((on) => setShow(!on)).catch(() => setShow(false));
   }, [support]);
   if (!show) return null;
@@ -33,7 +39,7 @@ export default function PushBanner() {
       <AppText variant="caption" tone="secondary" style={{ flex: 1 }}>
         {support === 'ios_needs_install' ? PUSH_IOS_GUIDE : '앱이 꺼져 있어도 댓글·좋아요·팔로우 알림을 받아보세요.'}
       </AppText>
-      {support === 'supported' ? (
+      {support === 'supported' || support === 'native' ? (
         <TouchableOpacity
           style={styles.btn}
           onPress={async () => { if (await turnOnPushWithFeedback()) setShow(false); }}

@@ -1,7 +1,7 @@
 import { stashLyricsOnLogout, restoreLyricsOnLogin } from './lyricsStore';
 import { create } from 'zustand';
 import api, { setAuthToken } from '../services/api';
-import { unsubscribeLocalOnLogout } from '../services/pushService';
+import { unsubscribeLocalOnLogout, unregisterNativeOnLogout } from '../services/pushService';
 import { usePlayerStore } from './playerStore';
 import { useMusicStore } from './musicStore';
 import { useCharacterTaskStore } from './characterTaskStore';
@@ -243,6 +243,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     // v3.298 [WebPush]: 이 기기의 푸시 구독 해제(공용 기기에서 이전 계정 알림 차단 — 서버는 다음 발송 때 410 정리)
     void unsubscribeLocalOnLogout();
+    // [FCM] 앱 푸시: 인증 토큰을 지우기 전에 이 기기 푸시 토큰을 서버에서 삭제(이전 계정 알림 차단)
+    void unregisterNativeOnLogout(useAuthStore.getState().token);
     // v3.279 [LyricsOwner]: 작사 작업본은 계정 보관함으로 옮기고 화면에서 비운다(user 를 지우기 전에 id 확보)
     try { const uid = useAuthStore.getState().user?.id; stashLyricsOnLogout(uid != null ? String(uid) : null); } catch (err) { console.error('[authStore] stashLyricsOnLogout 실패', { err }); }
     setAuthToken(null);

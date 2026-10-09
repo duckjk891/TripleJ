@@ -21,6 +21,7 @@ config.resolver.unstable_enablePackageExports = true;
 // web 플랫폼에서 native-only 모듈 import 시 빈 모듈로 대체
 const NATIVE_ONLY_MODULES = new Set([
   'react-native-google-mobile-ads',
+  'expo-notifications', // [FCM] 앱 푸시 전용 — 웹은 v3.298 웹푸시(sw.js) 경로
 ]);
 
 const ZUSTAND_ESM_SEG = `${path.sep}zustand${path.sep}esm${path.sep}`;
