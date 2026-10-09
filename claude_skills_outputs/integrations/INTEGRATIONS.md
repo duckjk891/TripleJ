@@ -8,7 +8,7 @@
 |---|---|---|
 | 1. AdMob (Android 보상형) | 🟡 회사 계정으로 이전 중 | 현 계정=개인 Gmail·개인 결제 프로필 → 법인 계정 신규 개설 대기 |
 | 2. Firebase / FCM (Android 앱 푸시) | 🟡 앱 코드 완료·서버 스테이징 | 서버 배포(승인) → v1.3.2 APK 빌드 → 실기기 수신 확인 |
-| 3. iOS 출시 | ⛔ 애플 승인 대기 | Apple Developer 법인 등록(K52Q5KXB89, 접수 2026-09-17) |
+| 3. iOS 출시 | 🟡 계정·인증서 준비 완료 | 앱 쪽 iOS 준비(애플 로그인·권한 문구·ATS·ATT) → 첫 빌드 → TestFlight · ⭐ 인앱결제 결정 필요 |
 | 4. AWS SES (비밀번호 재설정 메일) | ⏳ 대표님 작업 대기 | 도메인 인증·샌드박스 해제·EC2 역할 권한 |
 
 ## 계정 원칙 (2026-10-08 대표 결정)
@@ -112,7 +112,17 @@
 
 ---
 
-## 3. iOS 출시 — ⛔ 애플 승인 대기
+## 3. iOS 출시 — 🟡 계정·인증서 준비 완료
+
+**진행(2026-10-09)**
+- ✅ 애플 개발자 법인 멤버십 활성(LOTUS AI Co., Ltd.)
+- ✅ 번들 ID `com.maidol.app` 등록 — 기능: Sign in with Apple(Primary App ID), Push Notifications, In-App Purchase. Sign in with Apple 서버 알림 엔드포인트는 비워 둠(애플 로그인 구현 시 등록).
+- ✅ App Store Connect 앱 생성: 「MAIDOL - 나의 마음을 부르는 MY AI IDOL」, 기본 언어 한국어, SKU `maidol-ios-001`, 판매자 LOTUS AI Co., Ltd.
+- ✅ 키 2종 수령 → `2_housing/credentials/`(git 제외, ID 메모는 같은 폴더 `asc.env`): Sign in with Apple 키, App Store Connect API 키(관리자). API 키로 앱·번들 ID 조회 검증 완료.
+- ✅ EAS 자격 증명(production): 배포 인증서·프로비저닝 프로필 생성(만료 2027-10-09). APNs 푸시 키는 첫 iOS 빌드 때 생성.
+- ✅ 앱 설정: `ios.usesAppleSignIn`, `expo-apple-authentication` 설치(애플 로그인 엔타이틀먼트).
+- ⏳ 남은 일: 애플 로그인 구현(앱 버튼·서버 검증·탈퇴 시 토큰 해지), 권한 문구 한국어, ATS 축소, ATT·SKAdNetwork, iOS 보상형 광고 단위 연결(새 AdMob iOS 앱 ID 필요), ⭐ 인앱결제 정책 결정, 첫 빌드 → TestFlight.
+
 
 **현재**: Apple Developer 법인 등록 접수(K52Q5KXB89, 2026-09-17) 후 승인 대기. 번들 ID `com.maidol.app`, AdMob iOS 앱 ID는 이미 설정됨. iOS 빌드는 아직 한 번도 안 함.
 

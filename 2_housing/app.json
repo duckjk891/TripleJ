@@ -24,7 +24,8 @@
         "UIBackgroundModes": [
           "audio"
         ]
-      }
+      },
+      "usesAppleSignIn": true
     },
     "android": {
       "adaptiveIcon": {
