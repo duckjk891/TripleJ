@@ -7,7 +7,7 @@
 | 연동 | 상태 | 지금 막힌 곳 |
 |---|---|---|
 | 1. AdMob (Android 보상형) | 🟡 회사 계정으로 이전 중 | 현 계정=개인 Gmail·개인 결제 프로필 → 법인 계정 신규 개설 대기 |
-| 2. Firebase / FCM (Android 앱 푸시) | ⏳ 대표님 작업 대기 | Firebase 프로젝트·google-services.json 없음 |
+| 2. Firebase / FCM (Android 앱 푸시) | 🟡 앱 코드 완료·서버 스테이징 | 서버 배포(승인) → v1.3.2 APK 빌드 → 실기기 수신 확인 |
 | 3. iOS 출시 | ⛔ 애플 승인 대기 | Apple Developer 법인 등록(K52Q5KXB89, 접수 2026-09-17) |
 | 4. AWS SES (비밀번호 재설정 메일) | ⏳ 대표님 작업 대기 | 도메인 인증·샌드박스 해제·EC2 역할 권한 |
 
@@ -77,7 +77,14 @@
 
 ---
 
-## 2. Firebase / FCM (Android 앱 푸시) — ⏳ 대표님 작업 대기
+## 2. Firebase / FCM (Android 앱 푸시) — 🟡 앱 코드 완료·서버 스테이징
+
+**진행(2026-10-09)**
+- ✅ 대표: Firebase 프로젝트(Android `com.maidol.app`) 생성, `google-services.json` 배치(git 제외), expo.dev에 FCM V1 키 업로드. iOS는 Firebase 등록 불필요(APNs는 EAS가 관리).
+- ✅ 앱(커밋 346b7f6): `expo-notifications`, 알림 아이콘(MAIDOL 심볼 흰색), 로그인 시 1회 「알림 받기」 안내 → 권한 요청, 로그아웃 시 기기 토큰 삭제, 설정 「푸시 알림」 토글·알림함 배너 앱 지원, 알림 탭 → 알림함 이동. web은 빈 모듈(웹푸시 그대로). tsc 통과.
+- ✅ 서버 스테이징 `server_staging_fcm1/`(미배포): `POST /api/push/expo-token`·`/expo-token/delete`, 웹푸시 발송 시 Expo 푸시 체인(같은 문구), DeviceNotRegistered 토큰 정리. 로컬 테스트 16/16 PASS. 원본 md5는 v3.298 스테이징 기준 — 배포 전 운영 파일과 대조 필수.
+- ⏳ 남은 일: 서버 배포(대표 승인·운영 접근 필요) → v1.3.2 APK 빌드(AdMob 새 앱 ID 2개 수령 후 함께) → 실기기 수신 확인.
+
 
 **현재**: 웹 푸시는 운영 중. Android 앱 푸시는 Firebase 프로젝트·설정 파일·`expo-notifications` 모두 없음. 설치된 APK는 v1.3.1(2026-09-29) — 이후 앱 수정분 전부 미반영.
 
