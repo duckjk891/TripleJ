@@ -5,15 +5,15 @@
 //   네이티브 → expo-web-browser openAuthSessionAsync + `aidol://oauth/callback#token=` 딥링크 복귀.
 //   백엔드가 client=app 리다이렉트를 지원하기 전에는 콜백이 안 와도 취소/닫힘으로 조용히 복귀(크래시·무한 busy 없음).
 //   백엔드 요청 문서: 2_housing/백엔드_요청_소셜로그인_앱복귀.md
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { showAlert } from '../../utils/appAlert';
-import { BACKEND_BASE_URL } from '../../services/api';
+import api, { BACKEND_BASE_URL } from '../../services/api';
 import { resetToChartTab } from '../../services/navigationRef';
 import { useAuthStore } from '../../stores/authStore';
 import { savePendingReferral } from '../../utils/pendingReferral';
-import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, notifyAccountSuspended } from '../../utils/kidsRestricted';
+import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, isAccountSuspendedError, notifyAccountSuspended } from '../../utils/kidsRestricted';
 import { AppText } from '../ui';
 import {
   chromeIntentUrl,
@@ -35,6 +35,25 @@ const OAUTH_REDIRECT_URL = 'aidol://oauth/callback';
 
 const GENERIC_FAIL_MSG = '소셜 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.';
 
+// [SIWA] iOS 전용 애플 로그인 — App Store 심사 4.8(구글·카카오 제공 시 애플 로그인 필수). 네이티브 시트 → 서버
+// POST /auth/apple/native 가 identity_token 검증·계정 처리 후 JWT 반환. 모듈 미탑재 빌드·안드로이드·웹은 미노출.
+let AppleAuth: any = null;
+if (Platform.OS === 'ios') {
+  try {
+    AppleAuth = require('expo-apple-authentication');
+  } catch (e) {
+    console.warn('[SIWA] expo-apple-authentication 로드 실패', { msg: String(e).slice(0, 120) });
+  }
+}
+
+/** 애플이 주는 이름 → 닉네임 후보(한글이면 성+이름 붙여서, 그 외 이름 성) */
+function appleDisplayName(fullName: any): string {
+  const given = String(fullName?.givenName || '').trim();
+  const family = String(fullName?.familyName || '').trim();
+  if (!given && !family) return '';
+  return /[가-힣]/.test(given + family) ? `${family}${given}` : [given, family].filter(Boolean).join(' ');
+}
+
 // 서버가 내려준 오류 문구는 검증 후에만 그대로 노출 — 문자열이 아니거나(null/객체) 과도하게 길면 고정 문구.
 function sanitizeServerMessage(value: unknown): string {
   // v3.233: 보호자 동의 철회 계정 — 콜백 error=account_suspended(가정) 는 코드 문자열 대신 안내 문구
@@ -55,6 +74,50 @@ export default function SocialLoginButtons({
   referralCode?: string;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    if (!AppleAuth?.isAvailableAsync) return;
+    AppleAuth.isAvailableAsync().then((v: boolean) => setAppleAvailable(!!v)).catch(() => setAppleAvailable(false));
+  }, []);
+
+  const handleApple = async () => {
+    if (busy || !AppleAuth) return;
+    setBusy('apple');
+    const ref = (referralCode || '').trim().toUpperCase();
+    try {
+      const cred = await AppleAuth.signInAsync({
+        requestedScopes: [AppleAuth.AppleAuthenticationScope.FULL_NAME, AppleAuth.AppleAuthenticationScope.EMAIL],
+      });
+      if (!cred?.identityToken) throw new Error('no identity token');
+      // 토큰·코드 값은 로그 금지 — 수신 여부만
+      if (__DEV__) console.info(`[${logPrefix}] 애플 인증 완료`, { hasCode: !!cred.authorizationCode, hasName: !!cred.fullName?.givenName });
+      const res = await api.post('/auth/apple/native', {
+        identity_token: cred.identityToken,
+        authorization_code: cred.authorizationCode || null,
+        full_name: appleDisplayName(cred.fullName) || null,
+        ref_code: /^[A-Z0-9]{4,12}$/.test(ref) ? ref : null,
+      });
+      const ok = await useAuthStore.getState().loginWithToken(String(res.data?.token || ''));
+      if (!ok) {
+        console.error(`[${logPrefix}] 애플 로그인 세션 열기 실패`);
+        if (useAuthStore.getState().error !== KIDS_TEXT.accountSuspended) showAlert('알림', GENERIC_FAIL_MSG);
+        return;
+      }
+      console.info(`[${logPrefix}] 애플 로그인 성공`, { action: res.data?.action });
+      resetToChartTab();
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') {
+        if (__DEV__) console.info(`[${logPrefix}] 애플 로그인 취소`);
+        return;
+      }
+      // 이용 중지 계정은 api 인터셉터가 이미 안내 — 이중 팝업 방지
+      if (isAccountSuspendedError(err)) return;
+      console.error(`[${logPrefix}] 애플 로그인 실패`, { status: err?.response?.status, code: err?.code, message: err?.message });
+      showAlert('알림', sanitizeServerMessage(err?.response?.data?.error));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   // v3.240: 인앱 브라우저(카톡·인스타 등으로 연 공유 링크)에서 구글은 로그인 자체를 막는다(차단 페이지).
   // 구글로 보내지 말고 외부 브라우저 열기 / 카카오로 계속하기를 안내한다. 카카오 로그인은 인앱에서도 정상.
@@ -181,6 +244,21 @@ export default function SocialLoginButtons({
         </View>
       ) : null}
 
+      {appleAvailable ? (
+        busy === 'apple' ? (
+          <View style={[styles.btn, { backgroundColor: '#000', borderColor: '#000' }]}>
+            <ActivityIndicator size="small" color="#fff" />
+          </View>
+        ) : (
+          <AppleAuth.AppleAuthenticationButton
+            buttonType={AppleAuth.AppleAuthenticationButtonType.CONTINUE}
+            buttonStyle={AppleAuth.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={radius.md}
+            style={styles.appleBtn}
+            onPress={handleApple}
+          />
+        )
+      ) : null}
       {PROVIDERS.map((p) => (
         <TouchableOpacity
           key={p.key}
@@ -213,4 +291,5 @@ const styles = StyleSheet.create({
     height: 46, borderRadius: radius.md, borderWidth: 1,
     justifyContent: 'center', alignItems: 'center',
   },
+  appleBtn: { height: 46, width: '100%' },
 });

@@ -14,16 +14,27 @@
       "backgroundColor": "#0a0a1a"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.maidol.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "kakaocdn.net": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
         },
         "UIBackgroundModes": [
           "audio"
-        ]
+        ],
+        "NSMicrophoneUsageDescription": "내 목소리로 노래를 만들기 위해 목소리를 녹음할 때 마이크를 사용합니다.",
+        "NSCameraUsageDescription": "본인 확인(얼굴 인증) 사진을 찍을 때 카메라를 사용합니다.",
+        "NSPhotoLibraryUsageDescription": "프로필·커버·게시물에 올릴 사진을 고를 때 사진 보관함에 접근합니다.",
+        "NSUserTrackingUsageDescription": "맞춤 광고를 보여드리고 광고 효과를 측정하는 데 사용합니다. 허용하지 않아도 광고 보고 휴식 줄이기는 그대로 이용할 수 있어요."
       },
       "usesAppleSignIn": true
     },
@@ -48,7 +59,60 @@
         "react-native-google-mobile-ads",
         {
           "androidAppId": "ca-app-pub-1425041551318467~8636830033",
-          "iosAppId": "ca-app-pub-1425041551318467~5404280238"
+          "iosAppId": "ca-app-pub-1425041551318467~5404280238",
+          "skAdNetworkItems": [
+            "cstr6suwn9.skadnetwork",
+            "4fzdc2evr5.skadnetwork",
+            "2fnua5tdw4.skadnetwork",
+            "ydx93a7ass.skadnetwork",
+            "p78axxw29g.skadnetwork",
+            "v72qych5uu.skadnetwork",
+            "ludvb6z3bs.skadnetwork",
+            "cp8zw746q7.skadnetwork",
+            "3sh42y64q3.skadnetwork",
+            "c6k4g5qg8m.skadnetwork",
+            "s39g8k73mm.skadnetwork",
+            "wg4vff78zm.skadnetwork",
+            "3qy4746246.skadnetwork",
+            "f38h382jlk.skadnetwork",
+            "hs6bdukanm.skadnetwork",
+            "mlmmfzh3r3.skadnetwork",
+            "v4nxqhlyqp.skadnetwork",
+            "wzmmz9fp6w.skadnetwork",
+            "su67r6k2v3.skadnetwork",
+            "yclnxrl5pm.skadnetwork",
+            "t38b2kh725.skadnetwork",
+            "7ug5zh24hu.skadnetwork",
+            "gta9lk7p23.skadnetwork",
+            "vutu7akeur.skadnetwork",
+            "y5ghdn5j9k.skadnetwork",
+            "v9wttpbfk9.skadnetwork",
+            "n38lu8286q.skadnetwork",
+            "47vhws6wlr.skadnetwork",
+            "kbd757ywx3.skadnetwork",
+            "9t245vhmpl.skadnetwork",
+            "a2p9lx4jpn.skadnetwork",
+            "22mmun2rn5.skadnetwork",
+            "44jx6755aq.skadnetwork",
+            "k674qkevps.skadnetwork",
+            "4468km3ulz.skadnetwork",
+            "2u9pt9hc89.skadnetwork",
+            "8s468mfl3y.skadnetwork",
+            "klf5c3l5u5.skadnetwork",
+            "ppxm28t8ap.skadnetwork",
+            "kbmxgpxpgc.skadnetwork",
+            "uw77j35x4d.skadnetwork",
+            "578prtvx9j.skadnetwork",
+            "4dzt52r2t5.skadnetwork",
+            "tl55sbb4fm.skadnetwork",
+            "c3frkrj4fj.skadnetwork",
+            "e5fvkxwrpn.skadnetwork",
+            "8c4e2ghe7u.skadnetwork",
+            "3rd42ekr43.skadnetwork",
+            "97r2b46745.skadnetwork",
+            "3qcr597p9d.skadnetwork"
+          ],
+          "userTrackingUsageDescription": "맞춤 광고를 보여드리고 광고 효과를 측정하는 데 사용합니다. 허용하지 않아도 광고 보고 휴식 줄이기는 그대로 이용할 수 있어요."
         }
       ],
       [
@@ -66,7 +130,8 @@
         "expo-media-library",
         {
           "savePhotosPermission": "만든 공유 영상을 사진 앨범에 저장하기 위해 접근 권한이 필요합니다.",
-          "isAccessMediaLocationEnabled": false
+          "isAccessMediaLocationEnabled": false,
+          "photosPermission": "프로필·커버·게시물에 올릴 사진을 고를 때 사진 보관함에 접근합니다."
         }
       ],
       [
@@ -79,13 +144,37 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "내 목소리로 노래를 만들기 위해 목소리를 녹음할 때 마이크를 사용합니다."
+        }
+      ],
       [
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
           "color": "#a855f7",
           "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-tracking-transparency",
+        {
+          "userTrackingPermission": "맞춤 광고를 보여드리고 광고 효과를 측정하는 데 사용합니다. 허용하지 않아도 광고 보고 휴식 줄이기는 그대로 이용할 수 있어요."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "내 목소리로 노래를 만들기 위해 목소리를 녹음할 때 마이크를 사용합니다."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "프로필·커버·게시물에 올릴 사진을 고를 때 사진 보관함에 접근합니다.",
+          "cameraPermission": "본인 확인(얼굴 인증) 사진을 찍을 때 카메라를 사용합니다."
         }
       ]
     ],

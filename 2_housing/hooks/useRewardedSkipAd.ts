@@ -17,7 +17,7 @@
  */
 import { Platform } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
-import { ADMOB_REWARDED_AD_UNIT_ANDROID, ADMOB_TEST_DEVICE_IDS } from '../constants/ads';
+import { ADMOB_REWARDED_AD_UNIT_ANDROID, ADMOB_REWARDED_AD_UNIT_IOS, ADMOB_TEST_DEVICE_IDS } from '../constants/ads';
 import { isKidsRestrictedUser } from '../utils/kidsRestricted';
 
 // try-require 게이트 — web 은 metro 에서 빈 모듈, Expo Go 는 require 실패
@@ -41,7 +41,8 @@ if (Platform.OS !== 'web') {
 export const isRewardedAdSupported = (): boolean => !!admob?.RewardedAd;
 
 /** 광고 단위 ID — env 주입값 우선, 미설정 시 TestIds.REWARDED 폴백 (값 로그 금지) */
-const resolveAdUnitId = (): string => ADMOB_REWARDED_AD_UNIT_ANDROID || admob?.TestIds?.REWARDED || '';
+const resolveAdUnitId = (): string =>
+  (Platform.OS === 'ios' ? ADMOB_REWARDED_AD_UNIT_IOS : ADMOB_REWARDED_AD_UNIT_ANDROID) || admob?.TestIds?.REWARDED || '';
 
 // ── 모듈 싱글턴 pre-load 상태 ────────────────────────────────────────────────
 let preloadedAd: any = null;
@@ -281,6 +282,17 @@ export async function initRewardedAds(): Promise<void> {
   // v3.232 K5: 진행 promise 보관(아동 설정 적용이 init 완료 뒤에 오도록) — 초기화 동작 자체는 현행 그대로
   mobileAdsInitPromise = (async () => {
     try {
+      // [iOS] 앱 추적 투명성(ATT) — 광고 SDK 초기화 전에 1회 요청(이미 응답했으면 팝업 없이 상태만 반환).
+      // 거부해도 광고는 비맞춤으로 나오고 '광고 보고 휴식 줄이기'는 그대로 동작한다.
+      if (Platform.OS === 'ios') {
+        try {
+          const att = require('expo-tracking-transparency');
+          const r = await att.requestTrackingPermissionsAsync();
+          console.info('[AdReward] ATT', { status: r?.status });
+        } catch (e) {
+          console.warn('[AdReward] ATT 요청 실패(광고는 비맞춤으로 계속)', { msg: String(e).slice(0, 120) });
+        }
+      }
       const mobileAds = admob.MobileAds();
       // (아동 설정이 먼저 적용·진행 중이면 덮어쓰지 않음 — 아동 설정에 테스트 기기 포함. 성인 실행은 항상 false)
       if (ADMOB_TEST_DEVICE_IDS.length > 0 && !childAdConfigApplied && !childAdConfigPending) {

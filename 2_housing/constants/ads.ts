@@ -14,6 +14,11 @@ export const ADMOB_REWARDED_AD_UNIT_ANDROID: string = (
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID ?? ''
 ).trim();
 
+/** 보상형 광고 단위 ID(iOS) — 미설정('')이면 TestIds.REWARDED 폴백 */
+export const ADMOB_REWARDED_AD_UNIT_IOS: string = (
+  process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS ?? ''
+).trim();
+
 /**
  * 테스트 기기 ID 목록(콤마 구분) — 내부 테스트 중 실광고 노출(무효 트래픽) 방지.
  * MobileAds().setRequestConfiguration({ testDeviceIdentifiers }) 에 1회 주입(App.tsx).
