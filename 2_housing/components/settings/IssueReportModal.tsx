@@ -1,3 +1,4 @@
+import { usePasteImages, type PastedAsset } from '../../utils/usePasteImages'; // v3.328
 // v3.285 [IssueReport] 문의하기(오류 신고) 모달 — 설정 '문의하기(오류 신고)' 행에서 연다.
 // v3.95 의 "공식 계정 DM 프리필" 방식을 폐지: 사유(5종 라디오) + 내용(1~2000자) 을 받아
 // POST /api/issues 로 전용 접수 → 관리자 웹 '오류 신고' 탭에 들어간다(DM 문의함엔 남지 않음).
@@ -129,10 +130,10 @@ export default function IssueReportModal({ visible, onClose }: Props) {
       });
   };
 
-  const pickImages = async () => {
+  const pickImages = async (pasted?: PastedAsset[]) => {
     if (busy) return;
     if (images.length >= ISSUE_MAX_IMAGES) { setError(`사진은 최대 ${ISSUE_MAX_IMAGES}장까지 첨부할 수 있어요.`); return; }
-    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
     if (res.canceled || !res.assets?.length) return;
     const room = ISSUE_MAX_IMAGES - images.length;
     const valid = res.assets.filter((f) => {
@@ -154,6 +155,9 @@ export default function IssueReportModal({ visible, onClose }: Props) {
     setImages((prev) => [...prev, ...entries]);
     entries.forEach(startUpload);
   };
+
+  // v3.328 [PasteImage] 웹 Ctrl+V 이미지 붙여넣기(접수 화면 열려 있을 때·어린이 제외)
+  usePasteImages(visible && !done && !isChild, (assets) => { void pickImages(assets); });
 
   const close = () => {
     if (busy) return;
@@ -292,7 +296,7 @@ export default function IssueReportModal({ visible, onClose }: Props) {
                         </TouchableOpacity>
                       ))}
                       {images.length < ISSUE_MAX_IMAGES ? (
-                        <TouchableOpacity style={styles.addImage} onPress={pickImages} disabled={busy} accessibilityLabel="사진 첨부">
+                        <TouchableOpacity style={styles.addImage} onPress={() => { void pickImages(); }} disabled={busy} accessibilityLabel="사진 첨부">
                           <Feather name="image" size={18} color={colors.text.secondary} />
                           <AppText style={styles.addImageText}>{`사진 ${images.length}/${ISSUE_MAX_IMAGES}`}</AppText>
                         </TouchableOpacity>

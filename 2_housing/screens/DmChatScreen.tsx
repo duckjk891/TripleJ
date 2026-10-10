@@ -1,3 +1,4 @@
+import { usePasteImages, type PastedAsset } from '../utils/usePasteImages'; // v3.328
 import { enterToSendHandler } from '../utils/enterToSend';
 // [DmChat] DM 대화방 — MAIDOL DmChatView 이식(RN).
 // 말풍선 스레드 + 입력(Enter 전송, 2000자) + 메시지 요청 수락/거절/차단 바 + ⋯ 차단하기 + 상대 메시지 신고.
@@ -175,14 +176,14 @@ export default function DmChatScreen() {
     }
   };
 
-  const pickImage = async () => {
+  const pickImage = async (pasted?: PastedAsset[]) => {
     if (attachedImages.length >= DM_MAX_IMAGES) {
       showAlert('안내', `이미지는 최대 ${DM_MAX_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
     // expo-image-picker 미설치 — 기존 이미지 선택 관행(FeedCompose DocumentPicker image/*) 재사용
     // v3.273: multiple — 남은 슬롯만큼 수용, 초과·형식/용량 불량은 묶어서 1회 안내
-    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
     if (res.canceled || !res.assets?.length) return;
     const room = DM_MAX_IMAGES - attachedImages.length;
     const skipped: string[] = [];
@@ -207,6 +208,9 @@ export default function DmChatScreen() {
     setAttachedImages((prev) => [...prev, ...entries]);
     entries.forEach((e) => uploadImage(e));
   };
+
+  // v3.328 [PasteImage] 웹 Ctrl+V 이미지 붙여넣기(어린이는 사진 첨부 없음 — 서버도 403)
+  usePasteImages(!isChild, (assets) => { void pickImage(assets); });
 
   const retryImage = (entry: AttachedImage) => {
     if (entry.status !== 'failed') return;
@@ -432,7 +436,7 @@ export default function DmChatScreen() {
           <View style={styles.inputBar}>
             {/* v3.232 K7(B3): 어린이는 사진 첨부 없음(서버 /upload/dm-image 도 403) */}
             {!isChild && (
-            <TouchableOpacity onPress={pickImage} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
+            <TouchableOpacity onPress={() => { void pickImage(); }} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
               <Feather name="image" size={20} color={attachedImages.length >= DM_MAX_IMAGES ? colors.text.muted : colors.text.secondary} />
             </TouchableOpacity>
             )}

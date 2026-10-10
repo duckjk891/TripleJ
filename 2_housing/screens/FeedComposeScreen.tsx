@@ -1,3 +1,4 @@
+import { usePasteImages, type PastedAsset } from '../utils/usePasteImages'; // v3.328
 // [FeedCompose] 피드 작성 — v3.61 신설(기존엔 작성 UI 부재, 읽기·댓글만 가능했음).
 // 제목(선택)·내용 입력 + 음악 첨부(내 곡 목록 — 차트와 동일한 공용 TrackRow 디자인) → POST /feeds/.
 // 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}|{type:'image',object_name}], is_public, kind:'feed' }
@@ -232,14 +233,14 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     }
   };
 
-  const pickImage = async () => {
+  const pickImage = async (pasted?: PastedAsset[]) => {
     if (images.length >= MAX_FEED_IMAGES) {
       showAlert('안내', `사진은 최대 ${MAX_FEED_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
     // expo-image-picker 미설치 — 기존 이미지 선택 관행(SettingsScreen DocumentPicker image/*) 재사용
     // v3.273: multiple — OS 피커에서 한 번에 여러 장(남은 슬롯만큼 수용, 초과분은 안내 후 버림)
-    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
     if (res.canceled || !res.assets?.length) return;
     const room = MAX_FEED_IMAGES - images.length;
     const skipped: string[] = [];
@@ -264,6 +265,9 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     setImages((prev) => [...prev, ...entries]);
     entries.forEach((e) => uploadImage(e));
   };
+
+  // v3.328 [PasteImage] 웹 Ctrl+V 이미지 붙여넣기(어린이 이미지 금지 게이트 유지)
+  usePasteImages(!isChild && !feedWriteBlocked, (assets) => { void pickImage(assets); });
 
   const retryImage = (entry: AttachedImage) => {
     if (entry.status !== 'failed') return;
@@ -447,7 +451,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
         {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
         {!isCommunity && !isChild ? (
-          <TouchableOpacity style={styles.attachBtn} onPress={pickImage} accessibilityLabel="사진 첨부">
+          <TouchableOpacity style={styles.attachBtn} onPress={() => { void pickImage(); }} accessibilityLabel="사진 첨부">
             <Feather name="image" size={18} color={colors.accent.primary} />
             <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
           </TouchableOpacity>

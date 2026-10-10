@@ -4299,3 +4299,9 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 마이페이지 ⋮ '다른 장르로 편곡'(AI 곡): ArrangeSheet·⭐ 확인·arrangeGeneration(generation_id·variant_index)·작곡 로딩 이어보기 — 작곡 결과 화면과 같은 흐름. 진행 중 작곡·실패는 안내 문구(오류 원문 비노출).
 - 로그인: 이메일 Enter → 비밀번호, 비밀번호 Enter → 로그인(신고 5). DM·크루 채팅: PC 웹 Enter 전송·Shift+Enter 줄바꿈, 모바일(웹·앱)은 줄바꿈 유지, 한글 조합 중 Enter 무시(신고 6, utils/enterToSend).
 - 검증: tsc 0.
+
+## v3.328 — 2026-10-10 — 이미지 붙여넣기(Ctrl+V) + 다른 사용자 착장 위시 담기 (서버·웹)
+
+- 신고 7(오리쟁이 10-10 "복사·붙여넣기 단축키로도 이미지 붙여넣기"): utils/usePasteImages(웹 전용 paste 이벤트 — 이미지일 때만 가로채고 글자 붙여넣기는 그대로) → 첨부 버튼과 같은 흐름(형식·용량·장수 검사 동일). 적용: 문의하기(오류 신고)·DM·피드/공지 글쓰기. 네이티브 앱은 OS 첨부로 충분 — 무동작. 어린이 이미지 게이트 유지.
+- 신고 8(오리쟁이 10-10 "다른 사용자가 입은 의상 보는 곳에서 위시리스트 담기가 없음"): 원인 = 옛 착장 기록(user_character_snapshot.used_items)에 상품 id 가 비어 앱이 위시 하트를 숨김. 서버 tracks.py get_track cover_character: id 없는 착장은 image_object_name 으로 ad_items 조회해 id 채움(읽기 전용). 운영 확인: 대머리 김부장 4종 모두 id 확보.
+- 검증: tsc 0, 배포 후 /login 302·곡 상세 응답 확인.
