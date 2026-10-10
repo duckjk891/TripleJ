@@ -1610,8 +1610,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       }
       setBgUploading(true);
       console.info('[Cover] 배경 사진 업로드 시작', { name: a.name, size: a.size ?? -1 });
+      // v3.326: 필드명 fileUri(PickedFile) — 종전 uri 로 넘겨 경로가 비어 웹은 앱 HTML 이 '사진'으로 올라가
+      //   커버 생성이 OpenAI 400(Invalid image data)으로 실패했다(오리쟁이 10-10 신고). 네이티브도 업로드 불가였음.
       const data = await uploadCoverBackground({
-        uri: a.uri, fileName: a.name || 'background.jpg', mimeType: a.mimeType, size: a.size,
+        fileUri: a.uri, fileName: a.name || 'background.jpg', mimeType: a.mimeType, size: a.size,
       } as any);
       applyExtras({ bgObjectName: data.object_name, bgPrompt: null });
       console.info('[Cover] 배경 사진 업로드 완료', { object: data.object_name });
@@ -2737,7 +2739,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <ResultSecondaryButton label="다시 생성하기" onPress={handleRegenerate} disabled={busy} />
             </View>
             <ResultActionBar
-              aiNotice // v3.322: 커버 결과 화면 — 적용(저장) 전 AI 확인 안내
+              aiNotice={!errorMsg} // v3.322: 커버 결과 화면 — 적용(저장) 전 AI 확인 안내(v3.326: 오류 화면 제외)
               screen="CoverGeneration"
               onBack={() => {
                 if (albumMode) navigation.goBack();

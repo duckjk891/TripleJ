@@ -1,3 +1,4 @@
+import { friendlyText } from '../utils/friendlyError'; // v3.326
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
@@ -1162,7 +1163,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         {/* Error display */}
         {hasError && (
           <View style={styles.errorBox}>
-            <AppText style={styles.errorText}>{typeof store.error === 'string' ? store.error : JSON.stringify(store.error)}</AppText>
+            <AppText style={styles.errorText}>{friendlyText(typeof store.error === 'string' ? store.error : '', { fallback: '곡을 만들지 못했어요. 잠시 후 다시 시도해 주세요.' })}</AppText>
           </View>
         )}
 

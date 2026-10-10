@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { friendlyText, isTechnicalMessage } from '../utils/friendlyError'; // v3.326
 import { handleAccountSuspendedError, handleChildRestrictedError } from '../utils/kidsRestricted';
 
 // 백엔드 서버 — AWS 이전 완료(2026-09-17): 기본값 = AWS EC2 (api.maidol.ai.kr, backend_9004 동일 코드).
@@ -65,6 +66,23 @@ api.interceptors.response.use(
       handleAccountSuspendedError(error);
     } catch (e) {
       console.error('[KidsGuard] 인터셉터 처리 실패', e);
+    }
+    // v3.326 [FriendlyError]: 서버 오류 문구가 기술 문구(영문 예외·HTTP·JSON 등)면 상태 코드별 안내로 교체 —
+    // 화면들이 쓰는 err.response.data.error / err.message 가 그대로 사용자 안내가 되도록. 원문은 로그에만.
+    try {
+      const data = error.response?.data;
+      const rawErr = typeof data?.error === 'string' ? data.error : (typeof data?.detail === 'string' ? data.detail : '');
+      if (error.response && data && typeof data === 'object') {
+        if (!rawErr || isTechnicalMessage(rawErr)) {
+          if (rawErr) console.error('[FriendlyError] 서버 원문(사용자 비노출)', { url, status, raw: String(rawErr).slice(0, 300) });
+          data.error = friendlyText('', { status });
+          if (typeof data.detail !== 'string' || isTechnicalMessage(data.detail)) data.detail = data.error;
+        }
+      }
+      (error as any).__rawMessage = error.message;
+      error.message = error.response ? friendlyText(rawErr, { status }) : friendlyText('', { status: 0 });
+    } catch (e) {
+      console.error('[FriendlyError] 인터셉터 처리 실패', e);
     }
     return Promise.reject(error);
   }

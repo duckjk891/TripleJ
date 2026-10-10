@@ -76,8 +76,14 @@ function guessImageMime(fileName: string): string {
 async function appendFile(formData: FormData, field: string, file: PickedFile, mime: string) {
   if (Platform.OS === 'web') {
     // web: 표준 FormData는 Blob/File만 허용
+    if (!file.fileUri) throw new Error('선택한 파일을 찾을 수 없어요. 다시 선택해 주세요.');
     const res = await fetch(file.fileUri);
     const blob = await res.blob();
+    // v3.326: 이미지 업로드인데 이미지가 아니면(예: 경로 오류로 웹페이지 HTML) 올리지 않는다
+    if (mime.startsWith('image/') && blob.type && !blob.type.startsWith('image/')) {
+      console.error('[trackService] 이미지가 아닌 파일 업로드 차단', { field, type: blob.type, size: blob.size });
+      throw new Error('사진 파일을 읽지 못했어요. 다른 사진으로 다시 선택해 주세요.');
+    }
     formData.append(field, blob, file.fileName);
   } else {
     // native: RN 확장 문법

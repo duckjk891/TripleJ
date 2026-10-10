@@ -1,3 +1,4 @@
+import { friendlyText } from '../utils/friendlyError'; // v3.326
 import { useEffect, useRef, useState } from 'react';
 import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import {
@@ -324,7 +325,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
         {/* Error display */}
         {hasError && (
           <View style={styles.errorBox}>
-            <AppText style={styles.errorText}>{store.error}</AppText>
+            <AppText style={styles.errorText}>{friendlyText(store.error, { fallback: '가사를 만들지 못했어요. 잠시 후 다시 시도해 주세요.' })}</AppText>
           </View>
         )}
 

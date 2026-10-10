@@ -4282,3 +4282,10 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 ## v3.325 — 2026-10-10 — 크루 플레이리스트 안에서 바로 곡 추가 (웹 배포)
 
 대표: "크루 플리에 곡을 곡 ⋮ → 플레이리스트에 담기로만 넣는 건 안 되지" → 플리 상세(멤버)에 '곡 추가' 버튼 → components/club/ClubPlaylistAddSheet(전체 화면, ← 뒤로, 탭 [내 곡](/tracks/my)·[곡 검색](/tracks/search 400ms 디바운스), [담기] = POST /playlists/{id}/tracks, 담긴 곡 '담김'·409 흡수·서버 거부 문구 안내). 담으면 플리 곡 목록·개수 갱신. 빈 플리 안내 문구 갱신(멤버/비멤버). tsc 0.
+
+## v3.326 — 2026-10-10 — 시스템 오류 원문 비노출(오류 코드별 안내) + 커버 참고 사진 업로드 버그 (서버·웹 배포)
+
+대표: "사용자에게 저런 시스템 오류를 보여주면 안 됨 — 오류 번호마다 팝업 처리" + 신고 1번(오리쟁이 10-10 '커버 생성 중 참고 이미지 첨부 시 오류' — 화면에 OpenAI 400 원문 노출).
+- 앱 utils/friendlyError: isTechnicalMessage·statusMessage(400/401/402/403/404/408/409/413/415/422/429/5xx/네트워크 → 한국어 안내 + 오류 코드 E###)·friendlyText·looksLikeSystemError. services/api 응답 인터셉터: 서버 error/detail 가 기술 문구·없음이면 상태 코드 안내로 교체, err.message 도 안내문(원문은 콘솔). utils/appAlert showAlert 최후 방어선. genJobs failureBody·작곡/작사 결과 오류 표시도 동일. 커버 결과 바 AI 안내는 오류 화면 제외.
+- 신고 1번 원인: CoverGenerationScreen 배경 사진 업로드가 PickedFile 필드를 uri 로 넘겨(fileUri 미설정) 웹은 fetch(undefined) → 앱 HTML 이 사진으로 업로드(서버 확장자만 검사) → 커버 OpenAI edits 400. 네이티브도 업로드 불가였음. 수정: fileUri 전달, appendFile 이미지 아님 차단. 서버 upload.py cover-background 내용 검사(비이미지 PNG 변환 실패 시 415 안내), openai_image 읽을 수 없는 참조 = 회색 자리표시(Image N 번호 유지)로 대체해 생성 진행.
+- 검증: 하네스 10/10, tsc 0, 서버 격리(자리표시 PNG·HTML 판별·라우트 매핑), 배포 후 /login 302·cover-background 401 확인.

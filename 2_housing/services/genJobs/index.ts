@@ -1,3 +1,4 @@
+import { isTechnicalMessage } from '../../utils/friendlyError'; // v3.326
 import {
   GEN_KIND_DIRECTOR,
   type GenJobKind,
@@ -126,7 +127,10 @@ export function chargeNotice(refunded?: boolean | null, notCharged?: boolean | n
  * 아니면 오류 문장 + chargeNotice. 오류 문장이 없으면 chargeNotice만.
  */
 export function failureBody(error?: string | null, refunded?: boolean | null, notCharged?: boolean | null): string {
-  const e = (error || '').trim();
+  // v3.326 [FriendlyError]: 서버 실패 원문(영문 예외 등)은 쉬운 안내로 — 원문은 로그에만
+  const rawE = (error || '').trim();
+  if (rawE && isTechnicalMessage(rawE)) console.error('[FriendlyError] 생성 실패 원문(사용자 비노출)', { raw: rawE.slice(0, 300) });
+  const e = rawE && isTechnicalMessage(rawE) ? '생성 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.' : rawE;
   if (e && /별|⭐|환불|차감/.test(e)) return e;
   const notice = chargeNotice(refunded, notCharged);
   return e ? `${e}\n${notice}` : notice;

@@ -5,6 +5,7 @@ import {
   type DialogCustomContext,
 } from '../stores/dialogStore';
 import type { ReactNode } from 'react';
+import { friendlyText, looksLikeSystemError } from './friendlyError'; // v3.326
 
 export type AppAlertButton = DialogButton;
 
@@ -15,6 +16,11 @@ export type AppAlertButton = DialogButton;
  * 버튼 3개 이상도 지원(세로 스택).
  */
 export function showAlert(title: string, message?: string, buttons?: AppAlertButton[], options?: DialogOptions) {
+  // v3.326 [FriendlyError] 최후 방어선 — 시스템 오류 원문이 섞인 안내는 쉬운 문구로(원문은 콘솔에만)
+  if (looksLikeSystemError(message)) {
+    console.error('[FriendlyError] 팝업 원문 차단', { title, raw: String(message).slice(0, 300) });
+    message = friendlyText('', { status: 500 });
+  }
   if (__DEV__) {
     console.info('[appAlert] show', { title, buttons: buttons?.length ?? 0, lockMs: options?.lockMs ?? 0 });
   }
