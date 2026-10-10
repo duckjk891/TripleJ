@@ -13,6 +13,7 @@ import {
   Easing,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { versionLabel } from '../utils/appVersion';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
@@ -130,11 +131,15 @@ export default function SplashScreen({ navigation }: Props) {
           <AppText style={styles.title}>DOL</AppText>
         </View>
       </Animated.View>
+
+      {/* v3.324 (대표 10-10): 하단 아주 작은 글씨로 앱 버전(웹은 배포 시각까지) */}
+      <AppText style={styles.versionText} pointerEvents="none">{versionLabel()}</AppText>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  versionText: { position: 'absolute', bottom: 28, alignSelf: 'center', fontSize: 10, color: 'rgba(255,255,255,0.45)', letterSpacing: 0.3 },
   container: {
     flex: 1,
     justifyContent: 'center',

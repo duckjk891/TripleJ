@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { versionLabel } from '../utils/appVersion'; // v3.324 실제 버전 표시(종전 v1.0.0 고정 문구)
 import {
   StyleSheet,
   View,
@@ -654,7 +655,7 @@ export default function SettingsScreen({ navigation, route }: any) {
         <AppText variant="callout" style={styles.sectionTitle}>앱 정보</AppText>
         <View style={[styles.settingRow, styles.settingRowFirst]}>
           <AppText style={styles.settingLabel}>앱 버전</AppText>
-          <AppText style={styles.settingValue}>v1.0.0</AppText>
+          <AppText style={styles.settingValue}>{versionLabel()}</AppText>
         </View>
         <TouchableOpacity
           style={styles.settingRow}

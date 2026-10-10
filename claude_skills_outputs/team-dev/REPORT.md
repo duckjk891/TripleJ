@@ -4268,3 +4268,12 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 영향: 2026-10-09 14:22 ~ 2026-10-10 17:40 KST, 로그인 시작 422 25회(재기동 전 로그 3개 합계).
 - 수정: 헬퍼를 데코레이터 위로 이동(로그인 함수에 데코레이터 복원). 격리 컨테이너에서 라우트→함수 매핑 확인(/login→oauth_login, /callback→oauth_callback), 배포 후 google·kakao /login 302 → 각 인가 페이지 확인.
 - 재발 방지: 서버 배포 시 라우트 매핑 점검(app.routes endpoint 이름) 추가.
+
+## v3.324 — 2026-10-10 — 업데이트 안내(필수·선택 2단계) + 스플래시 버전 표시 (서버·웹 배포)
+
+대표 요청: "서버·앱이 업데이트되면 업데이트 팝업, 실행 안 하면 아무 동작 안 되게 — 보통 이렇게 하지?" → 대표 결정 '필수·선택 2단계(추천)'. 추가: "버전 명시 UI가 없으면 스플래시 하단에 아주 작은 글씨로".
+- 서버: routes/app_version.py GET /api/app/version(무인증) — Mongo app_config{_id:'app_version'} 의 web.min_build·android/ios min·latest·store_url·message(문서 없으면 기본값 = 강제 없음, android latest 1.3.1). main.py 등록. 배포 후 라우트 매핑·/login 302 재확인.
+- 앱: utils/appVersion(APP_VERSION·WEB_BUILD·versionLabel·compareVersions·decideUpdate·UPDATE_BUSY_ROUTES·parseBundleName), components/UpdateGate(시작 3초·10분마다·복귀 시 확인; 웹 = /app 번들 해시 비교로 새 배포 감지(선택) + web.min_build 미만(필수), 네이티브 = min 미만 필수·latest 미만 선택; 작업 중 화면(작사·작곡·디렉터·생성·글쓰기·채팅 등)에서는 보류 후 화면 이동 시 표시; 필수 = 닫기 없음, 업데이트 = 웹 새로고침/스토어). 스플래시 하단 10px 버전(웹은 배포 시각), 설정 '앱 버전' 고정 문구 v1.0.0 → 실제 버전.
+- deploy.sh(homepage/maidol, 백업 deploy.sh.bak_pre_v3324): EXPO_PUBLIC_WEB_BUILD=배포 시각(KST YYYYMMDDHHmm) 주입.
+- 운영: 필수 업데이트 걸기 = app_config.web.min_build 를 해당 배포 빌드 번호로(또는 android.min). 이번 배포 이후 배포부터 선택 팝업 동작(이전 번들에는 UpdateGate 없음).
+- 검증: 하네스 11/11, tsc 0.
