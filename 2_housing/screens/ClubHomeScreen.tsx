@@ -25,6 +25,7 @@ import ClubGenrePicker from '../components/ClubGenrePicker'; // v3.296 [ClubGenr
 import { updateClub, getClubInvite } from '../services/clubService';
 // v3.305 [ClubAlbum·ClubLink] 크루 앨범(플리·앨범 함께 표시) + 초대 링크·로그인 후 자동 가입
 import ClubAlbumCreateModal from '../components/club/ClubAlbumCreateModal';
+import ClubPlaylistAddSheet from '../components/club/ClubPlaylistAddSheet'; // v3.325 크루 플리 안에서 곡 추가
 import { listClubAlbums, type ClubAlbum } from '../services/clubAlbumService';
 import { getTrackCoverUri } from '../components/TrackRow';
 import { joinClubFlow, joinResultMessage, shareOrCopy } from '../utils/clubJoin';
@@ -97,6 +98,7 @@ export default function ClubHomeScreen() {
   // v3.305 [ClubAlbum] 크루 앨범 + 초대 코드(링크로 온 비회원 표시·가입에 사용)
   const [albums, setAlbums] = useState<ClubAlbum[]>([]);
   const [albumCreateOpen, setAlbumCreateOpen] = useState(false);
+  const [plAddOpen, setPlAddOpen] = useState(false); // v3.325
   const [inviteCode, setInviteCode] = useState<string>(routeInvite || '');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [joinBusy, setJoinBusy] = useState(false);
@@ -1144,6 +1146,13 @@ export default function ClubHomeScreen() {
             </TouchableOpacity>
             <AppText variant="title3" style={{ marginTop: spacing.sm }} numberOfLines={1}>{selectedPl.title || selectedPl.name}</AppText>
             <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>{`${plTracks.length}곡 · ${CLUB_LABEL} 멤버가 함께 채워요`}</AppText>
+            {/* v3.325 (대표 10-10): 멤버는 플레이리스트 안에서 바로 곡 추가(내 곡·곡 검색) */}
+            {isMember ? (
+              <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setPlAddOpen(true)} accessibilityLabel="이 플레이리스트에 곡 추가">
+                <Feather name="plus" size={16} color={colors.accent.primary} />
+                <AppText style={styles.composeText}>곡 추가</AppText>
+              </TouchableOpacity>
+            ) : null}
             {/* v3.305 [ClubAlbum] 크루장 — 이 플레이리스트로 테마 앨범 만들기 */}
             {isOwner && plTracks.length > 0 ? (
               <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setAlbumCreateOpen(true)} accessibilityLabel="이 플레이리스트로 앨범 만들기">
@@ -1237,7 +1246,7 @@ export default function ClubHomeScreen() {
     : selectedPl
     ? (plTracksLoading
       ? <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: spacing.xl }} />
-      : <EmptyState title="이 플레이리스트에 곡이 없어요" hint="차트나 검색에서 곡을 담아보세요!" />)
+      : <EmptyState title="이 플레이리스트에 곡이 없어요" hint={isMember ? "위의 '곡 추가'로 첫 곡을 담아보세요!" : `${CLUB_LABEL}에 가입하면 곡을 함께 담을 수 있어요.`} />)
     : (plFailed
       ? <EmptyState icon={<Feather name="cloud-off" size={44} color={colors.text.muted} />} title="플레이리스트를 불러오지 못했어요" hint="잠시 후 아래로 당겨 다시 시도해주세요." />
       : <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title={`아직 ${CLUB_LABEL} 플레이리스트가 없어요`} hint="멤버라면 첫 플레이리스트를 만들어보세요!" />);
@@ -1264,6 +1273,16 @@ export default function ClubHomeScreen() {
           />
         }
         contentContainerStyle={{ flexGrow: 1, paddingBottom: playerStore.track ? 140 : 80 }}
+      />
+
+      {/* v3.325 크루 플리 곡 추가 */}
+      <ClubPlaylistAddSheet
+        visible={plAddOpen}
+        playlistId={selectedPl ? String(selectedPl.id) : null}
+        playlistTitle={selectedPl ? (selectedPl.title || (selectedPl as any).name) : undefined}
+        existingIds={plTracks.map((t: any) => String(t.id || t.track_id))}
+        onClose={() => setPlAddOpen(false)}
+        onAdded={() => { if (selectedPl) openPlaylist(selectedPl); fetchPlaylists(); }}
       />
 
       {/* v3.305 [ClubAlbum] 크루장 — 플레이리스트로 앨범 만들기 */}
