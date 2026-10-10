@@ -4289,3 +4289,13 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 앱 utils/friendlyError: isTechnicalMessage·statusMessage(400/401/402/403/404/408/409/413/415/422/429/5xx/네트워크 → 한국어 안내 + 오류 코드 E###)·friendlyText·looksLikeSystemError. services/api 응답 인터셉터: 서버 error/detail 가 기술 문구·없음이면 상태 코드 안내로 교체, err.message 도 안내문(원문은 콘솔). utils/appAlert showAlert 최후 방어선. genJobs failureBody·작곡/작사 결과 오류 표시도 동일. 커버 결과 바 AI 안내는 오류 화면 제외.
 - 신고 1번 원인: CoverGenerationScreen 배경 사진 업로드가 PickedFile 필드를 uri 로 넘겨(fileUri 미설정) 웹은 fetch(undefined) → 앱 HTML 이 사진으로 업로드(서버 확장자만 검사) → 커버 OpenAI edits 400. 네이티브도 업로드 불가였음. 수정: fileUri 전달, appendFile 이미지 아님 차단. 서버 upload.py cover-background 내용 검사(비이미지 PNG 변환 실패 시 415 안내), openai_image 읽을 수 없는 참조 = 회색 자리표시(Image N 번호 유지)로 대체해 생성 진행.
 - 검증: 하네스 10/10, tsc 0, 서버 격리(자리표시 PNG·HTML 판별·라우트 매핑), 배포 후 /login 302·cover-background 401 확인.
+
+## v3.327 — 2026-10-10 — Inst → MR(동영상 가사 표시) + 마이페이지 ⋮ 장르 편곡 + 로그인·DM Enter (서버·데이터·웹)
+
+대표 결정(신고 정리 회신, 3번 제외 전부 + 추가 지시): "모바일·PC·앱 버전 모두 고려", "MR 은 기존 Inst 기능을 MR 로 바꾸고 MR 이니 동영상에 가사가 나와야", "장르 변경을 마이페이지 내 곡 ⋮ 에서도".
+- MR(서버): inst_service 신규 파생곡 제목 '(MR)'·원곡 가사 상속. share_video._fetch_lyric_segments — 자체 타임스탬프 없으면 source_track_id 원곡 타이밍 사용(1단계). tracks.py '(MR)' 도 추천 제외·중복 생성 거부·마퀴 제외. 격리 4/4, 배포 후 /login 302.
+- MR(데이터): 기존 (Inst.) 4곡 → (MR) + 원곡 가사(백업 /home/ubuntu/maidol/logs/inst_to_mr_v3327.json). 동영상 가사 타이밍: 냥냥냥 32·더 나오려는 92·SURFSIDE 24줄 확인, 감정 로봇은 원곡에도 타이밍 없음.
+- MR(앱): 라벨·안내·진행 화면·알림·스타 내역 'Inst.' → 'MR', 파생곡(source_track_id·(MR))엔 MR 메뉴 숨김.
+- 마이페이지 ⋮ '다른 장르로 편곡'(AI 곡): ArrangeSheet·⭐ 확인·arrangeGeneration(generation_id·variant_index)·작곡 로딩 이어보기 — 작곡 결과 화면과 같은 흐름. 진행 중 작곡·실패는 안내 문구(오류 원문 비노출).
+- 로그인: 이메일 Enter → 비밀번호, 비밀번호 Enter → 로그인(신고 5). DM·크루 채팅: PC 웹 Enter 전송·Shift+Enter 줄바꿈, 모바일(웹·앱)은 줄바꿈 유지, 한글 조합 중 Enter 무시(신고 6, utils/enterToSend).
+- 검증: tsc 0.

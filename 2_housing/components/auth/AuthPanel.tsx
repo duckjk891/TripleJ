@@ -6,7 +6,7 @@
 //               → pending 화면(동의 요청 발송 안내 + 상태 확인). 승인 전 로그인은 서버가 403으로 차단.
 //   플래그 OFF → 기존 blocked(준비 중) 안내 유지 — 법적 방어(가입 차단).
 // 현행 백엔드는 gender·consents가 필수라 이 패널이 없으면 가입이 항상 400으로 실패한다(v3.43에서 해소).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
@@ -166,6 +166,7 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode, social
     return age;
   };
 
+  const loginPwRef = useRef<any>(null); // v3.326 이메일 Enter → 비밀번호
   const handleLogin = async () => {
     resetError();
     if (!email.trim() || !password) { setLocalError('이메일과 비밀번호를 입력해주세요.'); return; }
@@ -423,10 +424,13 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode, social
           <>
         <Label>이메일</Label>
         <TextInput style={styles.input} placeholder="이메일을 입력하세요" placeholderTextColor={colors.text.muted}
-          value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+          value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address"
+          returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => loginPwRef.current?.focus?.()} />
         <Label>비밀번호</Label>
-        <TextInput style={styles.input} placeholder="비밀번호를 입력하세요" placeholderTextColor={colors.text.muted}
-          value={password} onChangeText={setPassword} secureTextEntry />
+        {/* v3.326 (오리쟁이 10-06 신고): 비밀번호 입력 후 Enter = 로그인(종전: 소셜 버튼이 눌림) */}
+        <TextInput ref={loginPwRef} style={styles.input} placeholder="비밀번호를 입력하세요" placeholderTextColor={colors.text.muted}
+          value={password} onChangeText={setPassword} secureTextEntry
+          returnKeyType="go" onSubmitEditing={() => { if (!isLoading) void handleLogin(); }} />
         <Button label={isLoading ? '로그인 중...' : '로그인'} fullWidth disabled={isLoading} onPress={handleLogin} />
           </>
         ) : null}

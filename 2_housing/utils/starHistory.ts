@@ -33,7 +33,7 @@ const USE_NOUNS: Record<string, string> = {
   cover: '커버',
   cover_refine: '커버 미세조정',
   share_video: '영상',
-  instrumental: 'Inst',
+  instrumental: 'MR 만들기',
   voice_clone: '보이스',
   fatigue_skip: '휴식 단축',
   hire_director: '디렉터 영입',

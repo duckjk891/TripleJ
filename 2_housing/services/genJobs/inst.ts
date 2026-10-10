@@ -15,11 +15,11 @@ export const INST_CAP_MS = 30 * 60 * 1000;
 export const INST_SLOW_MS = 4 * 60 * 1000;
 
 export const INST_TEXT: GenKindText = {
-  busyTitle: '이미 Inst. 버전을 만드는 중이에요',
+  busyTitle: '이미 MR 버전을 만드는 중이에요',
   busyBody: '완성된 뒤에 새로 만들 수 있어요.',
-  doneTitle: 'Inst. 버전이 완성됐어요',
+  doneTitle: 'MR 버전이 완성됐어요',
   doneBody: '내 곡에 추가됐어요.',
-  failTitle: 'Inst. 버전을 끝내지 못했어요',
+  failTitle: 'MR 버전을 끝내지 못했어요',
 };
 
 /** 이 원곡의 추적 레코드(최신) — 없으면 null */

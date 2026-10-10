@@ -1,3 +1,4 @@
+import { enterToSendHandler } from '../utils/enterToSend';
 // [ClubChatScreen] v3.252 크루 단톡방 — 크루 멤버 전용 실시간 채팅(계약 fixed).
 // 진입: ClubHome 채팅 탭(멤버) → navigate('ClubChat', { clubId, name, isOwner }). 별도 풀스크린
 // (DmChat 관행 — keyboard-controller KAV 키보드 처리, 탭바·미니플레이어 없음).
@@ -306,6 +307,7 @@ export default function ClubChatScreen() {
               onChangeText={setText}
               maxLength={CHAT_TEXT_MAX}
               multiline
+              onKeyPress={enterToSendHandler(() => { void send(); })} // v3.326 PC 웹 Enter 전송
               editable={!loading}
             />
             <TouchableOpacity

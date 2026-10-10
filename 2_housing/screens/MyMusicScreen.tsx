@@ -1,3 +1,12 @@
+import ArrangeSheet, { type ArrangeSelection } from '../components/arrange/ArrangeSheet'; // v3.326
+import { arrangeGeneration } from '../services/musicService';
+import { adoptGenJob, guardGeneration, newRequestId } from '../services/generationTracker';
+import { parseGenInProgress } from '../services/genJobsService';
+import { MUSIC_TEXT } from '../services/genJobs/music';
+import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
+import { useMusicStore } from '../stores/musicStore';
+import { getPointCostSync } from '../services/pointCosts';
+import { friendlyErrorMessage } from '../utils/friendlyError';
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import ReputationCard from '../components/ReputationCard';
@@ -438,9 +447,61 @@ export default function MyMusicScreen({ navigation }: any) {
 
   // v3.210 ③: Inst. 항목 노출 조건 — AI 곡(ai_model suno 한정, 발매 시 'Suno' 저장 — MusicResult:464),
   // 이미 (Inst.)인 곡·생성 진행 중인 곡 제외 (PLAN v3.210 확정 스펙)
+  // v3.326 (대표 10-10): 마이페이지 ⋮ '다른 장르로 편곡' — 작곡 결과 화면의 편곡(ArrangeSheet·⭐ 확인·접수)과 같은 흐름.
+  //   원본 = 발매 트랙의 generation_id + variant_index. 접수 후 작곡 로딩(MusicLoading resume)으로 이동.
+  const [arrangeTrack, setArrangeTrack] = useState<Track | null>(null);
+  const [arrangeBusy, setArrangeBusy] = useState(false);
+  const canArrange = (t: Track): boolean => (t.ai_model || '').toLowerCase() === 'suno' && !!(t as any).generation_id;
+  const openArrangeFor = (t: Track) => {
+    if (guardGeneration('music', { navigation: navigation.getParent() || navigation, where: 'MyMusic:arrange' })) return;
+    console.info('[MyMusic] 편곡 시트', { trackId: t.id });
+    setArrangeTrack(t);
+  };
+  const submitArrange = async (sel: ArrangeSelection) => {
+    const t = arrangeTrack;
+    const genId = (t as any)?.generation_id;
+    if (!t || !genId || arrangeBusy) return;
+    const ok = await confirmStarSpend({
+      source: 'MyMusic:arrange', costKey: 'compose', action: '편곡하기',
+      message: '가사와 목소리는 그대로, 새 장르·분위기의 곡을 만들어요.',
+    });
+    if (!ok) return;
+    setArrangeBusy(true);
+    const rid = newRequestId();
+    try {
+      const variantIndex = typeof (t as any).variant_index === 'number' ? (t as any).variant_index : undefined;
+      const doc = await arrangeGeneration(String(genId),
+        { variantIndex, genreKo: sel.genreKo, moodKo: sel.moodKo, styleText: sel.styleText, keepMelody: sel.keepMelody },
+        { requestId: rid });
+      const newId = String(doc?.id || (doc as any)?.generation_id || '');
+      if (!newId) throw new Error('arrange: no generation id');
+      registerGenJob({ kind: 'music', requestId: rid, serverJobId: newId, meta: { title: doc?.title ?? null } });
+      hydrateMusicStoresFromGeneration(doc as any);
+      const music = useMusicStore.getState();
+      if (sel.genreKo) music.setGenre(sel.genreKo);
+      if (sel.moodKo) music.setMood(sel.moodKo);
+      console.info('[MyMusic] 편곡 접수', { trackId: t.id, newId });
+      setArrangeTrack(null);
+      (navigation.getParent() || navigation).navigate('Studio', { screen: 'MusicLoading', params: { resumeGenerationId: newId } });
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.warn('[MyMusic] 편곡 실패', { trackId: t.id, status: status ?? null });
+      const busySnap = parseGenInProgress(err, 'music');
+      if (busySnap) {
+        adoptGenJob(busySnap);
+        setArrangeTrack(null);
+        showAlert(MUSIC_TEXT.busyTitle, MUSIC_TEXT.busyBody);
+        return;
+      }
+      showAlert('알림', friendlyErrorMessage(err, '편곡을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+    } finally {
+      setArrangeBusy(false);
+    }
+  };
+
   const canMakeInstrumental = (t: Track): boolean =>
     (t.ai_model || '').toLowerCase() === 'suno'
-    && !(t.title || '').includes('(Inst.)')
+    && !(t.title || '').includes('(Inst.)') && !(t.title || '').includes('(MR)') && !(t as any).source_track_id
     && !instBusy[String(t.id)];
 
   // v3.222 ②: Inst 폴링 소유권을 InstLoadingScreen으로 이관 — 이 화면은 진입 배선만 담당.
@@ -539,8 +600,8 @@ export default function MyMusicScreen({ navigation }: any) {
     const ok = await confirmStarSpend({
       source: 'MyMusic.inst',
       costKey: 'instrumental',
-      action: 'Inst. 버전 만들기',
-      message: `"${track.title}"에서 보이스를 뺀 연주(Inst.) 버전을 만들어요. 완료되면 "${track.title} (Inst.)" 트랙이 내 곡에 추가돼요.`,
+      action: 'MR 버전 만들기',
+      message: `"${track.title}"에서 보컬을 뺀 MR(반주) 버전을 만들어요. 동영상에는 원곡 가사가 그대로 나와요. 완료되면 "${track.title} (MR)" 트랙이 내 곡에 추가돼요.`,
     });
     if (!ok) {
       console.info('[Inst] ⭐ 확인 취소 — 요청 없음', { trackId });
@@ -580,7 +641,7 @@ export default function MyMusicScreen({ navigation }: any) {
       } else if (status === 409) {
         // v3.210 tester U-7③: 서버 409는 2형상 — existing_track_id(이미 완성) vs job_id(진행 중)
         if (err?.response?.data?.existing_track_id) {
-          showAlert('알림', err?.response?.data?.error || '이미 이 곡의 Inst. 버전이 있어요.');
+          showAlert('알림', err?.response?.data?.error || '이미 이 곡의 MR 버전이 있어요.');
         } else {
           // v3.222 ②: 진행 중 409 → 동일 화면 resume 모드(폴링만 — MusicLoading resume 관행)
           // v3.228: 진행 중 job(다른 창·기기 포함)을 추적기에 편입
@@ -593,9 +654,9 @@ export default function MyMusicScreen({ navigation }: any) {
         }
       } else if (status === 404) {
         // v3.214 ③: 서버 /instrumental 미배포(v3.210) 과도기 안내 — 배포 후 404는 곡 미존재뿐이라 무해
-        showAlert('알림', 'Inst. 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.');
+        showAlert('알림', 'MR 만들기 준비 중이에요. 잠시 후 다시 시도해주세요.');
       } else {
-        showAlert('오류', err?.response?.data?.error || 'Inst. 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
+        showAlert('오류', err?.response?.data?.error || 'MR 생성 요청에 실패했어요. 잠시 후 다시 시도해주세요.');
       }
     }
   };
@@ -1101,7 +1162,11 @@ export default function MyMusicScreen({ navigation }: any) {
           { icon: 'download', label: '다운로드', onPress: () => handleDownloadChoice(actionTrack) },
           // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외
           ...(canMakeInstrumental(actionTrack)
-            ? [{ icon: 'disc' as const, label: 'Inst. 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
+            ? [{ icon: 'disc' as const, label: 'MR 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
+            : []),
+          // v3.326: 다른 장르로 편곡(AI 곡 — 작곡 결과 화면과 같은 흐름)
+          ...(canArrange(actionTrack)
+            ? [{ icon: 'shuffle' as const, label: '다른 장르로 편곡', onPress: () => openArrangeFor(actionTrack) }]
             : []),
           // v3.217 ②: 공개↔숨김 양방향 — 공개곡="차트에서 숨기기", 비공개곡="차트에 업로드"(상호 배타)
           ...(actionTrack.is_public
@@ -1111,6 +1176,17 @@ export default function MyMusicScreen({ navigation }: any) {
           { icon: 'user', label: '아티스트 지정', onPress: () => setRetagTrack(actionTrack) },
           { icon: 'trash-2', label: '삭제', danger: true, onPress: () => handleDeleteTrack(String(actionTrack.id), actionTrack.title) },
         ] : undefined}
+      />
+
+      {/* v3.326 다른 장르로 편곡 시트 */}
+      <ArrangeSheet
+        visible={!!arrangeTrack}
+        currentGenre={(arrangeTrack as any)?.genre && typeof (arrangeTrack as any).genre === 'string' ? (arrangeTrack as any).genre : null}
+        sourceLabel={arrangeTrack ? `「${arrangeTrack.title}」` : null}
+        cost={getPointCostSync('compose')}
+        busy={arrangeBusy}
+        onClose={() => { if (!arrangeBusy) setArrangeTrack(null); }}
+        onSubmit={(sel) => { void submitArrange(sel); }}
       />
 
       {/* v3.269 [30]: 아티스트 재지정 시트 */}

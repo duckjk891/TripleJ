@@ -31,7 +31,7 @@ const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
 // Inst 전용 스텝 문안(기본안) — 서버 파이프라인 실순서(제출→보컬 분리→다운로드→정규화→발매) 차용
 const INST_STEPS: ComposerLoadingStep[] = [
-  { label: '제출', message: 'Inst. 작업을 접수하고 있어요...' },
+  { label: '제출', message: 'MR 작업을 접수하고 있어요...' },
   { label: '보컬 분리', message: '보컬을 분리하고 있어요...' },
   { label: '오디오 받기', message: '연주 오디오를 받고 있어요...' },
   { label: '정규화', message: '음질을 다듬고 있어요...' },
@@ -160,7 +160,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
         } else if (st === 'failed' || st === 'error') {
           if (interval) clearInterval(interval);
           // v3.228 X-K1: 환불 안내는 서버 refunded=true(또는 서버 확정 문장)일 때만
-          setErrorMsg(failureBody(data?.error || 'Inst. 생성에 실패했어요.', data?.refunded));
+          setErrorMsg(failureBody(data?.error || 'MR 생성에 실패했어요.', data?.refunded));
           setPhase('failed');
           settleGenJob('inst', data?.job_id ? String(data.job_id) : trackedKey, 'failed', {
             error: data?.error ?? null,
@@ -286,7 +286,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
     navigation.getParent()?.navigate('MyMusic');
   };
 
-  const instTitle = title ? `${title} (Inst.)` : 'Inst. 트랙';
+  const instTitle = title ? `${title} (MR)` : 'MR 트랙'; // v3.327 Inst → MR
 
   return (
     <AppScreenLayout scroll={false} insideTab avoidMiniPlayer={false}>
@@ -305,7 +305,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
             <View style={styles.doneBadge}>
               <Feather name="check" size={28} color={colors.accent.primary} />
             </View>
-            <AppText style={styles.cardTitle}>Inst. 버전 완성!</AppText>
+            <AppText style={styles.cardTitle}>MR 버전 완성!</AppText>
             <AppText style={styles.cardSub}>{`"${instTitle}" 트랙이 내 곡에 추가됐어요.`}</AppText>
 
             {resultTrackId ? (
@@ -351,9 +351,9 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
             <View style={[styles.doneBadge, styles.failBadge]}>
               <Feather name="x" size={28} color={colors.status.error} />
             </View>
-            <AppText style={styles.cardTitle}>Inst. 생성 실패</AppText>
+            <AppText style={styles.cardTitle}>MR 생성 실패</AppText>
             <AppText style={styles.cardSub}>
-              {errorMsg || 'Inst. 생성에 실패했어요.'}
+              {errorMsg || 'MR 생성에 실패했어요.'}
             </AppText>
             <TouchableOpacity
               style={styles.primaryBtn}

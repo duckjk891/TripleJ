@@ -1,3 +1,4 @@
+import { enterToSendHandler } from '../utils/enterToSend';
 // [DmChat] DM 대화방 — MAIDOL DmChatView 이식(RN).
 // 말풍선 스레드 + 입력(Enter 전송, 2000자) + 메시지 요청 수락/거절/차단 바 + ⋯ 차단하기 + 상대 메시지 신고.
 // 갱신: 화면 포커스 중 8초 폴링(모바일 관용 — MAIDOL은 WS+30s 폴링, WS는 후속).
@@ -443,6 +444,7 @@ export default function DmChatScreen() {
               onChangeText={setText}
               maxLength={2000}
               multiline
+              onKeyPress={enterToSendHandler(() => { void send(); })} // v3.326 PC 웹 Enter 전송
             />
             <TouchableOpacity
               onPress={send}
