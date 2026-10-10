@@ -3,16 +3,13 @@
 //    EXPO_PUBLIC_WEB_BUILD=YYYYMMDDHHmm KST 로 주입 — 로컬 개발·네이티브는 '').
 //  · 판정(순수): 필수 = 네이티브 버전 < min 또는 웹 빌드 < web.min_build. 선택 = 네이티브 버전 < latest 또는 웹 새 번들 감지.
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
 
 export const APP_VERSION: string = (Constants.expoConfig?.version as string) || '0.0.0';
 export const WEB_BUILD: string = (process.env.EXPO_PUBLIC_WEB_BUILD as string) || '';
 
-/** 화면 표시용 — 'v1.3.1' / 웹은 'v1.3.1 · 웹 10.10 17:40' */
-export function versionLabel(platform: string = Platform.OS, webBuild: string = WEB_BUILD, appVersion: string = APP_VERSION): string {
-  const base = `v${appVersion}`;
-  if (platform !== 'web' || !/^\d{12}$/.test(webBuild)) return base;
-  return `${base} · 웹 ${webBuild.slice(4, 6)}.${webBuild.slice(6, 8)} ${webBuild.slice(8, 10)}:${webBuild.slice(10, 12)}`;
+/** 화면 표시용 — 'v1.3.1'(대표 10-10 "버전만 보이게": 웹 배포 시각은 표시하지 않고 업데이트 판정에만 사용) */
+export function versionLabel(appVersion: string = APP_VERSION): string {
+  return `v${appVersion}`;
 }
 
 /** '1.3.1' 비교(순수) — a<b 음수, 같으면 0, a>b 양수. 숫자 아닌 조각은 0 */

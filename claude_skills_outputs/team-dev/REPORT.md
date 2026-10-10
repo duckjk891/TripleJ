@@ -4277,3 +4277,4 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - deploy.sh(homepage/maidol, 백업 deploy.sh.bak_pre_v3324): EXPO_PUBLIC_WEB_BUILD=배포 시각(KST YYYYMMDDHHmm) 주입.
 - 운영: 필수 업데이트 걸기 = app_config.web.min_build 를 해당 배포 빌드 번호로(또는 android.min). 이번 배포 이후 배포부터 선택 팝업 동작(이전 번들에는 UpdateGate 없음).
 - 검증: 하네스 11/11, tsc 0.
+- v3.324b(같은 날): 대표 "버전만 보이게" → versionLabel = 'v1.3.1'(웹 배포 시각 표시 제거, 업데이트 판정에는 계속 사용). 스플래시·설정·업데이트 팝업 공통.
