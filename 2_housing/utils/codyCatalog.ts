@@ -580,3 +580,44 @@ export function pinPicked<T extends { id: string }>(items: T[], pickedId?: strin
   if (idx <= 0) return items;
   return [items[idx], ...items.slice(0, idx), ...items.slice(idx + 1)];
 }
+
+// v3.329 [CodyWorn] 다시 꾸미기 진입 시 "지금 입고 있는 옷"을 선택 상태로 채운다(재히 10-07 제보:
+// 가방만 바꿨는데 나머지 옷이 기본 흰 티·회색 반바지로 초기화). 서버 used_items(아티스트 착용 기록)를
+// 슬롯별 AdItem 으로 변환 — 카탈로그에서 같은 이미지(image_object_name)를 찾으면 그 상품을 그대로 쓰고,
+// 못 찾으면(판매 종료 등) 착용 기록만으로 최소 아이템을 만든다. 슬롯당 1개(뒤에 나온 기록 우선).
+export interface WornItemLike {
+  name?: string | null;
+  image_object_name?: string | null;
+  product_url?: string | null;
+  category?: string | null;
+  cat?: string | null;
+  brand?: string | null;
+  id?: string | null;
+}
+
+export function wornItemsToSelection(
+  worn: WornItemLike[] | null | undefined,
+  catalogByCat: Partial<Record<Cat, AdItem[]>> = {},
+): Partial<Record<Cat, AdItem>> {
+  const out: Partial<Record<Cat, AdItem>> = {};
+  for (const w of worn || []) {
+    const cat = String(w?.category || w?.cat || '').trim() as Cat;
+    if (!CATEGORIES.includes(cat)) continue;
+    const img = (w?.image_object_name || '').trim();
+    const name = (w?.name || '').trim();
+    if (!img && !name) continue;
+    const hit = img ? (catalogByCat[cat] || []).find((x) => x.image_object_name === img) : undefined;
+    out[cat] = hit
+      ? { ...hit }
+      : {
+          id: (w?.id && String(w.id)) || `worn_${cat}_${img || name}`,
+          name: name || '착용 중인 아이템',
+          image_object_name: img || undefined,
+          product_url: w?.product_url || undefined,
+          brand: w?.brand || undefined,
+          category: cat,
+          color_family: null,
+        };
+  }
+  return out;
+}

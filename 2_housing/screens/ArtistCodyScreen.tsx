@@ -45,6 +45,7 @@ import {
   type Cat,
   type CodyGenderChoice,
   type CodyViewState,
+  wornItemsToSelection,
 } from '../utils/codyCatalog';
 
 // v3.206: 카테고리 개편 — Cat·CATEGORIES·ACCESSORY_SUBCATS는 utils/codyCatalog.ts.
@@ -376,7 +377,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       showAlert(KIDS_TEXT.restrictedTitle, '어린이 계정에서는 판매처로 이동할 수 없어요.');
       return;
     }
-    if (!item.id.startsWith('sample_')) {
+    if (!item.id.startsWith('sample_') && !item.id.startsWith('worn_')) {
       api.post(`/business/ads/${item.id}/click`).catch(() => {});
     }
     const url = item.product_url.startsWith('http') ? item.product_url : `https://${item.product_url}`;
@@ -413,6 +414,42 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     setStaleIds(stale);
   };
 
+  // v3.329 [CodyWorn]: 대상 아티스트의 현재 착용 기록(서버 used_items) → 선택 상태. 옵션(핏·착용 방식)은
+  // 같은 이미지의 마지막 적용 기록(useOutfitStore.items)에서 이어받는다. 실패하면 빈 선택(기존 동작).
+  const seedFromWorn = async (cid: string, isAlive: () => boolean) => {
+    try {
+      const { characters } = await listArtists();
+      const worn = characters.find((c) => c.character_id === cid)?.used_items || [];
+      if (worn.length === 0) {
+        console.info('[ArtistCody] 착용 기록 없음 — 빈 선택', { characterId: cid });
+        return;
+      }
+      const cats = [...new Set(worn.map((w: any) => String(w?.category || '')))].filter(
+        (c): c is Cat => (CATEGORIES as string[]).includes(c),
+      );
+      const catalogByCat: Partial<Record<Cat, AdItem[]>> = {};
+      await Promise.all(cats.map(async (c) => {
+        try { catalogByCat[c] = (await getCatalog(c)).items; } catch { /* 매칭 실패 → 착용 기록으로 최소 아이템 */ }
+      }));
+      if (!isAlive()) return;
+      const seeded = wornItemsToSelection(worn, catalogByCat);
+      const lastApplied = useOutfitStore.getState().items;
+      const opts: Partial<Record<Cat, Record<string, string>>> = {};
+      for (const [c, it] of Object.entries(seeded) as [Cat, AdItem][]) {
+        const prev = lastApplied.find((a) => a.cat === c && !!a.imageObjectName && a.imageObjectName === it.image_object_name);
+        if (prev?.options && Object.keys(prev.options).length > 0) opts[c] = { ...prev.options };
+      }
+      // 사용자가 그새 고른 게 있으면 덮지 않는다(빈 슬롯만 채움)
+      setSelected((cur) => ({ ...seeded, ...cur }));
+      setItemOptions((cur) => ({ ...opts, ...cur }));
+      console.info('[ArtistCody] 현재 착장 불러오기', {
+        characterId: cid, slots: Object.keys(seeded), catalogMatched: Object.values(seeded).filter((i) => !i!.id.startsWith('worn_')).length,
+      });
+    } catch (err: any) {
+      console.error('[ArtistCody] 현재 착장 불러오기 실패', { characterId: cid, status: err?.response?.status, message: err?.message });
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     const restore = () => {
@@ -444,7 +481,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             n: Object.keys(restored).length, mode: d.mode, afterFailedApply: d.appliedAt != null,
           });
           checkStale(restored, () => alive);
+          setDraftReady(true);
+          return;
         }
+      }
+      // v3.329 [CodyWorn]: 고르던 draft 가 없는 '다시 꾸미기'(outfit) — 지금 입고 있는 옷을 선택 상태로 채운다.
+      // (재히 10-07: 가방만 바꿨는데 나머지 옷이 기본형으로 초기화) 채운 뒤에야 draft 기록을 연다.
+      if (!isSheetMode && draftCharacterId) {
+        seedFromWorn(draftCharacterId, () => alive).finally(() => { if (alive) setDraftReady(true); });
+        return;
       }
       setDraftReady(true);
     };
@@ -673,11 +718,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       // v3.124: 참조 이미지가 첨부되는 아이템은 제품 사진 그대로 재현하도록 명시 —
       // 기존 "이름에서 연상해 시각화" 문구가 이미지 있는 아이템의 디자인 변형을 유도(대표 지적).
       const hasRefImage = selectedEntries.some(
-        ([cat, it]) => ['상의', '하의', '신발'].includes(cat) && it?.image_object_name,
+        ([cat, it]) => ['상의', '하의', '신발', '모자', '가방'].includes(cat) && it?.image_object_name,
       );
       if (hasRefImage) {
         parts.push(
-          '참조 이미지가 첨부된 아이템(상의/하의/신발)은 첨부된 제품 사진과 동일하게(색상·패턴·로고 위치·실루엣·기장·디테일) 그대로 재현하세요. 사진에 없는 디테일을 상상해서 추가하거나 바꾸지 마세요. 참조 이미지가 없는 아이템만 브랜드명·이름·옵션에서 연상되는 색상·실루엣·소재·디테일로 시각화하세요.'
+          '참조 이미지가 첨부된 아이템(상의/하의/신발/모자/가방)은 첨부된 제품 사진과 동일하게(색상·패턴·로고 위치·실루엣·기장·디테일) 그대로 재현하세요. 사진에 없는 디테일을 상상해서 추가하거나 바꾸지 마세요. 참조 이미지가 없는 아이템만 브랜드명·이름·옵션에서 연상되는 색상·실루엣·소재·디테일로 시각화하세요.'
         );
         // v3.125: 로고·프린팅 정밀 복제 — "로고가 조금씩 다르다" 대표 피드백 반영
         parts.push(
@@ -743,7 +788,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           : `【4단계 — 헤어/문신】 ${styleItems}. 명시 안 된 카테고리는 현재 시트 그대로 유지.`,
       );
     } else if (!isSheetMode) {
-      parts.push('【4단계 — 헤어/문신】 현재 시트 그대로 유지.');
+      // v3.329: 머리는 원본 얼굴 사진이 아니라 지금 시트의 머리(길이·색·스타일·앞머리)를 유지(재히 10-07 — 꾸미기 후 머리가 사진처럼 바뀜)
+      parts.push('【4단계 — 헤어/문신】 머리 모양·길이·색·앞머리와 문신은 지금 캐릭터 시트([현재 시트] 이미지)의 상태 그대로 유지. 얼굴 사진의 머리로 바꾸지 마세요.');
     }
 
     // v3.116: 자유 디렉팅 합성 — 미입력 시 기존 프롬프트와 완전 동일(추가 블록 없음).
@@ -790,10 +836,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       options: itemOptions[cat as Cat],
       appliedAt: appliedStamp,
     }));
-    // 9004 옷 입히기는 image_object_name이 있는 상의/하의/신발만 이미지 첨부 → 정확도 ↑.
+    // 9004 옷 입히기는 image_object_name이 있는 상의/하의/신발(v3.329~ 모자/가방 포함)만 이미지 첨부 → 정확도 ↑.
     // 누락 항목은 텍스트(desc)로만 묘사돼서 결과가 흔들릴 수 있으니 경고.
     const missingImage = appliedItems.filter(
-      (it) => ['상의', '하의', '신발'].includes(it.cat) && !it.imageObjectName,
+      (it) => ['상의', '하의', '신발', '모자', '가방'].includes(it.cat) && !it.imageObjectName,
     );
     if (missingImage.length > 0) {
       console.warn(

@@ -85,8 +85,13 @@ function inferMimeType(filename: string): string {
 
 // v3.76: 코디 선택분(상의/하의/신발)을 서버 정식 계약(object_name 필드)으로 전송.
 // 기존 방식(이미지 재다운로드 후 top_image 첨부)보다 단순하고 서버가 원본 화질로 처리.
+// v3.329: 가방·모자도 제품 사진 전송(재히 10-07 — 일러스트 에코백이 이름만으로 그려져 주황 가방이 됨).
+// 구서버는 모르는 Form 필드를 무시하므로 그대로 안전.
 function appendOutfitObjectNames(form: FormData, items: AppliedItem[]) {
-  const fieldByCat: Record<string, string> = { 상의: 'top_object_name', 하의: 'bottom_object_name', 신발: 'shoes_object_name' };
+  const fieldByCat: Record<string, string> = {
+    상의: 'top_object_name', 하의: 'bottom_object_name', 신발: 'shoes_object_name',
+    가방: 'bag_object_name', 모자: 'hat_object_name',
+  };
   for (const [cat, field] of Object.entries(fieldByCat)) {
     const item = items.find((it) => it.cat === cat && it.imageObjectName);
     if (item?.imageObjectName) form.append(field, item.imageObjectName);

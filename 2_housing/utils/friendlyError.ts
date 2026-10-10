@@ -39,8 +39,8 @@ export function statusMessage(status?: number | null): { title: string; body: st
 export function friendlyText(raw: unknown, opts: { status?: number | null; fallback?: string } = {}): string {
   if (typeof raw === 'string' && raw.trim() && !isTechnicalMessage(raw)) return raw.trim();
   if (opts.fallback) return opts.fallback;
-  const m = statusMessage(opts.status);
-  return `${m.body} (${m.code})`;
+  // v3.329: 화면에는 안내 문구만 — 오류 코드(E500 등)는 표시하지 않는다(대표 10-10 "(E500) 같은 건 필요없다"). 코드는 콘솔 로그용.
+  return statusMessage(opts.status).body;
 }
 
 /** axios 오류 객체 → 안내 문구 */
