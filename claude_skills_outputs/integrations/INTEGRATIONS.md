@@ -83,7 +83,8 @@
 - ✅ 대표: Firebase 프로젝트(Android `com.maidol.app`) 생성, `google-services.json` 배치(git 제외), expo.dev에 FCM V1 키 업로드. iOS는 Firebase 등록 불필요(APNs는 EAS가 관리).
 - ✅ 앱(커밋 346b7f6): `expo-notifications`, 알림 아이콘(MAIDOL 심볼 흰색), 로그인 시 1회 「알림 받기」 안내 → 권한 요청, 로그아웃 시 기기 토큰 삭제, 설정 「푸시 알림」 토글·알림함 배너 앱 지원, 알림 탭 → 알림함 이동. web은 빈 모듈(웹푸시 그대로). tsc 통과.
 - ✅ 서버 스테이징 `server_staging_fcm1/`(미배포): `POST /api/push/expo-token`·`/expo-token/delete`, 웹푸시 발송 시 Expo 푸시 체인(같은 문구), DeviceNotRegistered 토큰 정리. 로컬 테스트 16/16 PASS. 원본 md5는 v3.298 스테이징 기준 — 배포 전 운영 파일과 대조 필수.
-- ⏳ 남은 일: 서버 배포(대표 승인·운영 접근 필요) → v1.3.2 APK 빌드(AdMob 새 앱 ID 2개 수령 후 함께) → 실기기 수신 확인.
+- ✅ v1.3.2 APK 빌드 완료(2026-10-11, EAS build 34e965bf) — APK 내부 확인: versionName 1.3.2, 새 AdMob 앱 ID(구 ID 없음), 새 보상형 단위, Firebase 설정(maidol-d9150), CAMERA·POST_NOTIFICATIONS 권한, 앱 푸시 등록 코드.
+- ⏳ 남은 일: 서버 배포(대표 승인 대기) → 대표 폰 v1.3.2 설치 → 알림 수신·광고 적립 실기기 확인.
 
 
 **현재**: 웹 푸시는 운영 중. Android 앱 푸시는 Firebase 프로젝트·설정 파일·`expo-notifications` 모두 없음. 설치된 APK는 v1.3.1(2026-09-29) — 이후 앱 수정분 전부 미반영.
@@ -174,5 +175,6 @@
 ---
 
 ## 변경 이력
+- 2026-10-11: AdMob 회사 계정 전환 완료(앱 ID·단위 4종, 세금 정보 W-8BEN-E 제출), v1.3.2 APK 빌드.
 - 2026-10-08: 계정 원칙 추가, AdMob 회사 계정 이전 결정(기존=개인 결제 프로필).
 - 2026-10-08: 문서 생성. 앱 쪽 설정 직접 확인, 서버 쪽은 메인 세션 확인값 사용(운영 서버 열람 권한 없음).
