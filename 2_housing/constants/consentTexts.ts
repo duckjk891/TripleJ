@@ -18,7 +18,8 @@
 //   → 표시는 Footer 컴포넌트에 반영됨. ⚠ 실제 이용약관·개인정보처리방침 페이지(현재 링크 '#')는 미작성.
 //   전체 문구는 정식 오픈 전 법률 검토 대상 (오픈전에확인할것리스트.md C 섹션).
 
-export const CONSENT_VERSION = '2026-07-30.v1';
+// v3.335: 국외 이전 동의 이전받는 자에 Anthropic·Wonder AI 추가(실제 사용처와 일치) → 판 올림
+export const CONSENT_VERSION = '2026-10-11.v1';
 // v3.334 [VoiceConsent]: 음성 데이터 처리 동의 문구 판(서버 version ≤20자)
 export const VOICE_AI_CONSENT_VERSION = '2026-10-11.voice1';
 
@@ -107,7 +108,9 @@ export const CONSENTS = {
 3. 이전받는 자 (명칭 / 국가 / 연락처)
 - Google LLC (미국) — 이미지·영상·텍스트 생성 / privacy.google.com
 - OpenAI, L.L.C. (미국) — 텍스트·이미지 생성 / openai.com/policies
+- Anthropic, PBC (미국) — 텍스트 생성(가사·번역·아티스트 설명) / anthropic.com/legal/privacy
 - SunoAPI.org (미국) — 음악 생성 중개 / sunoapi.org
+- Wonder AI Inc. (미국) — 음악 생성·가사 타이밍 인식(Wondera) / wondera.ai
 - Kuaishou Technology (중국) — 영상 생성(Kling) / kling.kuaishou.com
 - fal.ai, Inc. (미국) — 영상 생성(Seedance) / fal.ai
 - xAI Corp. (미국) — 영상 생성(Grok) / x.ai

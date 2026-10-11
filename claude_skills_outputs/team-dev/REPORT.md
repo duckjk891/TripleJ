@@ -4364,3 +4364,11 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - ⑦ 부적절한 AI 결과 신고: 결과 화면 공통 바(ResultActionBar — 가사·작곡·커버·아티스트 결과)의 AI 확인 안내 아래 「부적절한 결과 신고」 → 문의하기(기타 사유, 머리말 "[부적절한 AI 결과 · 화면]" 미리 채움, 사진 첨부 가능). 서버 계약 변경 없음.
 - 서버 배포(v3334, auth.py): md5 가드·백업·격리 테스트(라우트 매핑·비밀번호 변경 4종)·진행 작업 0건·재기동, health ok·oauth 302·Traceback 0·/auth/me/password 401(무인증).
 - 검증: 앱 단위 15/15(음성 동의: 이미 동의·캐시·옛 판 재동의·거절 미기록·동의 기록), tsc 0.
+
+## v3.335 — 2026-10-11 — 국외 이전 동의 사업자 목록 정정 + 네이버 로그인 재도입 준비 + 로그인 안내 줄바꿈 (서버·웹)
+
+- 6번(이전받는 자 불일치) 실사용 확인(서버 코드·설정 키 이름 기준, 값 미열람): 사용자 데이터를 보내는 곳 = Google(Gemini)·OpenAI·Anthropic(가사·번역·아티스트 설명·MV)·SunoAPI.org·Wonder AI(Wondera 작곡·가사 타이밍)·Kling/fal/xAI(MV 경로 — 현재 앱 미호출)·AWS(얼굴 라이브니스 도쿄)·AdMob. Replicate·LALAL·Kits 는 관리자 헬스체크만(사용자 데이터 전송 없음 → 기재 불필요). 앱 국외 이전 동의문에 Anthropic·Wonder AI 추가, CONSENT_VERSION 2026-10-11.v1(신규 가입·가입 마무리부터 새 판 기록). 웹 처리방침 제6조의 Anthropic 추가는 외부 연동 세션에 문안 요청(대표 승인 후 게시).
+- 네이버 로그인: 서버 연동 코드(oauth_service naver — 이메일·닉네임·프로필·생년·성별)는 그대로 있고 키만 비어 있음. 서버 GET /api/auth/oauth/providers(설정 여부만, 무인증) 신설 → 앱은 네이버 버튼을 서버가 true 일 때만 표시(구글·카카오는 조회 실패해도 표시 — 기존 동작). 키 입력(.env NAVER_CLIENT_ID/SECRET) + 재기동이면 앱 업데이트 없이 버튼이 나타남.
+- 로그인 창 안내: "구글·카카오로 바로 시작해요." 뒤 줄바꿈(네이버 켜지면 "구글·카카오·네이버로").
+- 서버 배포(v3335 oauth.py): md5·백업·라우트 매핑(providers/login/callback)·진행 0건·재기동, health ok·oauth 302·Traceback 0, providers = google/kakao true·naver false.
+- 검증: tsc 0.

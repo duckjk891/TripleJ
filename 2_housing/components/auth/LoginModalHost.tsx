@@ -8,6 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AuthPanel from './AuthPanel';
+import { useNaverLoginEnabled } from './SocialLoginButtons';
 import { useLyricsStore } from '../../stores/lyricsStore';
 import { whenBootAuthSettled } from '../../utils/bootAuth';
 import { AppText } from '../ui';
@@ -36,6 +37,7 @@ async function migrateLegacyGuestLyricsOnce(): Promise<void> {
 }
 
 export default function LoginModalHost() {
+  const naverEnabled = useNaverLoginEnabled(); // v3.335
   useEffect(() => { void migrateLegacyGuestLyricsOnce(); }, []);
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
@@ -97,7 +99,8 @@ export default function LoginModalHost() {
                 </AppText>
                 {mode === 'login' ? (
                   <AppText variant="footnote" tone="secondary" style={{ marginTop: 4 }}>
-                    구글·카카오로 바로 시작해요. 본인인증은 필요한 순간에만 요청해요.
+                    {/* v3.335: '시작해요.' 뒤 줄바꿈(대표 10-11), 네이버는 서버에 설정됐을 때만 문구에 포함 */}
+                    {naverEnabled ? '구글·카카오·네이버로 바로 시작해요.' : '구글·카카오로 바로 시작해요.'}{'\n'}본인인증은 필요한 순간에만 요청해요.
                   </AppText>
                 ) : null}
               </View>

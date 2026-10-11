@@ -28,7 +28,39 @@ import { spacing, radius } from '../../theme/spacing';
 const PROVIDERS = [
   { key: 'google', label: 'Google 로 계속하기', bg: '#ffffff', fg: '#1f1f1f', border: '#dadce0' },
   { key: 'kakao', label: '카카오로 계속하기', bg: '#FEE500', fg: '#191600', border: '#FEE500' },
+  // v3.335: 네이버 재도입 — 서버에 키가 설정됐을 때만 표시(GET /auth/oauth/providers). 네이버 브랜드 색.
+  { key: 'naver', label: '네이버로 계속하기', bg: '#03C75A', fg: '#ffffff', border: '#03C75A' },
 ] as const;
+
+// v3.335 [OAuthProviders]: 서버에 설정된 소셜 로그인만 노출 — 구글·카카오는 조회 실패해도 항상 표시(기존 동작),
+// 네이버는 서버가 true 라고 할 때만. 앱 실행 동안 1회 조회 캐시.
+type ProviderFlags = { google?: boolean; kakao?: boolean; naver?: boolean };
+let providerFlagsCache: ProviderFlags | null = null;
+let providerFlagsPending: Promise<ProviderFlags> | null = null;
+function loadProviderFlags(): Promise<ProviderFlags> {
+  if (providerFlagsCache) return Promise.resolve(providerFlagsCache);
+  if (!providerFlagsPending) {
+    providerFlagsPending = api.get('/auth/oauth/providers')
+      .then((r) => { providerFlagsCache = (r.data?.providers || {}) as ProviderFlags; return providerFlagsCache; })
+      .catch((err: any) => {
+        console.warn('[SocialLogin] providers 조회 실패 — 구글·카카오만', { status: err?.response?.status });
+        return {} as ProviderFlags;
+      })
+      .finally(() => { providerFlagsPending = null; });
+  }
+  return providerFlagsPending;
+}
+
+/** 네이버 로그인 사용 가능 여부(문구용) */
+export function useNaverLoginEnabled(): boolean {
+  const [on, setOn] = useState(!!providerFlagsCache?.naver);
+  useEffect(() => {
+    let alive = true;
+    loadProviderFlags().then((f) => { if (alive) setOn(!!f.naver); });
+    return () => { alive = false; };
+  }, []);
+  return on;
+}
 
 // 앱 복귀 딥링크(스킴 aidol 은 app.json 기존재) — 백엔드 요청 문서와 동일해야 한다.
 const OAUTH_REDIRECT_URL = 'aidol://oauth/callback';
@@ -74,6 +106,7 @@ export default function SocialLoginButtons({
   referralCode?: string;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const naverEnabled = useNaverLoginEnabled(); // v3.335
   const [appleAvailable, setAppleAvailable] = useState(false);
   useEffect(() => {
     if (!AppleAuth?.isAvailableAsync) return;
@@ -259,7 +292,7 @@ export default function SocialLoginButtons({
           />
         )
       ) : null}
-      {PROVIDERS.map((p) => (
+      {PROVIDERS.filter((p) => p.key !== 'naver' || naverEnabled).map((p) => (
         <TouchableOpacity
           key={p.key}
           style={[styles.btn, { backgroundColor: p.bg, borderColor: p.border }]}
