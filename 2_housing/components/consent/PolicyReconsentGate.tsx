@@ -21,11 +21,12 @@ const SNOOZE_MS = 24 * 60 * 60 * 1000;
 const snoozeKey = (uid: string) => `policy_reconsent_snooze:${CONSENT_VERSION}:${uid}`;
 
 export const POLICY_CHANGE_LINES = [
-  'AI 생성 협력사에 Anthropic(가사·번역 등 글 생성)을 추가했어요.',
-  'Wondera 이용 목적에 작곡을 추가했어요.',
-  '앱 알림을 보내는 협력사(Expo)를 추가했고, 알림을 허용하면 알림 토큰을 수집해요.',
-  '문의 이메일이 maidol_official@lotusai.co.kr 로 바뀌었어요.',
-];
+  'AI 글 생성(가사·번역·아티스트 설명)을 위해 입력한 글이 Anthropic, PBC(미국)로 이전돼요.',
+  '음악 생성 협력사를 sunoapi.org Inc.(미국)로 밝히고, Wonder AI(미국)의 이용 목적에 작곡을 추가했어요.',
+  '앱 알림을 허용하면 기기 알림 토큰과 알림 내용이 Expo(650 Industries, Inc., 미국)를 거쳐 발송돼요(알림을 끄면 삭제).',
+  'Apple·네이버(제공 시) 계정으로 가입할 수 있게 되어 수집 항목에 반영했어요.',
+  '문의처가 maidol_official@lotusai.co.kr 로 바뀌었어요.',
+]
 
 /** 최신 판 동의 필요 여부(순수) — 국외 이전 동의 판이 다르거나 없으면 true */
 export function needsReconsent(consents: Record<string, { agreed?: boolean; version?: string } | undefined>, current = CONSENT_VERSION): boolean {
