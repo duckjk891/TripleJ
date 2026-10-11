@@ -4344,3 +4344,13 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 8번 ③ 마이크 권한 문구(iOS Info.plist·expo-audio·녹음 플러그인 3곳): "목소리 학습(내 목소리로 노래 만들기)과 작곡에 쓸 참고 음악을 녹음할 때" — 네이티브 문구라 다음 빌드부터.
 - 서버 배포(v3332): md5 가드·백업(.bak_pre_v3332, 이미지 pre-v3332-live)·격리 테스트(초대 페이지 '베타' 0·메일 교체·혜택 줄)·진행 작업 0건·재기동, /api/health ok·oauth 302·Traceback 0, 운영 /invite 에 '베타' 0건.
 - 검증: tsc 0.
+
+## v3.333 — 2026-10-11 — 본인확인(PG) 준비본 + 소셜 가입 마무리 화면 (서버·웹 — 기본 꺼짐, 동작 변화 없음)
+
+스토어 제출 점검 #1(소셜 가입이 약관·개인정보·국외이전 동의와 나이 확인 없이 계정 생성) — 대표: "PG사 계약 진행 중, 연동코드를 받으면 넣을 수 있게 미리 준비".
+- 서버 services/identity_verify.py: 공급자 어댑터(IDENTITY_VERIFY_PROVIDER = ''(꺼짐)/mock(점검용)/<pg>), PgProvider 자리(TODO 주석: 인증 페이지 SDK·서버 대 서버 재조회). 기본 리턴값만(성명·생년월일·성별·CI), CI 는 HMAC 해시만 저장(IDENTITY_CI_SALT).
+- 서버 routes/identity.py(/api/identity — referral.public_router 합류, main.py 무변경): config·onboarding·start·page·callback·result. 반영 = users is_verified·verified_at·verify_provider('identity:<pg>')·birth_date·gender·ci_hash, 같은 CI 다른 활성 계정이면 duplicate(반영 안 함), verify_bonus ⭐30(oauth 본인인증과 같은 1회). 스키마(identity_verifications 표·users.ci_hash)는 켜진 뒤 첫 호출 때 생성(꺼진 동안 DB 무변경). return_url 은 aidol:// · app.maidol.ai.kr 만 허용.
+- 앱: services/identityService·utils/identityFlow(네이티브 인증 세션 aidol://identity-done / 웹 새 창 + 결과 확인), components/auth/SignupCompleteGate(App 루트) — 서버 onboarding.required 일 때만 '가입 마무리'(필수 동의 ConsentList → POST /auth/me/consents, 나이 = 본인확인(켜짐) 또는 생년월일 입력, 만 14세 미만 → 이용 불가 안내 + 로그아웃).
+- 스위치: SOCIAL_ONBOARDING_ENABLED(가입 마무리 표시), IDENTITY_VERIFY_PROVIDER(본인확인). 지금은 둘 다 꺼짐 — 운영 /api/identity/config → enabled false, start 401(무인증)/503(꺼짐).
+- 검증: 서버 격리 10/10(라우트 매핑·꺼짐 기본값·온보딩 판정·mock 흐름·return_url 차단·만14 판정·CI 해시·중복), 앱 단위 8/8(생년월일 해석·만 나이), tsc 0. 배포 후 health·oauth 302·Traceback 0.
+- PG 받으면: PgProvider 구현(SDK 페이지·조회 API) → .env IDENTITY_VERIFY_PROVIDER=<pg>, IDENTITY_CI_SALT → 점검 후 SOCIAL_ONBOARDING_ENABLED=true.

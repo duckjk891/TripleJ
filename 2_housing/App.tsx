@@ -116,6 +116,7 @@ import AppDialogHost from './components/AppDialogHost';
 import LoginModalHost from './components/auth/LoginModalHost'; // v3.276: 전역 로그인 모달
 import WelcomeGuide from './components/WelcomeGuide'; // v3.276: 첫 실행 이미지형 웰컴 팝업(화면별 튜토리얼 대체)
 import UpdateGate from './components/UpdateGate'; // v3.324 앱 업데이트 안내(필수·선택)
+import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333 소셜 가입 마무리(서버 스위치 켜기 전엔 미표시)
 import { notifyBootAuthSettled } from './utils/bootAuth';
 // v3.232 K4(B8): 어린이 계정 첫 로그인 1회 온라인 안전 안내(일반 사용자 무동작)
 import KidsSafetyNotice from './components/kids/KidsSafetyNotice';
@@ -1044,6 +1045,7 @@ export default function App() {
           {/* v3.276: 로그인 모달은 다이얼로그(오류 팝업)보다 아래에 — AuthPanel 의 showAlert 가 위로 뜨도록 순서 유지 */}
           <WelcomeGuide />
           <UpdateGate />
+          <SignupCompleteGate />
           <LoginModalHost />
           <AppDialogHost />
           {/* v3.232 K4: 어린이 계정 온라인 안전 안내 1회 트리거(렌더 없음) */}
