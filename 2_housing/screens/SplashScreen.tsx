@@ -36,7 +36,7 @@ const BUBBLES: {
   { text: '크루들과 함께 완성하는 플리', top: '29%', side: 'left' },
   { text: '나만의 아티스트 키우기', top: '64%', side: 'right' },
   { text: '당신만의 1인 기획사', top: '72%', side: 'left' },
-  { text: '내 음악으로 수익창출까지', top: '80%', side: 'right' },
+  { text: '내 음악으로 SNS 풍성하게', top: '80%', side: 'right' },
 ];
 
 export default function SplashScreen({ navigation }: Props) {
