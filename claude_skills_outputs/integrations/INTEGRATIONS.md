@@ -84,7 +84,8 @@
 - ✅ 앱(커밋 346b7f6): `expo-notifications`, 알림 아이콘(MAIDOL 심볼 흰색), 로그인 시 1회 「알림 받기」 안내 → 권한 요청, 로그아웃 시 기기 토큰 삭제, 설정 「푸시 알림」 토글·알림함 배너 앱 지원, 알림 탭 → 알림함 이동. web은 빈 모듈(웹푸시 그대로). tsc 통과.
 - ✅ 서버 스테이징 `server_staging_fcm1/`(미배포): `POST /api/push/expo-token`·`/expo-token/delete`, 웹푸시 발송 시 Expo 푸시 체인(같은 문구), DeviceNotRegistered 토큰 정리. 로컬 테스트 16/16 PASS. 원본 md5는 v3.298 스테이징 기준 — 배포 전 운영 파일과 대조 필수.
 - ✅ v1.3.2 APK 빌드 완료(2026-10-11, EAS build 34e965bf) — APK 내부 확인: versionName 1.3.2, 새 AdMob 앱 ID(구 ID 없음), 새 보상형 단위, Firebase 설정(maidol-d9150), CAMERA·POST_NOTIFICATIONS 권한, 앱 푸시 등록 코드.
-- ⏳ 남은 일: 서버 배포(대표 승인 대기) → 대표 폰 v1.3.2 설치 → 알림 수신·광고 적립 실기기 확인.
+- ✅ 서버 배포(2026-10-11 06:12 UTC, 대표 승인): FCM(push.py·webpush.py·expo_push.py) + 애플 로그인(apple_auth.py·auth.py 탈퇴 훅·main.py) 1회 재기동. md5 가드(main.py·oauth.py 는 메인 세션 v3.324 변경분 위에 재적용)·진행 작업 4종 0건 확인 후 정식 명령. 백업 /home/ubuntu/maidol/backups/pre_int_20261011T061119Z(.env 포함). 확인: health 200, /push/expo-token 무토큰 401, /auth/apple/native 위조 401, 애플 공개키 조회 3개, SIWA client_secret 생성 OK.
+- ⏳ 남은 일: 대표 폰 v1.3.2 설치 → 알림 수신·광고 적립 실기기 확인.
 
 
 **현재**: 웹 푸시는 운영 중. Android 앱 푸시는 Firebase 프로젝트·설정 파일·`expo-notifications` 모두 없음. 설치된 APK는 v1.3.1(2026-09-29) — 이후 앱 수정분 전부 미반영.
@@ -122,7 +123,8 @@
 - ✅ 키 2종 수령 → `2_housing/credentials/`(git 제외, ID 메모는 같은 폴더 `asc.env`): Sign in with Apple 키, App Store Connect API 키(관리자). API 키로 앱·번들 ID 조회 검증 완료.
 - ✅ EAS 자격 증명(production): 배포 인증서·프로비저닝 프로필 생성(만료 2027-10-09). APNs 푸시 키는 첫 iOS 빌드 때 생성.
 - ✅ 앱 설정: `ios.usesAppleSignIn`, `expo-apple-authentication` 설치(애플 로그인 엔타이틀먼트).
-- ⏳ 남은 일: 애플 로그인 구현(앱 버튼·서버 검증·탈퇴 시 토큰 해지), 권한 문구 한국어, ATS 축소, ATT·SKAdNetwork, iOS 보상형 광고 단위 연결(새 AdMob iOS 앱 ID 필요), ⭐ 인앱결제 정책 결정, 첫 빌드 → TestFlight.
+- ✅ 애플 로그인: 앱 버튼(iOS) + 서버 운영 반영(2026-10-11), .env APPLE_* 4종. 애플 서버 알림 URL `https://api.maidol.ai.kr/api/auth/apple/notifications` (번들 ID의 Sign in with Apple 설정에 등록 필요)
+- ⏳ 남은 일: (애플 로그인 완료), 권한 문구 한국어, ATS 축소, ATT·SKAdNetwork, iOS 보상형 광고 단위 연결(새 AdMob iOS 앱 ID 필요), ⭐ 인앱결제 정책 결정, 첫 빌드 → TestFlight.
 
 
 **현재**: Apple Developer 법인 등록 접수(K52Q5KXB89, 2026-09-17) 후 승인 대기. 번들 ID `com.maidol.app`, AdMob iOS 앱 ID는 이미 설정됨. iOS 빌드는 아직 한 번도 안 함.

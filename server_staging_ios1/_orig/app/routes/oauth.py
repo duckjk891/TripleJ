@@ -69,7 +69,6 @@ def _frontend_error_redirect(message: str, client: str = "web") -> RedirectRespo
     )
 
 
-@router.get("/{provider}/login")
 def _is_provider_default_avatar(url) -> bool:
     """v3.316 소셜 계정의 '사진 없음' 기본 이미지 판별 — 카카오 account_images/default_profile(썸네일 프록시 인코딩 포함)."""
     if not url or not isinstance(url, str):
@@ -79,6 +78,7 @@ def _is_provider_default_avatar(url) -> bool:
     return "kakaocdn.net" in u and "account_images/default_profile" in u
 
 
+@router.get("/{provider}/login")
 async def oauth_login(provider: str, request: Request):
     """소셜 로그인 시작 — provider 인가 페이지로 리다이렉트."""
     # v3.194: 네이티브 앱은 ?client=app 로 진입 → state 에 실어 콜백까지 전달.

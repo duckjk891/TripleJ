@@ -818,6 +818,8 @@ from .routes import reference_link as _reference_link  # v3.276 유튜브 링크
 app.include_router(_reference_link.router)
 from .routes import reputation as _reputation  # v3.297 배지·피드백 온도
 app.include_router(_reputation.router)
+from .routes import app_version as _app_version  # v3.324 앱 업데이트 안내(필수·선택)
+app.include_router(_app_version.router)
 from .routes import push as _push  # v3.298 웹 푸시 구독
 app.include_router(_push.router)
 from .routes import missions as _missions  # v3.293 주간 미션(내 아티스트 창작 ⭐ 보상)
