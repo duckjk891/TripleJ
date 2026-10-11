@@ -88,6 +88,14 @@ export interface ClubPlaylist {
   title?: string;
   name?: string;
   track_count?: number;
+  /** v3.342: 만든 사람 — 삭제 버튼 노출(만든 사람·크루장) */
+  user_id?: string;
+}
+
+/** v3.342 크루 플레이리스트 삭제 — DELETE /playlists/{id}(서버: 만든 사람 또는 크루장만, 그 외 404) */
+export async function deleteClubPlaylist(playlistId: string): Promise<void> {
+  console.info('[Club] deleteClubPlaylist', { playlistId });
+  await api.delete(`/playlists/${playlistId}`);
 }
 
 export interface ClubFeedPage {

@@ -39,7 +39,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import {
   Club, ClubPlaylist, TransferCandidate, getClub, getClubErrorCode, joinClub, leaveClub,
-  listClubFeeds, listClubPlaylists, createClubPlaylist,
+  listClubFeeds, listClubPlaylists, createClubPlaylist, deleteClubPlaylist,
   transferCandidates, transferOwner, clubDeleteRequestDraft,
   // v3.249 멤버 관리 — 멤버 목록·내보내기·행 메뉴 규칙(문구 라벨은 CLUB_LABEL 단일화)
   CLUB_LABEL, ClubMember, ClubMembersError, classifyMembersError,
@@ -732,6 +732,29 @@ export default function ClubHomeScreen() {
     }
   };
 
+  // v3.342 크루 플레이리스트 삭제(만든 사람·크루장) — 앨범으로 만든 플리여도 앨범·곡은 그대로(서버 FK 정책)
+  const confirmDeletePlaylist = () => {
+    if (!selectedPl) return;
+    const pl = selectedPl;
+    showAlert('플레이리스트 삭제', `「${pl.title || pl.name || '플레이리스트'}」을(를) 삭제할까요?\n담긴 곡은 삭제되지 않아요.`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제', style: 'destructive', onPress: async () => {
+          try {
+            await deleteClubPlaylist(String(pl.id));
+            console.info('[Club] 플리 삭제 완료', { clubId, playlistId: pl.id });
+            setSelectedPl(null);
+            setPlTracks([]);
+            fetchPlaylists();
+          } catch (err: any) {
+            console.error('[Club] 플리 삭제 실패', { clubId, playlistId: pl.id, status: err?.response?.status });
+            showAlert('알림', err?.response?.status === 404 ? '만든 사람이나 크루장만 삭제할 수 있어요.' : '플레이리스트를 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.');
+          }
+        },
+      },
+    ]);
+  };
+
   const handleCreatePlaylist = async () => {
     const title = plName.trim();
     if (!title) { showAlert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
@@ -949,6 +972,14 @@ export default function ClubHomeScreen() {
           <Feather name="chevron-right" size={16} color={colors.text.muted} />
         </TouchableOpacity>
       ) : null}
+      {/* v3.342 (대표 10-11): 운영자(방장) 넘기기 — 종전엔 '탈퇴' 시도 때만 보이던 위임을 상시 노출 */}
+      {isOwner ? (
+        <TouchableOpacity style={styles.promoRow} activeOpacity={0.7} onPress={openTransferSheet} accessibilityLabel="운영자 넘기기">
+          <Feather name="user-check" size={16} color={colors.accent.primary} />
+          <AppText variant="body" tone="accent" style={{ flex: 1 }}>운영자(방장) 넘기기</AppText>
+          <Feather name="chevron-right" size={16} color={colors.text.muted} />
+        </TouchableOpacity>
+      ) : null}
       {/* v3.305 [ClubInvite] 초대 링크 자동 승인 — owner 전용(기본 켜짐, 강퇴 이력자는 항상 승인 대기) */}
       {isOwner ? (
         <View style={styles.promoRow}>
@@ -1151,6 +1182,13 @@ export default function ClubHomeScreen() {
               <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setPlAddOpen(true)} accessibilityLabel="이 플레이리스트에 곡 추가">
                 <Feather name="plus" size={16} color={colors.accent.primary} />
                 <AppText style={styles.composeText}>곡 추가</AppText>
+              </TouchableOpacity>
+            ) : null}
+            {/* v3.342 (대표 10-11): 크루 플리 삭제 — 만든 사람·크루장 */}
+            {(isOwner || (!!user && String((selectedPl as any).user_id || '') === String(user.id))) ? (
+              <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={confirmDeletePlaylist} accessibilityLabel="이 플레이리스트 삭제">
+                <Feather name="trash-2" size={16} color={colors.text.muted} />
+                <AppText style={[styles.composeText, { color: colors.text.secondary }]}>플레이리스트 삭제</AppText>
               </TouchableOpacity>
             ) : null}
             {/* v3.305 [ClubAlbum] 크루장 — 이 플레이리스트로 테마 앨범 만들기 */}
