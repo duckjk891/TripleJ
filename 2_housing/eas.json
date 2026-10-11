@@ -16,6 +16,9 @@
       "env": {
         "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-6459342098492367/6868688845",
         "EXPO_PUBLIC_ADMOB_REWARDED_IOS": "ca-app-pub-6459342098492367/9663296583"
+      },
+      "ios": {
+        "image": "sdk-54"
       }
     },
     "production": {
@@ -23,6 +26,9 @@
       "env": {
         "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-6459342098492367/6868688845",
         "EXPO_PUBLIC_ADMOB_REWARDED_IOS": "ca-app-pub-6459342098492367/9663296583"
+      },
+      "ios": {
+        "image": "sdk-54"
       }
     }
   },

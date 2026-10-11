@@ -137,10 +137,12 @@
 |---|---|---|
 | **앱 내 통제 기능** | | |
 | 보호자 통제(Parental Controls) | **예** | 만 14세 미만은 보호자 동의 후 가입, 보호자 웹 페이지에서 피드 글·댓글·친구 메시지 허용을 켜고 끔 — `www/guardian/index.html`, `utils/kidsRestricted.ts`(`feed_write`·`comment`·`dm_friends`) |
-| 연령 확인(Age Assurance) | **예** (자기 신고형) | 가입 시 생년월일 필수·가입 후 변경 불가(`birth_date_locked`), 서버가 나이로 어린이 계정 판정(`kids_restricted`). 신분증 수준 확인은 아님(본인인증은 추후 적용 — `utils/identityGate.ts`) |
+| 연령 확인(Age Assurance) | **예** | 가입 시 생년월일 필수·가입 후 변경 불가(`birth_date_locked`), 서버가 나이로 어린이 계정 판정(`kids_restricted`) + **iOS: 애플 Declared Age Range**(v3.331 — 소셜 화면 첫 진입 시 1회 요청, 13세 미만이면 소셜 차단) |
 | **기능(Capabilities)** | | |
 | 무제한 웹 접근 | **아니요** | 앱 내 웹뷰·브라우저 없음. 외부 링크(코디 상품·SNS 업로드)는 Safari로 열림, 소셜 로그인만 인증 세션 사용 |
 | 사용자 생성 콘텐츠(UGC) | **예** | 곡 발매·직접 업로드, 피드 글·사진, 곡 댓글, 크루 게시판, 프로필 |
+| 소셜 미디어 | **예** | 피드(게시글·좋아요·댓글)·크루로 사용자 콘텐츠가 확산 |
+| **13세 미만 소셜 미디어 비활성화** | **예** (v3.331, 2026-10-11) | iOS에서 어린이 계정이거나 Declared Age Range가 13세 미만(upperBound<13)이면 피드 탭·피드 상세·커뮤니티 탭·크루 홈·마이페이지/채널의 피드·커뮤니티 탭·플레이어 댓글 차단. 공유 거부·iOS 26 미만·애플 계정 미로그인 시 계정 나이로 판정. 차트·감상·창작·DM(어린이는 공식 계정만)은 유지. 효과: 13세 미만의 스크린 타임 '소셜 미디어' 시간 제한 대상에서 제외 |
 | 메시지·채팅 | **예** | 1:1 메시지(DM), 크루 채팅 — `DmChatScreen.tsx`, `ClubChatScreen.tsx` |
 | 광고 | **예** | AdMob 보상형 광고(광고 보고 휴식 단축) — 사용자가 선택할 때만 노출 |
 | **콘텐츠 빈도** (없음 / 드물게·약함 / 잦음·강함) | | |
@@ -206,8 +208,9 @@
 
 | 항목 | 값 |
 |---|---|
-| 사용자 이름 | `[데모 계정 이메일 — 예: appreview@… 형식으로 신규 생성]` |
-| 암호 | `[데모 계정 비밀번호]` |
+| 사용자 이름(성인) | `playreview@lotusai.co.kr` (구글 Play 심사 계정과 동일) |
+| 사용자 이름(어린이) | `playreview_child@lotusai.co.kr` — 심사 메모에 함께 기재 |
+| 암호 | 대표님 보관 — App Store Connect 입력란에만 입력(문서·채팅 금지) |
 
 데모 계정 준비 체크리스트:
 - [ ] **성인** 생년월일로 가입(어린이 계정이면 사진·목소리·DM이 막혀 심사가 막힘)
@@ -251,11 +254,22 @@
 [AI 생성 고지]
 - 앱의 음악·가사·이미지·영상은 생성형 AI로 만들어지며, 이 사실을 가입 동의와 설정 > 앱 정보에서 고지합니다.
 
+[Demo accounts / 데모 계정]
+- Adult: playreview@lotusai.co.kr (entered in the Sign-In fields above)
+- Child (under 13, guardian-consented): playreview_child@lotusai.co.kr — password: [대표님 입력]
+
+[Age-based restrictions on iOS (Declared Age Range)]
+- The first time a user opens a social screen, the app requests the user's age range through Apple's Declared Age Range API (system prompt).
+- If the account is a child account, or Apple reports an age range under 13, all social features are blocked on iOS: the Feed tab, feed posts, the Community tab, crew homes, the feed/community tabs on My Page and user channels, and comments in the player.
+- If the user declines to share, is on iOS earlier than 26, or is not signed in to an Apple Account, the app falls back to the age on the MAIDOL account (birth date entered at sign-up, which cannot be changed later).
+- Charts, listening, and creating music remain available. Direct messages for child accounts are limited to the official MAIDOL account only.
+- With the child demo account above, you will see the Feed, Community and comments shown as blocked on iOS.
+
 문의: [심사 연락 담당자 이름 / 전화 / 이메일]
 ```
 
-> ⚠️ 위 메모의 "Sign in with Apple" 문장은 **애플 로그인 구현이 끝난 뒤에만** 남기세요(현재 미구현 — `components/auth/SocialLoginButtons.tsx`에는 Google·카카오 2종만).
-> ⚠️ "광고 보고 휴식 줄이기"가 iOS에서 실광고가 나오려면 iOS 보상형 단위 연결 필요(0번 3항).
+> ✅ Sign in with Apple(2026-10-11 운영 반영)·iOS 보상형 광고 단위 연결 완료 — 위 메모 그대로 사용 가능.
+> ✅ v3.331 Declared Age Range(메인 세션) 반영 — 어린이 데모 계정으로 소셜 차단 확인 가능. 실기기 미검증(TestFlight로 확인 필요).
 >
 > 근거: 계정 삭제 — `screens/SettingsScreen.tsx` 341~395행(DELETE `/auth/me`, 확인 문구 "회원탈퇴"), 726행(로그아웃 아래 진입); 진입 경로 — `components/HomeHeaderActions.tsx`(사람 아이콘 → 마이페이지), `App.tsx` 마이페이지 헤더 톱니 → `Settings`; 차단 목록 — `App.tsx` `BlockedUsers` 화면; 보이스 동의 — `consentTexts.ts` `voice_ai`, 얼굴 동의 — `face_biometric`.
 
