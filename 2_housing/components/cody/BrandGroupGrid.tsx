@@ -2,7 +2,7 @@
 //   · 브랜드 모아보기: 브랜드 그룹 카드(상품 수 내림차순·썸네일 3장) → 탭 → "전체 브랜드 › {브랜드}" 상품 그리드
 //   · 브랜드 펼쳐보기: 필터 적용된 전체 상품 그리드(추천순/가격순)
 // v3.90 드릴다운(플랫폼 › 브랜드 › 성별 › 제품)은 PLAN D에 따라 폐지 — 판매자 계정 대신 실제 브랜드로 통합.
-import { useMemo, type ReactElement } from 'react';
+import { useMemo, useRef, type ReactElement } from 'react';
 import { View, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
@@ -44,6 +44,10 @@ interface Props {
 
 const LIST_PERF = { initialNumToRender: 8, windowSize: 5, removeClippedSubviews: true } as const;
 
+// v3.336 [CodyScroll]: 상품 목록 스크롤 위치 기억(카테고리·브랜드별) — 고르면 피커가 닫혔다가 다시 열 때
+// 맨 위로 돌아가던 문제(DDui 10-10). 앱 실행 동안만 보관.
+const scrollMemory = new Map<string, number>();
+
 export default function BrandGroupGrid({
   pickerLoading,
   pickerCat,
@@ -65,6 +69,10 @@ export default function BrandGroupGrid({
   openItemLink,
 }: Props) {
   const inBrand = view.mode === 'group' && !!view.groupBrand;
+  // v3.336 [CodyScroll]
+  const listRef = useRef<FlatList<AdItem>>(null);
+  const restoredRef = useRef<string | null>(null);
+  const scrollKey = `${pickerCat ?? '-'}|${view.mode}|${inBrand ? view.groupBrand : '*'}`;
   const groups = useMemo(
     () => (view.mode === 'group' && !view.groupBrand ? groupByBrand(filtered) : []),
     [filtered, view.mode, view.groupBrand],
@@ -196,6 +204,18 @@ export default function BrandGroupGrid({
     {header}
     <FlatList<AdItem>
       key={inBrand ? 'brand' : 'all'}
+      ref={listRef}
+      onScroll={(e) => { scrollMemory.set(scrollKey, e.nativeEvent.contentOffset.y); }}
+      scrollEventThrottle={100}
+      onContentSizeChange={() => {
+        if (restoredRef.current === scrollKey) return;
+        restoredRef.current = scrollKey;
+        const y = scrollMemory.get(scrollKey) || 0;
+        if (y > 0) {
+          if (__DEV__) console.info('[CodyScroll] 위치 복원', { key: scrollKey, y: Math.round(y) });
+          listRef.current?.scrollToOffset({ offset: y, animated: false });
+        }
+      }}
       data={products}
       keyExtractor={(item) => item.id}
       numColumns={2}

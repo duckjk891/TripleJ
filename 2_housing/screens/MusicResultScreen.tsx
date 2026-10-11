@@ -79,6 +79,7 @@ import { CHARGE_UNCONFIRMED_BODY } from '../services/genJobs';
 import { MUSIC_TEXT } from '../services/genJobs/music';
 import { weeklyMissionLine } from '../services/missionService';
 import type { FatigueStatus } from '../types';
+import { hasCoverDialogueSnapshot, isCoverPendingGeneration } from '../utils/directorResume';
 
 // v3.93: 2-variant 클립 비교 라벨 (버전 A/버전 B — Suno는 요청당 2클립 반환)
 const VARIANT_LABELS = ['버전 A', '버전 B', '버전 C', '버전 D'];
@@ -1057,6 +1058,27 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         console.error('[MusicResult] 커버 경유 저장 실패:', err?.response?.status, err?.message);
         showAlert('저장 실패', err?.response?.data?.error || '곡 저장에 실패했습니다.');
         return;
+      }
+    }
+    // v3.336 [CoverCtx]: 커버 화면에 남아 있던 '다른 곡'의 대화·결과를 비우고 새로 시작(DDui 10-10 제보:
+    // 새 곡 커버가 자꾸 직전 곡 컨셉으로 만들어짐). 같은 곡이거나 다른 곡 커버가 생성 대기 중이면 건드리지 않는다.
+    {
+      const ms = useMusicStore.getState();
+      const newId = ms.savedTrackId ? String(ms.savedTrackId) : null;
+      const ctxTrack = ms.coverTrackId ? String(ms.coverTrackId) : (ms.coverLastResult?.trackId ? String(ms.coverLastResult.trackId) : null);
+      const hasCtx = !!ctxTrack || hasCoverDialogueSnapshot(ms) || !!ms.coverLastResult;
+      if (newId && hasCtx && ctxTrack !== newId && !isCoverPendingGeneration(ms)) {
+        console.info('[MusicResult] [CoverCtx] 이전 곡 커버 컨텍스트 비움', { prev: ctxTrack, next: newId });
+        ms.setCoverTrackId(null);
+        ms.setCoverTrackTitle(null);
+        ms.setCoverStyle(null);
+        ms.setCoverCharacterObjectName(null);
+        ms.setCoverMessages(null);
+        ms.setCoverStep(null);
+        ms.setCoverExtrasSnapshot(null);
+        ms.setCoverLyricsExcerpt(null);
+        ms.setCoverLyricsId(null);
+        ms.setCoverLastResult(null);
       }
     }
     navigation.navigate('CoverGeneration');

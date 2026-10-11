@@ -1,7 +1,8 @@
 // v3.227(D): 피커 상품 카드 — 추출 커밋의 BrandGroupGrid renderItem을 공용 카드로 분리.
 // 유지: v3.124 선택됨(강조 테두리+체크 배지), 위시 하트(샘플 숨김, v3.176 채움 보라), v3.109 판매처 보기.
 // 변경(PLAN D): 배지 = 실제 브랜드(brand, advertiser_nickname은 폴백), 색상 잔재 숨김(매퍼가 정리), 가격 표시.
-import { View, TouchableOpacity, Image } from 'react-native';
+import { useState } from 'react';
+import { View, TouchableOpacity, Image, Modal, StyleSheet } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
@@ -29,10 +30,21 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
   const price = formatPrice(item.price_krw);
   // v3.232 K17 [KidsGate]: 어린이 계정 — 가격·판매처 링크 숨김(카드·이미지·선택·찜은 유지). 성인은 false.
   const isChild = useIsChild();
+  // v3.336 [CodyZoom]: 상품 이미지 크게 보기(DDui 10-10 — 크게 보려고 누르면 선택돼 창이 닫히고 목록 맨 위로 돌아감).
+  // 이미지 오른쪽 아래 돋보기 또는 카드 길게 누르기 → 전체 화면 보기(목록은 그대로). 카드 탭 = 선택(기존 그대로).
+  const [zoom, setZoom] = useState(false);
+  const openZoom = () => {
+    if (!url) return;
+    if (__DEV__) console.info('[CodyZoom] 크게 보기', { id: item.id });
+    setZoom(true);
+  };
   return (
+    <>
     <TouchableOpacity
       style={[styles.itemCard, isPicked && styles.itemCardPicked]}
       onPress={() => onPick(item)}
+      onLongPress={openZoom}
+      delayLongPress={350}
     >
       <View style={styles.itemImgWrap}>
         {url ? (
@@ -55,6 +67,11 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
               {brand}
             </AppText>
           </View>
+        ) : null}
+        {url ? (
+          <TouchableOpacity style={zoomStyles.zoomBtn} onPress={openZoom} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityLabel="크게 보기">
+            <Feather name="zoom-in" size={15} color="#fff" />
+          </TouchableOpacity>
         ) : null}
         {/* 위시 하트 — 샘플 더미는 서버에 없어 담기 불가 → 숨김 */}
         {!isSample && (
@@ -95,5 +112,35 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
         </TouchableOpacity>
       ) : null}
     </TouchableOpacity>
+    {zoom && url ? (
+      <Modal visible transparent animationType="fade" onRequestClose={() => setZoom(false)}>
+        <TouchableOpacity style={zoomStyles.overlay} activeOpacity={1} onPress={() => setZoom(false)} accessibilityLabel="크게 보기 닫기">
+          <Image source={{ uri: url }} style={zoomStyles.big} resizeMode="contain" />
+          <AppText style={zoomStyles.name} numberOfLines={2}>{brand ? `${brand} · ` : ''}{item.product_name || item.name}</AppText>
+          <View style={zoomStyles.row}>
+            <TouchableOpacity style={[zoomStyles.btn, zoomStyles.btnGhost]} onPress={() => setZoom(false)}>
+              <AppText style={zoomStyles.btnGhostText}>닫기</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity style={[zoomStyles.btn, zoomStyles.btnPick]} onPress={() => { setZoom(false); onPick(item); }}>
+              <AppText style={zoomStyles.btnPickText}>{isPicked ? '선택됨' : '이 상품 고르기'}</AppText>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    ) : null}
+    </>
   );
 }
+
+const zoomStyles = StyleSheet.create({
+  zoomBtn: { position: 'absolute', left: 6, bottom: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  big: { width: '100%', height: '70%' },
+  name: { color: '#fff', marginTop: 14, textAlign: 'center', fontSize: 14 },
+  row: { flexDirection: 'row', gap: 10, marginTop: 18, width: '100%', maxWidth: 420 },
+  btn: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  btnGhost: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
+  btnGhostText: { color: '#fff', fontWeight: '600' },
+  btnPick: { backgroundColor: colors.accent.primary },
+  btnPickText: { color: '#fff', fontWeight: '700' },
+});
