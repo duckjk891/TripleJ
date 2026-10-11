@@ -7,7 +7,7 @@ import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
 import { useMusicStore } from '../stores/musicStore';
 import { getPointCostSync } from '../services/pointCosts';
 import { friendlyErrorMessage } from '../utils/friendlyError';
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { cleanLyricsForDisplay } from '../utils/lyricsDisplay';
 import ReputationCard from '../components/ReputationCard';
 import { useFocusEffect } from '@react-navigation/native';
@@ -58,6 +58,7 @@ import { playTrackNow } from '../services/playback';
 import { registerGenJob } from '../services/generationTracker';
 import { findInstJobForTrack } from '../services/genJobs/inst';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
+import { ensureDeclaredAgeChecked, useSocialAgeGate } from '../utils/socialAgeGate';
 
 interface Track {
   id: number;
@@ -109,7 +110,12 @@ export default function MyMusicScreen({ navigation }: any) {
   const lyricsStore = useLyricsStore();
   const { track: playingTrack } = usePlayerStore();
   const hasMiniPlayer = !!playingTrack;
-  const [activeTab, setActiveTab] = useState<MyMusicTab>('music');
+  const [activeTabState, setActiveTab] = useState<MyMusicTab>('music');
+  // v3.331 [SocialAgeGate]: iOS 13세 미만(어린이 계정·Apple 나이대)은 피드·커뮤니티 탭 숨김 — 확인 중에도 숨김
+  const socialGate = useSocialAgeGate();
+  const socialHidden = socialGate.blocked || socialGate.checking;
+  useEffect(() => { void ensureDeclaredAgeChecked(); }, []);
+  const activeTab: MyMusicTab = socialHidden && activeTabState !== 'music' ? 'music' : activeTabState;
   const [musicSub, setMusicSub] = useState<MusicSubTab>('tracks'); // v3.115: 곡·앨범 탭 하위 칩
   const [tracks, setTracks] = useState<Track[]>([]);
   // v3.274 [48]: 발매곡 총수(서버 pagination.total) — 목록 limit과 무관한 정답 숫자
@@ -939,7 +945,7 @@ export default function MyMusicScreen({ navigation }: any) {
             { key: 'music', label: '곡·앨범' },
             { key: 'feed', label: '피드' },
             { key: 'community', label: '커뮤니티' },
-          ] as { key: MyMusicTab; label: string }[]).map((t) => (
+          ] as { key: MyMusicTab; label: string }[]).filter((t) => !(socialHidden && t.key !== 'music')).map((t) => (
             <TouchableOpacity
               key={t.key}
               style={[styles.tab, activeTab === t.key && styles.tabActive]}

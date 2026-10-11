@@ -4325,3 +4325,12 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 아티스트(간편 목소리) 선택 = 아티스트 나이를 자동 반영(질문 없음). 내 목소리(클론)·연주곡 = 나이 태그 없음(그 목소리 그대로).
 - 전달: musicStore.vocalAge → MusicLoading → musicService style 에 나이 태그 추가(서버 변경 없음 — style 이 생성 문서에 저장돼 편곡·재기동 재개에도 승계). 창작 기록(DIRECTION)에 vocal_age.
 - 검증: 단위 24/24(나이 해석 14·태그 6·라벨 4), tsc 0. 실기기 확인 필요: 아티스트 없이 작곡 → 목소리 나이 질문 → '어린이' 선택 곡이 아이 목소리로 나오는지.
+
+## v3.331 — 2026-10-11 — iOS 13세 미만 소셜 차단(Apple Declared Age Range) (앱 — 다음 iOS 빌드부터)
+
+배경: App Store Connect 연령 등급 설문(2026-09 필수) "Social Media" 질문. 피드·커뮤니티·댓글이 있으면 등급은 어차피 13+. "Social Media Disabled for Users Under 13"을 '예'로 답하려면 소셜 기능을 켜기 전에 Declared Age Range API로 나이대를 확인하고 13세 미만에게 소셜을 주지 않아야 함(효과: 13세 미만 스크린 타임 '소셜 미디어' 시간 제한 분류에서 빠짐). Google Play는 해당 질문 없음 — 기존 어린이 모드(가입 생년월일·보호자 동의·보호자 허용) 그대로.
+- expo-age-range ~0.2.1(SDK 54 매칭) + app.json ios.entitlements `com.apple.developer.declared-age-range`.
+- utils/socialAgeGate: iOS 에서만 — 어린이 계정(서버 kids_restricted) 또는 Apple 나이대 13세 미만(upperBound<13)이면 소셜 차단. 공유 거절·iOS 26 미만·Apple 계정 미로그인 = 계정 나이로만 판단. 소셜 화면 첫 진입 시 1회 확인(동시 호출 1회로 합침, 실행 중 메모리 보관).
+- 차단 범위(iOS 13세 미만): 피드 탭·피드 상세·커뮤니티 탭·크루 홈 = 안내 화면, 마이페이지·사용자 채널의 피드/커뮤니티 탭 숨김, 플레이어 곡 댓글(버튼·탭·알림 진입) 숨김. 확인 중에는 숨김(로딩). 차트·듣기·만들기·DM(어린이=공식 계정만 기존 규칙)은 유지.
+- Android·웹: 동작 변화 없음(코드상 iOS 분기).
+- 검증: 단위 16/16(판정·플랫폼 분기·단일 호출·캐시), tsc 0. 실기기 미검증 — iOS 26 기기 + EAS 빌드(Xcode 26 이미지)에서 확인 필요. 새 네이티브 모듈이라 OTA 불가, 다음 iOS 빌드·Android APK 에 포함.

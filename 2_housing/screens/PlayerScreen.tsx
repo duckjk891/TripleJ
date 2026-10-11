@@ -62,6 +62,7 @@ import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
 import TutorialOverlay, { TutorialStep } from '../components/TutorialOverlay';
 // v3.207 ①: 코치마크 anchor — 담기 버튼 스포트라이트
 import { measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
+import { ensureDeclaredAgeChecked, useSocialAgeGate } from '../utils/socialAgeGate';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -389,12 +390,20 @@ export default function PlayerScreen({ route, navigation }: any) {
   // v3.274 [39]③: 곡 댓글 알림 경유(openComments 파라미터) — 진입 시 댓글 탭 자동 오픈.
   // 같은 Player 재사용 진입도 param 변화로 재실행되도록 값 자체를 deps 로 둔다.
   const openCommentsParam = route.params?.openComments;
+  // v3.331 [SocialAgeGate]: iOS 13세 미만(어린이 계정·Apple 나이대)은 곡 댓글(소셜) 숨김 — 확인 중에도 숨김
+  const socialGate = useSocialAgeGate();
+  const commentsHidden = socialGate.blocked || socialGate.checking;
+  useEffect(() => { void ensureDeclaredAgeChecked(); }, []);
   useEffect(() => {
-    if (openCommentsParam) {
+    if (commentsHidden && detailTab === 'comments') setDetailTab('lyrics');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commentsHidden]);
+  useEffect(() => {
+    if (openCommentsParam && !commentsHidden) {
       setDetailTab('comments');
       setShowDetails(true);
     }
-  }, [openCommentsParam, trackIdForComments]);
+  }, [openCommentsParam, trackIdForComments, commentsHidden]);
 
   // v3.178(대표): 댓글 액션 → 하단 상세토글을 댓글 탭으로 연다(미니플레이어 축소 형태)
   const openComments = () => {
@@ -1287,12 +1296,14 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
 
         {/* v3.178(대표): 댓글 = 하단 상세토글을 댓글 탭으로 연다. v3.180: 숫자는 패널 상단으로 */}
+        {!commentsHidden && (
         <TouchableOpacity style={styles.actionBtn} onPress={openComments} accessibilityLabel="댓글">
           <View style={styles.actionIconBox}>
             <Feather name="message-circle" size={24} color={colors.text.muted} />
           </View>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>댓글</AppText>
         </TouchableOpacity>
+        )}
 
         {/* v3.193: 담기 = 플레이리스트 담기(회원) / 비회원은 기존 안내 팝업 → 큐 폴백 */}
         <TouchableOpacity
@@ -1342,7 +1353,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         accessibilityLabel="가사 제작 노트 스타일링 댓글"
       >
         <View style={styles.swipeUpHandle} />
-        <AppText variant="footnote" tone="secondary">가사 · 제작 노트 · 스타일링 · 댓글</AppText>
+        <AppText variant="footnote" tone="secondary">{commentsHidden ? '가사 · 제작 노트 · 스타일링' : '가사 · 제작 노트 · 스타일링 · 댓글'}</AppText>
       </TouchableOpacity>
       </>
       )}
@@ -1404,7 +1415,7 @@ export default function PlayerScreen({ route, navigation }: any) {
 
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
-              {(['lyrics', 'prompt', 'outfit', 'comments'] as const).map((tab) => {
+              {(['lyrics', 'prompt', 'outfit', 'comments'] as const).filter((t) => !(commentsHidden && t === 'comments')).map((tab) => {
                 // v3.180: 탭 라벨 숫자 제거 — 댓글 수는 패널 상단 "댓글 N개"로
                 const labels = { lyrics: '가사', prompt: '제작 노트', outfit: '스타일링', comments: '댓글' };
                 return (
@@ -1575,7 +1586,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                 )
               )}
               {/* v3.177: 곡 댓글 — v3.180: 탭 라벨 숫자 대신 패널 상단에 "댓글 N개" */}
-              {detailTab === 'comments' && (
+              {detailTab === 'comments' && !commentsHidden && (
                 <View>
                   <AppText style={styles.commentsHeader}>댓글 {commentCount ?? 0}개</AppText>
                   <TrackComments

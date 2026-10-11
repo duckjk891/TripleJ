@@ -23,6 +23,7 @@ import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 // v3.251 [Recog]: 아티스트 탭 휘장(sm) — 구서버(recognition 부재)는 연습생 5 폴백
 import ArtistLevelBadge from '../components/ArtistLevelBadge';
 import { normalizeRecognition } from '../data/levels';
+import { ensureDeclaredAgeChecked, useSocialAgeGate } from '../utils/socialAgeGate';
 
 const mediaUri = (obj?: string | null): string | null =>
   obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}?w=320` : null;
@@ -53,7 +54,12 @@ export default function UserChannelScreen() {
   const [followerCount, setFollowerCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'music');
+  const [tabState, setTab] = useState<Tab>(initialTab ?? 'music');
+  // v3.331 [SocialAgeGate]: iOS 13세 미만(어린이 계정·Apple 나이대)은 피드·커뮤니티 탭 숨김 — 확인 중에도 숨김
+  const socialGate = useSocialAgeGate();
+  const socialHidden = socialGate.blocked || socialGate.checking;
+  useEffect(() => { void ensureDeclaredAgeChecked(); }, []);
+  const tab: Tab = socialHidden && (tabState === 'feed' || tabState === 'community') ? 'music' : tabState;
   const [musicSub, setMusicSub] = useState<MusicSub>('tracks');
   const [tracks, setTracks] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
@@ -248,7 +254,7 @@ export default function UserChannelScreen() {
     { key: 'artists', label: '아티스트' },
     { key: 'feed', label: '피드' },
     { key: 'community', label: '커뮤니티' },
-  ];
+  ].filter((t) => !(socialHidden && (t.key === 'feed' || t.key === 'community'))) as { key: Tab; label: string }[];
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 120 }}>

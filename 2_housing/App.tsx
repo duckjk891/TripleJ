@@ -134,6 +134,7 @@ import UserChannelScreen from './screens/UserChannelScreen';
 import FeedComposeScreen from './screens/FeedComposeScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import FeedDetailScreen from './screens/FeedDetailScreen';
+import { withSocialAgeGate } from './components/social/SocialAgeGate';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 import AlbumDetailScreen, { exitAlbum } from './screens/AlbumDetailScreen';
 // v3.100(A-10): 직접 음원 파일 업로드
@@ -145,6 +146,12 @@ import CoverLibraryScreen from './screens/CoverLibraryScreen';
 import AudioSpikeScreen from './screens/AudioSpikeScreen';
 // v3.237 A조: 곡 공유 문구 화면(⋯ 시트 '공유하기' 목적지)
 import ShareComposeScreen from './screens/ShareComposeScreen';
+
+// v3.331 [SocialAgeGate]: iOS 13세 미만 소셜 차단(Apple Declared Age Range) — Android·웹은 그대로 통과
+const GatedFeedScreen = withSocialAgeGate(FeedScreen, 'Feed');
+const GatedCommunityScreen = withSocialAgeGate(CommunityScreen, 'Community');
+const GatedClubHomeScreen = withSocialAgeGate(ClubHomeScreen, 'ClubHome');
+const GatedFeedDetailScreen = withSocialAgeGate(FeedDetailScreen, 'FeedDetail');
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -433,7 +440,7 @@ function MainTabs() {
       />
       <Tab.Screen
         name="Feed"
-        component={FeedScreen}
+        component={GatedFeedScreen}
         options={({ navigation }) => ({
           tabBarLabel: '피드',
           tabBarIcon: ({ color, size }) => (
@@ -445,7 +452,7 @@ function MainTabs() {
       {/* v3.243 Phase1a: 검색 탭 자리 → 커뮤니티 탭. 검색은 숨김 탭(아래)으로 이동 — 차트 상단 검색바에서 진입 */}
       <Tab.Screen
         name="Community"
-        component={CommunityScreen}
+        component={GatedCommunityScreen}
         options={({ navigation }) => ({
           tabBarLabel: '커뮤니티',
           tabBarIcon: ({ color, size }) => (
@@ -538,7 +545,7 @@ function MainTabs() {
       />
       <Tab.Screen
         name="ClubHome"
-        component={ClubHomeScreen}
+        component={GatedClubHomeScreen}
         options={({ navigation, route }) => ({
           tabBarButton: () => null,
           tabBarItemStyle: { display: 'none' },
@@ -1003,7 +1010,7 @@ export default function App() {
               ),
             })} />
             {/* v3.95(A-21): 피드 단건 착지 — 공유/딥링크(aidol://feed/{id}) 목적지 */}
-            <RootStack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '피드')} />
+            <RootStack.Screen name="FeedDetail" component={GatedFeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '피드')} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             {/* v3.96(A-2)→v3.220 ①: 앨범 상세/관리는 MainTabs 숨김 탭으로 이동(하단 탭바 유지) — MainTabs 정의 참조 */}
             {/* v3.120: 앨범 AI 커버 — 이미지 디렉터 대화(작업실 CoverGeneration과 동일 화면·헤더 없음, 앨범 모드).
