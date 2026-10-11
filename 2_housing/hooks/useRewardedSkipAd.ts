@@ -78,6 +78,9 @@ export const isRewardedSkipAdReady = (): boolean => !!preloadedAd && preloadedRe
 let childAdConfigApplied = false;
 let childAdConfigPending: Promise<boolean> | null = null;
 let mobileAdsInitPromise: Promise<void> | null = null;
+// v3.332 [ATT]: 추적 허용 요청 1회(앱 실행 단위 — OS 가 응답을 기억하므로 재실행 시에도 팝업은 처음 한 번만)
+let trackingAsked = false;
+let trackingAskPending: Promise<void> | null = null;
 
 /** 어린이 요청의 pre-load 재사용 키 — 성인은 기존과 같이 userId 그대로 */
 const preloadKeyFor = (userId: string, child: boolean): string => (child ? `${userId}|child` : userId);
@@ -137,6 +140,25 @@ export function preloadRewardedSkipAd(): void {
       applyChildAdConfig().then((ok) => {
         if (ok) preloadRewardedSkipAd();
       });
+    }
+    return;
+  }
+  // v3.332 [ATT]: iOS 성인 — 첫 광고 로드 전에 추적 허용(ATT) 1회 요청(응답 후 이어서 로드). 어린이는 요청하지 않음(비맞춤 광고만).
+  if (Platform.OS === 'ios' && !child && !trackingAsked) {
+    if (!trackingAskPending) {
+      trackingAskPending = (async () => {
+        try {
+          const att = require('expo-tracking-transparency');
+          const r = await att.requestTrackingPermissionsAsync();
+          console.info('[AdReward] ATT', { status: r?.status });
+        } catch (e) {
+          console.warn('[AdReward] ATT 요청 실패(광고는 비맞춤으로 계속)', { msg: String(e).slice(0, 120) });
+        } finally {
+          trackingAsked = true;
+          trackingAskPending = null;
+        }
+      })();
+      trackingAskPending.then(() => preloadRewardedSkipAd());
     }
     return;
   }
@@ -282,17 +304,8 @@ export async function initRewardedAds(): Promise<void> {
   // v3.232 K5: 진행 promise 보관(아동 설정 적용이 init 완료 뒤에 오도록) — 초기화 동작 자체는 현행 그대로
   mobileAdsInitPromise = (async () => {
     try {
-      // [iOS] 앱 추적 투명성(ATT) — 광고 SDK 초기화 전에 1회 요청(이미 응답했으면 팝업 없이 상태만 반환).
-      // 거부해도 광고는 비맞춤으로 나오고 '광고 보고 휴식 줄이기'는 그대로 동작한다.
-      if (Platform.OS === 'ios') {
-        try {
-          const att = require('expo-tracking-transparency');
-          const r = await att.requestTrackingPermissionsAsync();
-          console.info('[AdReward] ATT', { status: r?.status });
-        } catch (e) {
-          console.warn('[AdReward] ATT 요청 실패(광고는 비맞춤으로 계속)', { msg: String(e).slice(0, 120) });
-        }
-      }
+      // v3.332 [ATT]: 추적 허용(ATT) 요청은 앱 시작이 아니라 '로그인한 성인'의 첫 광고 로드 직전으로 이동
+      // (ensureTrackingAsked — preloadRewardedSkipAd). 로그인·연령 확인 전·어린이에게는 팝업이 뜨지 않는다.
       const mobileAds = admob.MobileAds();
       // (아동 설정이 먼저 적용·진행 중이면 덮어쓰지 않음 — 아동 설정에 테스트 기기 포함. 성인 실행은 항상 false)
       if (ADMOB_TEST_DEVICE_IDS.length > 0 && !childAdConfigApplied && !childAdConfigPending) {

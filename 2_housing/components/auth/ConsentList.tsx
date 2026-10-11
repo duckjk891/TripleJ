@@ -7,6 +7,7 @@ import { CONSENTS, SIGNUP_CONSENT_KEYS, BEHAVIOR_NOTICE } from '../../constants/
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
+import { openPolicyPage } from '../../utils/policyLinks';
 
 export type ConsentState = Record<string, boolean>;
 
@@ -45,13 +46,22 @@ export default function ConsentList({ value, onChange }: Props) {
                 <Feather name={checked ? 'check-square' : 'square'} size={18} color={checked ? colors.accent.primary : colors.text.muted} />
                 <AppText variant="footnote" tone={checked ? 'primary' : 'secondary'} style={{ flex: 1 }}>{c.label}</AppText>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setOpenKey(open ? null : k)} accessibilityLabel={`${c.label} ${open ? '접기' : '보기'}`}>
+              {/* v3.332 [PolicyLinks]: 이용약관 '보기' = 게시된 약관 전문(웹 정본) — 앱 축약본이 옛 판이라 동의 대상과 어긋나던 문제 */}
+              <TouchableOpacity
+                onPress={() => (k === 'terms' ? void openPolicyPage('terms') : setOpenKey(open ? null : k))}
+                accessibilityLabel={`${c.label} ${open ? '접기' : '보기'}`}
+              >
                 <AppText variant="caption" tone="accent">{open ? '접기' : '보기'}</AppText>
               </TouchableOpacity>
             </View>
             {open ? (
               <ScrollView style={styles.body} nestedScrollEnabled>
                 <AppText variant="caption" tone="secondary" style={styles.bodyText}>{c.body}</AppText>
+                {k === 'privacy' ? (
+                  <TouchableOpacity onPress={() => void openPolicyPage('privacy')} accessibilityLabel="개인정보 처리방침 전문 보기">
+                    <AppText variant="caption" tone="accent" style={{ marginTop: 8 }}>개인정보 처리방침 전문 보기</AppText>
+                  </TouchableOpacity>
+                ) : null}
               </ScrollView>
             ) : null}
           </View>

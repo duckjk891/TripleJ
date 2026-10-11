@@ -11,6 +11,8 @@ import { useUiStore } from '../stores/uiStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
+import { isBenefitActive } from '../utils/shareMessage';
+import { SHARE_BENEFIT_FALLBACK } from '../constants/shareMessages';
 
 // 공유 타깃 라벨 — v3.212: 카카오톡 1종만(네이티브 공유 시트 위임). 링크 복사는 별도 버튼.
 const SHARE_BUTTONS: { key: string; label: string }[] = [
@@ -88,7 +90,9 @@ export default function AppShareModal() {
           ) : (
             <>
               <AppText variant="footnote" tone="secondary" center style={styles.desc}>
-                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 ⭐50을 받아요!{'\n'}베타 테스트 기간엔 가입만 해도 ⭐50 추가 증정!
+                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 ⭐50을 받아요!
+                {/* v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 표시 */}
+                {isBenefitActive(Date.now()) ? `\n가입 이벤트 기간엔 가입만 해도 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : ''}
               </AppText>
 
               <View style={styles.codeBox}>

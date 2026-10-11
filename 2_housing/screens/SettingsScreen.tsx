@@ -44,6 +44,7 @@ import { AppText, seedColor } from '../components/ui';
 // v3.232 K3: 어린이 모드(서버 kids_restricted) · 생년월일 잠금(서버 birth_date_locked)
 import { useIsChild, useBirthDateLocked, isChildNow, KIDS_TEXT } from '../utils/kidsMode';
 import { showKidsSafetyNotice } from '../components/kids/KidsSafetyNotice';
+import { openPolicyPage } from '../utils/policyLinks';
 
 // v3.92(A-18): 인구통계 선택지 — MAIDOL backend user.py GENDERS/REGIONS 계약값 그대로
 const GENDER_OPTIONS: Array<{ value: 'male' | 'female' | 'other' | null; label: string }> = [
@@ -473,6 +474,8 @@ export default function SettingsScreen({ navigation, route }: any) {
   const [notifyChartUpdate, setNotifyChartUpdate] = useState(true);
   // v3.200(F6): 'ai' = AI 생성 고지 상시 항목(앱 정보 섹션) — 가입 동의문 재사용(consentTexts)
   const [policy, setPolicy] = useState<null | 'terms' | 'privacy' | 'ai'>(null); // 정책 문서 시트
+  // v3.332 [PolicyLinks]: 이용약관·개인정보 처리방침은 게시된 웹 문서(정본)로 — AI 생성 고지만 앱 안 시트
+  const openPolicy = (k: 'terms' | 'privacy') => { void openPolicyPage(k); };
   const [authTitle, setAuthTitle] = useState(authMode === 'register' ? '회원가입' : '로그인'); // 비로그인 헤더 타이틀(AuthPanel 모드 연동)
   // v3.237 B: 로그인/가입 성공 착지 — CTA 진입(after='studio')이면 작업실 Map 으로 리셋, 아니면 현행 차트 리셋.
   //  소셜 로그인(웹 페이지 이탈·네이티브 SocialLoginButtons 내부 리셋)은 이 콜백을 거치지 않아 차트 착지(한계 수용 — D9).
@@ -659,14 +662,14 @@ export default function SettingsScreen({ navigation, route }: any) {
         </View>
         <TouchableOpacity
           style={styles.settingRow}
-          onPress={() => setPolicy('terms')}
+          onPress={() => openPolicy('terms')}
         >
           <AppText style={styles.settingLabel}>이용약관</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.settingRow}
-          onPress={() => setPolicy('privacy')}
+          onPress={() => openPolicy('privacy')}
         >
           <AppText style={styles.settingLabel}>개인정보 처리방침</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
@@ -969,7 +972,7 @@ export default function SettingsScreen({ navigation, route }: any) {
 
         {/* 사업자 정보 표기 + 정책 문서 */}
         <View style={{ paddingHorizontal: 20 }}>
-          <CompanyFooter onOpenPolicy={setPolicy} />
+          <CompanyFooter onOpenPolicy={openPolicy} />
         </View>
         {/* v3.211: expo-audio 백그라운드 재생 스파이크 진입 — 스파이크 기간 한정, 이관 완료 후 제거 예정.
             테스터·사용자 실기기 검증용이라 __DEV__ 무관 노출(눈에 안 띄는 최하단 소형 텍스트) */}
@@ -1004,7 +1007,7 @@ export default function SettingsScreen({ navigation, route }: any) {
             setAuthTitle(m === 'login' ? '로그인' : m === 'forgot' ? '비밀번호 재설정' : '회원가입')
           }
         />
-        <CompanyFooter onOpenPolicy={setPolicy} />
+        <CompanyFooter onOpenPolicy={openPolicy} />
         {/* v3.211: 스파이크 진입 — 비로그인에도 노출(로그인 상태 무관 검증 경로, 기간 한정) */}
         <TouchableOpacity
           style={styles.spikeEntry}

@@ -18,6 +18,8 @@ import { useIsChild, useKidsPermission, KIDS_TEXT, isChildRestrictedError } from
 import { getWordFilteredMessage } from '../../utils/kidsMode'; // v3.233: 금칙어 400 안내
 import { useNavigation } from '@react-navigation/native';
 import { blockUser } from '../../services/blockService';
+import { isBenefitActive } from '../../utils/shareMessage';
+import { SHARE_BENEFIT_FALLBACK } from '../../constants/shareMessages';
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -339,7 +341,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
 
   const shareFeed = async () => {
     try {
-      await Share.share({ message: `MAIDOL 피드 "${feed.title || '게시물'}"\n🎁 베타 테스트 기간 가입 시 ⭐50 추가 증정!\n${BACKEND_BASE_URL}/feed/${feed.id}` });
+      // v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 혜택 줄
+      const benefit = isBenefitActive(Date.now()) ? `\n🎁 가입 이벤트 기간 가입 시 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : '';
+      await Share.share({ message: `MAIDOL 피드 "${feed.title || '게시물'}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
     } catch (err: any) {
       console.error('[FeedCard] 공유 실패', { message: err?.message });
     }

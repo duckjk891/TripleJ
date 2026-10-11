@@ -26,7 +26,7 @@ const VERIFY_GROUP = ['verify_bonus', 'guardian_consent_reward'];
 
 const SIGNUP_LINE_LABEL: Record<string, string> = {
   signup_bonus: '가입 보너스',
-  beta_signup_bonus: '베타 가입 추가',
+  beta_signup_bonus: '가입 이벤트 추가',
   referral_joiner: '추천코드 가입',
 };
 

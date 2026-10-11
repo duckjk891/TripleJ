@@ -10,7 +10,7 @@ export { parseServerTime };
 
 const CREDIT_LABELS: Record<string, string> = {
   signup_bonus: '가입 보너스',
-  beta_signup_bonus: '베타 가입 추가',
+  beta_signup_bonus: '가입 이벤트 추가',
   referral_joiner: '추천 가입',
   referral_inviter: '친구 초대',
   verify_bonus: '인증 보너스', // v3.230 A8: '본인인증' 표기 제거
