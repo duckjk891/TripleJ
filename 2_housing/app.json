@@ -52,7 +52,14 @@
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "blockedPermissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -134,7 +141,8 @@
         {
           "savePhotosPermission": "만든 공유 영상을 사진 앨범에 저장하기 위해 접근 권한이 필요합니다.",
           "isAccessMediaLocationEnabled": false,
-          "photosPermission": "프로필·커버·게시물에 올릴 사진을 고를 때 사진 보관함에 접근합니다."
+          "photosPermission": "프로필·커버·게시물에 올릴 사진을 고를 때 사진 보관함에 접근합니다.",
+          "granularPermissions": []
         }
       ],
       [

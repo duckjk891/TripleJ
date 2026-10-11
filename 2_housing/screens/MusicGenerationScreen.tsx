@@ -59,6 +59,7 @@ import { guardGeneration } from '../services/generationTracker';
 // v3.229 [DirectorResume]: 작곡 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { computeComposeLyricsKey, getResumableComposeDraft } from '../utils/directorResume';
 import { VOICE_AGE_OPTIONS, voiceAgeFromLabel, voiceAgeLabel, parseArtistAge } from '../utils/vocalAge';
+import { ensureVoiceAiConsent } from '../utils/voiceConsent';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -1629,6 +1630,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // Step 6: Reference - recording
   const handleStartRecording = async () => {
+    if (!(await ensureVoiceAiConsent('MusicGeneration.referenceRecord'))) return; // v3.334 [VoiceConsent]
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {

@@ -41,6 +41,9 @@ import {
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** v3.334 [AiReport]: 결과 화면 '부적절한 결과 신고' 진입 — 사유·본문 미리 채움 */
+  initialReason?: IssueReasonCode;
+  initialText?: string;
 }
 
 // v3.308 [IssueAttach] 서버 /upload/dm-image 계약(jpg/png/webp ≤15MB)·DM 메시지당 최대 5장과 짝
@@ -91,7 +94,7 @@ function currentPageUrl(): string | null {
   return getCurrentPage();
 }
 
-export default function IssueReportModal({ visible, onClose }: Props) {
+export default function IssueReportModal({ visible, onClose, initialReason, initialText }: Props) {
   const [reason, setReason] = useState<IssueReasonCode | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -107,7 +110,7 @@ export default function IssueReportModal({ visible, onClose }: Props) {
   // 열 때마다 초기화
   useEffect(() => {
     if (visible) {
-      setReason(null); setText(''); setError(''); setBusy(false); setDone(false);
+      setReason(initialReason ?? null); setText(initialText ?? ''); setError(''); setBusy(false); setDone(false);
       setImages([]); setImageNotice('');
       busyRef.current = false;
       console.info('[IssueReport] 모달 열기', { page: getCurrentPage(), recent: getRecentPages().length });

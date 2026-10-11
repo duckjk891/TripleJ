@@ -37,6 +37,8 @@ import {
 import AuthPanel from '../components/auth/AuthPanel';
 import NicknameEditModal from '../components/settings/NicknameEditModal';
 import IssueReportModal from '../components/settings/IssueReportModal';
+import PasswordChangeModal from '../components/settings/PasswordChangeModal';
+import OssLicensesModal from '../components/settings/OssLicensesModal';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS, CONSENT_VERSION, AI_GENERATION_NOTICE } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
@@ -346,6 +348,8 @@ export default function SettingsScreen({ navigation, route }: any) {
   const [showWithdraw, setShowWithdraw] = useState(false);
   // v3.230 A2: 닉네임 변경 모달
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false); // v3.334
+  const [showOss, setShowOss] = useState(false); // v3.334 오픈소스 라이선스
   const [withdrawInput, setWithdrawInput] = useState('');
   const [withdrawError, setWithdrawError] = useState('');
   const [withdrawBusy, setWithdrawBusy] = useState(false);
@@ -569,13 +573,19 @@ export default function SettingsScreen({ navigation, route }: any) {
           <AppText style={styles.settingLabel}>닉네임 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
-        >
-          <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
-          <AppText style={styles.settingArrow}>{'>'}</AppText>
-        </TouchableOpacity>
+        {/* v3.334: 비밀번호 변경 = 현재 비밀번호 확인 후 변경(POST /auth/me/password). 소셜 전용 계정(has_password=false)은 숨김 */}
+        {(user as any).has_password !== false && (
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => {
+              console.info('[PasswordChange] 설정 행 탭');
+              setShowPasswordChange(true);
+            }}
+          >
+            <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
+            <AppText style={styles.settingArrow}>{'>'}</AppText>
+          </TouchableOpacity>
+        )}
         {/* v3.230 A8 [IdentityBypass]: '본인인증' 행(⭐30 유도·준비 중 팝업) 제거 — 본인인증은 추후 적용(대표 지시).
             인증 상태 표시도 필요 없어 숨김. 복원 시 v3.189 행을 되살리면 된다. */}
         <TouchableOpacity
@@ -684,7 +694,7 @@ export default function SettingsScreen({ navigation, route }: any) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
-          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
+          onPress={() => setShowOss(true)}
         >
           <AppText style={styles.settingLabel}>오픈소스 라이선스</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
@@ -806,6 +816,10 @@ export default function SettingsScreen({ navigation, route }: any) {
           currentNickname={user.nickname}
           onClose={() => setShowNicknameEdit(false)}
         />
+
+        {/* v3.334: 비밀번호 변경·오픈소스 라이선스 */}
+        <PasswordChangeModal visible={showPasswordChange} onClose={() => setShowPasswordChange(false)} />
+        <OssLicensesModal visible={showOss} onClose={() => setShowOss(false)} />
 
         {/* v3.285: 문의하기(오류 신고) 모달 — POST /api/issues 전용 접수 */}
         <IssueReportModal visible={showIssueReport} onClose={() => setShowIssueReport(false)} />
@@ -974,15 +988,6 @@ export default function SettingsScreen({ navigation, route }: any) {
         <View style={{ paddingHorizontal: 20 }}>
           <CompanyFooter onOpenPolicy={openPolicy} />
         </View>
-        {/* v3.211: expo-audio 백그라운드 재생 스파이크 진입 — 스파이크 기간 한정, 이관 완료 후 제거 예정.
-            테스터·사용자 실기기 검증용이라 __DEV__ 무관 노출(눈에 안 띄는 최하단 소형 텍스트) */}
-        <TouchableOpacity
-          style={styles.spikeEntry}
-          onPress={() => navigation.navigate('AudioSpike')}
-          hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
-        >
-          <AppText style={styles.spikeEntryText}>재생 엔진 테스트</AppText>
-        </TouchableOpacity>
         <PolicySheet
           visible={!!policy}
           title={policy === 'ai' ? AI_GENERATION_NOTICE.label : policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
@@ -1008,14 +1013,6 @@ export default function SettingsScreen({ navigation, route }: any) {
           }
         />
         <CompanyFooter onOpenPolicy={openPolicy} />
-        {/* v3.211: 스파이크 진입 — 비로그인에도 노출(로그인 상태 무관 검증 경로, 기간 한정) */}
-        <TouchableOpacity
-          style={styles.spikeEntry}
-          onPress={() => navigation.navigate('AudioSpike')}
-          hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
-        >
-          <AppText style={styles.spikeEntryText}>재생 엔진 테스트</AppText>
-        </TouchableOpacity>
         {/* v3.200: 'ai' 항목은 로그인 뷰 전용이지만, 시트 열린 채 로그아웃되는 엣지 방어 */}
         <PolicySheet
           visible={!!policy}
@@ -1453,14 +1450,4 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   // v3.211: 스파이크 진입 행(회원탈퇴 소형 텍스트 관행 — 눈에 안 띄는 최하단, 기간 한정)
-  spikeEntry: {
-    alignSelf: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-    paddingVertical: 6,
-  },
-  spikeEntryText: {
-    fontSize: 11,
-    color: colors.text.muted,
-  },
 });

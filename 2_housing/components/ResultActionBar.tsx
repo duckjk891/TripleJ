@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
 import { AppText } from './ui';
+import IssueReportModal from './settings/IssueReportModal';
 import { colors } from '../theme/colors';
 
 // v3.290 [ResultBar]: 모든 디렉터 최종 결과 화면 하단 공통 바 — [‹ 이전] + 주요 버튼(저장 등).
@@ -23,6 +25,11 @@ type Props = {
 // v3.322 (대표 10-09): 각 디렉터 저장 단계 — AI 결과는 틀릴 수 있으니 확인 후 저장하도록 안내
 export const AI_SAVE_NOTICE = 'AI는 실수를 할 수 있어요. 내용을 꼭 확인한 뒤 저장해 주세요.';
 
+// v3.334 [AiReport]: 신고 머리말에 쓰는 화면 이름
+const AI_REPORT_SCREEN_LABEL: Record<string, string> = {
+  LyricsResult: '가사 결과', MusicResult: '작곡 결과', CoverGeneration: '커버 결과', ArtistResult: '아티스트 결과',
+};
+
 export default function ResultActionBar({
   screen,
   onBack,
@@ -35,14 +42,34 @@ export default function ResultActionBar({
   aiNotice,
 }: Props) {
   const hasPrimary = !!primaryLabel && !!onPrimary;
+  // v3.334 [AiReport]: Google Play AI 생성 콘텐츠 정책 — 앱을 나가지 않고 부적절한 AI 결과를 운영자에게 알릴 수 있게.
+  // 문의하기(오류 신고)를 '기타' 사유 + 머리말(화면 이름)로 미리 채워 연다(서버 계약 변경 없음).
+  const [reportOpen, setReportOpen] = useState(false);
   const showNotice = aiNotice ?? (hasPrimary && !/다시 생성/.test(primaryLabel || ''));
   return (
     <View style={[{ width: '100%' }, style]}>
     {showNotice ? (
       <View style={styles.noticeRow} accessibilityRole="text">
         <AppText style={styles.noticeText}>ⓘ {AI_SAVE_NOTICE}</AppText>
+        <TouchableOpacity
+          onPress={() => {
+            console.info('[ResultBar] 부적절한 AI 결과 신고 열기', { screen });
+            setReportOpen(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="부적절한 결과 신고"
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <AppText style={styles.reportLink}>부적절한 결과 신고</AppText>
+        </TouchableOpacity>
       </View>
     ) : null}
+    <IssueReportModal
+      visible={reportOpen}
+      onClose={() => setReportOpen(false)}
+      initialReason="other"
+      initialText={`[부적절한 AI 결과 · ${AI_REPORT_SCREEN_LABEL[screen] || screen}] `}
+    />
     <View style={styles.row}>
       <TouchableOpacity
         style={[styles.backBtn, !hasPrimary && { flex: 1 }]}
@@ -108,6 +135,7 @@ export const resultBarStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   noticeRow: { width: '100%', paddingHorizontal: 4, marginBottom: 8 },
   noticeText: { color: colors.text.muted, fontSize: 12, lineHeight: 17, textAlign: 'center' },
+  reportLink: { color: colors.text.muted, fontSize: 11, textAlign: 'center', textDecorationLine: 'underline', marginTop: 2 },
   row: { flexDirection: 'row', gap: 8, width: '100%', alignItems: 'stretch' },
   backBtn: {
     minWidth: 96,

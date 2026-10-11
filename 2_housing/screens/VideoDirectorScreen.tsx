@@ -1405,7 +1405,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           await Linking.openURL(videoUrl);
         }
       } else {
-        const { status } = await MediaLibrary.requestPermissionsAsync();
+        // v3.334 [Permissions]: Android 는 '저장만' 권한(writeOnly) — 사진·동영상 읽기 권한(READ_MEDIA_*) 없이 저장
+        // (Google Play 사진·동영상 권한 정책). 앨범 묶기가 안 되는 기기는 saveMediaToMaidolAlbum 이 라이브러리 저장으로 폴백.
+        const { status } = await MediaLibrary.requestPermissionsAsync(Platform.OS === 'android');
         if (status !== 'granted') {
           showAlert('권한 필요', '사진 보관함 접근 권한을 허용해야 영상을 저장할 수 있어요.');
           return;

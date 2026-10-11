@@ -147,6 +147,7 @@ import CoverLibraryScreen from './screens/CoverLibraryScreen';
 import AudioSpikeScreen from './screens/AudioSpikeScreen';
 // v3.237 A조: 곡 공유 문구 화면(⋯ 시트 '공유하기' 목적지)
 import ShareComposeScreen from './screens/ShareComposeScreen';
+import VoiceConsentHost from './components/consent/VoiceConsentHost'; // v3.334 음성 데이터 처리 동의
 
 // v3.331 [SocialAgeGate]: iOS 13세 미만 소셜 차단(Apple Declared Age Range) — Android·웹은 그대로 통과
 const GatedFeedScreen = withSocialAgeGate(FeedScreen, 'Feed');
@@ -1046,6 +1047,7 @@ export default function App() {
           <WelcomeGuide />
           <UpdateGate />
           <SignupCompleteGate />
+          <VoiceConsentHost />
           <LoginModalHost />
           <AppDialogHost />
           {/* v3.232 K4: 어린이 계정 온라인 안전 안내 1회 트리거(렌더 없음) */}

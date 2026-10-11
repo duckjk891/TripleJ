@@ -4354,3 +4354,13 @@ loudnorm 2패스 정밀화 · split_stem 재합성 실험(50크레딧·미검증
 - 스위치: SOCIAL_ONBOARDING_ENABLED(가입 마무리 표시), IDENTITY_VERIFY_PROVIDER(본인확인). 지금은 둘 다 꺼짐 — 운영 /api/identity/config → enabled false, start 401(무인증)/503(꺼짐).
 - 검증: 서버 격리 10/10(라우트 매핑·꺼짐 기본값·온보딩 판정·mock 흐름·return_url 차단·만14 판정·CI 해시·중복), 앱 단위 8/8(생년월일 해석·만 나이), tsc 0. 배포 후 health·oauth 302·Traceback 0.
 - PG 받으면: PgProvider 구현(SDK 페이지·조회 API) → .env IDENTITY_VERIFY_PROVIDER=<pg>, IDENTITY_CI_SALT → 점검 후 SOCIAL_ONBOARDING_ENABLED=true.
+
+## v3.334 — 2026-10-11 — 음성 데이터 처리 동의·AI 결과 신고·설정 정리(비밀번호 변경·오픈소스 라이선스)·Android 미디어 읽기 권한 제거 (서버·웹, 권한·네이티브는 다음 빌드)
+
+대표: "나머지는 다 실행" + "오픈소스 라이선스 명시 대상이 아니면 지우자" + 음성 동의문 '해외 AI 업체'·회사명 빼고 다른 표현.
+- ② 음성 데이터 처리 동의(utils/voiceConsent + components/consent/VoiceConsentHost, App 루트): 목소리 학습 녹음·파일 선택·생성 요청, 작곡 참고 음악 녹음 직전 1회. 동의 = POST /auth/me/consents voice_ai(version '2026-10-11.voice1'), 같은 판 동의자는 다시 묻지 않음. 문구: "AI 음성 처리를 맡긴 협력사의 서버 … 협력사와 처리 국가는 개인정보 처리방침에서 확인"(회사명·'해외 AI 업체' 제거, 처리방침 링크). 보관 = 처리방침 따름·탈퇴 시 파기(기존 의미 유지).
+- ③ Android 권한: expo-media-library granularPermissions [] + android.blockedPermissions(READ_MEDIA_IMAGES·VIDEO·AUDIO·VISUAL_USER_SELECTED, SYSTEM_ALERT_WINDOW) — introspect 결과 매니페스트에서 tools:node=remove 확인. 공유 영상 저장은 Android 에서 '저장만' 권한(requestPermissionsAsync(true)), MAIDOL 앨범 묶기 실패 기기는 라이브러리 저장 폴백(기존 코드). 업로드는 원래 시스템 파일 선택(권한 불필요)이라 영향 없음. 다음 Android 빌드에서 실기기 저장 확인 필요.
+- ④ 설정: 「재생 엔진 테스트」(개발용 진입 2곳) 삭제. 「비밀번호 변경」 = 현재 비밀번호 확인 후 변경(서버 POST /auth/me/password 신설 — 메일 없이 동작, 소셜 전용 400·현재 비밀번호 불일치 400·규칙=가입과 동일·같은 비밀번호 거부) + /auth/me has_password 가산, 소셜 전용 계정은 행 숨김. 「오픈소스 라이선스」 = 지우지 않고 화면 구현 — MIT·BSD·Apache 는 배포물에 저작권·라이선스 고지 포함이 라이선스 조건이라 '명시 대상'. scripts/gen-oss-licenses.js → constants/ossLicenses.json(운영 의존성 704개·라이선스 16종, 160KB), components/settings/OssLicensesModal.
+- ⑦ 부적절한 AI 결과 신고: 결과 화면 공통 바(ResultActionBar — 가사·작곡·커버·아티스트 결과)의 AI 확인 안내 아래 「부적절한 결과 신고」 → 문의하기(기타 사유, 머리말 "[부적절한 AI 결과 · 화면]" 미리 채움, 사진 첨부 가능). 서버 계약 변경 없음.
+- 서버 배포(v3334, auth.py): md5 가드·백업·격리 테스트(라우트 매핑·비밀번호 변경 4종)·진행 작업 0건·재기동, health ok·oauth 302·Traceback 0·/auth/me/password 401(무인증).
+- 검증: 앱 단위 15/15(음성 동의: 이미 동의·캐시·옛 판 재동의·거절 미기록·동의 기록), tsc 0.

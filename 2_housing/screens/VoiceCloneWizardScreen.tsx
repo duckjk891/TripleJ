@@ -43,6 +43,7 @@ import {
 // (PATCH persona_id=clone_id, ready 클론만).
 import { patchArtist } from '../services/characterService';
 import { friendlyVoiceFailure, friendlyVoiceApiError, isNoResponseError, VOICE_RETRY_HINT } from '../utils/voiceCloneErrors';
+import { ensureVoiceAiConsent } from '../utils/voiceConsent';
 
 // ── v3.83: Voice Clone 4단계 위저드 (MAIDOL VoiceCloneWizard.jsx 이식) ─────────
 // ① 노래 샘플(녹음/업로드) + 보컬 구간 + 이름 → POST /voice-clone/create
@@ -412,6 +413,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
   // ── 파일 업로드 ──
   const handlePickFile = async (target: 'sample' | 'verify') => {
+    if (!(await ensureVoiceAiConsent('VoiceCloneWizard.pick'))) return; // v3.334 [VoiceConsent]
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*' });
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -438,6 +440,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
   // ── 녹음 ──
   const handleStartRecording = async () => {
+    if (!(await ensureVoiceAiConsent('VoiceCloneWizard.record'))) return; // v3.334 [VoiceConsent]
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
@@ -605,6 +608,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
   // 실제 생성 호출 (confirm 이후 진입 — 샘플 유무는 handleStep1Next에서 검증됨)
   const startCloneCreate = async (name: string, startS: number, endS: number) => {
+    // v3.334 [VoiceConsent]: 보관함 샘플 재학습 등 녹음·업로드를 거치지 않는 경로도 전송 전에 동의 확인(동의돼 있으면 즉시 통과)
+    if (!(await ensureVoiceAiConsent('VoiceCloneWizard.create'))) return;
     if (!sampleSrc && !selectedSample) return;
     setBusy(true);
     setErrText('');
