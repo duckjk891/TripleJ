@@ -53,6 +53,8 @@ export interface MusicParams {
   isDuet?: boolean;
   subVocal?: string;
   subVocalStyle?: string;
+  /** v3.330 [VocalAge]: 목소리 나이(숫자) — 내 목소리·연주곡이 아니면 style 에 '{N}-year-old … vocal' 태그로 실림 */
+  vocalAge?: number;
   /** v3.91: 참고 음원 반영 세기(0.0~1.0) — 백엔드 GenerateRequest.audio_weight */
   audioWeight?: number | null;
   /** v3.91: 생성 직전 업로드된 참고 음악(upload-reference 응답) — reference_audio_* 필드로 전송 */

@@ -63,7 +63,7 @@ export function buildLyricsDirection(st: {
 export function buildComposeDirection(p: {
   genre?: string; mood?: string; tempo?: string; vocal?: string; vocalStyle?: string; style?: string;
   referenceStyle?: string; bpm?: string; musicalKey?: string; negativeTags?: string; personaModel?: string;
-  isDuet?: boolean; subVocal?: string; subVocalStyle?: string; instrumental?: boolean; durationSec?: number;
+  isDuet?: boolean; subVocal?: string; subVocalStyle?: string; instrumental?: boolean; durationSec?: number; vocalAge?: number;
   audioWeight?: number | null; referenceData?: { object_name?: string } | null; referenceLink?: boolean;
 }, stage: 'compose' | 'arrange' = 'compose'): DirectionPayload {
   const answers: DirectionPayload['answers'] = {
@@ -72,6 +72,7 @@ export function buildComposeDirection(p: {
     bpm: clip(p.bpm), key: clip(p.musicalKey), excluded_styles: clip(p.negativeTags),
     my_voice: p.personaModel === 'voice', duet: !!p.isDuet, sub_vocal: clip(p.subVocal),
     sub_vocal_style: clip(p.subVocalStyle), instrumental: !!p.instrumental,
+    vocal_age: typeof p.vocalAge === 'number' ? Math.round(p.vocalAge) : null, // v3.330 [VocalAge]
     duration_sec: typeof p.durationSec === 'number' ? Math.round(p.durationSec) : null,
     reference_audio_weight: typeof p.audioWeight === 'number' ? Math.round(p.audioWeight * 100) : null,
   };

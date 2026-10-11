@@ -68,6 +68,8 @@ export interface ComposeDraftAnswers {
   /** v3.276 [RefLink]: 유튜브 링크 참조(메타데이터 전용) — 이어서 하기 복원 시 디렉터 안내와
    *  실제 반영이 어긋나지 않게 draft에도 동봉(구 draft엔 없음 → null 취급) */
   referenceLink?: ReferenceLink | null;
+  /** v3.330 [VocalAge]: 목소리 나이(대표 나이 숫자, null=상관없음) — 구 draft엔 없음 → null 취급 */
+  selectedVocalAge?: number | null;
 }
 
 /** v3.276 [RefLink]: 작곡 "참고 음원" 단계의 유튜브 링크 참조 — 음원은 받지 않고
@@ -159,6 +161,8 @@ interface MusicState {
   lyricsSource: LyricsSourceSnapshot | null;
   subVocal: string;
   subVocalStyle: string;
+  /** v3.330 [VocalAge]: 목소리 나이(숫자) — 아티스트 나이 또는 작곡 대화 '목소리 나이' 답. null = 태그 없음 */
+  vocalAge: number | null;
   /** v3.202(J): 연주곡(Instrumental) 플래그 — true면 가사·보컬 없이 생성(vocal='instrumental').
    *  진입 2경로: ComposeLyricsPick '가사 없이 만들기' 카드(가사 공백), 작곡 대화 보컬 스텝의
    *  'Instrumental (연주곡)' 선택(가사 유지·무보컬). 일반 가사 선택/작곡 진입 시 false로 리셋
@@ -232,6 +236,7 @@ interface MusicState {
   setLyricsSource: (v: LyricsSourceSnapshot | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
+  setVocalAge: (v: number | null) => void;
   setInstrumental: (v: boolean) => void;
   setDurationSec: (v: number | null) => void;
   setCoverTrackId: (v: string | null) => void;
@@ -295,6 +300,7 @@ const initialState = {
   lyricsSource: null,
   subVocal: '',
   subVocalStyle: '',
+  vocalAge: null,
   instrumental: false,
   durationSec: null,
   coverTrackId: null,
@@ -353,6 +359,7 @@ export const useMusicStore = create<MusicState>()(persist((set) => ({
   setLyricsSource: (lyricsSource) => set({ lyricsSource }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
+  setVocalAge: (vocalAge) => set({ vocalAge }),
   setInstrumental: (instrumental) => set({ instrumental }),
   setDurationSec: (durationSec) => set({ durationSec }),
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),

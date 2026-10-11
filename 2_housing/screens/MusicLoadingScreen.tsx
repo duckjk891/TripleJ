@@ -310,6 +310,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
       isDuet: lyricsStore.isDuet || undefined,
       subVocal: store.subVocal || undefined,
       subVocalStyle: store.subVocalStyle || undefined,
+      // v3.330 [VocalAge]: 목소리 나이(숫자) — 연주곡 제외
+      vocalAge: store.instrumental ? undefined : (store.vocalAge ?? undefined),
       // BUG-2 픽스: 대화 스텝에서 설정한 상세 파라미터가 실제 생성 요청에 빠져 있었음
       style: store.style || undefined,
       referenceStyle: store.referenceStyle || undefined,

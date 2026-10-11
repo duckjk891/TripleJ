@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { vocalAgeTag } from '../utils/vocalAge';
 import api, { BACKEND_BASE_URL } from './api';
 import { useAuthStore } from '../stores/authStore';
 // v3.200: 창작 기록 계층 — 생성 요청에 session_id·최종 가사 버전 id 동봉(실패 무해)
@@ -278,6 +279,14 @@ export const buildSunoGenerateBody = async (
 
   // style 합성
   const styleParts = [styleEn, params.referenceStyle];
+  // v3.330 [VocalAge]: 목소리 나이 태그 — 내 목소리(클론)는 그 목소리 그대로라 제외, 연주곡 제외
+  if (params.vocalAge && !params.personaId && !params.instrumental) {
+    const ageTag = vocalAgeTag(params.vocalAge, params.vocal, isDuet);
+    if (ageTag) {
+      styleParts.push(ageTag);
+      console.info('[Suno] [VocalAge] 목소리 나이 태그', { age: params.vocalAge, tag: ageTag });
+    }
+  }
   if (isDuet && params.subVocal) {
     // 서브 보컬 키 조회 → 영문 스타일 태그로 변환
     const subVocalKey = mapVocalKey(params.subVocal, params.subVocalStyle || '');

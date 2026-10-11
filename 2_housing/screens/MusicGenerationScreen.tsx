@@ -58,6 +58,7 @@ import { FatigueStatus } from '../types';
 import { guardGeneration } from '../services/generationTracker';
 // v3.229 [DirectorResume]: 작곡 draft 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { computeComposeLyricsKey, getResumableComposeDraft } from '../utils/directorResume';
+import { VOICE_AGE_OPTIONS, voiceAgeFromLabel, voiceAgeLabel, parseArtistAge } from '../utils/vocalAge';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -78,7 +79,9 @@ const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A m
 //   300(장르)·301(분위기)·310(곡 길이)·11(키)·302(장르/분위기 확인)
 // · 복합형(확인 팝업 없이 performRewind 즉시 실행 + 수정 배너):
 //   0(제목)·1(가사)·5(참고)·6(제외)·7/8/9/10(슬라이더)·200(아티스트)·210(클론)·12(페르소나)
-const CHOICE_EDIT_STEPS = new Set([3, 100, 4, 101, 220, 300, 301, 310, 11, 302]);
+const CHOICE_EDIT_STEPS = new Set([3, 100, 4, 101, 230, 220, 300, 301, 310, 11, 302]);
+// v3.330 [VocalAge]: step 230 = 목소리 나이(아티스트 없이 간편 목소리로 만들 때 — 보컬 스타일 다음, 참고 곡 전)
+const VOICE_AGE_QUESTION = '목소리 나이는 어느 정도로 할까요? 아이 목소리부터 어른 목소리까지 고를 수 있어요.';
 // 자유 입력 허용 — 메인 플로우에 자유 입력이 있는 스텝만. enum 매핑 스텝(3·100·220·302·310·11) 비노출.
 const EDIT_FREETEXT_STEPS = new Set([300, 301, 4, 101]);
 // 310(곡 길이)·11(키) 모달 선택지 라벨 — 메인 플로우의 '자동' 스킵과 동치
@@ -239,6 +242,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   );
   const [subVocalGender, setSubVocalGender] = useState(draftAnswers ? draftAnswers.subVocalGender : '');
   const [subVocalStyle, setSubVocalStyle] = useState(draftAnswers ? draftAnswers.subVocalStyle : '');
+  // v3.330 [VocalAge]: 목소리 나이(대표 나이 숫자, null=상관없음) — 아티스트 나이 자동 또는 step 230 답
+  const [selectedVocalAge, setSelectedVocalAge] = useState<number | null>(draftAnswers?.selectedVocalAge ?? null);
   const [styleDesc, setStyleDesc] = useState('');
   const [refStyle, setRefStyle] = useState(draftAnswers ? draftAnswers.refStyle : '');
   const [negativeTags, setNegativeTags] = useState(draftAnswers ? draftAnswers.negativeTags : '');
@@ -377,6 +382,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         artistCharacterId: useMusicStore.getState().artistCharacterId,
         artistExplicitSkip: useMusicStore.getState().artistExplicitSkip, // v3.242
         referenceLink: useMusicStore.getState().referenceLink, // v3.276 [RefLink]
+        selectedVocalAge, // v3.330 [VocalAge]
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -410,6 +416,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedVocalGender(artistPreset ? (artistPreset.gender === 'male' ? '남성' : '여성') : '');
     setSubVocalGender('');
     setSubVocalStyle('');
+    setSelectedVocalAge(null); // v3.330 [VocalAge]
     setRefStyle('');
     setNegativeTags('');
     setNegativeTagsOn(false);
@@ -689,6 +696,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return lyricsStore.isDuet ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.' : DIRECTOR_MESSAGES[3];
       case 100: return '서브 보컬 성별을 선택해주세요!';
       case 101: return '서브 보컬 스타일을 선택해주세요!';
+      case 230: return VOICE_AGE_QUESTION;
       case 200: {
         // v3.301 [ArtistInfo]: 질문에 내 아티스트 이름을 함께(카드만으론 누가 있는지 한눈에 안 보였음 — 대표 10-07)
         const names = (artists || []).map((a) => (a.name || '').trim()).filter(Boolean);
@@ -770,6 +778,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 12: return '내 목소리';
       case 100: return '서브 보컬';
       case 101: return '서브 보컬 스타일';
+      case 230: return '목소리 나이';
       case 200: return '아티스트';
       case 210: return '내 목소리';
       case 220: return '목소리 방식';
@@ -788,6 +797,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 100: return [...VOCAL_OPTIONS];
       case 4: return [...VOCAL_STYLES];
       case 101: return [...VOCAL_STYLES];
+      case 230: return VOICE_AGE_OPTIONS.map((o) => o.label);
       case 220: return isRestricted ? ['간편 목소리 (보컬 스타일 선택)'] : ['간편 목소리 (보컬 스타일 선택)', '내 목소리 (클로닝한 목소리)'];
       case 300: return [...GENRE_OPTIONS];
       case 301: return [...MOOD_OPTIONS];
@@ -806,6 +816,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       case 100: handleSubVocalSelect(choice); break;
       case 4: handleVocalStyleSelect(choice); break;
       case 101: handleSubVocalStyleSelect(choice); break;
+      case 230: handleVoiceAgeSelect(choice); break;
       case 220:
         if (choice.startsWith('내 목소리')) handleMyVoiceEntry();
         else handleVoiceModeQuick();
@@ -1171,6 +1182,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // v3.242(대표 확정): 명시적 스킵 표시 — 발매 시 계정 대표 폴백(v3.241 P0-3) 주입을 차단해
       // v3.156 설계대로 기획사명 폴백으로 내보낸다(단순 미선택 레거시 경로는 대표 폴백 유지).
       musicStore.setArtistExplicitSkip(true);
+      setSelectedVocalAge(null); // v3.330 [VocalAge]: 무아티스트는 목소리 나이 질문(230)에서 새로 받는다
       commitExchange(
         { type: 'user', text: '아티스트 없이 진행', step: 200 },
         [{ type: 'director', text: instrumental ? DIRECTOR_MESSAGES[5] : vocalQuestion }],
@@ -1236,6 +1248,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setUseVocal(true);
       setSelectedVocalGender(preset.gender);
       setSelectedVocalStyle(preset.style);
+      // v3.330 [VocalAge]: 아티스트 나이(자유 입력)를 목소리 나이로 — 해석 불가면 태그 없음
+      const artistAge = parseArtistAge(artist.age);
+      setSelectedVocalAge(artistAge);
+      console.info('[MusicGeneration] [VocalAge] 아티스트 나이 반영', { cid: artist.character_id, raw: artist.age, age: artistAge });
       setArtistVoiceApplied(true);
       commitExchange(
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
@@ -1467,7 +1483,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         100 // 서브 보컬 성별 선택 임시 step
       );
     } else {
-      advanceStep(style, 5);
+      // v3.330 [VocalAge]: 보컬 스타일 다음 = 목소리 나이(230) → 참고 곡(5)
+      commitExchange(
+        { type: 'user', text: style, step: 4 },
+        [{ type: 'director', text: VOICE_AGE_QUESTION }],
+        230
+      );
     }
   };
 
@@ -1484,7 +1505,20 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 듀엣 서브 보컬 스타일 선택
   const handleSubVocalStyleSelect = (style: string) => {
     setSubVocalStyle(style);
-    advanceStep(`서브 스타일: ${style}`, 5);
+    // v3.330 [VocalAge]: 듀엣도 서브 스타일 다음 = 목소리 나이(230)
+    commitExchange(
+      { type: 'user', text: `서브 스타일: ${style}`, step: 101 },
+      [{ type: 'director', text: VOICE_AGE_QUESTION }],
+      230
+    );
+  };
+
+  // v3.330 [VocalAge]: step 230 — 목소리 나이 선택 → 참고 곡(5)
+  const handleVoiceAgeSelect = (label: string) => {
+    const age = voiceAgeFromLabel(label);
+    setSelectedVocalAge(age);
+    console.info('[MusicGeneration] [VocalAge] 목소리 나이 선택', { label, age });
+    advanceStep(label, 5);
   };
 
   // Step 5: Reference artist/song
@@ -1784,6 +1818,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
     musicStore.setSubVocal(instrumental ? '' : subVocalGender);
     musicStore.setSubVocalStyle(instrumental ? '' : subVocalStyle);
+    // v3.330 [VocalAge]: 목소리 나이 — 연주곡·내 목소리(클론)는 제외(그 목소리 그대로)
+    const ageOn = !instrumental && !(personaOn && selectedPersonaId && !kidsNow);
+    musicStore.setVocalAge(ageOn ? selectedVocalAge : null);
     // v3.203: 곡 길이(duration)는 연주곡 전용(step 310) — 일반곡은 명시적으로 비워
     // 직전 연주곡 흐름의 값이 body.duration으로 새는 끈적 상태를 차단.
     if (!instrumental) musicStore.setDurationSec(null);
@@ -2296,6 +2333,27 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           </View>
         );
 
+      case 230:
+        // v3.330 [VocalAge]: 목소리 나이
+        return (
+          <View style={inputAreaStyle}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vocalStyleScroll} contentContainerStyle={styles.vocalStyleContainer}>
+              {VOICE_AGE_OPTIONS.map((o) => {
+                const on = voiceAgeLabel(selectedVocalAge) === o.label;
+                return (
+                  <TouchableOpacity
+                    key={o.label}
+                    style={[styles.vocalChip, on && styles.vocalChipSelected]}
+                    onPress={() => handleVoiceAgeSelect(o.label)}
+                  >
+                    <AppText style={[styles.vocalChipText, on && styles.vocalChipTextSelected]}>{o.label}</AppText>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        );
+
       case 5:
         // Reference - file upload
         return (
@@ -2678,7 +2736,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // 진행도 (step 100/101은 sub-vocal 임시 step → 표시상 마지막으로 처리)
   const totalSteps = DIRECTOR_MESSAGES.length;
-  const displayedStep = step >= 100 ? totalSteps : Math.min(step + 1, totalSteps);
+  // v3.330 [VocalAge]: 230(목소리 나이)은 보컬 스타일(4) 다음 칸으로 표시
+  const displayedStep = step === 230 ? 5 : step >= 100 ? totalSteps : Math.min(step + 1, totalSteps);
   const progressPct = (displayedStep / totalSteps) * 100;
 
   return (
