@@ -23,6 +23,9 @@ export interface QueueSource {
 /** setQueue 두 번째 인자 — track_ids 는 스토어가 tracks 에서 파생한다 */
 export type QueueSourceInput = Omit<QueueSource, 'track_ids'>;
 
+/** v3.338 [Reco]: 자동 이어듣기 추천곡 표식 — 재생목록(내 곡)과 구분, 듣고 지나가면 큐에서 빠진다 */
+export const isRecoTrack = (t: any): boolean => !!t?.__reco;
+
 interface PlayerState {
   sound: Audio.Sound | null;
   track: any | null;
@@ -153,7 +156,25 @@ export const usePlayerStore = create<PlayerState>()(
     const saveOwnerQueue = () => {
       const { queueOwnerId, queue, currentIndex, track, savedQueues } = get();
       if (!queueOwnerId) return;
-      set({ savedQueues: { ...savedQueues, [queueOwnerId]: { queue, currentIndex, track } } });
+      // v3.338 [Reco]: 추천곡(__reco)은 계정 재생목록 보관함에 남기지 않는다(지금 재생 중인 곡만 예외)
+      const kept: any[] = [];
+      let idx = -1;
+      queue.forEach((t, i) => {
+        if (isRecoTrack(t) && i !== currentIndex) return;
+        if (i === currentIndex) idx = kept.length;
+        kept.push(t);
+      });
+      set({ savedQueues: { ...savedQueues, [queueOwnerId]: { queue: kept, currentIndex: idx, track } } });
+    };
+    // v3.338 [Reco]: 지나간 추천곡(현재 위치 앞의 __reco)을 큐에서 뺀다 — 추천은 듣고 지나가면 재생목록에 쌓이지 않는다.
+    const pruneRecoBefore = (queue: any[], index: number): { queue: any[]; index: number } => {
+      if (!queue.some((t, i) => i < index && isRecoTrack(t))) return { queue, index };
+      let removed = 0;
+      const next = queue.filter((t, i) => {
+        if (i < index && isRecoTrack(t)) { removed += 1; return false; }
+        return true;
+      });
+      return { queue: next, index: index - removed };
     };
     return ({
       sound: null,
@@ -194,6 +215,16 @@ export const usePlayerStore = create<PlayerState>()(
       addToQueue: (track) => {
         if (!track?.id) return false;
         const { queue } = get();
+        // v3.338 [Reco]: 추천으로 들어와 있던 곡을 사용자가 직접 담으면 '내 곡'으로 전환(추천 표식 제거)
+        const recoIdx = queue.findIndex((t) => String(t?.id) === String(track.id) && isRecoTrack(t));
+        if (recoIdx >= 0) {
+          const q = queue.slice();
+          const { __reco, ...rest } = q[recoIdx] as any;
+          q[recoIdx] = rest;
+          set({ queue: q });
+          saveOwnerQueue();
+          return true;
+        }
         // v3.223 O-1: id 타입 혼재(number/string) 이중 추가 방지 — String 정규화 비교
         if (queue.some((t) => String(t?.id) === String(track.id))) return false; // 중복 방지
         set({ queue: [...queue, track] });
@@ -313,16 +344,21 @@ export const usePlayerStore = create<PlayerState>()(
         const next = _miniHideTags.size > 0;
         if (get().miniHidden !== next) set({ miniHidden: next });
       },
-      setCurrentIndex: (currentIndex) => { set({ currentIndex }); saveOwnerQueue(); },
+      setCurrentIndex: (currentIndex) => {
+        const pr = pruneRecoBefore(get().queue, currentIndex); // v3.338 [Reco]
+        set({ queue: pr.queue, currentIndex: pr.index });
+        saveOwnerQueue();
+      },
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
       toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
       cycleRepeat: () => set((s) => ({
         repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
       })),
       playTrackAtIndex: (index: number) => {
-        const { queue } = get();
-        if (index >= 0 && index < queue.length) {
-          set({ currentIndex: index, track: queue[index] });
+        const { queue: q0 } = get();
+        if (index >= 0 && index < q0.length) {
+          const pr = pruneRecoBefore(q0, index); // v3.338 [Reco]: 지나간 추천곡 정리
+          set({ queue: pr.queue, currentIndex: pr.index, track: pr.queue[pr.index] });
           saveOwnerQueue(); // v3.223 ②: 현재곡·인덱스 스냅샷 최신화 — 재시작 복원 시 현재 곡 정확
         }
       },

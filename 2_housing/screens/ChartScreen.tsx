@@ -12,7 +12,6 @@ import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { buildRelatedExclude } from '../services/playback';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -236,37 +235,9 @@ export default function ChartScreen() {
       usePlayerStore.getState().toggleShuffle();
       if (__DEV__) console.info('[ChartScreen] [추천] 잔존 셔플 해제 — 선택곡 기준 추천 순차 재생');
     }
-    seedRelatedIntoQueue(track);
+    // v3.338 [Reco](대표 10-11 '가' 안): 관련곡 5곡을 재생목록에 바로 심던 v3.267 동작 중단 — 고른 곡과 사용자가
+    // 담은 곡만 재생목록에 남고, 목록이 끝나면 추천곡이 1곡씩 '추천'으로 이어진다(듣고 지나가면 목록에서 빠짐).
     navigation.navigate('Player', { track });
-  };
-
-  // v3.267 [추천 이어듣기]: 선택곡 관련곡을 큐의 선택곡 뒤에 심는다(무인증 API·중복 자동 제거).
-  const seedRelatedIntoQueue = async (track: ChartTrack) => {
-    try {
-      // v3.286 [RelatedVariety]: 최근 30곡 + 현재 위치 ±5곡만 제외(큐 전체 제외 → 추천 고갈)
-      const excludeIds = buildRelatedExclude();
-      const res = await api.get(`/tracks/${track.id}/related`, {
-        params: { limit: 5, exclude: excludeIds.join(',') },
-      });
-      const rel: any[] = Array.isArray(res.data?.tracks) ? res.data.tracks : [];
-      if (!rel.length) {
-        if (__DEV__) console.info('[ChartScreen] [추천] 관련곡 없음', { id: track.id });
-        return;
-      }
-      // v3.286: 선택곡 뒤에 추천 순서대로 배치 — 이미 큐에 있던 곡은 그 자리에서 옮겨온다(누락·되감기 방지).
-      // 확인 중 사용자가 다른 곡으로 넘어갔으면 배치하지 않는다.
-      const _st = usePlayerStore.getState();
-      if (String(_st.queue[_st.currentIndex]?.id) !== String(track.id)) return;
-      let inserted = 0;
-      for (const t of [...rel].reverse()) {
-        if (usePlayerStore.getState().placeNextAfterCurrent(t) >= 0) inserted += 1;
-      }
-      console.info('[ChartScreen] [추천] 관련곡 삽입', {
-        id: track.id, source: res.data?.source, fetched: rel.length, inserted,
-      });
-    } catch (err: any) {
-      console.error('[ChartScreen] [추천] 관련곡 조회 실패(무해)', { id: track.id, status: err?.response?.status });
-    }
   };
 
   // v3.260 [MakeLike]: 차트 행 인라인 칩 탭 — CEO "점 세개 말고 차트에 보였으면".
@@ -296,7 +267,10 @@ export default function ChartScreen() {
       : activeTab === 'queue'
       ? (index === playerStore.currentIndex
         ? <View style={[trackRowStyles.rank, { alignItems: 'center' }]}><Feather name="play" size={14} color={colors.accent.primary} /></View>
-        : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
+        : (item as any).__reco
+          // v3.338 [Reco]: 자동 이어듣기 추천곡 — 번호 대신 '추천' 표식(내가 담은 곡과 구분)
+          ? <AppText variant="caption" center style={trackRowStyles.rank} tone="accent">추천</AppText>
+          : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
       : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
 
     // v3.207 ②: 신곡 탭 발매일 footer (created_at 상대 표기 — 필드 없으면 미표기)

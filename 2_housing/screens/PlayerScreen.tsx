@@ -1629,7 +1629,8 @@ export default function PlayerScreen({ route, navigation }: any) {
           {/* Modal은 루트 인셋 패딩 미상속 → 하단 인셋을 시트에 직접 보강(styles.queueSheet의 paddingBottom 대체) */}
           <TouchableOpacity style={[styles.queueSheet, { paddingBottom: insets.bottom + spacing.xxl }]} activeOpacity={1} onPress={() => {}}>
             <View style={styles.queueHead}>
-              <AppText variant="title3">재생목록 {playerStore.queue.length}</AppText>
+              {/* v3.338 [Reco]: 개수 = 내가 담은 곡만(추천곡 제외) */}
+              <AppText variant="title3">재생목록 {playerStore.queue.filter((t: any) => !t?.__reco).length}</AppText>
               <TouchableOpacity onPress={() => setShowQueue(false)} accessibilityLabel="닫기">
                 <Feather name="x" size={22} color={colors.text.muted} />
               </TouchableOpacity>

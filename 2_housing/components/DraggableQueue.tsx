@@ -95,7 +95,10 @@ export default function DraggableQueue({ data, currentIndex, onReorder, onPress,
                 : <AppText variant="footnote" tone="muted" style={styles.idx}>{i + 1}</AppText>}
               <View style={{ flex: 1 }}>
                 <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
-                <AppText variant="caption" tone="muted" numberOfLines={1}>{q?.artist_name || q?.uploader_nickname || '아티스트'}</AppText>
+                <AppText variant="caption" tone="muted" numberOfLines={1}>
+                  {q?.__reco ? <AppText variant="caption" tone="accent">추천 · </AppText> : null}
+                  {q?.artist_name || q?.uploader_nickname || '아티스트'}
+                </AppText>
               </View>
             </TouchableOpacity>
             {/* 드래그 핸들 — 이 영역을 잡고 끌어 순서 변경 (닫기 아이콘보다 앞쪽에 배치) */}

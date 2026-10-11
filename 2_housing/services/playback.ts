@@ -188,6 +188,7 @@ function preQueueRelatedIfLast(attempt = 0): void {
         ...t, id: t.id, title: t.title,
         artist_name: t.artist_name || t.uploader_nickname || 'AI',
         cover_image: t.cover_image || t.cover_image_url,
+        __reco: true, // v3.338 [Reco]: 추천곡 표식 — 재생목록(내 곡)에 쌓이지 않고 듣고 지나가면 빠진다
       }) >= 0;
       console.warn('[BGWeb] 관련곡 선적재', { for: cid, next: t.id, added, source: res.data?.source });
     } catch (err: any) {
@@ -650,6 +651,7 @@ export async function autoContinueWithRelated(
       title: t.title,
       artist_name: t.artist_name || t.uploader_nickname || 'AI',
       cover_image: t.cover_image || t.cover_image_url,
+      __reco: true, // v3.338 [Reco]: 추천곡 표식(재생목록 비누적)
     };
     // v3.286: 큐에 이미 있던 곡이면 현재 곡 바로 뒤로 옮겨 재생(종전: 앞쪽 옛 위치로 되감겨 같은 순서 반복)
     const idx = usePlayerStore.getState().placeNextAfterCurrent(nextTrack);
