@@ -124,6 +124,9 @@
 - ✅ EAS 자격 증명(production): 배포 인증서·프로비저닝 프로필 생성(만료 2027-10-09). APNs 푸시 키는 첫 iOS 빌드 때 생성.
 - ✅ 앱 설정: `ios.usesAppleSignIn`, `expo-apple-authentication` 설치(애플 로그인 엔타이틀먼트).
 - ✅ 애플 로그인: 앱 버튼(iOS) + 서버 운영 반영(2026-10-11), .env APPLE_* 4종. 애플 서버 알림 URL `https://api.maidol.ai.kr/api/auth/apple/notifications` (번들 ID의 Sign in with Apple 설정에 등록 필요)
+- ✅ 2026-10-11 iOS 빌드 1.3.2 (8) TestFlight 업로드(EAS build 27070be9) — 아이폰 푸시(APNs 키 7TLXF4D664, 대표가 expo.dev 웹에서 등록) 포함, Declared Age Range(앱 ID 기능 켬·프로필 재생성 5NJ4YPU436) 포함, 빌드 이미지 sdk-54(Xcode 26.0) 고정. expo-age-range Swift 6 컴파일 실패(build b4855e96)는 plugins/withAgeRangeSwift5.js 로 회피.
+  - 참고: EAS CLI 로 APNs 키를 생성·등록하려면 애플 ID 비밀번호 로그인이 필요(API 키로 불가) → 대표가 개발자 사이트에서 키 생성 + expo.dev 웹에서 업로드하는 방식으로 처리.
+  - 이전 빌드 1.3.2 (2)는 푸시·나이 확인 없는 빌드 — 심사 제출에는 (8) 이상 사용.
 - ⏳ 남은 일: (애플 로그인 완료), 권한 문구 한국어, ATS 축소, ATT·SKAdNetwork, iOS 보상형 광고 단위 연결(새 AdMob iOS 앱 ID 필요), ⭐ 인앱결제 정책 결정, 첫 빌드 → TestFlight.
 
 
