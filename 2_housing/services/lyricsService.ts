@@ -1,6 +1,7 @@
 import api from './api';
 // v3.228 W3: 작사 요청 추적 헤더(X-Gen-Request-Id)
 import { genRequestHeaders } from './genJobsService';
+import { adoptCreationSession, ensureCreationSession } from './creationLogService';
 
 // v3.110 — 백엔드 LyricsRequest(routes/generate.py) 계약과 1:1 매핑.
 // prompt = 곡 설명(주제·시점·구조 태그·키워드·추가요청), 나머지는 구조화 필드.
@@ -21,7 +22,16 @@ export const generateLyrics = async (params: {
 }, opts: { requestId?: string | null } = {}) => {
   // v3.228 W3: opts.requestId → 헤더 X-Gen-Request-Id(서버 원장 — 응답 유실 시 /jobs/req/{rid}로 회수,
   // 같은 id 재전송은 진행 중 409·완료 200 replayed 무과금). 구서버는 헤더를 무시.
-  const response = await api.post('/generate/lyrics/', params, { headers: genRequestHeaders(opts.requestId) });
+  // v3.339 [CopyrightLog]: 작사 요청도 곡과 같은 창작 세션에 기록(서버 GEN_REQUEST/RESPONSE engine=lyrics).
+  // 세션 확보 실패·비로그인이면 없이 보낸다(서버가 만들어 응답으로 돌려주면 그 세션을 이어 쓴다).
+  let sid: string | null = null;
+  try { sid = await ensureCreationSession(); } catch { sid = null; }
+  const response = await api.post('/generate/lyrics/', { ...params, ...(sid ? { session_id: sid } : {}) }, { headers: genRequestHeaders(opts.requestId) });
+  const serverSid = response.data?.session_id ? String(response.data.session_id) : null;
+  if (serverSid && serverSid !== sid) {
+    console.info('[CreationLog] 작사 응답 세션 채택', { had: !!sid });
+    void adoptCreationSession(serverSid);
+  }
   return response.data;
 };
 

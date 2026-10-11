@@ -4400,3 +4400,12 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 
 - 공식 계정(maidol_official) DM 회신 4건 발송(대표: "위 내용 처리한 다음 한꺼번에"): DDui(그동안 수정 + 남녀 옷 구분 "데이터 수집 과정 문제로 반영 중·시간 소요" + 「Soft night」 표절 신고 "진지하고 엄중하게 검토 — 표절 아님, 차트 게시 유지"), 오리쟁이(수정 목록 + 재생목록 추천곡 개선), 재히(꾸미기 v3.329 — 기존 대화가 없어 공식 대화 새로 생성), 지유(곡 내리기 방법·기념일 아이디어·재생목록 개선). 1차 실행이 재히 새 대화 id 키 오류로 2건 발송 후 중단 → 남은 2건만 재실행(중복 발송 없음, 최근 메시지 4건 확인).
 - 신고 94cf35bd(트랙 6abb888a 「Soft night」, DDui 09-29) → status dismissed, resolution no_violation, handled_by 공식 계정 + admin_logs report_dismiss.
+
+## v3.339 — 2026-10-11 — 창작 기록에 작사 생성 요청 추가 (서버·웹)
+
+대표: "작사도 넣어야지!" — 작사는 사람 지시(DIRECTION stage=lyrics)·AI 초안·사람 수정 판(lyrics_versions)은 남았지만 **가사 생성 요청 자체(모델·조건·다시 만들기 횟수)는 기록되지 않았음**.
+- 서버 POST /generate/lyrics/: 창작 세션 확보(ensure_session — 앱이 보낸 session_id 우선, 없으면 생성) → GEN_REQUEST(engine=lyrics, 요청 해시[같은 조건 재생성 판별]·세션 내 몇 번째 시도·프롬프트 길이·장르·분위기·모델 지정) → 결과 GEN_RESPONSE(성공/실패, 사용 모델, 가사 SHA-256·길이 — 원문은 앱이 ai_draft 판으로 커밋). 실패도 기록. 재기동 재개는 중복 기록 생략. 응답에 session_id.
+- human_summary(발매 확정 봉인)에 lyric_gen_requests(가사 생성·다시 만들기 횟수)·music_gen_requests 분리(구 이벤트 engine 없음=작곡).
+- 앱 lyricsService: 작사 요청에 현재 창작 세션 전달, 서버가 다른 세션을 돌려주면(확정된 세션 이후 새 세션) 채택 — 작사→작곡→발매가 한 세션 기록으로 이어짐.
+- 배포(v3339 generate.py·creation_log.py): md5·백업·격리 테스트(요청 모델·라우트·요약 분리·집계 함수)·진행 0건·재기동, health ok·oauth 302·작사 401(무인증)·집계 쿼리 운영 스모크 0, Traceback 0. tsc 0.
+- 실제 작사 1건 이후 이벤트 기록 확인 필요(과금·외부 API 호출이라 임의 실행 안 함).
