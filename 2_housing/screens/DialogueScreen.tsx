@@ -32,6 +32,7 @@ import { colors } from '../theme/colors';
 // v3.202(C): 창작 과정 기록 가이드 — recChip 탭·모드 안내 '자세히 보기'에서 PolicySheet로 표시
 import PolicySheet from '../components/PolicySheet';
 import { COPYRIGHT_RECORD_GUIDE } from '../constants/consentTexts';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const MAP_IMAGE = require('../assets/map_rendered.png');
 const MAP_WIDTH = 704;
@@ -84,6 +85,8 @@ type Props = NativeStackScreenProps<StudioStackParamList, 'Dialogue'>;
 let copyrightModeNoticeShown = false;
 
 export default function DialogueScreen({ route, navigation }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('Dialogue');
   const { directorType, directorName, directorRole, directorY, hasArtist } = route.params;
   const lyricsStore = useLyricsStore();
   const musicStore = useMusicStore();

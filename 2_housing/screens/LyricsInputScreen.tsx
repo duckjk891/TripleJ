@@ -45,6 +45,7 @@ import {
 } from '../utils/lyricsPrompt';
 import { STRUCTURE_INTRO, structureExampleBody } from '../utils/lyricsStructureGuide';
 import { showAlert } from '../utils/appAlert';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -130,6 +131,8 @@ const DURATION_LABEL_BY_SEC: Record<number, string> = {
 };
 
 export default function LyricsInputScreen({ navigation, route }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('LyricsInput');
   const insets = useSafeAreaInsets();
   // v3.256 [MakeLike]: 차트 시트 '이 곡 느낌으로 만들기' 직행 진입 — 프리셋(장르·분위기 선답)은
   // utils/makeLike가 v3.219 draft로 store에 심어두고, 이 파라미터는 안내 문구·재수화 키(nonce)만 담당.

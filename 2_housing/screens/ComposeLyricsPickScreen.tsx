@@ -27,6 +27,7 @@ import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsBookStore } from '../stores/lyricsBookStore';
 import { listLyricsAssets, migrateLocalLyricsToServer, saveLyricsAsset } from '../services/lyricsService';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -52,6 +53,8 @@ const SOURCE_LABEL: Record<PickEntry['source'], string> = {
 };
 
 export default function ComposeLyricsPickScreen({ navigation }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('ComposeLyricsPick');
   const insets = useSafeAreaInsets();
   const isLoggedIn = !!useAuthStore((s) => s.token);
   const localEntries = useLyricsBookStore((s) => s.entries);

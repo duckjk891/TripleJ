@@ -15,6 +15,7 @@ import { getMyConsents, recordConsents } from '../../services/authService';
 import { getOnboardingStatus } from '../../services/identityService';
 import { openPolicyPage } from '../../utils/policyLinks';
 import { showAlert } from '../../utils/appAlert';
+import { markPolicyAgreed } from '../../utils/policyConsent';
 
 export const POLICY_EFFECTIVE_DATE = '2026-10-18';
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -71,6 +72,7 @@ export default function PolicyReconsentGate() {
     try {
       await recordConsents([{ key: 'privacy', agreed: true }, { key: 'overseas', agreed: true }], CONSENT_VERSION);
       console.info('[PolicyReconsent] 동의 기록', { version: CONSENT_VERSION });
+      markPolicyAgreed(uid); // v3.341: 디렉터 게이트가 다시 묻지 않게
       setVisible(false);
     } catch (err: any) {
       console.error('[PolicyReconsent] 동의 기록 실패', { status: err?.response?.status });

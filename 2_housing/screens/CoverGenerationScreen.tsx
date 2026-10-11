@@ -60,6 +60,7 @@ import { finalizeArtistJob, type CoverReturnTarget } from '../services/generatio
 // v3.229 [DirectorResume]: 보존 대화 판정 공용(작업실 맵 바로 가기와 같은 규칙)
 import { isCoverPendingGeneration, hasCoverDialogueSnapshot, hasCoverUserProgress } from '../utils/directorResume';
 import { REFINE_STEPS, REFINE_TYPICAL_TEXT, refineStepIndex, type ProgressStep } from '../utils/refineProgress';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -445,6 +446,8 @@ function slotInfoLine(info: SlotArtistInfo | null | undefined): string {
 }
 
 export default function CoverGenerationScreen({ navigation, route }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('CoverGeneration');
   const insets = useSafeAreaInsets();
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
   // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)

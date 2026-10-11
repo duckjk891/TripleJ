@@ -4417,3 +4417,11 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 처리방침 게시: 외부 연동 세션에 대표 승인 전달(sunoapi.org 명칭·보관기간 '생성 처리 완료 시까지'·7일 사전 공지). 팝업 웹 배포는 게시 확인 후(옛 문서로 동의받지 않게).
 - 문의(issue_reports) 미완료 15건(접수 14·처리 중 1) → resolved(처리자 공식 계정, 메모 없던 건 "일괄 완료 처리(대표 지시 2026-10-11)", admin_logs issue_status_change). 남은 미완료 0.
 - 검증: 단위 4/4(재동의 판정), tsc 0.
+
+## v3.341 — 2026-10-11 — 디렉터(AI) 진입 시 처리방침 동의 게이트 (웹 — 처리방침 게시 확인 후 배포)
+
+대표: "모든 디렉터가 다 AI 이기 때문에 동의를 안 했다면 디렉터와 대화할 때 동의 팝업 — 동의 안 하면 대화가 취소되어 작업실로. 신규 회원은 상관없지?" (시행일과 무관하게 적용)
+- utils/policyConsent(ensurePolicyConsent·useAiConsentGate·goBackToStudio) + components/consent/PolicyConsentHost(App 루트): 디렉터 화면 10곳(Dialogue·LyricsInput·LyricsPromptReview·ComposeLyricsPick·ComposerSelect·MusicGeneration·CoverGeneration(앨범 커버 포함)·ArtistInput·ArtistCody·VideoDirector)에 들어올 때 국외 이전 동의 판이 최신이 아니면 "개인정보 처리방침 동의가 필요해요"(바뀐 점 5줄·전문 링크) — [동의하고 계속] = privacy·overseas 최신 판 기록 후 계속, [동의하지 않음] = 작업 취소·작업실(지도) 복귀. 동의 후엔 실행 중 캐시로 즉시 통과, 앱 시작 재동의 팝업에서 동의해도 캐시 공유. 동시 진입은 팝업 1개로 합침. 조회 실패는 통과(서버 장애로 작업 전체 차단 방지).
+- 신규 회원: 이메일 가입은 가입 동의가 최신 판(2026-10-11.v1)이라 게이트 안 뜸. 소셜 가입자(가입 동의 기록 없음)는 첫 디렉터 진입 때 동의받음. 비로그인 체험·어린이 계정(법정대리인 대상)은 제외.
+- 재동의 팝업 문구 = 외부 연동 세션 확정 요약 5줄(Anthropic·sunoapi.org/Wonder AI·Expo 알림·Apple/네이버·문의처, 시행 2026-10-18).
+- 검증: 단위 15/15(게스트·어린이 통과·최신 판 통과·옛 판 팝업·거절 미기록·동시 진입 합침·작업실 이동·동의 기록·캐시·시작 팝업 공유), tsc 0.

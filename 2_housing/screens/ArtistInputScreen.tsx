@@ -60,6 +60,7 @@ import {
   type AnswerEditState,
   type ArtistStep,
 } from '../utils/artistAnswerEdit';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
@@ -144,6 +145,8 @@ function PrevPhotoButton({ objectName, onPress }: { objectName: string; onPress:
 }
 
 export default function ArtistInputScreen({ navigation, route }: any) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('ArtistInput');
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const titleLabel = user?.display_title || '대표';

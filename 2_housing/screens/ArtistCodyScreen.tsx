@@ -47,6 +47,7 @@ import {
   type CodyViewState,
   wornItemsToSelection,
 } from '../utils/codyCatalog';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 // v3.206: 카테고리 개편 — Cat·CATEGORIES·ACCESSORY_SUBCATS는 utils/codyCatalog.ts.
 const GRID_BASIC_CATS: Cat[] = ['상의', '하의', '신발'];
@@ -117,6 +118,8 @@ const toDraftItem = (i: AdItem): CodyDraftItem => ({
 });
 
 export default function ArtistCodyScreen({ navigation, route }: any) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('ArtistCody');
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
   // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침) —

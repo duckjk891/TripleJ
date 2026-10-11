@@ -43,6 +43,7 @@ import { GUEST_TEXT, isGuestNow, isGuestTrialUsed } from '../utils/guestTrial';
 import { STRUCTURE_EXAMPLES } from '../utils/lyricsStructureGuide';
 import { logCreationEvent, flushCreationEvents } from '../services/creationLogService';
 import { buildLyricsDirection } from '../utils/creationDirection';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -66,6 +67,8 @@ type EditField =
 type Props = NativeStackScreenProps<any, 'LyricsPromptReview'>;
 
 export default function LyricsPromptReviewScreen({ navigation }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('LyricsPromptReview');
   const insets = useSafeAreaInsets();
   const store = useLyricsStore();
   const { user } = useAuthStore();

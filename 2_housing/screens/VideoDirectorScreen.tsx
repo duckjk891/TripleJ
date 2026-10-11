@@ -69,6 +69,7 @@ import {
 import { savedTrackStreamUrl } from '../services/musicService';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 import { usePlayerStore } from '../stores/playerStore';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -223,6 +224,8 @@ const INITIAL_VIDEO_GREETING: ChatMessage = {
 };
 
 export default function VideoDirectorScreen({ navigation, route }: any) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('VideoDirector');
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
   // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)
   const inputAreaStyle = [styles.inputArea, miniVisible && { marginBottom: MINI_PLAYER_HEIGHT }];

@@ -60,6 +60,7 @@ import { guardGeneration } from '../services/generationTracker';
 import { computeComposeLyricsKey, getResumableComposeDraft } from '../utils/directorResume';
 import { VOICE_AGE_OPTIONS, voiceAgeFromLabel, voiceAgeLabel, parseArtistAge } from '../utils/vocalAge';
 import { ensureVoiceAiConsent } from '../utils/voiceConsent';
+import { useAiConsentGate } from '../utils/policyConsent';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -168,6 +169,8 @@ type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
 // utils/directorResume로 이동 — 작업실 맵 바로 가기와 같은 규칙을 쓴다(동작 불변).
 
 export default function MusicGenerationScreen({ navigation }: Props) {
+  // v3.341 [PolicyConsentGate]: 디렉터(AI) 작업 — 개정 처리방침 미동의면 동의 팝업, 거절 시 작업실로
+  useAiConsentGate('MusicGeneration');
   const insets = useSafeAreaInsets();
   const miniVisible = useMiniPlayerVisible(); // v3.248 B2: 미니 떠 있으면 하단 영역 +70 들어올림
   // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 입력영역을 미니 높이만큼 들어올림(가림 방지)

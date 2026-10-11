@@ -118,6 +118,7 @@ import WelcomeGuide from './components/WelcomeGuide'; // v3.276: 첫 실행 이�
 import UpdateGate from './components/UpdateGate'; // v3.324 앱 업데이트 안내(필수·선택)
 import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333 소셜 가입 마무리(서버 스위치 켜기 전엔 미표시)
 import PolicyReconsentGate from './components/consent/PolicyReconsentGate'; // v3.340 처리방침 재동의
+import PolicyConsentHost from './components/consent/PolicyConsentHost'; // v3.341 디렉터 진입 동의 게이트
 import { notifyBootAuthSettled } from './utils/bootAuth';
 // v3.232 K4(B8): 어린이 계정 첫 로그인 1회 온라인 안전 안내(일반 사용자 무동작)
 import KidsSafetyNotice from './components/kids/KidsSafetyNotice';
@@ -1049,6 +1050,7 @@ export default function App() {
           <UpdateGate />
           <SignupCompleteGate />
           <PolicyReconsentGate />
+          <PolicyConsentHost />
           <VoiceConsentHost />
           <LoginModalHost />
           <AppDialogHost />
