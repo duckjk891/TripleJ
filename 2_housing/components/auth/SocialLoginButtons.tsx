@@ -1,4 +1,4 @@
-// [SocialLoginButtons] 소셜 로그인 2종(구글/카카오) — MAIDOL SocialLoginButtons 이식. (v3.194: 네이버 제거)
+// [SocialLoginButtons] 소셜 로그인(구글/카카오/네이버·iOS 애플) — MAIDOL SocialLoginButtons 이식. (v3.194 네이버 제거 → v3.335 재도입)
 // 구분선 "또는" + 프로바이더 색상 버튼. SDK 미사용: 백엔드 /auth/oauth/{p}/login 리다이렉트 방식.
 // v3.194: 유해한 프리플라이트 api.get 제거(백엔드 OAuth state 선점/소모 방지) + 네이티브 앱 복귀 경로:
 //   웹    → 전체 페이지 이동, 콜백은 App.tsx 해시(#token=) 처리.
@@ -7,6 +7,7 @@
 //   백엔드 요청 문서: 2_housing/백엔드_요청_소셜로그인_앱복귀.md
 import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import * as WebBrowser from 'expo-web-browser';
 import { showAlert } from '../../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../../services/api';
@@ -29,8 +30,18 @@ const PROVIDERS = [
   { key: 'google', label: 'Google 로 계속하기', bg: '#ffffff', fg: '#1f1f1f', border: '#dadce0' },
   { key: 'kakao', label: '카카오로 계속하기', bg: '#FEE500', fg: '#191600', border: '#FEE500' },
   // v3.335: 네이버 재도입 — 서버에 키가 설정됐을 때만 표시(GET /auth/oauth/providers). 네이버 브랜드 색.
-  { key: 'naver', label: '네이버로 계속하기', bg: '#03C75A', fg: '#ffffff', border: '#03C75A' },
+  // v3.347: 네이버 로그인 버튼 가이드(검수 필수) — 녹색 바탕 + 흰색 N 로고 + "네이버로 로그인"
+  { key: 'naver', label: '네이버로 로그인', bg: '#03C75A', fg: '#ffffff', border: '#03C75A' },
 ] as const;
+
+/** v3.347 네이버 공식 N 로고(흰색) — 로그인 버튼 가이드 */
+function NaverLogo({ size = 16 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" accessibilityElementsHidden importantForAccessibility="no">
+      <Path d="M13.5608 10.7042L6.14769 0H0V20H6.43923V9.29576L13.8523 20H20V0H13.5608V10.7042Z" fill="#FFFFFF" />
+    </Svg>
+  );
+}
 
 // v3.335 [OAuthProviders]: 서버에 설정된 소셜 로그인만 노출 — 구글·카카오는 조회 실패해도 항상 표시(기존 동작),
 // 네이버는 서버가 true 라고 할 때만. 앱 실행 동안 1회 조회 캐시.
@@ -300,6 +311,7 @@ export default function SocialLoginButtons({
           disabled={!!busy}
           accessibilityLabel={p.label}
         >
+          {p.key === 'naver' && busy !== p.key ? <View style={styles.logoSlot}><NaverLogo /></View> : null}
           {busy === p.key
             ? <ActivityIndicator size="small" color={p.fg} />
             : <AppText variant="bodyStrong" style={{ color: p.fg }}>{p.label}</AppText>}
@@ -325,4 +337,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   appleBtn: { height: 46, width: '100%' },
+  logoSlot: { position: 'absolute', left: spacing.lg, top: 0, bottom: 0, justifyContent: 'center' }, // v3.347 로고 왼쪽·문구 가운데
 });

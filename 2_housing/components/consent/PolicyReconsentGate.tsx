@@ -25,7 +25,7 @@ export const POLICY_CHANGE_LINES = [
   'AI 글 생성(가사·번역·아티스트 설명)을 위해 입력한 글이 Anthropic, PBC(미국)로 이전돼요.',
   '음악 생성 협력사를 sunoapi.org Inc.(미국)로 밝히고, Wonder AI(미국)의 이용 목적에 작곡을 추가했어요.',
   '앱 알림을 허용하면 기기 알림 토큰과 알림 내용이 Expo(650 Industries, Inc., 미국)를 거쳐 발송돼요(알림을 끄면 삭제).',
-  'Apple·네이버(제공 시) 계정으로 가입할 수 있게 되어 수집 항목에 반영했어요.',
+  'Apple·네이버 계정으로도 가입할 수 있어요. 소셜 로그인으로는 닉네임·이메일·프로필 사진만 받고, 생년월일·성별 등은 받지 않아요.',
   '문의처가 maidol_official@lotusai.co.kr 로 바뀌었어요.',
 ]
 
