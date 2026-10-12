@@ -346,9 +346,11 @@ export default function SignupCompleteGate() {
 
             {needBirth && status.identity.enabled && (
               <View style={styles.section}>
-                <AppText variant="subtitle">나이 확인</AppText>
+                <AppText variant="subtitle">{status.identity_required ? '휴대폰 본인확인' : '나이 확인'}</AppText>
                 <AppText variant="footnote" tone="secondary" style={{ marginVertical: spacing.sm }}>
-                  휴대폰 본인확인으로 나이를 확인해요. 이름·생년월일·성별만 확인하고, 휴대폰 번호는 저장하지 않아요.
+                  {status.identity_required
+                    ? 'MAIDOL 은 한 분당 한 계정으로 운영돼요. 가입하신 방법(이메일·소셜)과 관계없이 휴대폰 본인확인을 한 번 해 주세요. 이름·생년월일·성별만 확인하고, 휴대폰 번호는 저장하지 않아요.'
+                    : '휴대폰 본인확인으로 나이를 확인해요. 이름·생년월일·성별만 확인하고, 휴대폰 번호는 저장하지 않아요.'}
                 </AppText>
                 <TouchableOpacity style={[styles.primary, (!consentsOk || verifying) && styles.disabled]} onPress={submitWithIdentity} disabled={!consentsOk || verifying}>
                   {verifying ? <ActivityIndicator color="#fff" /> : <AppText style={styles.primaryText}>휴대폰 본인확인</AppText>}

@@ -4542,3 +4542,8 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - QR 에는 우리 주소 https://maidol.ai.kr/c/{곡ID} 만 담는다 → maidol.ai.kr(_redirects) 가 곡 공유 화면(api.maidol.ai.kr/track/{곡ID}?src=card)으로 302(임시) 연결 → 웹 플레이어에서 그 곡 + "나도 이런 곡 만들기". 302 라 휴대폰이 목적지를 기억하지 않아, 나중에 스토어 연결로 바꿔도 인쇄한 QR 그대로 동작(_redirects 한 줄 또는 서버 공유 화면만 수정).
 - QR 생성 스크립트 design_assets/player_card_src/make_card_qr.js(곡ID·파일이름 → design_assets/qr/{이름}_QR.svg, 벡터·오류 복원 Q·여백 4칸·레이어 QR_배경/QR_코드). 샘플: 분신술·일단해.
 - 검증: QR 판독(jsQR) 2/2 원래 주소 일치, maidol.ai.kr/c/{id} → 302 → 공유 화면 → 웹 플레이어 「분신술」 실화면 확인.
+
+## v3.354 — 2026-10-12 — 신규 가입 휴대폰 본인확인 필수 안내 문구 (웹)
+
+외부 연동 세션 int5 운영 반영(대표 "배포, 게시", 10:19 UTC): ① 계정 통합은 ACCOUNT_MERGE_ENABLED_FROM=2026-10-19T00:00+09:00 에 재기동 없이 자동 활성(/identity/config account_merge_enabled 도 그때 true → v3.352 ⭐ 유도 팝업 자동 시작), 처리방침 통합 조항 게시. ② (대표 결정) 이메일 포함 모든 신규 가입 휴대폰 본인확인 필수 — IDENTITY_REQUIRED_SINCE 이후 가입·미인증 계정은 onboarding required·identity_required·birth_date_missing=true → 가입 마무리 화면이 [휴대폰 본인확인]을 띄움(구 네이티브 빌드 포함, 앱 변경 불필요). 기존 회원·운영 계정·보호자 확인 완료 어린이 계정 제외.
+- 앱 SignupCompleteGate: identity_required 면 제목 "휴대폰 본인확인" + "한 분당 한 계정 — 가입 방법(이메일·소셜)과 관계없이 한 번" 안내(종전 '나이 확인' 문구는 그 외 경우 유지). tsc 0.

@@ -14,6 +14,8 @@ export interface OnboardingStatus {
   is_verified: boolean;
   /** v3.348: 만 14세 미만·보호자 동의 계정 — '만 14세 이상 확인' 항목을 묻지 않는다(구서버 미제공 = false) */
   is_minor?: boolean;
+  /** v3.354: 신규 가입(이메일 포함) 휴대폰 본인확인 필수(서버 IDENTITY_REQUIRED_SINCE 이후 가입·미인증) */
+  identity_required?: boolean;
   identity: { enabled: boolean; provider: string | null };
 }
 
