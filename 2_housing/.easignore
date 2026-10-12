@@ -46,3 +46,6 @@ android/.gradle/
 android/app/build/
 *.log
 *.tmp
+
+# 비밀값 폴더(로컬 전용) — 빌드 업로드 제외
+credentials/
