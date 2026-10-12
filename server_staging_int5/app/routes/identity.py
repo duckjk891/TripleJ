@@ -55,7 +55,11 @@ def _onboarding_enabled() -> bool:
 
 
 def _merge_enabled() -> bool:
-    return (os.getenv("ACCOUNT_MERGE_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
+    """ACCOUNT_MERGE_ENABLED=true 이거나, ACCOUNT_MERGE_ENABLED_FROM(ISO 시각, 처리방침 시행일) 이 지났으면 켜짐 — 재기동 없이 자동 시작."""
+    if (os.getenv("ACCOUNT_MERGE_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    since = _parse_since("ACCOUNT_MERGE_ENABLED_FROM")
+    return bool(since and datetime.now(timezone.utc) >= since)
 
 
 MERGE_TTL = timedelta(hours=24)  # 통합 제안 유효 시간 — 지나면 다시 본인확인
@@ -110,6 +114,33 @@ async def identity_config():
             "account_merge_enabled": _merge_enabled()}  # [AccountMerge] 앱 ⭐ 본인인증 유도 팝업은 true 일 때만
 
 
+def _parse_since(name: str) -> Optional[datetime]:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        logger.warning("[identity] bad %s", name)
+        return None
+
+
+async def _identity_required(conn, user_id, row) -> bool:
+    """[EmailIdentity 2026-10-12] IDENTITY_REQUIRED_SINCE 이후 가입한 계정(가입 방법 무관)은 본인확인 전까지 가입 마무리.
+    기존 회원은 그대로(⭐ 유도 팝업 대상). 예외: 운영·공식 계정, 보호자가 본인확인 후 동의한 어린이 계정."""
+    since = _parse_since("IDENTITY_REQUIRED_SINCE")
+    if not since or not iv.enabled() or (row and row["is_verified"]):
+        return False
+    u = await conn.fetchrow("SELECT created_at, role FROM users WHERE id = $1", user_id)
+    if not u or not u["created_at"] or u["created_at"] < since or (u["role"] or "user") != "user":
+        return False
+    guardian_ok = await conn.fetchval(
+        """SELECT 1 FROM guardian_consents WHERE child_user_id = $1 AND status = 'agreed'
+           AND guardian_verified_at IS NOT NULL LIMIT 1""", user_id)
+    return not guardian_ok
+
+
 @router.get("/onboarding")
 async def onboarding_status(current_user=Depends(get_current_user), conn=Depends(get_pg)):
     """소셜 가입 마무리 필요 여부. 스위치 꺼짐이면 required=false(앱은 아무것도 띄우지 않음)."""
@@ -132,16 +163,20 @@ async def onboarding_status(current_user=Depends(get_current_user), conn=Depends
         ))
     missing = [k for k in REQUIRED_CONSENT_KEYS if k not in agreed and not (is_minor and k == "age14")]
     birth_missing = not (row and row["birth_date"])
+    identity_required = await _identity_required(conn, user_id, row)
     enabled = _onboarding_enabled()
-    required = enabled and (bool(missing) or birth_missing)
+    # [EmailIdentity 2026-10-12] 신규 가입은 이메일·소셜 모두 휴대폰 본인확인 필수 — 앱(구 빌드 포함)은
+    # birth_date_missing 일 때 「휴대폰 본인확인」을 띄우므로, 본인확인 전이면 생년월일을 '확인 안 됨'으로 알린다.
+    required = enabled and (bool(missing) or birth_missing or identity_required)
     if required:
-        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s minor=%s",
-                    _u8(user_id), missing, birth_missing, is_minor)
+        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s identity=%s minor=%s",
+                    _u8(user_id), missing, birth_missing, identity_required, is_minor)
     return {
         "enabled": enabled,
         "required": required,
         "missing_consents": missing,
-        "birth_date_missing": birth_missing,
+        "birth_date_missing": birth_missing or (identity_required and iv.enabled()),
+        "identity_required": identity_required,
         "is_verified": bool(row and row["is_verified"]),
         "is_minor": is_minor,  # v3.348 앱: 마무리 화면에서 age14 항목 숨김
         "identity": {"enabled": iv.enabled(), "provider": iv.provider_name() if iv.enabled() else None},

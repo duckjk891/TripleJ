@@ -5,3 +5,9 @@
 테스트: `_tests/test_int5_merge.py` 48/48 — 임시 DB(운영 스키마·인덱스 복제, 데이터 없음, `_tests/reset_dbs.sh`·`run_tests.sh`). int4 보호자 테스트 회귀 통과.
 배포: md5 가드(MD5SUMS.orig) → 백업 pre_int5_* → 두 파일 복사 → 정식 재기동 절차(진행 작업 4종 0건 확인).
 켜기: 처리방침 제1조·제8조 ④ 시행일 이후 + 앱 통합 화면 배포 후, 대표 승인.
+
+## 운영 반영 (2026-10-12 10:19 UTC)
+- 백업 /home/ubuntu/maidol/backups/pre_int5_20261012T101748Z, identity.py.bak_pre_int5
+- 운영 md5: identity.py b0fba55a997cf80c69bd38930b1c238d, account_merge.py 83c952ef62c67205e7581fc98c4267e7
+- .env 추가: IDENTITY_REQUIRED_SINCE=2026-10-12T10:18:05+00:00, ACCOUNT_MERGE_ENABLED_FROM=2026-10-19T00:00:00+09:00
+- 테스트: test_int5_merge 48/48, test_int5_onboarding ALL PASS, int4 보호자 회귀 ALL PASS
