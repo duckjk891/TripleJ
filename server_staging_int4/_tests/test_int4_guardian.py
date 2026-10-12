@@ -45,6 +45,11 @@ async def main():
     c3=Conn(); c3.gc["guardian_verified_at"]="now"
     st=await ri.guardian_identity_status("tok",conn=c3); ok("상태: verified true·reason 없음·개인정보 없음", st["guardian_verified"] is True and st["reason"] is None and "guardian_name" not in st)
     c4=Conn(); st=await ri.guardian_identity_status("tok",conn=c4); ok("상태: 실패 시 reason not_adult", st["guardian_verified"] is False and st["reason"]=="not_adult")
+    c5=Conn(); c5.last={"status":"cancelled","error":None,"reason":None}; st=await ri.guardian_identity_status("tok",conn=c5); ok("상태: 취소 시 reason cancelled", st["reason"]=="cancelled")
+    c6=Conn(); r=await ri.guardian_identity_start(ri.GuardianStartBody(consent_token="tok", return_url="https://maidol.ai.kr/guardian/?token=tok&identity=done&x=1"),conn=c6)
+    ok("시작: 전달된 보호자 페이지 return_url 사용", c6.inserted[0][3].endswith("&x=1"))
+    c7=Conn(); r=await ri.guardian_identity_start(ri.GuardianStartBody(consent_token="tok", return_url="https://evil.example/"),conn=c7)
+    ok("시작: 외부 return_url 무시(기본값)", c7.inserted[0][3].startswith("https://maidol.ai.kr/guardian/?token=tok"))
     ok("보호자 페이지 복귀 주소 허용", any("https://maidol.ai.kr/guardian/?x".startswith(p) for p in ri._ALLOWED_RETURN_PREFIXES))
 asyncio.run(main())
 print("RESULT:","ALL PASS" if not FAILS else FAILS); sys.exit(1 if FAILS else 0)

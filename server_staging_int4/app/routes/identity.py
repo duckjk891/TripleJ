@@ -310,6 +310,7 @@ async def _apply_guardian_result(conn, row, provider_name: str, result: "iv.Iden
 
 class GuardianStartBody(BaseModel):
     consent_token: str
+    return_url: Optional[str] = None   # 보호자 페이지 복귀 주소(https://maidol.ai.kr/guardian/ 로 시작할 때만)
 
 
 async def _pending_consent(conn, token: str):
@@ -330,7 +331,9 @@ async def guardian_identity_start(body: GuardianStartBody, conn=Depends(get_pg))
     if not gc or gc["status"] != "pending":
         return JSONResponse(status_code=404, content={"error": "유효하지 않거나 이미 처리된 보호자 동의 요청이에요."})
     rid = secrets.token_urlsafe(18)
-    ret = "https://maidol.ai.kr/guardian/?" + urlencode({"token": body.consent_token.strip(), "identity": "done"})
+    ret = (body.return_url or "").strip()
+    if not ret.startswith("https://maidol.ai.kr/guardian/"):
+        ret = "https://maidol.ai.kr/guardian/?" + urlencode({"token": body.consent_token.strip(), "identity": "done"})
     await conn.execute(
         """INSERT INTO identity_verifications (id, user_id, purpose, provider, return_url, consent_id)
            VALUES ($1, $2, 'guardian', $3, $4, $5)""",
@@ -351,7 +354,7 @@ async def guardian_identity_status(consent_token: str, conn=Depends(get_pg)):
         "SELECT status, error, reason FROM identity_verifications WHERE consent_id = $1 ORDER BY created_at DESC LIMIT 1", gc["id"])
     verified = gc["guardian_verified_at"] is not None
     return {"consent_status": gc["status"], "guardian_verified": verified, "method": gc["method"],
-            "reason": (None if verified else (last["reason"] if last else None)),
+            "reason": (None if verified else ((last["reason"] or ("cancelled" if last["status"] == "cancelled" else None)) if last else None)),
             "last_attempt": ({"status": last["status"], "error": last["error"]} if last else None)}
 
 
