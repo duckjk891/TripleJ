@@ -69,7 +69,10 @@ export default function SignupCompleteGate() {
 
   const needConsents = status.missing_consents.length > 0;
   const needBirth = status.birth_date_missing;
-  const consentsOk = !needConsents || REQUIRED_CONSENT_KEYS.every((k) => consents[k]);
+  // v3.348: 어린이(보호자 동의) 계정은 '만 14세 이상 확인'을 보이지도·요구하지도·기록하지도 않는다
+  const consentKeys = status.is_minor ? SIGNUP_CONSENT_KEYS.filter((k) => k !== 'age14') : SIGNUP_CONSENT_KEYS;
+  const requiredKeys = status.is_minor ? REQUIRED_CONSENT_KEYS.filter((k) => k !== 'age14') : REQUIRED_CONSENT_KEYS;
+  const consentsOk = !needConsents || requiredKeys.every((k) => consents[k]);
 
   const finish = async () => {
     const s = await getOnboardingStatus();
@@ -88,7 +91,7 @@ export default function SignupCompleteGate() {
 
   const saveConsents = async () => {
     if (!needConsents) return;
-    await recordConsents(SIGNUP_CONSENT_KEYS.map((k) => ({ key: k, agreed: !!consents[k] })), CONSENT_VERSION);
+    await recordConsents(consentKeys.map((k) => ({ key: k, agreed: !!consents[k] })), CONSENT_VERSION);
   };
 
   const submitWithBirth = async () => {
@@ -167,7 +170,7 @@ export default function SignupCompleteGate() {
             {needConsents && (
               <View style={styles.section}>
                 <AppText variant="subtitle" style={{ marginBottom: spacing.sm }}>약관 동의</AppText>
-                <ConsentList value={consents} onChange={setConsents} />
+                <ConsentList value={consents} onChange={setConsents} keys={consentKeys} />
               </View>
             )}
 

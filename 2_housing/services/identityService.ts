@@ -12,6 +12,8 @@ export interface OnboardingStatus {
   missing_consents: string[];
   birth_date_missing: boolean;
   is_verified: boolean;
+  /** v3.348: 만 14세 미만·보호자 동의 계정 — '만 14세 이상 확인' 항목을 묻지 않는다(구서버 미제공 = false) */
+  is_minor?: boolean;
   identity: { enabled: boolean; provider: string | null };
 }
 

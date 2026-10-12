@@ -4479,3 +4479,12 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - SocialLoginButtons: 네이버 버튼 = #03C75A 바탕 + 왼쪽 흰색 N 로고(react-native-svg, 네이버 공식 N 형태) + "네이버로 로그인"(가운데). 로딩 중엔 로고 숨김.
 - 처리방침 재동의 팝업 요약: 처리방침 제2조 ② 축소(닉네임·이메일·프로필 사진만, 생년월일·성별 등 미수령)에 맞춰 "Apple·네이버 계정으로도 가입할 수 있어요. 소셜 로그인으로는 닉네임·이메일·프로필 사진만 받고, 생년월일·성별 등은 받지 않아요."
 - 검증: tsc 0, 웹 실화면(로그인 모달) 확인.
+
+## v3.348 — 2026-10-12 — 가입 마무리 게이트: 어린이(보호자 동의) 계정에 '만 14세 이상 확인' 요구 제거 (서버·웹)
+
+외부 연동 세션 보고(다날 본인확인 운영 반영 후 SOCIAL_ONBOARDING_ENABLED 켜기 전 차단 요소): GET /api/identity/onboarding 이 필수 동의 4종(terms·privacy·overseas·age14) 중 하나라도 없으면 모든 계정에 required=true → 스위치를 켜는 순간 보호자 동의로 가입한 어린이 계정(심사용 playreview_child 포함 — 오늘 age14=false 로 정정됨)이 "만 14세 이상 확인"을 요구받아 마무리 화면에 갇힘.
+- 서버 routes/identity.py onboarding: 만 14세 미만(생년월일) 또는 보호자 가입 동의(guardian_consents signup·agreed) 계정은 age14 를 missing 에서 제외, 응답에 is_minor 추가.
+- 앱 SignupCompleteGate: is_minor 면 동의 목록에서 '만 14세 이상' 항목을 숨기고 필수 판정·기록에서도 제외(ConsentList keys prop 추가).
+- 검증: 운영 DB 읽기 전용(스위치 켠 것으로 가정) — 심사용어린이 required=false·missing [] ·is_minor true, 심사용어른 required=false, 생년월일상 어린이 계정 전원 age14 요구 0건. tsc 0.
+- 서버 배포(v3348 identity.py — 외부 연동 세션 다날 반영본 기준 md5 가드): 백업·이미지 pre-v3348-live·진행 0건·재기동, health ok·oauth google/kakao/naver 302·identity config(danal, social_onboarding false) 그대로·Traceback 0.
+- 남은 결정: 본인확인 결과 만 14세 미만으로 나온 소셜 가입자 → 현재는 "보호자 동의 절차가 열리면 안내 + 로그아웃". 기존 계정에 보호자 동의를 붙이는 경로(서버 신규 + 보호자 연락 방식)는 대표 결정 필요.

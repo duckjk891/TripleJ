@@ -14,15 +14,17 @@ export type ConsentState = Record<string, boolean>;
 interface Props {
   value: ConsentState;
   onChange: (next: ConsentState) => void;
+  /** v3.348: 표시할 항목(기본 가입 5항목) — 보호자 동의 어린이 계정은 age14 제외 */
+  keys?: readonly string[];
 }
 
-export default function ConsentList({ value, onChange }: Props) {
+export default function ConsentList({ value, onChange, keys = SIGNUP_CONSENT_KEYS }: Props) {
   const [openKey, setOpenKey] = useState<string | null>(null);
 
-  const allChecked = SIGNUP_CONSENT_KEYS.every((k) => value[k]);
+  const allChecked = keys.every((k) => value[k]);
   const toggleAll = () => {
     const next: ConsentState = {};
-    SIGNUP_CONSENT_KEYS.forEach((k) => { next[k] = !allChecked; });
+    keys.forEach((k) => { next[k] = !allChecked; });
     onChange(next);
   };
   const toggleOne = (k: string) => onChange({ ...value, [k]: !value[k] });
@@ -35,7 +37,7 @@ export default function ConsentList({ value, onChange }: Props) {
         <AppText variant="bodyStrong">전체 동의</AppText>
       </TouchableOpacity>
 
-      {SIGNUP_CONSENT_KEYS.map((k) => {
+      {keys.map((k) => {
         const c = (CONSENTS as any)[k];
         const checked = !!value[k];
         const open = openKey === k;
