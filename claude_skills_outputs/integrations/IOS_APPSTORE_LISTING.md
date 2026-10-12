@@ -234,6 +234,7 @@
 [로그인]
 - 제공한 데모 계정(이메일)으로 로그인해 주세요. 로그인 화면에서 Sign in with Apple, Google, 카카오 로그인도 사용할 수 있습니다.
 - 데모 계정에는 기능 체험에 필요한 스타(앱 내 무료 포인트)가 미리 지급되어 있고, 미리 만든 아티스트와 곡이 있습니다.
+- Apple·Google·카카오·네이버로 새로 가입하면 가입 마무리 단계에서 한국 법령에 따른 휴대폰 본인확인(한국 이동통신사 명의 휴대폰 필요)을 거쳐야 하므로, 심사에는 제공한 데모 계정을 사용해 주세요. 데모 계정은 가입 절차가 모두 끝난 상태입니다.
 
 [핵심 기능 확인 방법]
 1) 곡 만들기: 하단 「작업실」 탭 → 작사 디렉터와 대화로 가사 생성 → 작곡 디렉터에서 장르·분위기 선택 → 완성곡 생성. AI 생성은 외부 서버에서 처리되어 보통 1~3분 걸리며, 다른 화면으로 이동해도 계속 진행되고 완료되면 알려드립니다.
@@ -264,6 +265,11 @@
 [Demo accounts / 데모 계정]
 - Adult: playreview@lotusai.co.kr (entered in the Sign-In fields above)
 - Child (under 13, guardian-consented): playreview_child@lotusai.co.kr — password: [대표님 입력]
+
+[Please use the demo accounts — Korean phone identity verification]
+- Under Korean law, a new account created with Sign in with Apple, Google, Kakao or Naver must complete mobile phone identity verification (provided by Danal, a licensed Korean identity verification agency) to finish sign-up. This requires a mobile phone registered with a Korean carrier, so it cannot be completed outside Korea.
+- Sign in with Apple itself works: it signs the user in and creates the account, and then shows the identity verification step.
+- Please use the demo accounts above. Both have already finished sign-up (the child account has also completed guardian consent), so every feature can be reviewed without this step.
 
 [Age-based restrictions on iOS (Declared Age Range)]
 - The first time a user opens a social screen, the app requests the user's age range through Apple's Declared Age Range API (system prompt).
