@@ -4488,3 +4488,10 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 검증: 운영 DB 읽기 전용(스위치 켠 것으로 가정) — 심사용어린이 required=false·missing [] ·is_minor true, 심사용어른 required=false, 생년월일상 어린이 계정 전원 age14 요구 0건. tsc 0.
 - 서버 배포(v3348 identity.py — 외부 연동 세션 다날 반영본 기준 md5 가드): 백업·이미지 pre-v3348-live·진행 0건·재기동, health ok·oauth google/kakao/naver 302·identity config(danal, social_onboarding false) 그대로·Traceback 0.
 - 남은 결정: 본인확인 결과 만 14세 미만으로 나온 소셜 가입자 → 현재는 "보호자 동의 절차가 열리면 안내 + 로그아웃". 기존 계정에 보호자 동의를 붙이는 경로(서버 신규 + 보호자 연락 방식)는 대표 결정 필요.
+
+## v3.349 — 2026-10-12 — 웹 본인확인 같은 탭 이동·자동 복귀 (웹)
+
+대표 지적(외부 연동 세션 경유): 웹 본인확인이 새 탭(window.open)으로 열려 다날 완료 화면에서 사용자가 직접 탭을 닫아야 했다.
+- utils/identityFlow: 웹(app.maidol.ai.kr)은 return_url = https://app.maidol.ai.kr/?identity=done 으로 시작해 같은 탭 이동(location.assign). 서버가 끝나면 ?identity=done&rid=&status= 로 303 복귀(서버 허용 접두·리다이렉트는 기존). 미리보기 도메인 등은 종전 새 창 + 3초 확인. 네이티브(인앱 인증 세션 + aidol://identity-done) 변경 없음.
+- utils/identityReturn(신규): 앱 로드 시 복귀 정보 1회 캡처 + 주소창에서 identity·rid·status 제거. SignupCompleteGate 가 로그인 복원 뒤 서버 결과(GET /identity/result/{rid}, 정본)를 확인해 이어 처리 — 완료 = 내 정보·마무리 상태 갱신 + "본인확인이 완료됐어요", 만 14세 미만 = 이용 불가 안내(마무리 대상이 아니어도 표시), 취소 = 조용히, 실패·중복 = 서버 안내 문구.
+- 검증: 단위 11/11(복귀 주소 파싱·잘못된 rid 거부·다른 파라미터 보존·도메인 판정·서버 허용 접두), tsc 0, 웹 복귀 주소 진입 시 주소 정리·오류 없음 확인. 실제 다날 인증 왕복은 대표 휴대폰 확인 필요.

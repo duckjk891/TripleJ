@@ -17,7 +17,7 @@ export interface OnboardingStatus {
   identity: { enabled: boolean; provider: string | null };
 }
 
-export type IdentityStatus = 'pending' | 'verified' | 'failed' | 'duplicate' | 'expired';
+export type IdentityStatus = 'pending' | 'verified' | 'failed' | 'duplicate' | 'expired' | 'cancelled';
 
 export interface IdentityResult {
   status: IdentityStatus;

@@ -117,6 +117,7 @@ import LoginModalHost from './components/auth/LoginModalHost'; // v3.276: 전역
 import WelcomeGuide from './components/WelcomeGuide'; // v3.276: 첫 실행 이미지형 웰컴 팝업(화면별 튜토리얼 대체)
 import UpdateGate from './components/UpdateGate'; // v3.324 앱 업데이트 안내(필수·선택)
 import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333 소셜 가입 마무리(서버 스위치 켜기 전엔 미표시)
+import { captureWebIdentityReturn } from './utils/identityReturn'; // v3.349
 import PolicyReconsentGate from './components/consent/PolicyReconsentGate'; // v3.340 처리방침 재동의
 import PolicyConsentHost from './components/consent/PolicyConsentHost'; // v3.341 디렉터 진입 동의 게이트
 import { notifyBootAuthSettled } from './utils/bootAuth';
@@ -684,6 +685,7 @@ function GlobalModals() {
 captureWebTrackLink();
 // v3.305 [ClubLink] 웹 `?club=&i=&album=` 캡처 — 트랙 링크와 같은 시점(주소 변경 전). 초대 코드는 7일 보관.
 captureWebClubLink();
+captureWebIdentityReturn(); // v3.349 웹 본인확인 같은 탭 복귀(?identity=done&rid=&status=) 1회 캡처
 
 // v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
 //  로그인 복원(restoreQueueFor)이 재생목록을 계정 보관함으로 교체하므로 그 뒤에 붙여야 링크 곡이 남고,

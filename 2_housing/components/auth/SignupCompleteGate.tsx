@@ -16,7 +16,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { CONSENT_VERSION, SIGNUP_CONSENT_KEYS, REQUIRED_CONSENT_KEYS } from '../../constants/consentTexts';
 import { recordConsents, getMe } from '../../services/authService';
 import { getOnboardingStatus, type OnboardingStatus } from '../../services/identityService';
-import { runIdentityVerification } from '../../utils/identityFlow';
+import { runIdentityVerification, pollResult } from '../../utils/identityFlow';
+import { consumeIdentityReturn } from '../../utils/identityReturn';
 import { showAlert } from '../../utils/appAlert';
 import { friendlyErrorMessage } from '../../utils/friendlyError';
 
@@ -65,7 +66,52 @@ export default function SignupCompleteGate() {
     return () => { alive = false; };
   }, [userId]);
 
-  if (!userId || !status?.required) return null;
+  // v3.349 웹 본인확인 같은 탭 복귀 — 서버 결과(정본)로 이어 처리. 로그인 복원 뒤 1회.
+  useEffect(() => {
+    if (!userId) return;
+    const ret = consumeIdentityReturn();
+    if (!ret) return;
+    let alive = true;
+    (async () => {
+      const r = await pollResult(ret.rid, Date.now() + 15000);
+      console.info('[SignupComplete] 웹 본인확인 복귀 결과', { rid: ret.rid.slice(0, 8), hint: ret.status, status: r.status, under14: r.under_14 });
+      if (!alive) return;
+      if (r.status === 'verified') {
+        if (r.under_14) { setPhase('under14'); return; }
+        try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 표시용 갱신 실패 무시 */ }
+        const s = await getOnboardingStatus();
+        if (alive && s) setStatus(s);
+        showAlert('본인확인', '본인확인이 완료됐어요.');
+      } else if (r.status === 'cancelled' || ret.status === 'cancelled') {
+        console.info('[SignupComplete] 본인확인 취소');
+      } else if (r.status !== 'pending') {
+        showAlert('본인확인', r.error || '본인확인을 마치지 못했어요. 다시 시도해 주세요.');
+      } else {
+        console.warn('[SignupComplete] 본인확인 결과 대기 중(복귀 후 15초)', { rid: ret.rid.slice(0, 8) });
+      }
+    })().catch((err: any) => console.error('[SignupComplete] 복귀 처리 실패', { message: err?.message }));
+    return () => { alive = false; };
+  }, [userId]);
+
+  if (!userId) return null;
+  if (phase === 'under14') {
+    return (
+      <Modal visible animationType="slide" onRequestClose={() => {}}>
+        <View style={[styles.screen, { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + spacing.md }]}>
+          <View style={styles.center}>
+            <AppText variant="title3" center>만 14세 미만은 지금 가입할 수 없어요</AppText>
+            <AppText variant="footnote" tone="secondary" center style={{ marginTop: spacing.md }}>
+              만 14세 미만은 보호자 동의를 받아야 MAIDOL 을 이용할 수 있어요.{'\n'}보호자 동의 절차가 열리면 다시 안내해 드릴게요.
+            </AppText>
+            <TouchableOpacity style={[styles.primary, { marginTop: spacing.xl }]} onPress={() => useAuthStore.getState().logout()}>
+              <AppText style={styles.primaryText}>로그아웃</AppText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+  if (!status?.required) return null;
 
   const needConsents = status.missing_consents.length > 0;
   const needBirth = status.birth_date_missing;
@@ -150,18 +196,7 @@ export default function SignupCompleteGate() {
   return (
     <Modal visible animationType="slide" onRequestClose={() => {}}>
       <View style={[styles.screen, { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + spacing.md }]}>
-        {phase === 'under14' ? (
-          <View style={styles.center}>
-            <AppText variant="title3" center>만 14세 미만은 지금 가입할 수 없어요</AppText>
-            <AppText variant="footnote" tone="secondary" center style={{ marginTop: spacing.md }}>
-              만 14세 미만은 보호자 동의를 받아야 MAIDOL 을 이용할 수 있어요.{'\n'}보호자 동의 절차가 열리면 다시 안내해 드릴게요.
-            </AppText>
-            <TouchableOpacity style={[styles.primary, { marginTop: spacing.xl }]} onPress={logout}>
-              <AppText style={styles.primaryText}>로그아웃</AppText>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }} keyboardShouldPersistTaps="handled">
             <AppText variant="title2">가입 마무리</AppText>
             <AppText variant="footnote" tone="secondary" style={{ marginTop: spacing.xs, marginBottom: spacing.lg }}>
               MAIDOL 을 계속 이용하려면 아래 내용을 확인해 주세요.
@@ -215,7 +250,6 @@ export default function SignupCompleteGate() {
               <AppText variant="footnote" tone="muted">로그아웃</AppText>
             </TouchableOpacity>
           </ScrollView>
-        )}
       </View>
     </Modal>
   );
