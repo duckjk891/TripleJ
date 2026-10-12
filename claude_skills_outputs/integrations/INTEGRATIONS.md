@@ -196,6 +196,7 @@
 ---
 
 ## 변경 이력
+- 2026-10-12: 개인정보 처리방침 개정 게시(공고 10-12·시행 10-19, Anthropic·sunoapi.org Inc.·Expo 국외 이전 추가, 푸시 토큰·Apple/네이버 가입 반영, 문의처 maidol_official@lotusai.co.kr). 기존 회원 재동의 팝업은 메인 세션.
 - 2026-10-11: PG 연동 항목 추가. 심사 계정 ⭐ 지급(성인 +1000→1100, 어린이 +300→418, credit_points admin_adjust). 문의 이메일 maidol_official@lotusai.co.kr 통일(앱·홈페이지 소스·서버 스테이징 int2), 스플래시 「내 음악으로 SNS 풍성하게」.
 - 2026-10-11: AdMob 회사 계정 전환 완료(앱 ID·단위 4종, 세금 정보 W-8BEN-E 제출), v1.3.2 APK 빌드.
 - 2026-10-08: 계정 원칙 추가, AdMob 회사 계정 이전 결정(기존=개인 결제 프로필).
