@@ -141,11 +141,21 @@ def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False
     <p class="cta-note">설치 없이 브라우저에서 바로 — PC·모바일 모두 지원해요.</p>
     <div class="install-note">
       <p class="install-title">모바일 앱(Google Play) 설치를 원하시나요?</p>
-      <p class="install-body">베타 기간에는 등록된 테스터만 설치할 수 있어요.<br>
+      <p class="install-body">지금은 등록된 테스터만 설치할 수 있어요.<br>
       <strong>구글 계정</strong>을 앱 내 <strong>maidol_official DM</strong> 또는<br>
       <a class="install-mail" href="mailto:maidol_official@lotusai.co.kr">maidol_official@lotusai.co.kr</a>(MAIDOL 고객 문의 메일)로 보내주시면<br>
       테스터 등록 후 설치 방법을 안내해 드려요.</p>
     </div>"""
+
+    # v3.332: '베타' 표현 제거 — 가입 이벤트 추가 ⭐ 는 기간(auth.py 상수) 안에서만 표시
+    event_line = ""
+    try:
+        from .auth import BETA_SIGNUP_BONUS_AMOUNT, _beta_signup_bonus_active
+        from datetime import datetime, timezone
+        if _beta_signup_bonus_active(datetime.now(timezone.utc)):
+            event_line = f"<br>\n      가입 이벤트 기간엔 가입만 해도 <strong>&#11088;{BETA_SIGNUP_BONUS_AMOUNT}</strong> 추가 증정!"
+    except Exception as e:  # noqa: BLE001 — 판단 불가 = 이벤트 줄 없음(과대 약속 방지)
+        logger.warning("[Invite] event line check failed err=%s", type(e).__name__)
 
     if ok:
         code_block = f"""
@@ -159,7 +169,7 @@ def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False
       <div class="code-box invalid">
         <span class="invalid-msg">유효하지 않은 초대코드예요</span>
       </div>
-      <p class="invalid-sub">그래도 괜찮아요 — 지금 가입해도 베타 보상을 받을 수 있어요.</p>"""
+      <p class="invalid-sub">그래도 괜찮아요 — 지금 가입해도 가입 보상을 받을 수 있어요.</p>"""
 
     return f"""<!DOCTYPE html>
 <html lang="ko">
@@ -270,8 +280,7 @@ def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False
     <p class="lede">작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.</p>
     {code_block}
     <div class="reward">
-      추천코드로 가입하면 두 사람 모두 <strong>&#11088;50</strong><br>
-      베타 기간엔 가입만 해도 <strong>&#11088;50</strong> 추가 증정!
+      추천코드로 가입하면 두 사람 모두 <strong>&#11088;50</strong>{event_line}
     </div>
     {cta_block}
     <a class="open-app" href="{_APP_SCHEME_URL}">이미 설치했다면 앱 열기</a>
@@ -371,3 +380,8 @@ public_router.include_router(_share_messages_router)
 # v3.245 클럽 코어(/api/clubs/…) — 위 guardian·share 와 같은 방식으로 합류(main.py 무변경).
 from .clubs import router as _clubs_router  # noqa: E402
 public_router.include_router(_clubs_router)
+
+# v3.333 [IdentityVerify] 본인확인(PG 준비본)·소셜 가입 마무리 상태(/api/identity/…) — 같은 방식으로 합류(main.py 무변경).
+# 기본 꺼짐(IDENTITY_VERIFY_PROVIDER·SOCIAL_ONBOARDING_ENABLED 미설정) → 기존 동작 그대로.
+from .identity import router as _identity_router  # noqa: E402
+public_router.include_router(_identity_router)
