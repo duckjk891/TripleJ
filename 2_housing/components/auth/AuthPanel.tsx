@@ -18,6 +18,8 @@ import { showAlert } from '../../utils/appAlert';
 import { CONSENT_VERSION, SIGNUP_CONSENT_KEYS, REQUIRED_CONSENT_KEYS } from '../../constants/consentTexts';
 import ConsentList, { ConsentState } from './ConsentList';
 import SocialLoginButtons from './SocialLoginButtons';
+import QrCode from './QrCode'; // v3.351 보호자 링크 QR
+import { shareOrCopy } from '../../utils/clubJoin';
 import {
   capturePendingReferralFromUrl,
   loadPendingReferral,
@@ -534,21 +536,34 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode, social
     const statusToken = guardianTokenFromUrl(pendingInfo?.consentUrl);
     return (
       <View>
-        <AppText variant="bodyStrong" style={{ marginBottom: spacing.sm }}>보호자에게 동의 요청을 보냈어요</AppText>
+        {/* v3.351: 문자 발송이 없으므로 아이가 보호자에게 링크를 보내거나 QR 을 보여 준다(소셜 가입 보호자 동의 화면과 같은 방식) */}
+        <AppText variant="bodyStrong" style={{ marginBottom: spacing.sm }}>보호자 동의를 받아 주세요</AppText>
         <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
-          {pendingInfo?.message || '보호자 동의 요청이 접수되었습니다. 보호자 동의 완료 후 계정이 활성화됩니다.'}
-        </AppText>
-        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
-          보호자가 동의 링크에서 동의를 완료하면 로그인할 수 있습니다. 동의 링크는 요청 시점부터 72시간 동안 유효합니다.
+          보호자에게 아래 링크를 보내거나 QR 코드를 보여 주세요. 보호자가 휴대폰 본인확인 후 동의하면 로그인할 수 있어요. 링크는 72시간 동안 쓸 수 있어요.
         </AppText>
         {pendingInfo?.consentUrl ? (
-          <View style={styles.consentUrlBox}>
-            <AppText variant="caption" tone="secondary" style={{ marginBottom: spacing.xs }}>
-              테스트 모드 — 아래 링크에서 보호자 동의를 진행할 수 있습니다.
-            </AppText>
-            <AppText variant="caption" tone="accent" selectable>{pendingInfo.consentUrl}</AppText>
+          <View style={{ alignItems: 'center', marginBottom: spacing.md }}>
+            <View style={{ padding: spacing.sm, backgroundColor: '#FFFFFF', borderRadius: radius.md }}>
+              <QrCode value={pendingInfo.consentUrl} size={168} />
+            </View>
+            <View style={{ alignSelf: 'stretch', marginTop: spacing.md }}>
+              <Button
+                label="보호자에게 링크 보내기"
+                fullWidth
+                onPress={async () => {
+                  const url = pendingInfo.consentUrl as string;
+                  const r = await shareOrCopy(`MAIDOL 가입에 보호자 동의가 필요해요. 아래 링크를 열어 휴대폰 본인확인 후 동의해 주세요.\n${url}`, url);
+                  console.info('[AuthPanel] 보호자 링크 공유', { result: r });
+                  if (r === 'copied') showAlert('알림', '링크를 복사했어요. 보호자에게 보내 주세요.');
+                }}
+              />
+            </View>
           </View>
-        ) : null}
+        ) : (
+          <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+            {pendingInfo?.message || '보호자 동의 요청이 접수되었습니다. 보호자 동의 완료 후 계정이 활성화됩니다.'}
+          </AppText>
+        )}
         {statusToken ? (
           <View style={{ marginBottom: spacing.sm }}>
             <Button

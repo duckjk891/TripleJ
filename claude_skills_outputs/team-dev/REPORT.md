@@ -4508,3 +4508,11 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 검증: 서버 — 운영 DB 트랜잭션 안 실행 후 전부 ROLLBACK(잔여 0): 성인 대상 아님·아동 링크 생성/재사용·본인확인 전 동의 403·확인 후 동의 성공 → required 해제·거부 후 새 링크·73시간 만료·라우트 매핑. 앱 — QR 생성 3/3, tsc 0. 배포(auth.py·main.py md5 가드·백업·이미지 pre-v3350-live·진행 0건·재기동): health ok·oauth 3종 302·신규 경로 401(무인증)·없는 토큰 404·컬럼 생성·Traceback 0.
 - 남은 연동: POST /api/identity/guardian/start·GET /api/identity/guardian/status/{token}(외부 연동 세션 int4) 운영 반영 전까지 보호자 페이지 [본인확인]은 "시작하지 못했습니다" 안내 — 그 사이 동의 불가(현재 대상 계정 0).
 - (후속) 외부 연동 세션 확정 계약 반영 — 보호자 페이지: start 404(처리·만료) = 현재 상태 화면으로, 503 = "잠시 이용할 수 없음", 복귀 후 GET /identity/guardian/status 의 reason(not_adult·same_person·consent_closed)·last_attempt.error(서버 문구 그대로) 표시. 랜딩 재배포, 미리보기 정상·콘솔 오류 0.
+
+## v3.351 — 2026-10-12 — 보호자 고지 수집 항목 처리방침 정합 + 이메일 가입 아동 대기 화면 QR·링크 공유 (서버·웹·보호자 페이지)
+
+외부 연동 세션: 보호자 본인확인 API 운영 반영(07:22 UTC)·GUARDIAN_CONSENT_ENABLED=true(대표 "같이 켜고") — 이메일 가입 아동도 보호자 동의 경로 개방. 처리방침 제2조 ③ 문구 확정.
+- 서버 auth.py 보호자 고지(GET /auth/guardian-consent/{token}) collection_items = [보호자 본인확인 결과(성인 여부·DI 암호화값), 동의 여부, 동의 일시] + 아동이 보호자 성명·연락처를 입력한 경우(이메일 가입·얼굴 인증 요청)에만 "보호자 성명·연락처(입력한 경우)". 얼굴 인증 동의는 얼굴 정보 항목 유지. 응답에 이름·번호 값은 없음.
+- 앱 AuthPanel(이메일 가입 아동 대기): "보호자에게 동의 요청을 보냈어요"+'테스트 모드' 링크(실제 문자 발송 없음) → "보호자 동의를 받아 주세요" + QR + [보호자에게 링크 보내기](소셜 가입 보호자 동의 화면과 같은 방식).
+- 보호자 페이지 미리보기 수집 항목도 같은 문구.
+- 검증: 운영 DB 트랜잭션 ROLLBACK 테스트 3/3(링크 방식 3항목·이름 입력 방식 4항목·값 미노출), tsc 0. 배포(auth.py md5 가드·백업·이미지 pre-v3351-live·진행 0건·본인확인 진행 중 없음 확인·재기동): health ok·oauth 3종 302·identity config(danal·onboarding on)·signup-config guardian on·보호자 start/고지 잘못된 토큰 404·Traceback 0.
