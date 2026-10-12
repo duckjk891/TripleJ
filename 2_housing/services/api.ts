@@ -32,6 +32,17 @@ export function setAuthToken(token: string | null) {
   }
 }
 
+/**
+ * v3.345 오디오 stream-proxy URL — <audio>·다운로드는 헤더를 못 실으므로 비공개(미발매) 곡만 ?token= 을 붙인다.
+ * (크루 플리의 미발매곡은 크루 멤버도 재생 가능 — 서버 _club_unreleased_access). 공개 곡은 종전 URL 그대로.
+ */
+export function streamProxyUrl(track: { id?: any; unreleased?: boolean; is_public?: boolean } | string | null | undefined): string {
+  const t = typeof track === 'string' ? { id: track } : (track || {});
+  const base = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${String(t.id ?? '')}`;
+  const isPrivate = t.unreleased === true || t.is_public === false;
+  return isPrivate && _authToken ? `${base}?token=${encodeURIComponent(_authToken)}` : base;
+}
+
 api.interceptors.request.use(
   (config) => {
     if (_authToken) {

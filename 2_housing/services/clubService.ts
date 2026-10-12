@@ -90,6 +90,15 @@ export interface ClubPlaylist {
   track_count?: number;
   /** v3.342: 만든 사람 — 삭제 버튼 노출(만든 사람·크루장) */
   user_id?: string;
+  /** v3.345: 지정 대표곡(미지정 null — 상세 응답이 첫 발매곡으로 폴백) */
+  representative_track_id?: string | null;
+}
+
+/** v3.345 크루 플리 대표곡 지정 — PUT /playlists/{id}(만든 사람·크루장, 이 플리의 발매곡만 — 미발매 400). "" = 해제 */
+export async function setClubPlaylistRepresentative(playlistId: string, trackId: string): Promise<string | null> {
+  console.info('[Club] setClubPlaylistRepresentative', { playlistId, trackId });
+  const res = await api.put(`/playlists/${playlistId}`, { representative_track_id: trackId });
+  return res.data?.representative_track_id ?? null;
 }
 
 /** v3.342 크루 플레이리스트 삭제 — DELETE /playlists/{id}(서버: 만든 사람 또는 크루장만, 그 외 404) */

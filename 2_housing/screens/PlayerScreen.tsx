@@ -25,7 +25,7 @@ import { Audio, Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import api, { BACKEND_BASE_URL } from '../services/api';
+import api, { BACKEND_BASE_URL, streamProxyUrl } from '../services/api';
 import { trackCoverUri } from '../utils/coverUri';
 import { resolveTempoDisplay } from '../utils/tempoDisplay';
 import { usePlayerStore } from '../stores/playerStore';
@@ -659,7 +659,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 오디오 소스 결정. 웹: Range(206) 지원 presigned URL(/tracks/stream) → 실제 seek 가능.
   //            네이티브: stream-proxy(버퍼링으로 seek 정상, presigned 호스트 도달성 회피).
   const getAudioUri = async (id: string): Promise<string> => {
-    const proxy = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${id}`;
+    // v3.345: 미발매(비공개) 곡은 ?token= — 크루 플리 미발매곡의 멤버 재생(네이티브·웹 폴백)
+    const qt = usePlayerStore.getState().queue.find((q: any) => String(q?.id) === String(id))
+      || (String((track as any)?.id) === String(id) ? track : null);
+    const proxy = streamProxyUrl({ ...(qt || {}), id } as any);
     if (Platform.OS !== 'web') return proxy;
     try {
       const res = await api.get(`/tracks/stream/${id}`);

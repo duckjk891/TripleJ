@@ -16,7 +16,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
-import api, { BACKEND_BASE_URL } from './api';
+import api, { streamProxyUrl } from './api';
 import { trackCoverUri } from '../utils/coverUri';
 // v3.229 [PlayRecord]: 재생 기록(70%·재생 세션당 1회) — 아래 store 구독 단일 지점에서 판정(대표 결정:
 // 피드·미니플레이어만으로 재생해도 포함, 플레이어 화면 열림/닫힘 무관). 곡 끝은 endPlaySession으로 세션 종료.
@@ -145,7 +145,7 @@ function webSyncAdvance(idx: number, reason: 'ended' | 'remote-next'): boolean {
   if (!next?.id) return false;
   const nid = String(next.id);
   // v3.272 [BGWeb-Android]: 자동 스왑은 **항상 결정적 proxy** — presigned 간헐 code 4 노출면 제거.
-  const url = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nid}`;
+  const url = streamProxyUrl(next); // v3.345 미발매곡만 ?token=
   if (!webSwapSrcAndPlay(url)) return false;
   s.playTrackAtIndex(idx); // track 갱신 → 구독이 mediaSession 메타 동기화
   // v3.225: 자동 진행 표식 — 404 등 MediaError 시 skipUnplayableOnAutoAdvance 가 건너뜀
@@ -252,7 +252,7 @@ if (Platform.OS === 'web') {
   // v3.272 [BGWeb-Android]: 미디어 에러 동기 복구 URL 공급자 — 현재 곡의 결정적 proxy
   setWebErrorRecoveryProvider(() => {
     const t = usePlayerStore.getState().track;
-    return t?.id ? `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${String(t.id)}` : null;
+    return t?.id ? streamProxyUrl(t) : null; // v3.345
   });
 
   // v3.275 [BGWeb-Net] 계측: 네트워크·페이지 수명주기 — iOS 폐기/동결(패턴 B)·단절 구간 판별용(warn=원격 수집)
@@ -535,7 +535,7 @@ export function maybePreloadNext(
       await FileSystem.makeDirectoryAsync(PRELOAD_DIR, { intermediates: true }).catch(() => {});
       console.warn('[BTDebug] preload download start', { trackId: next.id });
       const dl = await FileSystem.downloadAsync(
-        `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${next.id}`,
+        streamProxyUrl(next), // v3.345 미발매곡만 ?token=
         fileUri,
       );
       if (dl.status < 200 || dl.status >= 300) throw new Error(`HTTP ${dl.status}`);
@@ -929,7 +929,7 @@ export async function loadAndPlayTrack(newTrack: any, opts?: { auto?: boolean })
   }
   releaseActiveLocalFile(); // v3.205: 새 로드 = 직전 스왑 곡 재생 종료 — 소비된 로컬 파일 삭제
   try {
-    const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${newTrack.id}`;
+    const audioUrl = streamProxyUrl(newTrack); // v3.345 미발매곡만 ?token=
     if (__DEV__) console.info('[playback] load', { id: newTrack.id, gen });
     await applyPlaybackAudioMode(); // 타 앱 오디오 중단·백그라운드 재생
     // v3.217 ①(a): 팩토리 경유 — 네이티브는 기존 createAsync 그대로, 웹은 단일 element 재사용

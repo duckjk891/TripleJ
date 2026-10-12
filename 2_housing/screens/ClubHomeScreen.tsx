@@ -39,7 +39,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import {
   Club, ClubPlaylist, TransferCandidate, getClub, getClubErrorCode, joinClub, leaveClub,
-  listClubFeeds, listClubPlaylists, createClubPlaylist, deleteClubPlaylist,
+  listClubFeeds, listClubPlaylists, createClubPlaylist, deleteClubPlaylist, setClubPlaylistRepresentative,
   transferCandidates, transferOwner, clubDeleteRequestDraft,
   // v3.249 멤버 관리 — 멤버 목록·내보내기·행 메뉴 규칙(문구 라벨은 CLUB_LABEL 단일화)
   CLUB_LABEL, ClubMember, ClubMembersError, classifyMembersError,
@@ -121,6 +121,8 @@ export default function ClubHomeScreen() {
   const [selectedPl, setSelectedPl] = useState<ClubPlaylist | null>(null);
   const [plTracks, setPlTracks] = useState<any[]>([]);
   const [plTracksLoading, setPlTracksLoading] = useState(false);
+  // v3.345 크루 플리 대표곡 — 비멤버는 이 곡만 1분 미리 듣기(나머지는 로그인·가입). null = 구서버(첫 발매곡 폴백)
+  const [plRepId, setPlRepId] = useState<string | null>(null);
   const [showPlCreate, setShowPlCreate] = useState(false);
   // v3.343 플리 ⋮ — 이름 편집
   const [plRenameOpen, setPlRenameOpen] = useState(false);
@@ -383,6 +385,7 @@ export default function ClubHomeScreen() {
         usePlayerStore.getState().setPreviewLimit(null); // v3.343: 가입 = 끝까지 듣기
         fetchMembers(); // v3.249 — 멤버가 되면 멤버 목록 열람 가능(정보 탭 동기화)
         fetchAlbums(); // v3.305 — 앨범 잠금 해제 반영
+        if (selectedPl) openPlaylistRef.current?.(selectedPl); // v3.345 — 열린 플리 재조회(미발매곡·잠금 해제)
       }
       const m = joinResultMessage(result, detail?.name);
       showAlert(m.title, m.body);
@@ -724,19 +727,38 @@ export default function ClubHomeScreen() {
   // v3.253 [CrewRecog]: 큐 교체에 귀속 메타(queueSource)를 함께 실어 record-play 가 크루 플리
   // 소속 재생임을 보고하게 하고, 인증 비멤버(승인 대기 포함)의 재생 시작이면 play-start 를
   // 1회 보고한다(내 크루=멤버·owner 는 절대 미호출, 비로그인은 미호출 — 401/404 는 서비스가 침묵).
+  // v3.345 (대표 10-12): 크루 플리 곡은 크루 멤버만 전곡 재생(미발매곡 포함). 비멤버(비로그인 포함)는
+  //   대표곡만 1분 미리 듣기, 나머지 곡은 탭하면 로그인·가입으로 연결. 멤버 재생 = 플리 전체로 재생목록 교체.
+  const trackKey = (t: any) => String(t?.id || t?.track_id || '');
+  const effectiveRepId = plRepId || trackKey(plTracks.find((t: any) => !t.unreleased && !t.locked)) || null;
+  const canPlayFull = isMember || isOwner;
+  const promptCrewLocked = () => {
+    console.info('[Club] 크루 전용 곡 탭(비멤버)', { clubId, loggedIn: !!user, pending: isPending });
+    if (isPending) { showAlert('알림', '가입 신청이 승인되면 플레이리스트 전곡을 들을 수 있어요.'); return; }
+    showAlert(
+      `${CLUB_LABEL} 전용 곡`,
+      user
+        ? `「${detail?.name ?? CLUB_LABEL}」에 가입하면 플레이리스트 전곡을 들을 수 있어요.\n대표곡은 지금 1분 미리 들을 수 있어요.`
+        : `로그인하고 「${detail?.name ?? CLUB_LABEL}」에 가입하면 플레이리스트 전곡을 들을 수 있어요.\n대표곡은 지금 1분 미리 들을 수 있어요.`,
+      [{ text: '닫기', style: 'cancel' }, { text: user ? '가입하기' : '로그인하고 가입', onPress: handleJoin }],
+    );
+  };
   const playTrack = (item: any) => {
-    const idx = plTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
+    const tid = trackKey(item);
+    if (!canPlayFull && (item.locked || (effectiveRepId && tid !== effectiveRepId))) { promptCrewLocked(); return; }
+    const queueTracks = canPlayFull ? plTracks : [item]; // 비멤버: 대표곡 1곡만(자동 넘김으로 잠긴 곡 재생 방지)
+    const idx = queueTracks.findIndex((t: any) => trackKey(t) === tid);
     const playlistId = selectedPl ? String(selectedPl.id) : '';
     usePlayerStore.getState().setQueue(
-      plTracks,
+      queueTracks,
       playlistId ? { type: 'club_playlist', playlist_id: playlistId, club_id: String(clubId) } : null,
     );
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
-    // v3.343 [CrewPreview]: 비회원(비로그인 포함)은 곡마다 1분 미리 듣기 — 넘으면 멈추고 가입 안내
-    if (!isMember && !isOwner) {
+    // v3.343 [CrewPreview] · v3.345: 비회원은 대표곡 1분 미리 듣기 — 넘으면 멈추고 가입 안내
+    if (!canPlayFull) {
       usePlayerStore.getState().setPreviewLimit({
         sec: CREW_PREVIEW_SEC,
-        trackIds: plTracks.map((t: any) => String(t.id || t.track_id)),
+        trackIds: [tid],
         clubId: String(clubId),
         clubName: detail?.name,
       });
@@ -755,9 +777,12 @@ export default function ClubHomeScreen() {
     try {
       const res = await api.get(`/playlists/${pl.id}`);
       setPlTracks(res.data?.tracks || []);
+      setPlRepId(res.data?.representative_track_id ? String(res.data.representative_track_id) : null);
+      if (__DEV__) console.info('[Club] 클럽 플리 상세', { playlistId: pl.id, n: (res.data?.tracks || []).length, rep: res.data?.representative_track_id, member: res.data?.viewer_is_member });
     } catch (err: any) {
       console.error('[Club] 클럽 플리 곡 조회 실패', { playlistId: pl.id, status: err?.response?.status });
       setPlTracks([]);
+      setPlRepId(null);
     } finally {
       setPlTracksLoading(false);
     }
@@ -771,6 +796,10 @@ export default function ClubHomeScreen() {
     const buttons: any[] = [];
     if (canManagePl) {
       buttons.push({ text: '이름 편집', onPress: () => { setPlRenameText(selectedPl.title || selectedPl.name || ''); setPlRenameOpen(true); } });
+    }
+    // v3.345 (대표 10-12): 「이 플레이리스트로 앨범 만들기」를 ⋮ 메뉴로 이동(크루장 전용 — 앨범은 운영자만)
+    if (isOwner && plTracks.some((t: any) => !t.unreleased)) {
+      buttons.push({ text: '이 플레이리스트로 앨범 만들기', onPress: () => setAlbumCreateOpen(true) });
     }
     buttons.push({ text: '공유하기', onPress: () => { void sharePlaylist(); } });
     if (canManagePl) buttons.push({ text: '삭제', style: 'destructive', onPress: confirmDeletePlaylist });
@@ -787,7 +816,7 @@ export default function ClubHomeScreen() {
     const url = clubPlaylistShareUrl(inviteUrl, String(clubId), String(selectedPl.id));
     console.info('[Club] 플리 공유', { playlistId: selectedPl.id, withInvite: url.includes('?i=') });
     await shareOrCopy(
-      `MAIDOL 「${detail?.name ?? CLUB_LABEL}」 크루 플레이리스트 「${selectedPl.title || selectedPl.name || ''}」\n1분씩 미리 들어보고, 크루에 가입하면 끝까지 들을 수 있어요!\n${url}`,
+      `MAIDOL 「${detail?.name ?? CLUB_LABEL}」 크루 플레이리스트 「${selectedPl.title || selectedPl.name || ''}」\n대표곡을 1분 미리 듣고, 크루에 가입하면 전곡을 들을 수 있어요!\n${url}`,
       url,
     );
   };
@@ -809,6 +838,33 @@ export default function ClubHomeScreen() {
     } finally {
       setPlRenameBusy(false);
     }
+  };
+
+  // v3.345 곡 ⋯ — 대표곡 지정(만든 사람·크루장). 미발매곡은 비회원 미리 듣기가 안 되므로 지정 불가
+  const openPlTrackMenu = (item: any) => {
+    if (!selectedPl) return;
+    const tid = trackKey(item);
+    const isRep = tid === effectiveRepId;
+    const buttons: any[] = [];
+    if (!isRep) {
+      buttons.push({
+        text: '대표곡으로 지정',
+        onPress: async () => {
+          if (item.unreleased) { showAlert('알림', '미발매곡은 대표곡으로 지정할 수 없어요.\n대표곡은 크루 밖 사람도 1분 미리 듣는 곡이에요.'); return; }
+          try {
+            const rep = await setClubPlaylistRepresentative(String(selectedPl.id), tid);
+            setPlRepId(rep);
+            console.info('[Club] 플리 대표곡 지정', { playlistId: selectedPl.id, trackId: tid });
+            fetchPlaylists();
+          } catch (err: any) {
+            console.error('[Club] 플리 대표곡 지정 실패', { playlistId: selectedPl.id, trackId: tid, status: err?.response?.status });
+            showAlert('알림', err?.response?.data?.error || '대표곡을 지정하지 못했어요. 잠시 후 다시 시도해 주세요.');
+          }
+        },
+      });
+    }
+    buttons.push({ text: '닫기', style: 'cancel' });
+    showAlert(item.title || '곡', isRep ? '이 곡이 대표곡이에요. 크루 밖 사람은 이 곡만 1분 미리 들을 수 있어요.' : undefined as any, buttons);
   };
 
   // v3.342 크루 플레이리스트 삭제(만든 사람·크루장) — 앨범으로 만든 플리여도 앨범·곡은 그대로(서버 FK 정책)
@@ -952,12 +1008,23 @@ export default function ClubHomeScreen() {
     </TouchableOpacity>
   );
 
-  const renderTrackRow = ({ item }: { item: any }) => (
-    <TrackRow
-      track={{ ...item, id: String(item.id || item.track_id) }}
-      onPress={() => playTrack(item)}
-    />
-  );
+  // v3.345 대표곡 배지 · 비멤버 잠금 · 미발매 표시 · 곡 ⋯(대표곡 지정 — 만든 사람·크루장)
+  const renderTrackRow = ({ item }: { item: any }) => {
+    const tid = trackKey(item);
+    const isRep = !!effectiveRepId && tid === effectiveRepId;
+    const locked = !canPlayFull && !isRep;
+    return (
+      <TrackRow
+        track={{ ...item, id: tid }}
+        left={isRep
+          ? <View style={styles.plRepBadge}><AppText variant="caption" tone="accent">대표</AppText></View>
+          : locked ? <View style={styles.plRepBadge}><Feather name="lock" size={14} color={colors.text.muted} /></View> : undefined}
+        footer={item.unreleased ? <AppText variant="caption" tone="muted">미발매 · 크루 멤버만 들을 수 있어요</AppText> : undefined}
+        onPress={() => playTrack(item)}
+        onMore={canManagePl ? () => openPlTrackMenu(item) : undefined}
+      />
+    );
+  };
 
   // ── v3.249 멤버 행 — 닉네임·role 뱃지·가입일 + ⋯ 메뉴(본인·owner 행 제외) ──
   // v3.261: 익명 모드(비멤버 열람)는 '크루 멤버'/'운영자' + 가입일만(행 탭·⋯ 없음),
@@ -1269,12 +1336,11 @@ export default function ClubHomeScreen() {
                 <AppText style={styles.composeText}>곡 추가</AppText>
               </TouchableOpacity>
             ) : null}
-            {/* v3.305 [ClubAlbum] 크루장 — 이 플레이리스트로 테마 앨범 만들기 */}
-            {isOwner && plTracks.length > 0 ? (
-              <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setAlbumCreateOpen(true)} accessibilityLabel="이 플레이리스트로 앨범 만들기">
-                <Feather name="disc" size={16} color={colors.accent.primary} />
-                <AppText style={styles.composeText}>이 플레이리스트로 앨범 만들기</AppText>
-              </TouchableOpacity>
+            {/* v3.345: 「이 플레이리스트로 앨범 만들기」는 제목 줄 ⋮ 메뉴로 이동(크루장) */}
+            {!canPlayFull && plTracks.length > 0 ? (
+              <AppText variant="caption" tone="muted" style={{ marginTop: spacing.sm }}>
+                {`🎧 대표곡은 1분 미리 들을 수 있어요. 전곡은 ${user ? '' : '로그인하고 '}${CLUB_LABEL}에 가입하면 들을 수 있어요.`}
+              </AppText>
             ) : null}
           </View>
         ) : (
@@ -1406,7 +1472,8 @@ export default function ClubHomeScreen() {
         visible={albumCreateOpen}
         clubId={String(clubId)}
         playlist={selectedPl as any}
-        tracks={plTracks}
+        tracks={plTracks.filter((t: any) => !t.unreleased)}
+        initialRepId={effectiveRepId}
         onClose={() => setAlbumCreateOpen(false)}
         onCreated={(a) => {
           setAlbumCreateOpen(false);
@@ -1733,6 +1800,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
   },
   plSubHead: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  plRepBadge: { width: 32, alignItems: 'center' }, // v3.345 대표곡 배지·잠금 슬롯(ClubAlbum repBadge 동일)
   plBackBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   infoTab: { paddingHorizontal: spacing.lg },
   infoLabel: { fontWeight: '700', letterSpacing: 0.3, marginTop: spacing.lg },

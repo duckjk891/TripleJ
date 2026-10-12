@@ -14,6 +14,8 @@ interface Props {
   clubId: string;
   playlist: { id: string; title?: string; name?: string } | null;
   tracks: any[];
+  /** v3.345: 플리 대표곡 — 앨범 대표곡 기본값(없거나 목록에 없으면 첫 곡) */
+  initialRepId?: string | null;
   onClose: () => void;
   onCreated: (album: ClubAlbum) => void;
 }
@@ -21,7 +23,7 @@ interface Props {
 const TITLE_MAX = 40;
 const THEME_MAX = 200;
 
-export default function ClubAlbumCreateModal({ visible, clubId, playlist, tracks, onClose, onCreated }: Props) {
+export default function ClubAlbumCreateModal({ visible, clubId, playlist, tracks, initialRepId, onClose, onCreated }: Props) {
   const [title, setTitle] = useState('');
   const [theme, setTheme] = useState('');
   const [rep, setRep] = useState<string | null>(null);
@@ -32,7 +34,9 @@ export default function ClubAlbumCreateModal({ visible, clubId, playlist, tracks
     if (!visible) return;
     setTitle(playlist?.title || playlist?.name || '');
     setTheme('');
-    setRep(usable[0] ? String(usable[0].id || usable[0].track_id) : null);
+    const keyOf = (t: any) => String(t.id || t.track_id);
+    const fromPl = initialRepId ? usable.find((t) => keyOf(t) === String(initialRepId)) : null;
+    setRep(fromPl ? keyOf(fromPl) : (usable[0] ? keyOf(usable[0]) : null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, playlist?.id]);
 
