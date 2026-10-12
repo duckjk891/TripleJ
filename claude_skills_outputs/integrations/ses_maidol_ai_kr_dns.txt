@@ -1,0 +1,8 @@
+; AWS SES (ap-northeast-2) — maidol.ai.kr 도메인 인증·MAIL FROM·DMARC (2026-10-12)
+; Cloudflare → maidol.ai.kr → DNS → Records → Import 로 업로드. 「Proxy imported DNS records」는 체크하지 말 것(DNS only).
+gehotn3vtfvaooossckef46nbcrmonxl._domainkey.maidol.ai.kr. 300 IN CNAME gehotn3vtfvaooossckef46nbcrmonxl.dkim.amazonses.com.
+n6es3j2fev5nyaqvjcgtxvvm7yxylfdh._domainkey.maidol.ai.kr. 300 IN CNAME n6es3j2fev5nyaqvjcgtxvvm7yxylfdh.dkim.amazonses.com.
+dawz47rykcsywv2ysjmdruxacv37kldb._domainkey.maidol.ai.kr. 300 IN CNAME dawz47rykcsywv2ysjmdruxacv37kldb.dkim.amazonses.com.
+mail.maidol.ai.kr. 300 IN MX 10 feedback-smtp.ap-northeast-2.amazonses.com.
+mail.maidol.ai.kr. 300 IN TXT "v=spf1 include:amazonses.com ~all"
+_dmarc.maidol.ai.kr. 300 IN TXT "v=DMARC1; p=none;"

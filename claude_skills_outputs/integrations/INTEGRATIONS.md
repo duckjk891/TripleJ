@@ -191,6 +191,13 @@
 
 ## 4. AWS SES (비밀번호 재설정 메일) — ⏳ 대표님 작업 대기
 
+**진행(2026-10-12)** — 대표 결정: 발신 `MAIDOL <no-reply@maidol.ai.kr>` + 답장(Reply-To) `maidol_official@lotusai.co.kr` (회사 도메인 평판 분리).
+- ✅ AWS 계정 확인: 600286789217(서버 계정), 루트 이메일 kimpearl@lotusai.co.kr, 루트 MFA(인증 앱 항목 root-lotusai@600286789217).
+- ✅ SES 도메인 자격 증명 `maidol.ai.kr`(서울) 생성 — Easy DKIM RSA2048, MAIL FROM `mail.maidol.ai.kr`(MX 실패 시 기본 MAIL FROM), Route 53 게시 해제.
+- ✅ Cloudflare DNS 6개 입력(DKIM CNAME 3 DNS only·MX·SPF TXT·DMARC p=none) — 공개 DNS 조회 확인(1.1.1.1·8.8.8.8). 가져오기 파일: `ses_maidol_ai_kr_dns.txt`.
+- ⏳ SES 「확인됨」 대기 → 프로덕션 액세스 요청 → IAM maidol-ec2 인라인 정책 → 애플 이메일 릴레이 등록(maidol.ai.kr / no-reply@maidol.ai.kr).
+- ⏳ Claude: mailer Reply-To·본문 문의처 추가(스테이징) → .env MAIL_ENABLED·MAIL_FROM·SES_REGION·MAIL_REPLY_TO → 승인 후 재기동(네이버 키·이메일 문구와 묶음) → 실발송 확인.
+
 **현재**: 앱 화면과 서버 API(`/auth/password-reset/request`·`/confirm`, 6자리 코드·15분 만료·5회 제한)는 준비됨. 서버 메일 발송은 꺼짐(MAIL_ENABLED). 그래서 지금은 비밀번호 찾기 메일이 실제로 가지 않음.
 
 **대표님이 할 일** (AWS 콘솔, 리전 **서울 ap-northeast-2** — 서버와 같은 리전)
