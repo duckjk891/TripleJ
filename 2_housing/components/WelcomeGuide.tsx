@@ -92,9 +92,15 @@ export default function WelcomeGuide() {
             setVisible(true);
           };
           offs.push(onDeferredWelcomeRequest(fire));
+          // 기동 중 Splash → 차트(초기 탭) → 크루 화면 순으로 거쳐 가므로, 크루 화면에 한 번 도착한 뒤의 이탈만 센다.
+          // 링크가 크루 화면으로 못 가는 경우(없는 크루 등)를 위해 20초 뒤엔 도착한 것으로 본다.
+          let arrived = false;
+          const arriveTimer = setTimeout(() => { arrived = true; }, 20000);
+          offs.push(() => clearTimeout(arriveTimer));
           const onNav = () => {
             const name = navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined;
-            if (!isCrewAreaRoute(name)) fire(`route:${name}`);
+            if (isCrewAreaRoute(name)) { if (name !== 'Splash') arrived = true; return; }
+            if (arrived) fire(`route:${name}`);
           };
           offs.push(navigationRef.addListener('state', onNav));
           return;
