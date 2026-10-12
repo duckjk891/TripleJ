@@ -5,7 +5,7 @@
 // 서버 미배포(404/네트워크) → 전 탭 안내 상태로 강등(크래시 금지). 팝업은 전부 앱 내 다이얼로그(showAlert).
 // v3.261: 멤버 창 외부 공개(비멤버=익명 행 '크루 멤버'/'운영자'+가입일, 멤버=실명 행 탭→유저 채널) +
 //   owner 전용 '크루 홍보하기' 시트(장르·분위기 칩 합계 1~5 + 한 줄 메시지 → POST /clubs/{id}/promote).
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl,
   StyleSheet, Modal, TextInput, KeyboardAvoidingView, ScrollView, Switch, Image,
@@ -52,6 +52,8 @@ import {
   // v3.261 크루 홍보(owner 전용 시트) + 멤버 창 외부 익명 모드 상수
   promoteClub, promoteErrorMessage, PROMO_MESSAGE_MAX, PROMO_KEYWORD_MIN_LEN, PROMO_KEYWORD_LEN_MAX,
 } from '../services/clubService';
+import { CREW_PREVIEW_SEC } from '../utils/crewPreview';
+import { clubPlaylistShareUrl } from '../services/clubAlbumService';
 // v3.261 홍보 키워드 칩 — 작사 대화와 같은 선택지 재사용(장르·분위기, 합계 1~5개)
 
 // v3.252: 채팅 탭 신설(첫 탭) — 채팅|게시판|플레이리스트|정보 4탭
@@ -82,6 +84,9 @@ export default function ClubHomeScreen() {
   const routeInvite: string | undefined = route.params?.inviteCode;
   const initialTab: ClubTab | undefined = route.params?.initialTab;
   const refreshAt = route.params?.refreshAt;
+  // v3.343 크루 플레이리스트 공유 링크 진입 — 이 플레이리스트를 바로 연다
+  const initialPlaylistId: string | undefined = route.params?.initialPlaylistId;
+  const openedInitialPlRef = useRef<string | null>(null);
   const { user } = useAuthStore();
   const playerStore = usePlayerStore();
   // 어린이 — 보호자 허용 없으면 글쓰기 숨김(FeedScreen 관행). 이미지 게이트는 FeedCompose 기존 로직.
@@ -117,6 +122,10 @@ export default function ClubHomeScreen() {
   const [plTracks, setPlTracks] = useState<any[]>([]);
   const [plTracksLoading, setPlTracksLoading] = useState(false);
   const [showPlCreate, setShowPlCreate] = useState(false);
+  // v3.343 플리 ⋮ — 이름 편집
+  const [plRenameOpen, setPlRenameOpen] = useState(false);
+  const [plRenameText, setPlRenameText] = useState('');
+  const [plRenameBusy, setPlRenameBusy] = useState(false);
   const [plName, setPlName] = useState('');
   const [plBusy, setPlBusy] = useState(false);
 
@@ -211,11 +220,23 @@ export default function ClubHomeScreen() {
     }
   }, [clubId]);
 
+  const openPlaylistRef = useRef<((pl: ClubPlaylist) => Promise<void>) | null>(null);
   const fetchPlaylists = useCallback(async () => {
     try {
       const list = await listClubPlaylists(String(clubId));
       setPlaylists(list);
       setPlFailed(false);
+      // v3.343: 공유 링크로 온 플레이리스트 자동 열기(1회)
+      if (initialPlaylistId && openedInitialPlRef.current !== initialPlaylistId) {
+        const target = list.find((p) => String(p.id).toLowerCase() === String(initialPlaylistId).toLowerCase());
+        openedInitialPlRef.current = initialPlaylistId;
+        if (target) {
+          console.info('[Club] 공유 링크 플리 열기', { playlistId: target.id });
+          void openPlaylistRef.current?.(target);
+        } else {
+          console.warn('[Club] 공유 링크 플리 없음(삭제 등)', { playlistId: initialPlaylistId });
+        }
+      }
     } catch (err: any) {
       console.error('[Club] 클럽 플리 조회 실패', { clubId, status: err?.response?.status });
       setPlaylists([]);
@@ -359,6 +380,7 @@ export default function ClubHomeScreen() {
         console.info('[Club] 가입 성공', { clubId, invite: !!inviteCode });
         setDetail((d) => d ? { ...d, is_member: true, join_status: 'member', role: d.role === 'owner' ? d.role : 'member', member_count: (d.member_count ?? 0) + 1 } : d);
         setInviteCode('');
+        usePlayerStore.getState().setPreviewLimit(null); // v3.343: 가입 = 끝까지 듣기
         fetchMembers(); // v3.249 — 멤버가 되면 멤버 목록 열람 가능(정보 탭 동기화)
         fetchAlbums(); // v3.305 — 앨범 잠금 해제 반영
       }
@@ -710,6 +732,15 @@ export default function ClubHomeScreen() {
       playlistId ? { type: 'club_playlist', playlist_id: playlistId, club_id: String(clubId) } : null,
     );
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
+    // v3.343 [CrewPreview]: 비회원(비로그인 포함)은 곡마다 1분 미리 듣기 — 넘으면 멈추고 가입 안내
+    if (!isMember && !isOwner) {
+      usePlayerStore.getState().setPreviewLimit({
+        sec: CREW_PREVIEW_SEC,
+        trackIds: plTracks.map((t: any) => String(t.id || t.track_id)),
+        clubId: String(clubId),
+        clubName: detail?.name,
+      });
+    }
     if (__DEV__) console.info('[CrewRecog] 크루 플리 재생(큐 교체·귀속 설정)', { playlistId, clubId, playIndex: idx >= 0 ? idx : 0, len: plTracks.length, nonMember: !!user && !isMember && !isOwner });
     if (user && !isMember && !isOwner && playlistId) {
       recordClubPlaylistPlayStart(String(clubId), playlistId); // fire & forget — 실패 침묵
@@ -729,6 +760,54 @@ export default function ClubHomeScreen() {
       setPlTracks([]);
     } finally {
       setPlTracksLoading(false);
+    }
+  };
+  openPlaylistRef.current = openPlaylist; // v3.343: 공유 링크 진입 시 목록 로드 후 자동 열기에 사용
+
+  // v3.343 플리 ⋮ 메뉴 — 이름 편집·삭제(만든 사람·크루장), 공유(누구나 — 멤버는 초대 코드 포함)
+  const canManagePl = !!selectedPl && (isOwner || (!!user && String((selectedPl as any).user_id || '') === String(user.id)));
+  const openPlaylistMenu = () => {
+    if (!selectedPl) return;
+    const buttons: any[] = [];
+    if (canManagePl) {
+      buttons.push({ text: '이름 편집', onPress: () => { setPlRenameText(selectedPl.title || selectedPl.name || ''); setPlRenameOpen(true); } });
+    }
+    buttons.push({ text: '공유하기', onPress: () => { void sharePlaylist(); } });
+    if (canManagePl) buttons.push({ text: '삭제', style: 'destructive', onPress: confirmDeletePlaylist });
+    buttons.push({ text: '닫기', style: 'cancel' });
+    showAlert(selectedPl.title || selectedPl.name || '플레이리스트', undefined as any, buttons);
+  };
+
+  const sharePlaylist = async () => {
+    if (!selectedPl) return;
+    let inviteUrl: string | null = null;
+    if (isMember || isOwner) {
+      try { inviteUrl = (await getClubInvite(String(clubId))).url; } catch { inviteUrl = null; }
+    }
+    const url = clubPlaylistShareUrl(inviteUrl, String(clubId), String(selectedPl.id));
+    console.info('[Club] 플리 공유', { playlistId: selectedPl.id, withInvite: url.includes('?i=') });
+    await shareOrCopy(
+      `MAIDOL 「${detail?.name ?? CLUB_LABEL}」 크루 플레이리스트 「${selectedPl.title || selectedPl.name || ''}」\n1분씩 미리 들어보고, 크루에 가입하면 끝까지 들을 수 있어요!\n${url}`,
+      url,
+    );
+  };
+
+  const savePlaylistRename = async () => {
+    if (!selectedPl || plRenameBusy) return;
+    const t = plRenameText.trim();
+    if (!t) { showAlert('알림', '플레이리스트 이름을 입력해 주세요.'); return; }
+    setPlRenameBusy(true);
+    try {
+      await api.put(`/playlists/${selectedPl.id}`, { title: t });
+      console.info('[Club] 플리 이름 변경', { playlistId: selectedPl.id, len: t.length });
+      setSelectedPl((p) => (p ? { ...p, title: t } : p));
+      setPlRenameOpen(false);
+      fetchPlaylists();
+    } catch (err: any) {
+      console.error('[Club] 플리 이름 변경 실패', { playlistId: selectedPl.id, status: err?.response?.status });
+      showAlert('알림', err?.response?.status === 404 ? '만든 사람이나 크루장만 바꿀 수 있어요.' : '이름을 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setPlRenameBusy(false);
     }
   };
 
@@ -1175,20 +1254,19 @@ export default function ClubHomeScreen() {
               <Feather name="arrow-left" size={16} color={colors.accent.primary} />
               <AppText variant="bodyLg" tone="accent">목록으로</AppText>
             </TouchableOpacity>
-            <AppText variant="title3" style={{ marginTop: spacing.sm }} numberOfLines={1}>{selectedPl.title || selectedPl.name}</AppText>
+            {/* v3.343: 제목 줄 ⋮ — 이름 편집·삭제·공유 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm }}>
+              <AppText variant="title3" style={{ flex: 1 }} numberOfLines={1}>{selectedPl.title || selectedPl.name}</AppText>
+              <TouchableOpacity onPress={openPlaylistMenu} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="플레이리스트 메뉴">
+                <Feather name="more-vertical" size={20} color={colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
             <AppText variant="caption" tone="muted" style={{ marginTop: 2 }}>{`${plTracks.length}곡 · ${CLUB_LABEL} 멤버가 함께 채워요`}</AppText>
             {/* v3.325 (대표 10-10): 멤버는 플레이리스트 안에서 바로 곡 추가(내 곡·곡 검색) */}
             {isMember ? (
               <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={() => setPlAddOpen(true)} accessibilityLabel="이 플레이리스트에 곡 추가">
                 <Feather name="plus" size={16} color={colors.accent.primary} />
                 <AppText style={styles.composeText}>곡 추가</AppText>
-              </TouchableOpacity>
-            ) : null}
-            {/* v3.342 (대표 10-11): 크루 플리 삭제 — 만든 사람·크루장 */}
-            {(isOwner || (!!user && String((selectedPl as any).user_id || '') === String(user.id))) ? (
-              <TouchableOpacity style={[styles.composeBtn, { marginHorizontal: 0, marginTop: spacing.sm }]} activeOpacity={0.8} onPress={confirmDeletePlaylist} accessibilityLabel="이 플레이리스트 삭제">
-                <Feather name="trash-2" size={16} color={colors.text.muted} />
-                <AppText style={[styles.composeText, { color: colors.text.secondary }]}>플레이리스트 삭제</AppText>
               </TouchableOpacity>
             ) : null}
             {/* v3.305 [ClubAlbum] 크루장 — 이 플레이리스트로 테마 앨범 만들기 */}
@@ -1364,6 +1442,36 @@ export default function ClubHomeScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Button label="만들기" fullWidth loading={plBusy} onPress={handleCreatePlaylist} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* v3.343 플리 이름 편집 */}
+      <Modal visible={plRenameOpen} transparent animationType="fade" onRequestClose={() => setPlRenameOpen(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
+          <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
+            <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setPlRenameOpen(false)} accessibilityLabel="이름 편집 닫기" />
+            <View style={styles.modalCard}>
+              <AppText style={styles.modalTitle}>플레이리스트 이름 편집</AppText>
+              <TextInput
+                style={styles.modalInput}
+                value={plRenameText}
+                onChangeText={setPlRenameText}
+                placeholder="플레이리스트 이름"
+                placeholderTextColor={colors.text.muted}
+                autoFocus
+                maxLength={60}
+                editable={!plRenameBusy}
+              />
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <View style={{ flex: 1 }}>
+                  <Button label="취소" variant="tonal" fullWidth onPress={() => setPlRenameOpen(false)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button label="저장" fullWidth loading={plRenameBusy} onPress={savePlaylistRename} />
                 </View>
               </View>
             </View>

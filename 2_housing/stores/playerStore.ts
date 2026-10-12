@@ -23,10 +23,21 @@ export interface QueueSource {
 /** setQueue 두 번째 인자 — track_ids 는 스토어가 tracks 에서 파생한다 */
 export type QueueSourceInput = Omit<QueueSource, 'track_ids'>;
 
+/** v3.343 [CrewPreview]: 크루 비회원 미리 듣기 제한 — 이 곡들은 sec 초까지만 재생(utils/crewPreview 감시) */
+export interface PreviewLimit {
+  sec: number;
+  trackIds: string[];
+  clubId: string;
+  clubName?: string;
+}
+
 /** v3.338 [Reco]: 자동 이어듣기 추천곡 표식 — 재생목록(내 곡)과 구분, 듣고 지나가면 큐에서 빠진다 */
 export const isRecoTrack = (t: any): boolean => !!t?.__reco;
 
 interface PlayerState {
+  /** v3.343 [CrewPreview] 비회원 미리 듣기 제한(큐 교체 시 해제, 크루 화면이 다시 건다) */
+  previewLimit: PreviewLimit | null;
+  setPreviewLimit: (v: PreviewLimit | null) => void;
   sound: Audio.Sound | null;
   track: any | null;
   isPlaying: boolean;
@@ -177,6 +188,7 @@ export const usePlayerStore = create<PlayerState>()(
       return { queue: next, index: index - removed };
     };
     return ({
+      previewLimit: null,
       sound: null,
       track: null,
       isPlaying: false,
@@ -208,9 +220,10 @@ export const usePlayerStore = create<PlayerState>()(
           ? { ...source, track_ids: queue.map((t: any) => String(t?.id ?? t?.track_id ?? '')).filter(Boolean) }
           : null;
         if (__DEV__ && source) console.info('[CrewRecog] 큐 귀속 설정', { playlistId: source.playlist_id, clubId: source.club_id, tracks: queueSource?.track_ids.length ?? 0 });
-        set({ queue, queueSource });
+        set({ queue, queueSource, previewLimit: null }); // v3.343: 큐 교체 = 미리 듣기 제한 해제(크루 화면이 필요 시 다시 설정)
         saveOwnerQueue();
       },
+      setPreviewLimit: (previewLimit) => set({ previewLimit }),
       setQueueSource: (queueSource) => set({ queueSource }),
       addToQueue: (track) => {
         if (!track?.id) return false;

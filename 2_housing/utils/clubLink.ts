@@ -21,7 +21,12 @@ export interface ClubLink {
   clubId: string;
   code?: string;
   albumId?: string;
+  /** v3.343 크루 플레이리스트 공유(PG uuid) */
+  playlistId?: string;
 }
+
+const PLAYLIST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const normPl = (v: unknown): string => (typeof v === 'string' && PLAYLIST_ID_RE.test(v.trim()) ? v.trim().toLowerCase() : '');
 
 let pending: ClubLink | null = null;
 let entryViaClubLink = false;
@@ -38,7 +43,8 @@ export function parseClubLinkFromSearch(search: string | null | undefined): Club
     if (!clubId) return null;
     const code = normCode(p.get('i'));
     const albumId = normId(p.get('album'));
-    return { clubId, ...(code ? { code } : {}), ...(albumId ? { albumId } : {}) };
+    const playlistId = normPl(p.get('pl'));
+    return { clubId, ...(code ? { code } : {}), ...(albumId ? { albumId } : {}), ...(playlistId ? { playlistId } : {}) };
   } catch {
     return null;
   }
@@ -47,7 +53,7 @@ export function parseClubLinkFromSearch(search: string | null | undefined): Club
 /** 네이티브 딥링크 `aidol://club/{id}?i=…&album=…` (순수). OAuth 콜백·기타 경로는 null */
 export function parseClubLinkFromUrl(url: string | null | undefined): ClubLink | null {
   if (!url || typeof url !== 'string' || url.includes('oauth/callback')) return null;
-  const m = url.match(/club\/([0-9a-fA-F]{24})(?:\/album\/([0-9a-fA-F]{24}))?/);
+  const m = url.match(/club\/([0-9a-fA-F]{24})(?:\/album\/([0-9a-fA-F]{24}))?(?:\/playlist\/([0-9a-fA-F-]{36}))?/);
   if (!m) {
     const qm = url.match(/\?([^#]*)/);
     return qm ? parseClubLinkFromSearch(qm[1]) : null;
@@ -56,7 +62,8 @@ export function parseClubLinkFromUrl(url: string | null | undefined): ClubLink |
   const q = qm ? new URLSearchParams(qm[1]) : null;
   const code = normCode(q?.get('i'));
   const albumId = normId(m[2] || q?.get('album'));
-  return { clubId: m[1].toLowerCase(), ...(code ? { code } : {}), ...(albumId ? { albumId } : {}) };
+  const playlistId = normPl(m[3] || q?.get('pl'));
+  return { clubId: m[1].toLowerCase(), ...(code ? { code } : {}), ...(albumId ? { albumId } : {}), ...(playlistId ? { playlistId } : {}) };
 }
 
 /** 웹 URL 에서 club·i·album 제거한 href (순수). 바꿀 게 없으면 null */
@@ -64,7 +71,7 @@ export function stripClubParams(href: string): string | null {
   try {
     const u = new URL(href);
     let changed = false;
-    for (const k of ['club', 'i', 'album']) {
+    for (const k of ['club', 'i', 'album', 'pl']) {
       if (u.searchParams.has(k)) { u.searchParams.delete(k); changed = true; }
     }
     return changed ? u.pathname + (u.searchParams.toString() ? `?${u.searchParams}` : '') + u.hash : null;

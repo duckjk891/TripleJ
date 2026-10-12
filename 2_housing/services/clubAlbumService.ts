@@ -159,3 +159,10 @@ export function clubAlbumShareUrl(inviteUrl: string, clubId: string, albumId: st
   const base = m ? m[1] : 'https://api.maidol.ai.kr';
   return `${base}/club/${clubId}/album/${albumId}${m?.[2] ?? ''}`;
 }
+
+/** v3.343 크루 플레이리스트 공유 링크 — 초대 링크(코드 포함)에서 기준 주소·코드를 따 온다 */
+export function clubPlaylistShareUrl(inviteUrl: string | null, clubId: string, playlistId: string): string {
+  const m = (inviteUrl || '').match(/^(https?:\/\/[^/]+)\/club\/[0-9a-f]{24}(\?i=[a-z0-9]{8})?/i);
+  const base = m ? m[1] : 'https://api.maidol.ai.kr';
+  return `${base}/club/${clubId}/playlist/${playlistId}${m?.[2] ?? ''}`;
+}

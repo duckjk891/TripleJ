@@ -153,6 +153,7 @@ import VoiceConsentHost from './components/consent/VoiceConsentHost'; // v3.334 
 
 // v3.331 [SocialAgeGate]: iOS 13세 미만 소셜 차단(Apple Declared Age Range) — Android·웹은 그대로 통과
 const GatedFeedScreen = withSocialAgeGate(FeedScreen, 'Feed');
+import { initCrewPreviewWatcher } from './utils/crewPreview';
 const GatedCommunityScreen = withSocialAgeGate(CommunityScreen, 'Community');
 const GatedClubHomeScreen = withSocialAgeGate(ClubHomeScreen, 'ClubHome');
 const GatedFeedDetailScreen = withSocialAgeGate(FeedDetailScreen, 'FeedDetail');
@@ -718,6 +719,9 @@ function tryConsumeClubLink() {
   const nav = navigationRef.navigate as any;
   if (link.albumId) {
     nav('MainTabs', { screen: 'ClubAlbum', params: { clubId: link.clubId, albumId: link.albumId, refreshAt: Date.now() } });
+  } else if (link.playlistId) {
+    // v3.343 크루 플레이리스트 공유 링크 — 크루 화면에서 그 플레이리스트를 바로 연다(비회원은 1분 미리 듣기)
+    nav('MainTabs', { screen: 'ClubHome', params: { clubId: link.clubId, ...(link.code ? { inviteCode: link.code } : {}), initialTab: 'playlists', initialPlaylistId: link.playlistId, refreshAt: Date.now() } });
   } else {
     nav('MainTabs', { screen: 'ClubHome', params: { clubId: link.clubId, ...(link.code ? { inviteCode: link.code } : {}), initialTab: 'playlists', refreshAt: Date.now() } });
   }
@@ -942,7 +946,8 @@ export default function App() {
   // v3.197(T4): AppState 'active' 복귀 리컨사일 등록/해제 쌍(모듈 내부 1회 가드 + cleanup 해제)
   useEffect(() => {
     initPlaybackReconciler();
-    return () => { teardownPlaybackReconciler(); };
+    const stopCrewPreview = initCrewPreviewWatcher(); // v3.343 크루 비회원 1분 미리 듣기
+    return () => { teardownPlaybackReconciler(); stopCrewPreview(); };
   }, []);
   // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용
   const [currentRoute, setCurrentRoute] = useState<string | undefined>(undefined);

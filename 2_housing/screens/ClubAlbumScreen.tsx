@@ -22,6 +22,7 @@ import {
   clubAlbumShareUrl, clubAlbumErrorMessage,
 } from '../services/clubAlbumService';
 import { joinClubFlow, joinResultMessage, shareOrCopy } from '../utils/clubJoin';
+import { CREW_PREVIEW_SEC } from '../utils/crewPreview';
 
 export default function ClubAlbumScreen() {
   const route = useRoute<any>();
@@ -90,6 +91,12 @@ export default function ClubAlbumScreen() {
     const idx = queue.findIndex((t) => t.id === String(item.id));
     usePlayerStore.getState().setQueue(queue, null);
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
+    // v3.343 [CrewPreview]: 비회원은 대표곡도 1분 미리 듣기 — 넘으면 멈추고 가입 안내(대표 10-12)
+    if (!isMember) {
+      usePlayerStore.getState().setPreviewLimit({
+        sec: CREW_PREVIEW_SEC, trackIds: queue.map((t) => String(t.id)), clubId: String(clubId), clubName: club?.name,
+      });
+    }
     if (__DEV__) console.info('[ClubAlbum] 재생', { albumId, idx, len: queue.length, member: isMember });
     navigation.navigate('Player', { track: queue[idx >= 0 ? idx : 0] });
   };
@@ -100,6 +107,7 @@ export default function ClubAlbumScreen() {
     try {
       const r = await joinClubFlow(String(clubId), { reason: 'club_album_join' });
       if (r === 'login') return;
+      if (r !== 'pending') usePlayerStore.getState().setPreviewLimit(null); // v3.343: 가입 = 끝까지 듣기
       const m = joinResultMessage(r, club?.name);
       showAlert(m.title, m.body);
       await load();
@@ -122,7 +130,7 @@ export default function ClubAlbumScreen() {
       }
     }
     console.info('[ClubAlbum] 공유', { albumId, withInvite: url.includes('?i=') });
-    await shareOrCopy(`MAIDOL 크루 앨범 「${album.title}」\n대표곡 먼저 들어보고, 크루에 가입하면 전 곡을 들을 수 있어요!\n${url}`, url);
+    await shareOrCopy(`MAIDOL 크루 앨범 「${album.title}」\n대표곡을 1분 미리 들어보고, 크루에 가입하면 전 곡을 끝까지 들을 수 있어요!\n${url}`, url);
   };
 
   const openSubmit = async () => {
