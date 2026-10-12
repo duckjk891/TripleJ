@@ -21,6 +21,7 @@ import { consumeIdentityReturn } from '../../utils/identityReturn';
 import { getMyGuardianConsent, requestMyGuardianConsent, type MyGuardianConsent } from '../../services/guardianConsentService';
 import { shareOrCopy } from '../../utils/clubJoin';
 import QrCode from './QrCode';
+import { openAccountMerge } from '../../utils/accountMerge';
 import { showAlert } from '../../utils/appAlert';
 import { friendlyErrorMessage } from '../../utils/friendlyError';
 
@@ -127,6 +128,14 @@ export default function SignupCompleteGate() {
       const r = await pollResult(ret.rid, Date.now() + 15000);
       console.info('[SignupComplete] 웹 본인확인 복귀 결과', { rid: ret.rid.slice(0, 8), hint: ret.status, status: r.status, under14: r.under_14 });
       if (!alive) return;
+      if (r.status === 'merge_candidate' || r.merge_candidate) {
+        // v3.352 같은 분 명의의 다른 계정 → 통합 화면(합치면 남긴 계정 세션으로 바뀌고 userId 효과가 다시 판정)
+        const o = await openAccountMerge(ret.rid);
+        if (o === 'declined') showAlert('알림', '계정을 합치지 않았어요. 본인 명의 휴대폰으로 다시 인증하거나 고객센터(maidol_official@lotusai.co.kr)로 문의해 주세요.');
+        const s = await getOnboardingStatus();
+        if (alive && s) setStatus(s);
+        return;
+      }
       if (r.status === 'verified') {
         if (r.under_14) { await enterGuardian('web_return'); return; }
         try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 표시용 갱신 실패 무시 */ }
@@ -294,6 +303,12 @@ export default function SignupCompleteGate() {
       await saveConsents();
       const r = await runIdentityVerification('signup');
       console.info('[SignupComplete] 본인확인 결과', { status: r.status, under14: r.under_14 });
+      if ((r.status === 'merge_candidate' || r.merge_candidate) && r.rid) {
+        const o = await openAccountMerge(r.rid);
+        if (o === 'declined') showAlert('알림', '계정을 합치지 않았어요. 본인 명의 휴대폰으로 다시 인증하거나 고객센터(maidol_official@lotusai.co.kr)로 문의해 주세요.');
+        await finish();
+        return;
+      }
       if (r.status === 'verified') {
         if (r.under_14) { await enterGuardian('native'); return; }
         await finish();

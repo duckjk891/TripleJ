@@ -101,6 +101,8 @@ function appleDisplayName(fullName: any): string {
 function sanitizeServerMessage(value: unknown): string {
   // v3.233: 보호자 동의 철회 계정 — 콜백 error=account_suspended(가정) 는 코드 문자열 대신 안내 문구
   if (typeof value === 'string' && value.trim() === ACCOUNT_SUSPENDED_CODE) return KIDS_TEXT.accountSuspended;
+  // v3.352 통합된 계정의 연결 대상을 못 찾음(드묾)
+  if (typeof value === 'string' && value.trim() === 'account_merge_error') return '합쳐진 계정을 찾지 못했어요. 고객센터(maidol_official@lotusai.co.kr)로 문의해 주세요.';
   if (typeof value === 'string' && value.trim().length > 0 && value.length <= 80) return value.trim();
   return GENERIC_FAIL_MSG;
 }

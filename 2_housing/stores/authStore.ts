@@ -92,6 +92,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await api.post('/auth/login', { email, password });
       const { token, user } = res.data;
+      // v3.352 1인 1계정 — 합쳐진 예전 이메일 계정으로 로그인하면 서버가 남긴 계정으로 연결하고 안내 문구를 준다
+      if (res.data?.merged_notice) {
+        console.info('[authStore] 통합된 계정 로그인 연결', { userId: String(user?.id).slice(0, 8) });
+        setTimeout(() => {
+          import('../utils/appAlert').then(({ showAlert }) => showAlert('계정이 합쳐졌어요', String(res.data.merged_notice))).catch(() => {});
+        }, 600);
+      }
       setAuthToken(token);
       AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {}); // 세션 영속화(앱 재시작 유지)
       set({ token, user, isLoading: false });

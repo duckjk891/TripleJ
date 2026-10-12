@@ -38,14 +38,14 @@ export async function runIdentityVerification(purpose: 'signup' | 'verify'): Pro
   if (sameTab) {
     // 같은 탭 이동 — 이 페이지는 곧 떠난다. 결과는 복귀 후 SignupCompleteGate 가 서버에서 확인.
     window.location.assign(url);
-    return { status: 'pending', under_14: null, error: null };
+    return { status: 'pending', under_14: null, error: null, rid };
   }
   if (isWeb) {
     window.open(url, '_blank');
-    return pollResult(rid, Date.now() + POLL_MAX_MS);
+    return { ...(await pollResult(rid, Date.now() + POLL_MAX_MS)), rid };
   }
   const r = await WebBrowser.openAuthSessionAsync(url, RETURN_URL);
   console.info('[IdentityFlow] 인증 창 닫힘', { type: r.type });
   // 돌아왔든 닫았든 서버 결과가 정본 — 짧게 확인(닫은 경우 pending 이면 그대로 반환)
-  return pollResult(rid, Date.now() + (r.type === 'success' ? 15000 : 4000));
+  return { ...(await pollResult(rid, Date.now() + (r.type === 'success' ? 15000 : 4000))), rid };
 }

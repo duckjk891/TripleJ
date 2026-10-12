@@ -17,12 +17,32 @@ export interface OnboardingStatus {
   identity: { enabled: boolean; provider: string | null };
 }
 
-export type IdentityStatus = 'pending' | 'verified' | 'failed' | 'duplicate' | 'expired' | 'cancelled';
+export type IdentityStatus = 'pending' | 'verified' | 'failed' | 'duplicate' | 'expired' | 'cancelled' | 'merge_candidate'; // v3.352 같은 사람 다른 계정 → 통합 제안
 
 export interface IdentityResult {
   status: IdentityStatus;
   under_14: boolean | null;
   error: string | null;
+  merge_candidate?: boolean; // v3.352
+  rid?: string; // v3.352 앱이 붙임(통합 화면 조회용)
+}
+
+export interface IdentityConfig {
+  enabled: boolean;
+  provider: string | null;
+  social_onboarding_enabled?: boolean;
+  /** v3.352 1인 1계정 통합 활성(서버 ACCOUNT_MERGE_ENABLED) — ⭐ 본인인증 유도 팝업은 이게 켜졌을 때만 */
+  account_merge_enabled?: boolean;
+}
+
+export async function getIdentityConfig(): Promise<IdentityConfig | null> {
+  try {
+    const res = await api.get('/identity/config');
+    return res.data as IdentityConfig;
+  } catch (err: any) {
+    console.warn('[identityService] config 조회 실패', { status: err?.response?.status });
+    return null;
+  }
 }
 
 export async function getOnboardingStatus(): Promise<OnboardingStatus | null> {

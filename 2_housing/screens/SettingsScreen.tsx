@@ -38,6 +38,7 @@ import AuthPanel from '../components/auth/AuthPanel';
 import NicknameEditModal from '../components/settings/NicknameEditModal';
 import IssueReportModal from '../components/settings/IssueReportModal';
 import PasswordChangeModal from '../components/settings/PasswordChangeModal';
+import { startIdentityVerify } from '../utils/identityVerify'; // v3.352
 import OssLicensesModal from '../components/settings/OssLicensesModal';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS, CONSENT_VERSION, AI_GENERATION_NOTICE } from '../constants/consentTexts';
@@ -586,8 +587,19 @@ export default function SettingsScreen({ navigation, route }: any) {
             <AppText style={styles.settingArrow}>{'>'}</AppText>
           </TouchableOpacity>
         )}
-        {/* v3.230 A8 [IdentityBypass]: '본인인증' 행(⭐30 유도·준비 중 팝업) 제거 — 본인인증은 추후 적용(대표 지시).
-            인증 상태 표시도 필요 없어 숨김. 복원 시 v3.189 행을 되살리면 된다. */}
+        {/* v3.352 본인인증(다날 휴대폰) — 미인증이면 ⭐30 안내·같은 분의 다른 계정은 하나로 합침. 인증 완료면 상태만.
+            (v3.230 A8 에서 숨겼던 행을 다날 연동 후 복원) */}
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => {
+            console.info('[IdentityVerify] 설정 행 탭', { verified: !!(user as any).is_verified });
+            if ((user as any).is_verified) { showAlert('본인인증', '이미 본인인증을 마쳤어요.'); return; }
+            void startIdentityVerify('settings');
+          }}
+        >
+          <AppText style={styles.settingLabel}>본인인증</AppText>
+          <AppText style={styles.settingArrow}>{(user as any).is_verified ? '완료' : '⭐30 >'}</AppText>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.settingRow}
           onPress={() => navigation.navigate('MyReports' as never)}

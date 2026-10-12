@@ -4516,3 +4516,22 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 앱 AuthPanel(이메일 가입 아동 대기): "보호자에게 동의 요청을 보냈어요"+'테스트 모드' 링크(실제 문자 발송 없음) → "보호자 동의를 받아 주세요" + QR + [보호자에게 링크 보내기](소셜 가입 보호자 동의 화면과 같은 방식).
 - 보호자 페이지 미리보기 수집 항목도 같은 문구.
 - 검증: 운영 DB 트랜잭션 ROLLBACK 테스트 3/3(링크 방식 3항목·이름 입력 방식 4항목·값 미노출), tsc 0. 배포(auth.py md5 가드·백업·이미지 pre-v3351-live·진행 0건·본인확인 진행 중 없음 확인·재기동): health ok·oauth 3종 302·identity config(danal·onboarding on)·signup-config guardian on·보호자 start/고지 잘못된 토큰 404·Traceback 0.
+
+## v3.352 — 2026-10-12 — 1인 1계정 통합: 로그인 연결·통합 화면·⭐ 본인인증 유도 (서버·웹) — 통합 실행은 외부 연동 세션(int5, 스위치 꺼짐)
+
+대표 결정(외부 연동 세션 경유, ACCOUNT_MERGE_DESIGN.md): 본인확인에서 같은 DI 의 다른 활성 계정이 나오면 사용자가 남길 계정을 골라 하나로 합침(별 보너스 포함 전부 이관), [내 계정이 아니에요]는 통합·인증 미반영. 본인인증 안 하는 회원은 그대로. 기존 회원 "본인인증하면 ⭐" 유도.
+- 서버(내 담당 — 운영 반영):
+  - services/merged_login.py(신규): merged 사슬 따라가기(최대 3단계, 끊김·비활성 = None), 원래 이메일 해시(sha256(lower(trim))) 조회, 소셜 행 → T 행 교체.
+  - 소셜 로그인(oauth.py 콜백·apple_auth.py 네이티브): 찾은 행이 merged → 남긴 계정(T)으로 로그인(못 따라가면 account_merge_error).
+  - 이메일 로그인(auth.py): 활성 계정이 없으면 merged_email_hash 로 S 를 찾아 S 비밀번호 확인 → T 토큰 + merged_notice(틀리면 일반 401 — 존재 비노출).
+  - 회원탈퇴: 이 계정으로 합쳐진 S 행들의 로그인 수단(password_hash·provider·provider_user_id·merged_email_hash) 함께 파기.
+  - 애플 토큰 해지: 사용자당 문서 여러 개(통합 후) 전부 해지.
+  - 기동: users.merged_into·merged_at·merged_email_hash(+부분 인덱스) ADD COLUMN IF NOT EXISTS, account_merge.resume_pending_merges(모듈 배포 전엔 건너뜀).
+- 앱(웹 배포):
+  - 통합 화면(AccountMergeHost, App 루트): 사과 문구 + 두 계정 카드(로그인 방식·닉네임·이메일 가림·가입일·아티스트·곡·피드·별) + [이 계정을 남길게요]→확인("되돌릴 수 없어요")→합치기(running 이면 3초 간격 확인 최대 3분) → 남긴 계정 토큰으로 교체(/auth/me) + 안내. [내 계정이 아니에요] = 통합·인증 미반영 안내. 통합 불가 사유 4종(진행 중 작업·둘 다 크루장·이용 제한·운영 계정) 안내.
+  - 본인확인 결과 merge_candidate → 통합 화면(가입 마무리 네이티브·웹 복귀, 설정·유도 팝업 공용 utils/identityVerify).
+  - 설정 「본인인증」 행 복원(미인증 = ⭐30, 완료 = 상태).
+  - ⭐ 유도 팝업(IdentityNudgeHost): 서버 account_merge_enabled 가 켜졌을 때만, 미인증·어린이 아님·가입 마무리 대상 아님, 계정별 3일 1회, 로그인 6초 뒤.
+  - 이메일 로그인 merged_notice 안내, 소셜 콜백 account_merge_error 안내(웹·네이티브).
+- 검증: 서버 — 운영 DB 트랜잭션 ROLLBACK 6/6(2단계 사슬·끊김·원래 이메일+S 비번 → T·틀린 비번 401·대소문자/공백·T 탈퇴 시 미연결·라우트). 앱 — 단위 9/9(유도 3일 주기·로그인 방식 이름·불가 사유·통합 화면 열기/닫기), tsc 0. 배포(oauth·auth·apple_auth·main md5 가드 + merged_login 신규·백업 pre-v3352·진행 0건·재기동): health ok·oauth 3종 302·이메일/애플 잘못된 입력 401·컬럼 3종 생성·Traceback 0.
+- 남은 것: 외부 연동 세션 int5(통합 실행·API) 배포 + ACCOUNT_MERGE_ENABLED(대표 승인·처리방침 시행 10-19 맞춤). /identity/config 에 account_merge_enabled 노출 요청. 실제 통합 왕복(두 계정 + 실폰)은 활성화 후 확인.

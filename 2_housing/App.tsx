@@ -117,6 +117,8 @@ import LoginModalHost from './components/auth/LoginModalHost'; // v3.276: 전역
 import WelcomeGuide from './components/WelcomeGuide'; // v3.276: 첫 실행 이미지형 웰컴 팝업(화면별 튜토리얼 대체)
 import UpdateGate from './components/UpdateGate'; // v3.324 앱 업데이트 안내(필수·선택)
 import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333 소셜 가입 마무리(서버 스위치 켜기 전엔 미표시)
+import AccountMergeHost from './components/auth/AccountMergeHost'; // v3.352 1인 1계정 통합 화면
+import IdentityNudgeHost from './components/auth/IdentityNudgeHost'; // v3.352 ⭐ 본인인증 유도
 import { captureWebIdentityReturn } from './utils/identityReturn'; // v3.349
 import PolicyReconsentGate from './components/consent/PolicyReconsentGate'; // v3.340 처리방침 재동의
 import PolicyConsentHost from './components/consent/PolicyConsentHost'; // v3.341 디렉터 진입 동의 게이트
@@ -783,6 +785,12 @@ function useOAuthCallback() {
           notifyAccountSuspended();
           return;
         }
+        // v3.352 통합된 계정의 연결 대상을 못 찾음(드묾) — 웹 콜백 안내
+        if (!m && /[#&]error=account_merge_error/.test(hash)) {
+          try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
+          setTimeout(() => showAlert('알림', '합쳐진 계정을 찾지 못했어요. 고객센터(maidol_official@lotusai.co.kr)로 문의해 주세요.'), 800);
+          return;
+        }
         if (!m) return;
         webOAuthTokenPending = true;
         const token = decodeURIComponent(m[1]);
@@ -1056,6 +1064,8 @@ export default function App() {
           <WelcomeGuide />
           <UpdateGate />
           <SignupCompleteGate />
+          <AccountMergeHost />
+          <IdentityNudgeHost />
           <PolicyReconsentGate />
           <PolicyConsentHost />
           <VoiceConsentHost />
