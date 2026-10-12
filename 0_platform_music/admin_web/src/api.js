@@ -149,6 +149,12 @@ export const getPointCohorts = (days = 30) => API.get('/admin/points/analytics/c
 export const getTracks = (params) => API.get('/admin/tracks', { params });
 export const deleteTrack = (id) => API.delete(`/admin/tracks/${id}`);
 export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/${id}/visibility`, { is_public });
+// age1 — 곡·앨범 연령 등급
+export const getAgeRatingSummary = () => API.get('/admin/age-ratings/summary');
+export const getAgeRatingItems = (params) => API.get('/admin/age-ratings/items', { params });
+export const getAgeRatingItem = (kind, id) => API.get(`/admin/age-ratings/${kind}/${id}`);
+export const setAgeRating = (kind, id, rating, note) => API.put(`/admin/age-ratings/${kind}/${id}`, { rating, note });
+export const reclassifyAgeRating = (kind, id) => API.post(`/admin/age-ratings/${kind}/${id}/reclassify`);
 
 // ---- reports ----
 export const getReports = (params) => API.get('/admin/reports', { params });

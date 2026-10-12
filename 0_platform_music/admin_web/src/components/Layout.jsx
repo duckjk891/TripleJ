@@ -15,6 +15,7 @@ const MENU = [
   { to: '/issues', label: '오류 신고', icon: '🐞', badge: 'issues' },
   { group: '운영' },
   { to: '/tracks', label: '곡 관리', icon: '🎵' },
+  { to: '/age-ratings', label: '연령 등급', icon: '🔞' },
   { to: '/users', label: '사용자 관리', icon: '👥' },
   { to: '/stars', label: '별 관리', icon: '⭐' },
   { to: '/items', label: '착장 아이템', icon: '👕' },

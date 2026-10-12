@@ -6,6 +6,7 @@ import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import ReportsPage from './pages/Reports';
 import TracksPage from './pages/Tracks';
+import AgeRatingsPage from './pages/AgeRatings';
 import UsersPage from './pages/Users';
 import ItemsPage from './pages/Items';
 import BrandsPage from './pages/Brands';
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/" element={<Protected><DashboardPage /></Protected>} />
           <Route path="/reports" element={<Protected><ReportsPage /></Protected>} />
           <Route path="/tracks" element={<Protected><TracksPage /></Protected>} />
+          <Route path="/age-ratings" element={<Protected><AgeRatingsPage /></Protected>} />
           <Route path="/users" element={<Protected><UsersPage /></Protected>} />
           <Route path="/items" element={<Protected><ItemsPage /></Protected>} />
           <Route path="/brands" element={<Protected><BrandsPage /></Protected>} />
