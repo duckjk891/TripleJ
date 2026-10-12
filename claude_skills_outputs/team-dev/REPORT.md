@@ -4583,3 +4583,4 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - deploy.sh: APP_BRANCH=… 로 미리보기 배포 가능(기본 main).
 - 서버 voice_clone_service.list_voice_clones: Mongo 의 시간대 없는 availability_checked_at 과 aware now 를 빼다 TypeError(30분 3건 — 목록 조회 때 생존확인 전체 건너뜀) → UTC 로 맞춰 비교. 배포(md5 가드·백업 pre-v3357·진행 0건·재기동): health ok·oauth 3종 302·Traceback 0.
 - 검증: 단위 5/5(번들 미리 받기 + 진행률 30·60·99·100), tsc 0, 미리보기 배포(worker-test)에서 진행률 화면 → 앱 실행(자리표시→번들 주입, 차트 진입, 콘솔 오류 0).
+- 운영 확인(2f92e8b·번들 AppEntry-b79c6417…): /app 에 자리표시·진행률 화면 포함, 번들 200 JS 4,568,272B(= data-size), 없는 번들 404, 모바일 실화면 진행률 → 차트 진입·콘솔 오류 0.
