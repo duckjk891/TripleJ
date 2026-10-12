@@ -300,6 +300,10 @@ async def _apply_result(conn, row, provider_name: str, result: "iv.IdentityResul
         user_id, f"identity:{provider_name}", result.birth_date, result.gender, h,
     )
     under14 = is_under_14(result.birth_date)
+    try:  # v3.355 — 이메일 가입은 '만 14세 이상' 체크가 없으므로 본인확인 결과로 기록(가입 마무리 재질문 방지)
+        await am.record_age14_if_adult(conn, user_id, result.birth_date)
+    except Exception:  # noqa: BLE001 — 기록 실패가 본인확인 반영을 막지 않게
+        logger.exception("[identity] age14 record failed user=%s", _u8(user_id))
     try:
         from ..services.points_service import credit_points
         await credit_points(str(user_id), "verify_bonus", 30, ref="-", day="-")  # oauth 본인인증과 같은 1회 보상(멱등)

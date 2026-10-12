@@ -262,6 +262,29 @@ async def main():
           and ua["merged_email_hash"] is None)
     check("all content now on E", await m.tracks.count_documents({"uploader_id": str(E)}) == 4)
 
+    # 9b) v3.355 — 본인확인 성인이면 age14 자동 기록(이메일 가입은 체크 없음), 미성년·기존 기록은 그대로
+    async def age14_rows(u):
+        return [tuple(r) for r in await c.fetch(
+            "SELECT agreed, version FROM user_consents WHERE user_id=$1 AND consent_key='age14'", u)]
+    check("merge target got age14 (identity)", (True, "identity") in await age14_rows(E))
+    F = await mk_user(c, "sixth@example.com", "식스")
+    ridf, rowf = await new_rid(c, F)
+    outf = await callback(c, ridf, rowf, ci="DI-OTHER-ADULT")
+    check("verified adult → age14 identity", outf["status"] == "verified" and await age14_rows(F) == [(True, "identity")], (outf, await age14_rows(F)))
+    ridf2, rowf2 = await new_rid(c, F)
+    await callback(c, ridf2, rowf2, ci="DI-OTHER-ADULT")
+    check("no duplicate age14 on re-verify", len(await age14_rows(F)) == 1)
+    G = await mk_user(c, "kid@example.com", "키드")
+    ridg, rowg = await new_rid(c, G)
+    resg = iv.IdentityResult(birth_date=date(2016, 5, 5), gender="male", ci="DI-KID")
+    outg = await idr._apply_result(c, rowg, "mock", resg)
+    check("under-14 → no age14", outg.get("under_14") is True and await age14_rows(G) == [])
+    H = await mk_user(c, "had@example.com", "해드")
+    await c.execute("INSERT INTO user_consents (user_id, consent_key, agreed, version) VALUES ($1,'age14',TRUE,'2026-07-23.v1')", H)
+    ridh, rowh = await new_rid(c, H)
+    await callback(c, ridh, rowh, ci="DI-HAD")
+    check("existing age14 kept, not duplicated", await age14_rows(H) == [(True, "2026-07-23.v1")])
+
     # 10) 운영·공식 계정은 통합 불가
     O = await mk_user(c, "official@example.com", "운영", role="admin")
     check("special account blocked", await am.blocked_reason(c, O, X) == "special_account")

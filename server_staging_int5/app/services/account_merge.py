@@ -101,6 +101,25 @@ def login_methods(row) -> list:
     return out
 
 
+AGE14_SOURCE = "identity"  # user_consents.version — 본인확인으로 확인된 '만 14세 이상'(v3.355 이메일 가입은 체크 항목 없음)
+
+
+async def record_age14_if_adult(conn, user_id, birth_date) -> bool:
+    """본인확인 결과 만 14세 이상이고 age14 동의 기록이 없으면 age14=true 를 남긴다(가입 마무리에서 다시 묻지 않게)."""
+    from ..models.user import is_under_14
+    if not birth_date or is_under_14(birth_date):
+        return False
+    has = await conn.fetchval(
+        "SELECT 1 FROM user_consents WHERE user_id = $1 AND consent_key = 'age14' AND agreed LIMIT 1", user_id)
+    if has:
+        return False
+    await conn.execute(
+        "INSERT INTO user_consents (user_id, consent_key, agreed, version) VALUES ($1, 'age14', TRUE, $2)",
+        user_id, AGE14_SOURCE)
+    logger.info("[consent] recorded user=%s key=age14 agreed=True version=%s", _u8(user_id), AGE14_SOURCE)
+    return True
+
+
 async def ensure_schema(conn) -> None:
     await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS merged_into UUID")
     await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ")
@@ -366,6 +385,7 @@ async def _step_pg(conn, rid, S, T, verify: dict, counts: dict):
                WHERE id = $1""",
             T, verify.get("verify_provider"), verify.get("birth_date"), verify.get("gender"), verify.get("ci_hash"),
         )
+        await record_age14_if_adult(conn, T, verify.get("birth_date"))
     # 겹친 좋아요만큼 곡·피드 좋아요 수 보정
     mongo = get_mongo()
     for tid in dropped_likes:
