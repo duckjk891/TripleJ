@@ -4584,3 +4584,6 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 서버 voice_clone_service.list_voice_clones: Mongo 의 시간대 없는 availability_checked_at 과 aware now 를 빼다 TypeError(30분 3건 — 목록 조회 때 생존확인 전체 건너뜀) → UTC 로 맞춰 비교. 배포(md5 가드·백업 pre-v3357·진행 0건·재기동): health ok·oauth 3종 302·Traceback 0.
 - 검증: 단위 5/5(번들 미리 받기 + 진행률 30·60·99·100), tsc 0, 미리보기 배포(worker-test)에서 진행률 화면 → 앱 실행(자리표시→번들 주입, 차트 진입, 콘솔 오류 0).
 - 운영 확인(2f92e8b·번들 AppEntry-b79c6417…): /app 에 자리표시·진행률 화면 포함, 번들 200 JS 4,568,272B(= data-size), 없는 번들 404, 모바일 실화면 진행률 → 차트 진입·콘솔 오류 0.
+
+## v3.358 — 2026-10-12 — 해시 번들 장기 캐시(워커) (웹)
+- 대표가 Cloudflare 존 Browser Cache TTL 을 "원본 헤더 따름"으로 변경(4시간 덮어쓰기 해제 — 외부 연동 세션 확인). 후속: 고급 모드에서는 _headers 가 적용되지 않으므로 워커에서 /_expo/static/ 정상 응답에 public, max-age=31536000, immutable 지정(이름에 해시가 있어 내용이 바뀌면 주소가 바뀜). 없는 경로는 404·no-store 그대로, HTML 은 max-age=0 그대로. 미리보기 → 운영 반영(앱 빌드 동일, 워커만 교체), 운영 헤더 확인.
