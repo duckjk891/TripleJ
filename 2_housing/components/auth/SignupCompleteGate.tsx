@@ -18,6 +18,9 @@ import { recordConsents, getMe } from '../../services/authService';
 import { getOnboardingStatus, type OnboardingStatus } from '../../services/identityService';
 import { runIdentityVerification, pollResult } from '../../utils/identityFlow';
 import { consumeIdentityReturn } from '../../utils/identityReturn';
+import { getMyGuardianConsent, requestMyGuardianConsent, type MyGuardianConsent } from '../../services/guardianConsentService';
+import { shareOrCopy } from '../../utils/clubJoin';
+import QrCode from './QrCode';
 import { showAlert } from '../../utils/appAlert';
 import { friendlyErrorMessage } from '../../utils/friendlyError';
 
@@ -41,7 +44,9 @@ export function ageFrom(isoDate: string, now = new Date()): number {
   return age;
 }
 
-type Phase = 'form' | 'saving' | 'under14';
+// v3.350: guardian = 만 14세 미만(본인확인으로 확인) → 보호자 동의 대기(링크·QR 공유, 동의되면 자동 해제)
+type Phase = 'form' | 'saving' | 'under14' | 'guardian';
+const GUARDIAN_POLL_MS = 8000;
 
 export default function SignupCompleteGate() {
   const insets = useSafeAreaInsets();
@@ -51,20 +56,66 @@ export default function SignupCompleteGate() {
   const [birth, setBirth] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [phase, setPhase] = useState<Phase>('form');
+  const [guardian, setGuardian] = useState<MyGuardianConsent | null>(null);
+  const [guardianBusy, setGuardianBusy] = useState(false);
+
+  /** v3.350 만 14세 미만 확인 → 보호자 동의 링크 만들기(대기 중이면 그 링크) → 대기 화면. 실패 시 종전 안내(로그아웃) */
+  const enterGuardian = async (src: string) => {
+    try {
+      const g = await requestMyGuardianConsent();
+      console.info('[SignupComplete] 보호자 동의 대기 진입', { src, status: g.status, required: g.required });
+      setGuardian(g);
+      setPhase(g.required ? 'guardian' : 'form');
+    } catch (err: any) {
+      console.error('[SignupComplete] 보호자 동의 링크 요청 실패', { src, status: err?.response?.status });
+      setPhase('under14');
+    }
+  };
 
   useEffect(() => {
     let alive = true;
     setStatus(null);
     setPhase('form');
+    setGuardian(null);
     if (!userId) return;
     (async () => {
       const s = await getOnboardingStatus();
       if (!alive || !s) return;
       if (s.required) console.info('[SignupComplete] 가입 마무리 필요', { missing: s.missing_consents, birthMissing: s.birth_date_missing });
       setStatus(s);
+      // v3.350 만 14세 미만인데 보호자 동의가 없으면(본인확인 뒤 앱을 닫았다 다시 연 경우 포함) 대기 화면
+      if (s.is_minor) {
+        const g = await getMyGuardianConsent();
+        if (!alive || !g) return;
+        if (g.required) {
+          console.info('[SignupComplete] 보호자 동의 필요(재진입)', { status: g.status });
+          setGuardian(g);
+          setPhase('guardian');
+        }
+      }
     })();
     return () => { alive = false; };
   }, [userId]);
+
+  // v3.350 보호자 동의 대기 중 — 주기적으로 확인해 동의되면 자동 해제
+  useEffect(() => {
+    if (phase !== 'guardian' || !userId) return;
+    let alive = true;
+    const t = setInterval(async () => {
+      const g = await getMyGuardianConsent();
+      if (!alive || !g) return;
+      setGuardian(g);
+      if (!g.required) {
+        console.info('[SignupComplete] 보호자 동의 완료 — 해제');
+        setPhase('form');
+        try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 표시용 갱신 실패 무시 */ }
+        const s = await getOnboardingStatus();
+        if (alive && s) setStatus(s);
+        showAlert('보호자 동의 완료', '보호자 동의가 끝났어요. 이제 MAIDOL 을 이용할 수 있어요!');
+      }
+    }, GUARDIAN_POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, [phase, userId]);
 
   // v3.349 웹 본인확인 같은 탭 복귀 — 서버 결과(정본)로 이어 처리. 로그인 복원 뒤 1회.
   useEffect(() => {
@@ -77,7 +128,7 @@ export default function SignupCompleteGate() {
       console.info('[SignupComplete] 웹 본인확인 복귀 결과', { rid: ret.rid.slice(0, 8), hint: ret.status, status: r.status, under14: r.under_14 });
       if (!alive) return;
       if (r.status === 'verified') {
-        if (r.under_14) { setPhase('under14'); return; }
+        if (r.under_14) { await enterGuardian('web_return'); return; }
         try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 표시용 갱신 실패 무시 */ }
         const s = await getOnboardingStatus();
         if (alive && s) setStatus(s);
@@ -94,6 +145,75 @@ export default function SignupCompleteGate() {
   }, [userId]);
 
   if (!userId) return null;
+  if (phase === 'guardian' && guardian) {
+    const url = guardian.consent_url;
+    const stale = guardian.status === 'rejected' || guardian.status === 'expired' || !url;
+    const remake = async () => {
+      setGuardianBusy(true);
+      try { await enterGuardian('remake'); } finally { setGuardianBusy(false); }
+    };
+    const share = async () => {
+      if (!url) return;
+      const r = await shareOrCopy(`MAIDOL 가입에 보호자 동의가 필요해요. 아래 링크를 열어 휴대폰 본인확인 후 동의해 주세요.\n${url}`, url);
+      console.info('[SignupComplete] 보호자 링크 공유', { result: r });
+      if (r === 'copied') showAlert('알림', '링크를 복사했어요. 보호자에게 보내 주세요.');
+    };
+    const checkNow = async () => {
+      setGuardianBusy(true);
+      try {
+        const g = await getMyGuardianConsent();
+        if (g) setGuardian(g);
+        if (g && !g.required) {
+          setPhase('form');
+          try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 무시 */ }
+          const s = await getOnboardingStatus();
+          if (s) setStatus(s);
+          showAlert('보호자 동의 완료', '보호자 동의가 끝났어요. 이제 MAIDOL 을 이용할 수 있어요!');
+        } else if (g) {
+          showAlert('알림', g.status === 'rejected' ? '보호자가 동의하지 않았어요. 다시 요청하려면 새 링크를 만들어 주세요.' : '아직 보호자 동의 전이에요.');
+        }
+      } finally {
+        setGuardianBusy(false);
+      }
+    };
+    return (
+      <Modal visible animationType="slide" onRequestClose={() => {}}>
+        <ScrollView style={styles.screen} contentContainerStyle={{ paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl, paddingHorizontal: spacing.lg }}>
+          <AppText variant="title2">보호자 동의가 필요해요</AppText>
+          <AppText variant="footnote" tone="secondary" style={{ marginTop: spacing.sm }}>
+            만 14세 미만은 보호자(부모님 등)의 동의가 있어야 MAIDOL 을 이용할 수 있어요.{'\n'}
+            보호자에게 아래 링크를 보내거나 QR 코드를 보여 주세요. 보호자가 휴대폰 본인확인 후 동의하면 바로 이용할 수 있어요.
+          </AppText>
+          {stale ? (
+            <View style={[styles.section, { marginTop: spacing.xl }]}>
+              <AppText variant="callout">
+                {guardian.status === 'rejected' ? '보호자가 동의하지 않았어요.' : '동의 링크가 만료됐어요.'}
+              </AppText>
+              <TouchableOpacity style={[styles.primary, { marginTop: spacing.md }, guardianBusy && styles.disabled]} onPress={remake} disabled={guardianBusy}>
+                {guardianBusy ? <ActivityIndicator color="#fff" /> : <AppText style={styles.primaryText}>새 동의 링크 만들기</AppText>}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ marginTop: spacing.xl, alignItems: 'center' }}>
+              <View style={styles.qrBox}><QrCode value={url as string} size={184} /></View>
+              <AppText variant="caption" tone="muted" center style={{ marginTop: spacing.sm }}>
+                {guardian.expires_at ? `링크는 ${new Date(guardian.expires_at).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}까지 쓸 수 있어요` : ''}
+              </AppText>
+              <TouchableOpacity style={[styles.primary, { marginTop: spacing.lg, alignSelf: 'stretch' }]} onPress={share}>
+                <AppText style={styles.primaryText}>보호자에게 링크 보내기</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.outline, { marginTop: spacing.sm, alignSelf: 'stretch' }, guardianBusy && styles.disabled]} onPress={checkNow} disabled={guardianBusy}>
+                {guardianBusy ? <ActivityIndicator color={colors.accent.primary} /> : <AppText tone="accent" style={{ fontWeight: '700' }}>보호자 동의 확인하기</AppText>}
+              </TouchableOpacity>
+            </View>
+          )}
+          <TouchableOpacity style={styles.secondary} onPress={() => useAuthStore.getState().logout()}>
+            <AppText variant="footnote" tone="muted">로그아웃</AppText>
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
+    );
+  }
   if (phase === 'under14') {
     return (
       <Modal visible animationType="slide" onRequestClose={() => {}}>
@@ -175,7 +295,7 @@ export default function SignupCompleteGate() {
       const r = await runIdentityVerification('signup');
       console.info('[SignupComplete] 본인확인 결과', { status: r.status, under14: r.under_14 });
       if (r.status === 'verified') {
-        if (r.under_14) { setPhase('under14'); return; }
+        if (r.under_14) { await enterGuardian('native'); return; }
         await finish();
       } else if (r.status !== 'pending') {
         showAlert('본인확인', r.error || '본인확인을 마치지 못했어요. 다시 시도해 주세요.');
@@ -268,4 +388,6 @@ const styles = StyleSheet.create({
   primaryText: { color: '#fff', fontWeight: '700' },
   disabled: { opacity: 0.5 },
   secondary: { alignItems: 'center', paddingVertical: spacing.lg },
+  outline: { borderRadius: radius.md, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: colors.accent.primary },
+  qrBox: { padding: spacing.sm, backgroundColor: '#FFFFFF', borderRadius: radius.md },
 });

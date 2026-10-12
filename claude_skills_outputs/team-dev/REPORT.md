@@ -4495,3 +4495,15 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - utils/identityFlow: 웹(app.maidol.ai.kr)은 return_url = https://app.maidol.ai.kr/?identity=done 으로 시작해 같은 탭 이동(location.assign). 서버가 끝나면 ?identity=done&rid=&status= 로 303 복귀(서버 허용 접두·리다이렉트는 기존). 미리보기 도메인 등은 종전 새 창 + 3초 확인. 네이티브(인앱 인증 세션 + aidol://identity-done) 변경 없음.
 - utils/identityReturn(신규): 앱 로드 시 복귀 정보 1회 캡처 + 주소창에서 identity·rid·status 제거. SignupCompleteGate 가 로그인 복원 뒤 서버 결과(GET /identity/result/{rid}, 정본)를 확인해 이어 처리 — 완료 = 내 정보·마무리 상태 갱신 + "본인확인이 완료됐어요", 만 14세 미만 = 이용 불가 안내(마무리 대상이 아니어도 표시), 취소 = 조용히, 실패·중복 = 서버 안내 문구.
 - 검증: 단위 11/11(복귀 주소 파싱·잘못된 rid 거부·다른 파라미터 보존·도메인 판정·서버 허용 접두), tsc 0, 웹 복귀 주소 진입 시 주소 정리·오류 없음 확인. 실제 다날 인증 왕복은 대표 휴대폰 확인 필요.
+
+## v3.350 — 2026-10-12 — 보호자 동의 연결(A안): 만 14세 미만 소셜 가입자 → 보호자 링크·QR → 보호자 휴대폰 본인확인 → 동의 (서버·웹·보호자 페이지)
+
+대표 결정(외부 연동 세션 경유, "보호자 동의 연결 만들어"): 본인확인 결과 만 14세 미만인 소셜 가입자는 로그아웃 대신 보호자 동의를 거쳐 이용. 종전 보호자 동의는 본인인증이 mock(즉시 통과)이라 아동이 링크를 열어 스스로 동의할 수 있었음 → 동의는 보호자 휴대폰 본인확인(다날 — 성인·아동 본인 아님, 외부 연동 세션 담당) 후에만.
+- 서버(routes/auth.py·main.py):
+  - GET/POST /api/auth/me/guardian-consent(로그인) — {required(생년월일상 만 14세 미만 + 가입 보호자 동의 완료 없음), status none|pending|agreed|rejected|expired, consent_url, expires_at, guardian_verified}. POST = 대기 중이면 그 링크, 아니면 새 링크(72시간). 계정 상태는 바꾸지 않음(소셜 로그인 아동이 대기 화면·링크를 다시 볼 수 있게).
+  - decide: 동의(agree)는 guardian_consents.guardian_verified_at 이 있어야 함(없으면 403 guardian_verify_required). 거부는 그대로 허용. mock 어댑터 호출 제거. 고지 GET 에 guardian_verified 추가.
+  - 기동 마이그레이션: guardian_consents.guardian_verified_at·guardian_di_hash(ADD COLUMN IF NOT EXISTS — 외부 연동 세션과 같은 이름).
+- 앱(SignupCompleteGate): 본인확인 결과 만 14세 미만(네이티브·웹 복귀 모두) → 보호자 동의 링크 생성 → "보호자 동의가 필요해요" 화면(QR 코드 + [보호자에게 링크 보내기] + [보호자 동의 확인하기] + 로그아웃, 닫기 없음). 8초마다 확인해 동의되면 자동 해제·안내. 거부·만료 = [새 동의 링크 만들기]. 앱을 다시 열어도(만 14세 미만·동의 없음) 같은 화면. QR = qrcode-generator(순수 JS, MIT) + react-native-svg(네이티브 추가 없음).
+- 보호자 페이지(maidol.ai.kr/guardian): 동의 화면에 "1. 보호자 본인확인" 단계 — [휴대폰으로 보호자 본인확인] → POST /api/identity/guardian/start(외부 연동 세션 API) → 같은 탭 이동·복귀(?token=&identity=done) → 확인 완료여야 [동의] 활성. 복귀했는데 미확인이면 이유(성인 아님·자녀 본인·취소) 표시. 소개 문구(문자 발송 → 자녀가 보여 준 링크·QR)·미리보기 갱신.
+- 검증: 서버 — 운영 DB 트랜잭션 안 실행 후 전부 ROLLBACK(잔여 0): 성인 대상 아님·아동 링크 생성/재사용·본인확인 전 동의 403·확인 후 동의 성공 → required 해제·거부 후 새 링크·73시간 만료·라우트 매핑. 앱 — QR 생성 3/3, tsc 0. 배포(auth.py·main.py md5 가드·백업·이미지 pre-v3350-live·진행 0건·재기동): health ok·oauth 3종 302·신규 경로 401(무인증)·없는 토큰 404·컬럼 생성·Traceback 0.
+- 남은 연동: POST /api/identity/guardian/start·GET /api/identity/guardian/status/{token}(외부 연동 세션 int4) 운영 반영 전까지 보호자 페이지 [본인확인]은 "시작하지 못했습니다" 안내 — 그 사이 동의 불가(현재 대상 계정 0).
