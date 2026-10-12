@@ -19,7 +19,7 @@ async def fake_call(data):
     if data["TXTYPE"]=="ITEMSEND": return {"RETURNCODE":"0000","TID":"T123"}
     if data["TID"]=="BAD": return {"RETURNCODE":"1110","RETURNMSG":"[인증실패] 입력하신 정보가 올바르지 않습니다."}
     if data["TID"]=="WEIRD": return {"RETURNCODE":"0256","RETURNMSG":"internal"}
-    return {"RETURNCODE":"0000","DOB":"20160315","SEX":"2","NAME":"홍길동","CI":"ci-abc","DI":"di"}
+    return {"RETURNCODE":"0000","DOB":"20160315","SEX":"2","NAME":"홍길동","CI":"","DI":"di-xyz"}
 p._call=fake_call
 async def main():
     page=await p.render_page_async("rid123","https://api.maidol.ai.kr/api/identity/callback/rid123","https://api.maidol.ai.kr/api/identity/back/rid123","Mozilla/5.0 (iPhone)")
@@ -30,7 +30,7 @@ async def main():
     r=await p.verify_callback("rid123",{"TID":"T999"})
     cf=calls[-1]
     ok("CONFIRM: CONFIRMOPTION=1·CPID·ORDERID 대조", cf["TXTYPE"]=="CONFIRM" and cf["CONFIRMOPTION"]=="1" and cf["ORDERID"]=="rid123" and cf["IDENOPTION"]=="1")
-    ok("결과 매핑(DOB·여성·CI·이름길이)", str(r.birth_date)=="2016-03-15" and r.gender=="female" and r.ci=="ci-abc" and r.name_len==3)
+    ok("결과 매핑(DOB·여성·DI 기준 중복키·이름길이)", str(r.birth_date)=="2016-03-15" and r.gender=="female" and r.ci=="DI:di-xyz" and r.name_len==3)
     for tid,expect in (("BAD","[인증실패]"),("WEIRD","본인확인에 실패")):
         try: await p.verify_callback("rid123",{"TID":tid}); ok(f"실패코드 {tid} 예외",False)
         except iv.IdentityVerifyError as e: ok(f"실패코드 {tid} 안내문", expect in str(e))
@@ -40,4 +40,7 @@ async def main():
     try: p._cfg(); ok("키 없으면 미설정",False)
     except iv.IdentityNotConfigured: ok("키 없으면 미설정",True)
 asyncio.run(main())
+import app.routes.identity as ri
+html=ri._done_page("본인확인이 끝났어요.").body.decode()
+ok("완료 화면: MAIDOL 복귀 버튼·자동 이동", "MAIDOL로 돌아가기" in html and "location.replace" in html and "앱으로 돌아가 주세요" not in html)
 print("RESULT:","ALL PASS" if not FAILS else FAILS); sys.exit(1 if FAILS else 0)

@@ -191,6 +191,8 @@ class DanalProvider(BaseProvider):
             raise IdentityVerifyError("본인확인 결과를 받지 못했어요. 다시 시도해 주세요.")
         res = await self._call({"TXTYPE": "CONFIRM", "TID": tid, "CONFIRMOPTION": "1", "IDENOPTION": "1",
                                 "CPID": cpid, "ORDERID": rid})
+        # 응답 항목 이름만 기록(값 금지) — 계약별 CI/DI 제공 여부 확인용
+        logger.info("[identity.danal] confirm keys rid=%s keys=%s", rid[:8], ",".join(sorted(k for k, v in res.items() if (v or "").strip())))
         if res.get("RETURNCODE") != "0000":
             logger.warning("[identity.danal] confirm fail rid=%s code=%s", rid[:8], res.get("RETURNCODE"))
             msg = (res.get("RETURNMSG") or "").strip()
@@ -203,7 +205,9 @@ class DanalProvider(BaseProvider):
             raise IdentityVerifyError("본인확인 결과를 확인하지 못했어요. 다시 시도해 주세요.")
         sex = (res.get("SEX") or "").strip()
         gender = ("male" if sex in ("1", "3", "5", "7", "9") else "female" if sex in ("2", "4", "6", "8", "0") else None) if sex else None
-        return IdentityResult(birth_date=bd, gender=gender, ci=(res.get("CI") or "").strip() or None,
+        # 중복 가입 확인 = DI(우리 사이트 전용 중복가입확인정보, 대표 계약 10-12). CI 는 계약상 미제공 — 있으면 무시.
+        di = (res.get("DI") or "").strip()
+        return IdentityResult(birth_date=bd, gender=gender, ci=(f"DI:{di}" if di else None),
                               name_len=len((res.get("NAME") or "").strip()))
 
 

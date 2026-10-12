@@ -95,19 +95,29 @@ async def onboarding_status(current_user=Depends(get_current_user), conn=Depends
         user_id,
     )
     agreed = {r["consent_key"] for r in rows if r["agreed"]}
-    missing = [k for k in REQUIRED_CONSENT_KEYS if k not in agreed]
+    # v3.348 — 만 14세 미만(생년월일 기준) 또는 보호자 가입 동의가 완료된 계정은 '만 14세 이상 확인'(age14)을
+    # 요구하지 않는다(보호자 동의가 대신함). 종전엔 스위치를 켜는 순간 어린이 계정 전부가 마무리 화면에 막혔다.
+    is_minor = bool(row and is_under_14(row["birth_date"]))
+    if not is_minor:
+        is_minor = bool(await conn.fetchval(
+            """SELECT 1 FROM guardian_consents WHERE child_user_id = $1 AND status = 'agreed'
+               AND COALESCE(consent_type, 'signup') = 'signup' LIMIT 1""",
+            user_id,
+        ))
+    missing = [k for k in REQUIRED_CONSENT_KEYS if k not in agreed and not (is_minor and k == "age14")]
     birth_missing = not (row and row["birth_date"])
     enabled = _onboarding_enabled()
     required = enabled and (bool(missing) or birth_missing)
     if required:
-        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s",
-                    _u8(user_id), missing, birth_missing)
+        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s minor=%s",
+                    _u8(user_id), missing, birth_missing, is_minor)
     return {
         "enabled": enabled,
         "required": required,
         "missing_consents": missing,
         "birth_date_missing": birth_missing,
         "is_verified": bool(row and row["is_verified"]),
+        "is_minor": is_minor,  # v3.348 앱: 마무리 화면에서 age14 항목 숨김
         "identity": {"enabled": iv.enabled(), "provider": iv.provider_name() if iv.enabled() else None},
     }
 
@@ -162,7 +172,7 @@ def _done_page(message: str) -> HTMLResponse:
 
 
 @router.get("/page/{rid}", response_class=HTMLResponse)
-async def identity_page(rid: str, conn=Depends(get_pg)):
+async def identity_page(rid: str, request: Request, conn=Depends(get_pg)):
     try:
         provider = iv.get_provider()
     except iv.IdentityNotConfigured:
@@ -172,7 +182,30 @@ async def identity_page(rid: str, conn=Depends(get_pg)):
     if err:
         return _done_page(err)
     callback_url = f"{_public_base()}/api/identity/callback/{rid}"
+    if hasattr(provider, "render_page_async"):  # 다날 등 — 서버 대 서버 준비(ITEMSEND) 후 공급자 화면으로 이동
+        try:
+            return HTMLResponse(await provider.render_page_async(rid, callback_url, f"{_public_base()}/api/identity/back/{rid}",
+                                                                 request.headers.get("user-agent", "")))
+        except iv.IdentityVerifyError as e:
+            return _done_page(str(e))
     return HTMLResponse(provider.render_page(rid, callback_url, row["return_url"] or ""))
+
+
+@router.api_route("/back/{rid}", methods=["GET", "POST"])
+async def identity_back(rid: str, conn=Depends(get_pg)):
+    """공급자 화면에서 취소·오류로 돌아온 경우(다날 BackURL) — 요청을 cancelled 로 닫고 앱으로 복귀."""
+    await _ensure_schema(conn)
+    row = await conn.fetchrow("SELECT status, return_url FROM identity_verifications WHERE id = $1", rid)
+    if not row:
+        return _done_page("요청을 찾을 수 없어요.")
+    if row["status"] == "pending":
+        await conn.execute("UPDATE identity_verifications SET status='cancelled', completed_at=now() WHERE id=$1 AND status='pending'", rid)
+        logger.info("[identity] cancelled rid=%s", rid[:8])
+    ret = row["return_url"]
+    if ret:
+        sep = "&" if "?" in ret else "?"
+        return RedirectResponse(url=f"{ret}{sep}{urlencode({'rid': rid, 'status': 'cancelled'})}", status_code=303)
+    return _done_page("본인확인을 취소했어요.")
 
 
 async def _apply_result(conn, row, provider_name: str, result: "iv.IdentityResult") -> dict:

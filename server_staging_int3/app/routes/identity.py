@@ -95,19 +95,29 @@ async def onboarding_status(current_user=Depends(get_current_user), conn=Depends
         user_id,
     )
     agreed = {r["consent_key"] for r in rows if r["agreed"]}
-    missing = [k for k in REQUIRED_CONSENT_KEYS if k not in agreed]
+    # v3.348 — 만 14세 미만(생년월일 기준) 또는 보호자 가입 동의가 완료된 계정은 '만 14세 이상 확인'(age14)을
+    # 요구하지 않는다(보호자 동의가 대신함). 종전엔 스위치를 켜는 순간 어린이 계정 전부가 마무리 화면에 막혔다.
+    is_minor = bool(row and is_under_14(row["birth_date"]))
+    if not is_minor:
+        is_minor = bool(await conn.fetchval(
+            """SELECT 1 FROM guardian_consents WHERE child_user_id = $1 AND status = 'agreed'
+               AND COALESCE(consent_type, 'signup') = 'signup' LIMIT 1""",
+            user_id,
+        ))
+    missing = [k for k in REQUIRED_CONSENT_KEYS if k not in agreed and not (is_minor and k == "age14")]
     birth_missing = not (row and row["birth_date"])
     enabled = _onboarding_enabled()
     required = enabled and (bool(missing) or birth_missing)
     if required:
-        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s",
-                    _u8(user_id), missing, birth_missing)
+        logger.info("[identity] onboarding required user=%s missing=%s birth_missing=%s minor=%s",
+                    _u8(user_id), missing, birth_missing, is_minor)
     return {
         "enabled": enabled,
         "required": required,
         "missing_consents": missing,
         "birth_date_missing": birth_missing,
         "is_verified": bool(row and row["is_verified"]),
+        "is_minor": is_minor,  # v3.348 앱: 마무리 화면에서 age14 항목 숨김
         "identity": {"enabled": iv.enabled(), "provider": iv.provider_name() if iv.enabled() else None},
     }
 
@@ -157,7 +167,9 @@ def _done_page(message: str) -> HTMLResponse:
     return HTMLResponse(
         f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>본인확인</title><style>body{{font-family:-apple-system,sans-serif;background:#0d0820;color:#fff;padding:32px;text-align:center}}</style></head>
-<body><h2>{message}</h2><p>앱으로 돌아가 주세요.</p><script>setTimeout(function(){{try{{window.close()}}catch(e){{}}}},800)</script></body></html>"""
+<body><h2>{message}</h2><p>잠시 후 MAIDOL로 돌아가요.</p>
+<p><a href="https://app.maidol.ai.kr/" style="display:inline-block;margin-top:12px;padding:12px 20px;border-radius:12px;background:#a855f7;color:#fff;text-decoration:none;font-weight:700">MAIDOL로 돌아가기</a></p>
+<script>setTimeout(function(){{try{{window.close()}}catch(e){{}}setTimeout(function(){{location.replace("https://app.maidol.ai.kr/")}},600)}},1200)</script></body></html>"""
     )
 
 
