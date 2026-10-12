@@ -16,6 +16,34 @@ import {
 } from '../utils/appVersion';
 
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const BUNDLE_DIR = '/_expo/static/js/web/';
+const PREFETCH_TRIES = 6;
+const PREFETCH_WAIT_MS = 5000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** v3.356 웹 업데이트 전 새 번들 미리 받기 — 새 /app 이 가리키는 번들을 캐시 갱신(reload)으로 받아 JS 인지 확인.
+ *  배포 직후 엣지 전파 전이면 HTML(또는 404)이 오므로 잠시 기다렸다 다시 시도. 끝까지 안 되면 false(새로고침 보류). */
+export async function prefetchDeployedBundle(fetchFn: typeof fetch = fetch, wait = sleep): Promise<boolean> {
+  for (let i = 0; i < PREFETCH_TRIES; i++) {
+    try {
+      const html = await fetchFn(`/app?vc=${Date.now()}`, { cache: 'no-store' }).then((r) => r.text());
+      const name = parseBundleName(html);
+      if (!name) return true; // 번들 이름을 못 찾으면 예전처럼 바로 새로고침
+      const res = await fetchFn(BUNDLE_DIR + name, { cache: 'reload' });
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('javascript')) {
+        await res.arrayBuffer(); // 끝까지 받아 캐시에 넣는다(새로고침이 바로 뜨게)
+        console.info('[AppUpdate] 새 번들 미리 받기 완료', { name, try: i + 1 });
+        return true;
+      }
+      console.warn('[AppUpdate] 새 번들 아직 준비 전 — 대기', { name, status: res.status, ct, try: i + 1 });
+    } catch (err: any) {
+      console.warn('[AppUpdate] 새 번들 미리 받기 실패 — 대기', { message: err?.message, try: i + 1 });
+    }
+    await wait(PREFETCH_WAIT_MS);
+  }
+  return false;
+}
 
 function currentBundleName(): string {
   try {
@@ -31,6 +59,8 @@ export default function UpdateGate() {
   const [level, setLevel] = useState<UpdateLevel>('none');
   const [config, setConfig] = useState<VersionConfig | null>(null);
   const [visible, setVisible] = useState(false);
+  const [updating, setUpdating] = useState(false); // v3.356 두 번 누름 방지·진행 안내
+  const [updateNote, setUpdateNote] = useState('');
   const dismissedRef = useRef<string>('');
   const pendingKeyRef = useRef<string>('');
 
@@ -101,10 +131,20 @@ export default function UpdateGate() {
     return () => { try { unsub?.(); } catch {} };
   }, [level, visible, maybeShow]);
 
-  const doUpdate = () => {
+  const doUpdate = async () => {
+    if (updating) return;
     console.info('[AppUpdate] 업데이트 실행', { level, platform: Platform.OS });
     if (Platform.OS === 'web') {
-      try { window.location.reload(); } catch {}
+      // v3.356: 새 번들을 먼저 받아 두고 새로고침(배포 직후 하얀 화면·반복 새로고침 방지)
+      setUpdating(true);
+      setUpdateNote('업데이트 중이에요. 잠시만 기다려 주세요.');
+      const ready = await prefetchDeployedBundle();
+      if (ready) {
+        try { window.location.reload(); } catch {}
+        return;
+      }
+      setUpdating(false);
+      setUpdateNote('새 버전을 준비하고 있어요. 1~2분 뒤 다시 눌러 주세요.');
       return;
     }
     const url = (Platform.OS === 'ios' ? config?.ios?.store_url : config?.android?.store_url) || '';
@@ -128,14 +168,15 @@ export default function UpdateGate() {
           <AppText style={styles.title}>{force ? '필수 업데이트' : '새 버전 안내'}</AppText>
           <AppText style={styles.body}>{msg}</AppText>
           <AppText style={styles.ver}>{`현재 ${versionLabel()}`}</AppText>
+          {updateNote ? <AppText style={styles.ver}>{updateNote}</AppText> : null}
           <View style={styles.btnRow}>
             {!force ? (
-              <TouchableOpacity style={[styles.btn, styles.btnLater]} onPress={later} accessibilityLabel="나중에">
+              <TouchableOpacity style={[styles.btn, styles.btnLater]} onPress={later} disabled={updating} accessibilityLabel="나중에">
                 <AppText style={styles.btnLaterText}>나중에</AppText>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={[styles.btn, styles.btnUpdate]} onPress={doUpdate} accessibilityLabel="업데이트">
-              <AppText style={styles.btnUpdateText}>{Platform.OS === 'web' ? '지금 업데이트' : '스토어에서 업데이트'}</AppText>
+            <TouchableOpacity style={[styles.btn, styles.btnUpdate, updating && { opacity: 0.6 }]} onPress={() => { void doUpdate(); }} disabled={updating} accessibilityLabel="업데이트">
+              <AppText style={styles.btnUpdateText}>{updating ? '업데이트 중…' : Platform.OS === 'web' ? '지금 업데이트' : '스토어에서 업데이트'}</AppText>
             </TouchableOpacity>
           </View>
         </View>

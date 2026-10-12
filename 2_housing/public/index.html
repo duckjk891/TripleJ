@@ -54,7 +54,102 @@
       body {
         touch-action: pan-x pan-y;
       }
+      /* v3.356 [BootSplash]: 번들을 받는 동안 하얀 빈 화면 대신 어두운 배경 + 로고 + 안내(React 가 #root 를 채우면 사라짐).
+         배포 직후 큰 번들(약 1MB 압축)을 받는 몇 초 동안 사용자가 고장으로 알고 새로고침을 반복하던 문제(10-12 실사례). */
+      html,
+      body {
+        background: #0a0a1a;
+      }
+      #maidol-boot {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        color: #f1efff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', system-ui, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      #maidol-boot .logo {
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+      }
+      #maidol-boot .logo span {
+        color: #a855f7;
+      }
+      #maidol-boot .spin {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid rgba(168, 85, 247, 0.25);
+        border-top-color: #a855f7;
+        animation: maidol-spin 0.9s linear infinite;
+      }
+      #maidol-boot .msg {
+        font-size: 14px;
+        color: #a9a3c8;
+        line-height: 1.6;
+      }
+      #maidol-boot button {
+        margin-top: 4px;
+        padding: 10px 22px;
+        border-radius: 999px;
+        border: 0;
+        background: #8b5cf6;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      @keyframes maidol-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
     </style>
+    <script>
+      /* v3.356 [BootSplash] 번들 스크립트가 깨진 응답(예: 배포 직후 HTML)으로 실패하면 캐시를 새로 받아 1번 다시 연다.
+         같은 탭에서 최대 2번(sessionStorage) — 그 뒤엔 [다시 시도] 버튼. 12초 넘게 걸리면 안내 문구만 바꾼다. */
+      (function () {
+        var KEY = 'maidol_boot_heal';
+        function msg(text, withButton) {
+          var m = document.getElementById('maidol-boot-msg');
+          if (!m) return;
+          m.textContent = text;
+          var b = document.getElementById('maidol-boot-retry');
+          if (b) b.style.display = withButton ? 'inline-block' : 'none';
+        }
+        function heal(src) {
+          var n = 0;
+          try { n = Number(sessionStorage.getItem(KEY) || '0'); } catch (e) {}
+          msg('새 버전을 받는 중이에요. 잠시만 기다려 주세요.', false);
+          fetch(src, { cache: 'reload' }).then(function (r) {
+            var ok = r.ok && (r.headers.get('content-type') || '').indexOf('javascript') >= 0;
+            if (ok && n < 2) {
+              try { sessionStorage.setItem(KEY, String(n + 1)); } catch (e) {}
+              return r.arrayBuffer().then(function () { location.reload(); });
+            }
+            msg('새 버전을 준비하고 있어요. 1~2분 뒤 다시 시도해 주세요.', true);
+          }).catch(function () {
+            msg('연결이 원활하지 않아요. 다시 시도해 주세요.', true);
+          });
+        }
+        window.addEventListener('error', function (e) {
+          var t = e && e.target;
+          if (t && t.tagName === 'SCRIPT' && t.src && t.src.indexOf('/_expo/') >= 0) heal(t.src);
+        }, true);
+        setTimeout(function () {
+          if (document.getElementById('maidol-boot')) msg('처음 열 때는 조금 걸릴 수 있어요. 잠시만 기다려 주세요.', false);
+        }, 12000);
+        window.addEventListener('load', function () {
+          setTimeout(function () {
+            if (!document.getElementById('maidol-boot')) { try { sessionStorage.removeItem(KEY); } catch (e) {} }
+          }, 3000);
+        });
+      })();
+    </script>
     <script>
       /* v3.217 ①(b) [WebShell]: 카카오톡 인앱 웹뷰 — 진입 즉시 외부 기본 브라우저 탈출 시도.
          인앱 웹뷰는 suspend로 백그라운드 오디오가 불가(코드 해결 불가 — PLAN F1) → 탈출이 유일 대응.
@@ -94,6 +189,13 @@
       You need to enable JavaScript to run this app.
     </noscript>
     <!-- The root element for your Expo app. -->
-    <div id="root"></div>
+    <div id="root">
+      <div id="maidol-boot">
+        <div class="logo">M<span>AI</span>DOL</div>
+        <div class="spin" aria-hidden="true"></div>
+        <div class="msg" id="maidol-boot-msg">불러오는 중…</div>
+        <button id="maidol-boot-retry" type="button" style="display: none" onclick="location.reload()">다시 시도</button>
+      </div>
+    </div>
   </body>
 </html>
