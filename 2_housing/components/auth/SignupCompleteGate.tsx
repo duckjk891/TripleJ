@@ -242,11 +242,13 @@ export default function SignupCompleteGate() {
   }
   if (!status?.required) return null;
 
-  const needConsents = status.missing_consents.length > 0;
-  const needBirth = status.birth_date_missing;
   // v3.348: 어린이(보호자 동의) 계정은 '만 14세 이상 확인'을 보이지도·요구하지도·기록하지도 않는다
-  const consentKeys = status.is_minor ? SIGNUP_CONSENT_KEYS.filter((k) => k !== 'age14') : SIGNUP_CONSENT_KEYS;
-  const requiredKeys = status.is_minor ? REQUIRED_CONSENT_KEYS.filter((k) => k !== 'age14') : REQUIRED_CONSENT_KEYS;
+  // v3.355: 본인확인 전(identity_required)에도 묻지 않는다 — 나이는 본인확인이 정한다(아이가 거짓으로 체크하지 않게)
+  const skipAge14 = !!status.is_minor || !!status.identity_required;
+  const consentKeys = skipAge14 ? SIGNUP_CONSENT_KEYS.filter((k) => k !== 'age14') : SIGNUP_CONSENT_KEYS;
+  const requiredKeys = skipAge14 ? REQUIRED_CONSENT_KEYS.filter((k) => k !== 'age14') : REQUIRED_CONSENT_KEYS;
+  const needConsents = status.missing_consents.some((k) => consentKeys.includes(k));
+  const needBirth = status.birth_date_missing;
   const consentsOk = !needConsents || requiredKeys.every((k) => consents[k]);
 
   const finish = async () => {
