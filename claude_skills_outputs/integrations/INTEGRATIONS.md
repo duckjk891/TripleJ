@@ -9,7 +9,7 @@
 | 1. AdMob (Android 보상형) | 🟡 회사 계정으로 이전 중 | 현 계정=개인 Gmail·개인 결제 프로필 → 법인 계정 신규 개설 대기 |
 | 2. Firebase / FCM (Android 앱 푸시) | 🟡 앱 코드 완료·서버 스테이징 | 서버 배포(승인) → v1.3.2 APK 빌드 → 실기기 수신 확인 |
 | 3. iOS 출시 | 🟡 계정·인증서 준비 완료 | 앱 쪽 iOS 준비(애플 로그인·권한 문구·ATS·ATT) → 첫 빌드 → TestFlight · ⭐ 인앱결제 결정 필요 |
-| 4. AWS SES (비밀번호 재설정 메일) | ⏳ 대표님 작업 대기 — **스토어 제출 전 필수** | 운영 .env 에 MAIL_* 없음(2026-10-12 확인) → 로그인 전 「비밀번호 찾기」 메일이 실제로 안 나감(서버 로그에만 코드). 심사관이 시험하면 미동작 |
+| 4. AWS SES (비밀번호 재설정 메일) | ✅ 운영 실발송 시작(2026-10-12) — 대표 수신함 확인 대기 | 운영 .env 에 MAIL_* 없음(2026-10-12 확인) → 로그인 전 「비밀번호 찾기」 메일이 실제로 안 나감(서버 로그에만 코드). 심사관이 시험하면 미동작 |
 | 5. PG 연동 — **휴대폰 본인확인**(스토어 제출 선행) + 웹 결제 | ⏳ 대표님 자료 대기 | 대표 결정(10-12): 소셜 가입 나이 확인은 생년월일 자기 입력 대신 **본인확인** — PG 본인확인 정보 수령 후 구현·스위치 켜기 |
 | 6. 네이버 로그인 | ⏳ 대표님 작업 대기 | 네이버 개발자센터 앱 등록 → Client ID·Secret 수령 → 운영 .env·재기동 → 검수 요청 |
 
@@ -196,7 +196,9 @@
 - ✅ SES 도메인 자격 증명 `maidol.ai.kr`(서울) 생성 — Easy DKIM RSA2048, MAIL FROM `mail.maidol.ai.kr`(MX 실패 시 기본 MAIL FROM), Route 53 게시 해제.
 - ✅ Cloudflare DNS 6개 입력(DKIM CNAME 3 DNS only·MX·SPF TXT·DMARC p=none) — 공개 DNS 조회 확인(1.1.1.1·8.8.8.8). 가져오기 파일: `ses_maidol_ai_kr_dns.txt`.
 - ⏳ SES 「확인됨」 대기 → 프로덕션 액세스 요청 → IAM maidol-ec2 인라인 정책 → 애플 이메일 릴레이 등록(maidol.ai.kr / no-reply@maidol.ai.kr).
-- ⏳ Claude: mailer Reply-To·본문 문의처 추가(스테이징) → .env MAIL_ENABLED·MAIL_FROM·SES_REGION·MAIL_REPLY_TO → 승인 후 재기동(네이버 키·이메일 문구와 묶음) → 실발송 확인.
+- ✅ 샌드박스 해제(2026-10-12, AWS case 179178016600476), IAM maidol-ses-send(메일박스 시뮬레이터 발송 OK), 애플 릴레이 maidol.ai.kr·no-reply@ SPF ✓(루트 SPF TXT 추가).
+- ✅ 운영 반영(2026-10-12 04:56 UTC, 대표 승인 「SES 배포」): mailer Reply-To·문의 줄·운영 실패 시 코드 미로그, 이용 중지 문의처, 초대 페이지 테스터 문구 제거(STORE_LINKS_LIVE 스위치 — 출시 전 「곧 출시」), .env MAIL_ENABLED·MAIL_FROM=MAIDOL <no-reply@maidol.ai.kr>·SES_REGION·MAIL_REPLY_TO. 백업 /home/ubuntu/maidol/backups/pre_int2_20261012T045620Z. 실발송: 대표 계정(소셜 전용) 안내 메일 `ses send ok`.
+- ⏳ 대표 수신함에서 받은편지함/스팸·DKIM pass 확인. 스토어 출시 시 운영 .env `STORE_LINKS_LIVE=true`(재기동) + maidol.ai.kr 랜딩 스토어 버튼.
 
 **현재**: 앱 화면과 서버 API(`/auth/password-reset/request`·`/confirm`, 6자리 코드·15분 만료·5회 제한)는 준비됨. 서버 메일 발송은 꺼짐(MAIL_ENABLED). 그래서 지금은 비밀번호 찾기 메일이 실제로 가지 않음.
 

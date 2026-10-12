@@ -6,6 +6,7 @@ MAIDOL Referral API (v154) - 앱 추천(리퍼럴).
 - GET /invite/{code}              (무인증)  v3.198 카톡/브라우저 사람용 HTML 랜딩 (public_router, 프리픽스 없음)
 """
 
+import os
 import html
 import logging
 import re
@@ -98,13 +99,15 @@ _PUBLIC_BASE_URL = "https://api.maidol.ai.kr"
 # (이미 스크랩된 구 카드의 이미지 404 방지). 파일명 변경으로 중간 캐시 회피.
 _OG_IMAGE_URL = f"{_PUBLIC_BASE_URL}/static/og/invite_og_v2.png"  # 1200×630 고정 규격
 _WEBAPP_URL = "https://app.maidol.ai.kr"  # v3.212 웹앱 CTA — 유효 코드면 ?ref={code} 부착
+_PLAY_URL = "https://play.google.com/store/apps/details?id=com.maidol.app"
+_APP_STORE_URL = "https://apps.apple.com/kr/app/id6820885751"
 _APP_SCHEME_URL = "aidol://"  # app.json scheme — "이미 설치했다면 열기" best-effort
 
 # 라우트 수준 형식 가드 — 영숫자 4~12자만 DB 조회(실코드는 4자 charset, resolve 가 최종 검증).
 _INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9]{4,12}$")
 
 
-def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False):
+def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False, is_ios=False):
     """초대 랜딩 HTML (f-string 인라인 템플릿 — 템플릿 엔진 불요).
 
     code/nickname/page_url 은 이 함수 안에서 html.escape 처리한다(XSS 방지 — 호출부 누락 원천 차단,
@@ -136,15 +139,31 @@ def _render_invite_html(*, code, nickname, store_url, page_url, is_android=False
         f"{nickname}님이<br>MAIDOL에 초대했어요" if ok and nickname else "MAIDOL에 초대합니다"
     )
 
-    cta_web = f'<a class="cta cta--primary" href="{webapp_url}">웹에서 바로 시작하기</a>'
-    cta_block = f"""{cta_web}
+    # [Store 2026-10-12] 테스터 안내 제거 → 스토어 출시 후 OS별 다운로드 버튼(STORE_LINKS_LIVE=true 일 때만).
+    # 출시 전에는 「곧 출시」 안내만 — 열리지 않는 스토어 링크를 노출하지 않는다.
+    stores_live = (os.environ.get("STORE_LINKS_LIVE") or "").strip().lower() == "true"
+    if stores_live and is_android:
+        cta_block = f"""<a class="cta cta--primary" href="{_PLAY_URL}">Google Play에서 앱 받기</a>
+    <a class="cta" href="{webapp_url}">웹에서 바로 시작하기</a>
+    <p class="cta-note">앱에서 가입할 때 추천코드를 입력하면 스타가 지급돼요.</p>"""
+    elif stores_live and is_ios:
+        cta_block = f"""<a class="cta cta--primary" href="{_APP_STORE_URL}">App Store에서 앱 받기</a>
+    <a class="cta" href="{webapp_url}">웹에서 바로 시작하기</a>
+    <p class="cta-note">앱에서 가입할 때 추천코드를 입력하면 스타가 지급돼요.</p>"""
+    elif stores_live:
+        cta_block = f"""<a class="cta cta--primary" href="{webapp_url}">웹에서 바로 시작하기</a>
     <p class="cta-note">설치 없이 브라우저에서 바로 — PC·모바일 모두 지원해요.</p>
     <div class="install-note">
-      <p class="install-title">모바일 앱(Google Play) 설치를 원하시나요?</p>
-      <p class="install-body">지금은 등록된 테스터만 설치할 수 있어요.<br>
-      <strong>구글 계정</strong>을 앱 내 <strong>maidol_official DM</strong> 또는<br>
-      <a class="install-mail" href="mailto:maidol_official@lotusai.co.kr">maidol_official@lotusai.co.kr</a>(MAIDOL 고객 문의 메일)로 보내주시면<br>
-      테스터 등록 후 설치 방법을 안내해 드려요.</p>
+      <p class="install-title">모바일 앱으로도 만나요</p>
+      <p class="install-body"><a class="install-mail" href="{_PLAY_URL}">Google Play</a> · <a class="install-mail" href="{_APP_STORE_URL}">App Store</a>에서 「MAIDOL」을 검색하세요.</p>
+    </div>"""
+    else:
+        cta_block = f"""<a class="cta cta--primary" href="{webapp_url}">웹에서 바로 시작하기</a>
+    <p class="cta-note">설치 없이 브라우저에서 바로 — PC·모바일 모두 지원해요.</p>
+    <div class="install-note">
+      <p class="install-title">모바일 앱은 곧 출시돼요</p>
+      <p class="install-body">Google Play·App Store 출시 전까지는 브라우저에서 바로 시작할 수 있어요.<br>
+      궁금한 점은 <a class="install-mail" href="mailto:maidol_official@lotusai.co.kr">maidol_official@lotusai.co.kr</a> 로 문의해 주세요.</p>
     </div>"""
 
     # v3.332: '베타' 표현 제거 — 가입 이벤트 추가 ⭐ 는 기간(auth.py 상수) 안에서만 표시
@@ -337,6 +356,7 @@ async def invite_landing(request: Request, code: str, conn=Depends(get_pg)):
     ua = (request.headers.get("user-agent") or "-")[:120]
     # v3.216: CTA 는 UA 무관 단일이나 UA 분기 판정·로깅은 유지(트래픽 분석·회귀 대비).
     is_android = "android" in ua.lower()
+    is_ios = any(t in ua.lower() for t in ("iphone", "ipad", "ipod"))
     logger.info("[invite] landing enter code=%s android=%s ua=%s", code_tag, is_android, ua)
 
     row = None
@@ -356,6 +376,7 @@ async def invite_landing(request: Request, code: str, conn=Depends(get_pg)):
             store_url=settings.play_store_url,
             page_url=page_url,
             is_android=is_android,
+            is_ios=is_ios,
         ),
     )
 
