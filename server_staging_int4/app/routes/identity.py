@@ -74,6 +74,7 @@ async def _ensure_schema(conn) -> None:
     await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ci_hash TEXT")
     # [Guardian 2026-10-12] 보호자 본인확인 — 요청↔보호자 동의 연결, 보호자 인증 결과(해시만)
     await conn.execute("ALTER TABLE identity_verifications ADD COLUMN IF NOT EXISTS consent_id UUID")
+    await conn.execute("ALTER TABLE identity_verifications ADD COLUMN IF NOT EXISTS reason TEXT")
     await conn.execute("ALTER TABLE guardian_consents ADD COLUMN IF NOT EXISTS guardian_verified_at TIMESTAMPTZ")
     await conn.execute("ALTER TABLE guardian_consents ADD COLUMN IF NOT EXISTS guardian_di_hash TEXT")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_ci_hash ON users(ci_hash) WHERE ci_hash IS NOT NULL")
@@ -268,8 +269,8 @@ async def identity_callback(rid: str, request: Request, conn=Depends(get_pg)):
         logger.exception("[identity] callback error rid=%s", rid[:8])
         outcome = {"status": "failed", "error": "본인확인 처리 중 문제가 생겼어요. 다시 시도해 주세요."}
     await conn.execute(
-        "UPDATE identity_verifications SET status=$2, error=$3, under_14=$4, completed_at=now() WHERE id=$1",
-        rid, outcome["status"], outcome.get("error"), outcome.get("under_14"),
+        "UPDATE identity_verifications SET status=$2, error=$3, under_14=$4, reason=$5, completed_at=now() WHERE id=$1",
+        rid, outcome["status"], outcome.get("error"), outcome.get("under_14"), outcome.get("reason"),
     )
     ret = row["return_url"]
     if ret:
@@ -290,19 +291,19 @@ async def _apply_guardian_result(conn, row, provider_name: str, result: "iv.Iden
     """보호자 인증 결과 반영 — 성인·아이 본인 아님 확인 후 guardian_consents 에 인증 표시(해시만 저장)."""
     if _age(result.birth_date) < GUARDIAN_MIN_AGE:
         logger.info("[identity.guardian] not adult rid=%s", row["id"][:8])
-        return {"status": "failed", "error": "보호자(법정대리인)는 만 19세 이상 성인만 본인확인할 수 있어요."}
+        return {"status": "failed", "reason": "not_adult", "error": "보호자(법정대리인)는 만 19세 이상 성인만 본인확인할 수 있어요."}
     h = iv.ci_hash(result.ci)
     child_hash = await conn.fetchval("SELECT ci_hash FROM users WHERE id = $1", row["user_id"])
     if h and child_hash and h == child_hash:
         logger.warning("[identity.guardian] same person as child rid=%s", row["id"][:8])
-        return {"status": "failed", "error": "자녀 본인이 아닌 보호자가 본인확인을 해 주세요."}
+        return {"status": "failed", "reason": "same_person", "error": "자녀 본인이 아닌 보호자가 본인확인을 해 주세요."}
     upd = await conn.execute(
         """UPDATE guardian_consents SET guardian_verified_at = now(), guardian_di_hash = $2, method = $3
            WHERE id = $1 AND status = 'pending'""",
         row["consent_id"], h, provider_name,
     )
     if not upd.endswith(" 1"):
-        return {"status": "failed", "error": "이미 처리됐거나 만료된 보호자 동의 요청이에요."}
+        return {"status": "failed", "reason": "consent_closed", "error": "이미 처리됐거나 만료된 보호자 동의 요청이에요."}
     logger.info("[identity.guardian] verified rid=%s child=%s", row["id"][:8], _u8(row["user_id"]))
     return {"status": "verified", "under_14": False}
 
@@ -347,9 +348,11 @@ async def guardian_identity_status(consent_token: str, conn=Depends(get_pg)):
     if not gc:
         return JSONResponse(status_code=404, content={"error": "요청을 찾을 수 없어요."})
     last = await conn.fetchrow(
-        "SELECT status, error FROM identity_verifications WHERE consent_id = $1 ORDER BY created_at DESC LIMIT 1", gc["id"])
-    return {"consent_status": gc["status"], "guardian_verified": gc["guardian_verified_at"] is not None,
-            "method": gc["method"], "last_attempt": (dict(last) if last else None)}
+        "SELECT status, error, reason FROM identity_verifications WHERE consent_id = $1 ORDER BY created_at DESC LIMIT 1", gc["id"])
+    verified = gc["guardian_verified_at"] is not None
+    return {"consent_status": gc["status"], "guardian_verified": verified, "method": gc["method"],
+            "reason": (None if verified else (last["reason"] if last else None)),
+            "last_attempt": ({"status": last["status"], "error": last["error"]} if last else None)}
 
 
 @router.get("/result/{rid}")
