@@ -17,7 +17,7 @@ import { openPolicyPage } from '../../utils/policyLinks';
 import { showAlert } from '../../utils/appAlert';
 import { markPolicyAgreed } from '../../utils/policyConsent';
 
-export const POLICY_EFFECTIVE_DATE = '2026-10-18';
+export const POLICY_EFFECTIVE_DATE = '2026-10-19'; // 공고 10-12 + 7일(외부 연동 세션 게시 확정)
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 const snoozeKey = (uid: string) => `policy_reconsent_snooze:${CONSENT_VERSION}:${uid}`;
 
