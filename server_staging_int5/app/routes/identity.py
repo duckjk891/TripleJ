@@ -106,7 +106,8 @@ async def _ensure_schema(conn) -> None:
 @router.get("/config")
 async def identity_config():
     return {"enabled": iv.enabled(), "provider": iv.provider_name() if iv.enabled() else None,
-            "social_onboarding_enabled": _onboarding_enabled()}
+            "social_onboarding_enabled": _onboarding_enabled(),
+            "account_merge_enabled": _merge_enabled()}  # [AccountMerge] 앱 ⭐ 본인인증 유도 팝업은 true 일 때만
 
 
 @router.get("/onboarding")
