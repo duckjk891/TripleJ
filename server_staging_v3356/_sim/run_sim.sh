@@ -7,5 +7,5 @@ ENVS="-e PYTHONPATH=/srv/app -e JWT_SECRET=test-jwt-secret-v3356-xxxxxxxxxxxxxxx
 MNT="-v /tmp/reltest/stage:/stage:ro"
 ARG="-"
 if [ -n "$CAT" ]; then MNT="$MNT -v $CAT:/cat.json:ro"; ARG="/cat.json"; fi
-sudo docker run --rm --network none --user root $ENVS $MNT maidol-app:latest sh -c \
+sudo docker run --rm --network none --user root $ENVS -e SIM_ONLY=${SIM_ONLY:-} $MNT maidol-app:latest sh -c \
  "cp -r /stage/app/. /srv/app/app/ && cp /stage/_orig/app/routes/tracks.py /srv/app/app/routes/tracks_orig.py && cd /srv/app && python -B /stage/_sim/sim_related.py $ARG $REPS"

@@ -232,10 +232,17 @@ VARIANTS = [
     ("D 서버 개선 + exclude 70 (제안)", {"server": "new", "excl": 70, "cap": 80}),
     ("D-탐색 없음", {"server": "new", "excl": 70, "cap": 80, "explore": 0.0}),
     ("D-hub 감쇠 없음", {"server": "new", "excl": 70, "cap": 80, "nohub": True}),
+    ("D + 기억 24시간", {"server": "new", "excl": 70, "cap": 80, "win": 24}),
+    ("D + 기억 48시간", {"server": "new", "excl": 70, "cap": 80, "win": 48}),
 ]
+import os
+if os.environ.get("SIM_ONLY"):  # 예: SIM_ONLY=A,D,24,48 — 이름 앞부분 일치
+    _want = os.environ["SIM_ONLY"].split(",")
+    VARIANTS = [v for v in VARIANTS if any(v[0].startswith(w) or w in v[0] for w in _want)]
 
 
 def configure(v):
+    RV.HUB_WINDOW_H = v.get("win", ORIG_WIN)
     RV.EXPLORE_P = v.get("explore", ORIG_EXPLORE)
     RV.hub_mult = (lambda *a, **k: 1.0) if v.get("nohub") else ORIG_HUB
 
@@ -276,7 +283,7 @@ def table(title, res):
 
 
 async def main():
-    global PG, FAKE_REDIS, ORIG_EXPLORE, ORIG_HUB
+    global PG, FAKE_REDIS, ORIG_EXPLORE, ORIG_HUB, ORIG_WIN
     real = len(sys.argv) > 1 and sys.argv[1] != "-"
     cat = load_catalog(sys.argv[1]) if real else synthetic_catalog()
     pub = [t for t in cat if t["is_public"]]
@@ -289,7 +296,7 @@ async def main():
         T.logger.disabled = True
     RV.time = Clock
     RV.logger.disabled = True
-    ORIG_EXPLORE, ORIG_HUB = RV.EXPLORE_P, RV.hub_mult
+    ORIG_EXPLORE, ORIG_HUB, ORIG_WIN = RV.EXPLORE_P, RV.hub_mult, RV.HUB_WINDOW_H
     ups = Counter(t.get("uploader_id") for t in pub)
     print(f"카탈로그: 공개 {len(pub)}곡(임베딩 {sum(1 for t in pub if t['emb'] is not None)}), 전체 임베딩 {len(PG.ids)}, "
           f"제작자 {len(ups)}명, 최다 제작자 {ups.most_common(1)[0][1]}곡"
