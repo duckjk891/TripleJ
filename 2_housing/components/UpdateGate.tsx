@@ -23,16 +23,32 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** v3.356 웹 업데이트 전 새 번들 미리 받기 — 새 /app 이 가리키는 번들을 캐시 갱신(reload)으로 받아 JS 인지 확인.
  *  배포 직후 엣지 전파 전이면 HTML(또는 404)이 오므로 잠시 기다렸다 다시 시도. 끝까지 안 되면 false(새로고침 보류). */
-export async function prefetchDeployedBundle(fetchFn: typeof fetch = fetch, wait = sleep): Promise<boolean> {
+export async function prefetchDeployedBundle(
+  fetchFn: typeof fetch = fetch, wait = sleep, onProgress?: (pct: number) => void,
+): Promise<boolean> {
   for (let i = 0; i < PREFETCH_TRIES; i++) {
     try {
       const html = await fetchFn(`/app?vc=${Date.now()}`, { cache: 'no-store' }).then((r) => r.text());
       const name = parseBundleName(html);
       if (!name) return true; // 번들 이름을 못 찾으면 예전처럼 바로 새로고침
+      const total = Number((html.match(/data-size="(\d+)"/) || [])[1]) || 0; // deploy.sh 가 넣은 원본 바이트
       const res = await fetchFn(BUNDLE_DIR + name, { cache: 'reload' });
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('javascript')) {
-        await res.arrayBuffer(); // 끝까지 받아 캐시에 넣는다(새로고침이 바로 뜨게)
+        // 끝까지 받아 캐시에 넣는다(새로고침이 바로 뜨게). 가능하면 받는 만큼 진행률 표시
+        const reader: any = total && onProgress && (res as any).body?.getReader ? (res as any).body.getReader() : null;
+        if (reader) {
+          let got = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            got += value?.byteLength || 0;
+            onProgress?.(Math.min(99, Math.floor((got * 100) / total)));
+          }
+        } else {
+          await res.arrayBuffer();
+        }
+        onProgress?.(100);
         console.info('[AppUpdate] 새 번들 미리 받기 완료', { name, try: i + 1 });
         return true;
       }
@@ -61,6 +77,7 @@ export default function UpdateGate() {
   const [visible, setVisible] = useState(false);
   const [updating, setUpdating] = useState(false); // v3.356 두 번 누름 방지·진행 안내
   const [updateNote, setUpdateNote] = useState('');
+  const [updatePct, setUpdatePct] = useState(-1); // v3.356 진행률(받기 시작 전 -1)
   const dismissedRef = useRef<string>('');
   const pendingKeyRef = useRef<string>('');
 
@@ -138,7 +155,10 @@ export default function UpdateGate() {
       // v3.356: 새 번들을 먼저 받아 두고 새로고침(배포 직후 하얀 화면·반복 새로고침 방지)
       setUpdating(true);
       setUpdateNote('업데이트 중이에요. 잠시만 기다려 주세요.');
-      const ready = await prefetchDeployedBundle();
+      const ready = await prefetchDeployedBundle(fetch, sleep, (pct) => {
+        setUpdatePct(pct);
+        setUpdateNote(`새 버전을 받는 중이에요… ${pct}%`);
+      });
       if (ready) {
         try { window.location.reload(); } catch {}
         return;
@@ -169,6 +189,9 @@ export default function UpdateGate() {
           <AppText style={styles.body}>{msg}</AppText>
           <AppText style={styles.ver}>{`현재 ${versionLabel()}`}</AppText>
           {updateNote ? <AppText style={styles.ver}>{updateNote}</AppText> : null}
+          {updating && updatePct >= 0 ? (
+            <View style={styles.progTrack}><View style={[styles.progFill, { width: `${Math.max(2, updatePct)}%` }]} /></View>
+          ) : null}
           <View style={styles.btnRow}>
             {!force ? (
               <TouchableOpacity style={[styles.btn, styles.btnLater]} onPress={later} disabled={updating} accessibilityLabel="나중에">
@@ -186,6 +209,8 @@ export default function UpdateGate() {
 }
 
 const styles = StyleSheet.create({
+  progTrack: { height: 6, borderRadius: 3, backgroundColor: 'rgba(168, 85, 247, 0.2)', overflow: 'hidden' },
+  progFill: { height: '100%', backgroundColor: '#a855f7' },
   overlay: { flex: 1, backgroundColor: 'rgba(13, 8, 32, 0.9)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
   box: { width: '100%', maxWidth: 360, backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 22, gap: 10 },
   title: { fontSize: 18, fontWeight: '700', color: colors.text.primary },
