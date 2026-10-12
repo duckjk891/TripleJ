@@ -11,7 +11,7 @@
 | 3. iOS 출시 | 🟡 계정·인증서 준비 완료 | 앱 쪽 iOS 준비(애플 로그인·권한 문구·ATS·ATT) → 첫 빌드 → TestFlight · ⭐ 인앱결제 결정 필요 |
 | 4. AWS SES (비밀번호 재설정 메일) | ✅ 운영 실발송 시작(2026-10-12) — 대표 수신함 확인 대기 | 운영 .env 에 MAIL_* 없음(2026-10-12 확인) → 로그인 전 「비밀번호 찾기」 메일이 실제로 안 나감(서버 로그에만 코드). 심사관이 시험하면 미동작 |
 | 5. PG 연동 — **휴대폰 본인확인**(스토어 제출 선행) + 웹 결제 | ⏳ 대표님 자료 대기 | 대표 결정(10-12): 소셜 가입 나이 확인은 생년월일 자기 입력 대신 **본인확인** — PG 본인확인 정보 수령 후 구현·스위치 켜기 |
-| 6. 네이버 로그인 | 🟡 운영 키 반영(2026-10-12)·「개발 중」 | 대표 아이디 로그인 테스트 → 네이버 검수 요청 |
+| 6. 네이버 로그인 | 🟡 **검수 요청 완료(2026-10-12)** — 결과 대기 | 승인 메일(네이버 개발자 계정 메일) 오면 일반 사용자 로그인 확인 |
 
 ## 계정 원칙 (2026-10-08 대표 결정)
 
@@ -45,7 +45,7 @@
 
 ## 6. 네이버 로그인 — ⏳ 대표님 작업 대기 (2026-10-12 추가)
 
-**진행(2026-10-12)**: 대표 네이버 앱 등록(Client ID `VVFMCwvxi1HV_pJUYAca`, Secret 은 credentials/naver.txt·운영 .env 에만) → 운영 .env NAVER_CLIENT_ID·SECRET 설정·재기동(05:09 UTC, 진행 작업 0건) → `/api/auth/oauth/providers` naver:true, `/naver/login` 302 → nid.naver.com(client_id·redirect_uri 일치). 네이버 설정 권장: 로그인 플러스 OFF, 연결 끊기 콜백 비움, 국외이전 등록 1건(Expo·미국·닉네임·푸시 발송). 제공 정보는 **이메일·닉네임·프로필 사진만**(생일·출생연도·성별 해제 — 서버가 어느 소셜에서도 저장 안 함, VERIFIED_PROVIDERS 비어 있음). 처리방침 제2조②도 같은 날 「닉네임·이메일·프로필 사진, 그 밖의 정보 미수령」으로 축소 수정·재게시(시행 10-19 유지). 검수 캡처: claude_skills_outputs/integrations/naver_review/(이메일 마스킹, git 제외). 남은 것: 앱 네이버 버튼 공식 N 로고 적용(메인 세션) → 멤버 아이디 로그인 E2E·절차 캡처 → 검수 요청(적용 형태: 신규 회원 가입, 추가 서류: 없음).
+**진행(2026-10-12)**: 대표 네이버 앱 등록(Client ID `VVFMCwvxi1HV_pJUYAca`, Secret 은 credentials/naver.txt·운영 .env 에만) → 운영 .env NAVER_CLIENT_ID·SECRET 설정·재기동(05:09 UTC, 진행 작업 0건) → `/api/auth/oauth/providers` naver:true, `/naver/login` 302 → nid.naver.com(client_id·redirect_uri 일치). 네이버 설정 권장: 로그인 플러스 OFF, 연결 끊기 콜백 비움, 국외이전 등록 1건(Expo·미국·닉네임·푸시 발송). 제공 정보는 **이메일·닉네임·프로필 사진만**(생일·출생연도·성별 해제 — 서버가 어느 소셜에서도 저장 안 함, VERIFIED_PROVIDERS 비어 있음). 처리방침 제2조②도 같은 날 「닉네임·이메일·프로필 사진, 그 밖의 정보 미수령」으로 축소 수정·재게시(시행 10-19 유지). 검수 캡처: claude_skills_outputs/integrations/naver_review/(이메일 마스킹, git 제외). ✅ 앱 버튼 공식 N 로고·「네이버로 로그인」(v3.347 웹 배포) ✅ 대표 아이디 웹 로그인 E2E(로그인 → 네이버 동의(이메일·별명·프로필사진) → 처리방침 재동의 → 출석체크) ✅ **검수 요청 2026-10-12**(활용처 캡처 2·절차 캡처 5, 적용 형태 신규 회원 가입, 추가 서류 없음). 남은 것: 검수 결과 → 승인 시 멤버 외 아이디 로그인 확인. 안드로이드·iOS 앱 버튼은 다음 빌드부터.
 
 **현재**: 서버 네이버 로그인 코드는 준비됨(oauth_service naver, 본인인증 트랙 필드 생년월일·성별 포함). 운영 `.env` 의 `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET` 이 **빈 값** → `GET /api/auth/oauth/providers` 가 naver:false → 앱은 네이버 버튼 숨김(v3.335 재도입 로직).
 **콜백 URL(등록값)**: `https://api.maidol.ai.kr/api/auth/oauth/naver/callback` (OAUTH_CALLBACK_BASE=https://api.maidol.ai.kr)
