@@ -4535,3 +4535,10 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
   - 이메일 로그인 merged_notice 안내, 소셜 콜백 account_merge_error 안내(웹·네이티브).
 - 검증: 서버 — 운영 DB 트랜잭션 ROLLBACK 6/6(2단계 사슬·끊김·원래 이메일+S 비번 → T·틀린 비번 401·대소문자/공백·T 탈퇴 시 미연결·라우트). 앱 — 단위 9/9(유도 3일 주기·로그인 방식 이름·불가 사유·통합 화면 열기/닫기), tsc 0. 배포(oauth·auth·apple_auth·main md5 가드 + merged_login 신규·백업 pre-v3352·진행 0건·재기동): health ok·oauth 3종 302·이메일/애플 잘못된 입력 401·컬럼 3종 생성·Traceback 0.
 - 남은 것: 외부 연동 세션 int5(통합 실행·API) 배포 + ACCOUNT_MERGE_ENABLED(대표 승인·처리방침 시행 10-19 맞춤). /identity/config 에 account_merge_enabled 노출 요청. 실제 통합 왕복(두 계정 + 실폰)은 활성화 후 확인.
+
+## v3.353 — 2026-10-12 — 명함 QR: 곡마다 다른 QR, 인쇄 후에도 연결 목적지 변경 가능 (랜딩)
+
+대표: "명함 QR을 찍으면 음악을 듣고 앱 설치로 이어지게. 나중에 스토어로 바로 연결하려면 링크만 바꾸면 돼? QR 다시 만드는 건 곤란." · "명함마다 다른 곡, 가장 비슷한 화면 = 내 곡 공유 링크를 다른 사용자가 열었을 때 화면"
+- QR 에는 우리 주소 https://maidol.ai.kr/c/{곡ID} 만 담는다 → maidol.ai.kr(_redirects) 가 곡 공유 화면(api.maidol.ai.kr/track/{곡ID}?src=card)으로 302(임시) 연결 → 웹 플레이어에서 그 곡 + "나도 이런 곡 만들기". 302 라 휴대폰이 목적지를 기억하지 않아, 나중에 스토어 연결로 바꿔도 인쇄한 QR 그대로 동작(_redirects 한 줄 또는 서버 공유 화면만 수정).
+- QR 생성 스크립트 design_assets/player_card_src/make_card_qr.js(곡ID·파일이름 → design_assets/qr/{이름}_QR.svg, 벡터·오류 복원 Q·여백 4칸·레이어 QR_배경/QR_코드). 샘플: 분신술·일단해.
+- 검증: QR 판독(jsQR) 2/2 원래 주소 일치, maidol.ai.kr/c/{id} → 302 → 공유 화면 → 웹 플레이어 「분신술」 실화면 확인.
