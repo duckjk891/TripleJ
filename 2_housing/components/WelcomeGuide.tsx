@@ -14,6 +14,8 @@ import { useAuthStore } from '../stores/authStore';
 import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
 import { whenBootAuthSettled } from '../utils/bootAuth';
 import { isClubLinkEntry } from '../utils/clubLink';
+import { isCrewAreaRoute, onDeferredWelcomeRequest } from '../utils/deferredWelcome';
+import { navigationRef } from '../services/navigationRef';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
@@ -73,11 +75,30 @@ export default function WelcomeGuide() {
         // 세션 복원 완료까지 대기 — 복원 전 user=null 을 게스트로 오판해 기존 회원에게 번쩍 뜨는 것 방지
         await whenBootAuthSettled();
         if (useAuthStore.getState().user) return; // 로그인 사용자는 대상 아님
-        // v3.305 [ClubLink]: 크루·크루 앨범 링크로 처음 온 사람은 크루 화면으로 바로(대표 확정 — 체험은 가입 후).
-        //   seen 기록은 하지 않는다 — 다음 일반 방문 때 첫 실행 안내를 정상 노출.
-        if (isClubLinkEntry()) { console.info('[WelcomeGuide] 크루 링크 진입 — 이번엔 생략'); return; }
         const seen = await AsyncStorage.getItem(WELCOME_GUIDE_SEEN_KEY);
         if (seen) return;
+        // v3.305 [ClubLink] 크루 링크 진입은 크루 화면으로 바로 · v3.346(대표 10-12): 처음 온 사람은 체험 1회 —
+        //   크루 영역(크루·앨범·플레이어)을 벗어나거나 1분 미리 듣기 안내를 닫으면 그때 띄운다.
+        if (isClubLinkEntry()) {
+          console.info('[WelcomeGuide] 크루 링크 진입 — 크루 화면 뒤로 미룸');
+          let done = false;
+          const offs: Array<() => void> = [];
+          const fire = (reason: string) => {
+            if (done) return;
+            if (useAuthStore.getState().user) { done = true; offs.forEach((f) => f()); return; } // 로그인(가입)하면 대상 아님
+            done = true;
+            offs.forEach((f) => f());
+            console.info('[WelcomeGuide] 미뤄 둔 첫 방문 안내 노출', { reason });
+            setVisible(true);
+          };
+          offs.push(onDeferredWelcomeRequest(fire));
+          const onNav = () => {
+            const name = navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined;
+            if (!isCrewAreaRoute(name)) fire(`route:${name}`);
+          };
+          offs.push(navigationRef.addListener('state', onNav));
+          return;
+        }
         console.info('[WelcomeGuide] 첫 실행 — 노출');
         setVisible(true);
       } catch (e: any) {

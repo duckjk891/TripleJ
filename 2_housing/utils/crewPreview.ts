@@ -4,6 +4,7 @@
 import { usePlayerStore } from '../stores/playerStore';
 import { showAlert } from './appAlert';
 import { navigateGlobal } from '../services/navigationRef';
+import { requestDeferredWelcome } from './deferredWelcome';
 
 export const CREW_PREVIEW_SEC = 60;
 let lastNoticeAt = 0;
@@ -28,7 +29,8 @@ export function initCrewPreviewWatcher(): () => void {
     if (Date.now() - lastNoticeAt < 3000) return;
     lastNoticeAt = Date.now();
     showAlert('1분 미리 듣기가 끝났어요', `${lim.clubName ? `「${lim.clubName}」 ` : ''}크루에 가입하면 끝까지 들을 수 있어요.`, [
-      { text: '닫기', style: 'cancel' },
+      // v3.346: 닫기 = (크루 링크로 처음 온 비로그인이면) 미뤄 둔 체험 안내 노출
+      { text: '닫기', style: 'cancel', onPress: () => requestDeferredWelcome('preview_end') },
       {
         text: '크루 가입하러 가기',
         onPress: () => navigateGlobal('MainTabs', { screen: 'ClubHome', params: { clubId: lim.clubId, initialTab: 'playlists', refreshAt: Date.now() } }),

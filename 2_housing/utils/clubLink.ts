@@ -6,7 +6,7 @@
 //  보관(AsyncStorage, 7일): 초대 코드 {clubId, code} — 소셜 로그인 전체 페이지 이동 뒤에도 가입 시 코드를 쓴다.
 //  가입 의도(1시간): 비회원이 크루 화면에서 '크루 가입하기' → 로그인 모달. 로그인(이메일·소셜 리로드 모두) 직후
 //   App 전역에서 1회 자동 가입 → 크루 화면 복귀(processPendingClubJoin).
-//  첫 방문 안내(WelcomeGuide)는 크루 링크 진입이면 생략(대표 확정 10-08: 크루 페이지로 바로, 체험은 가입 후).
+//  첫 방문 안내(WelcomeGuide)는 크루 링크 진입이면 크루 화면 뒤로 미룸(10-08 크루 페이지로 바로 · v3.346 10-12 처음 온 사람은 체험 1회).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
