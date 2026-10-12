@@ -64,3 +64,6 @@ htmlcov/
 
 # Database files
 *.db
+
+# 네이버 검수 캡처(개인정보 마스킹본) — 로컬 전용
+claude_skills_outputs/integrations/naver_review/
