@@ -11,3 +11,9 @@
 - 운영 md5: identity.py b0fba55a997cf80c69bd38930b1c238d, account_merge.py 83c952ef62c67205e7581fc98c4267e7
 - .env 추가: IDENTITY_REQUIRED_SINCE=2026-10-12T10:18:05+00:00, ACCOUNT_MERGE_ENABLED_FROM=2026-10-19T00:00:00+09:00
 - 테스트: test_int5_merge 48/48, test_int5_onboarding ALL PASS, int4 보호자 회귀 ALL PASS
+
+## int5b 운영 반영 (2026-10-12 14:57 UTC, 대표 「배포」)
+- 본인확인 성인 → age14 자동 기록(version=identity), 통합 대상 T 포함
+- 백업 /home/ubuntu/maidol/backups/pre_int5b_20261012T145613Z, *.bak_pre_int5b
+- 운영 md5: identity.py 9d8b36e8ee3540aa77e348e5e2e49438, account_merge.py ce2d080dc77dd759074bca3e7f5f9709
+- 확인: health OK, oauth 3종 302, Traceback 0, account_merge_enabled=false(10-19 자동)
