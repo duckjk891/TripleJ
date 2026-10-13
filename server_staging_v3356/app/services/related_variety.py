@@ -7,7 +7,7 @@
 이 모듈은 DB 비의존 순수 로직 + Redis 카운터만 담는다(라우트 tracks.get_related_tracks 가 사용).
   1) hub 감쇠: 최근 HUB_WINDOW_H(24) 시간 동안 related 응답으로 뽑힌 횟수 c 로 가중 ×1/(1+c).
      로그인 = 사용자별 카운터, 비로그인 = 전체 카운터(곡별 평균 대비 정규화 — 트래픽이 늘어도 과벌점 없음).
-  2) 탐색: EXPLORE_P 확률로 vector 대신 장르 무관 신곡·덜 들은 곡 풀에서 고른다.
+  2) (v3.360 폐지) 장르 무관 탐색 — 대표 10-13 "비슷한 장르·분위기로". 신곡 노출은 related_feel 의 신곡 가중으로.
   3) 같은 제작자 연속 상한: 직전 곡·기준곡이 같은 제작자면 그 제작자 곡은 후보에서 뺀다(대안이 없을 때만 허용).
 모든 Redis 실패는 감쇠 없음(=종전 동작)으로 흡수한다.
 """
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 HUB_WINDOW_H = 24           # 감쇠 기억 시간(시간 버킷 개수) — 실데이터 시뮬: 6h 는 exclude 70 과 겹쳐 효과 0, 24h ≈ 48h
 HUB_KEY_TTL_S = (HUB_WINDOW_H + 1) * 3600
-EXPLORE_P = 0.25            # 탐색 비율
+EXPLORE_P = 0.0             # v3.360 폐지(라우트 미사용) — 종전 0.25
 EXPLORE_POOL_EACH = 20      # 탐색 풀 = 최신 N + 재생수 적은 N(합집합)
 MAX_SAME_UPLOADER_RUN = 2   # 같은 제작자 연속 상한(기준곡 포함)
 

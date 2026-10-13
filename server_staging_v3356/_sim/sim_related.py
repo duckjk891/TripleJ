@@ -19,6 +19,8 @@ from bson import ObjectId
 
 import app.routes.tracks as T_NEW
 import app.routes.tracks_orig as T_OLD
+import app.routes.tracks_v3359 as T_V59
+import app.services.related_feel as RF
 import app.services.related_variety as RV
 
 SONG_SEC = 210  # 곡당 평균 3.5분(시간 버킷 진행용)
@@ -135,6 +137,7 @@ class FakeMongo:
         for t in cat:
             docs.append({"_id": ObjectId(t["id"]), "title": t.get("title") or "", "uploader_id": t.get("uploader_id"),
                          "genre": t.get("genre"), "play_count": t.get("play_count") or 0,
+                         "mood": t.get("mood"), "categories": t.get("categories"), "bpm": t.get("bpm"), "tempo": t.get("tempo"),
                          "created_at": t.get("created_at") or "", "is_public": t.get("is_public", True)})
         self.tracks = Coll(docs)
         self.albums = Coll([])
@@ -186,6 +189,8 @@ class App:
 async def related(variant, tid, excl, user):
     if variant["server"] == "old":
         r = await T_OLD.get_related_tracks(tid, exclude=",".join(excl) or None, limit=1, pg=PG)
+    elif variant["server"] == "v59":
+        r = await T_V59.get_related_tracks(tid, exclude=",".join(excl) or None, limit=1, pg=PG, current_user=user)
     else:
         r = await T_NEW.get_related_tracks(tid, exclude=",".join(excl) or None, limit=1, pg=PG, current_user=user)
     return (r["tracks"][0]["id"], r["source"]) if r.get("tracks") else (None, r.get("source"))
@@ -208,6 +213,10 @@ async def session_chain(variant, app, start, n, user, srcs):
 
 def metrics(plays, up):
     c = Counter(plays)
+    pairs = [(META[a], META[b]) for a, b in zip(plays, plays[1:])]
+    gs = [RF.genre_sim(x.get("genre"), y.get("genre")) for x, y in pairs]
+    ms = [m for m in (RF.mood_sim(x.get("mood"), y.get("mood")) for x, y in pairs) if m is not None]
+    cs = [m for m in (RF.cat_sim(x.get("categories"), y.get("categories")) for x, y in pairs) if m is not None]
     top = c.most_common(3)
     same = sum(1 for a, b in zip(plays, plays[1:]) if up.get(a) and up.get(a) == up.get(b))
     run, best = 1, 1
@@ -217,7 +226,9 @@ def metrics(plays, up):
     trans = max(1, len(plays) - 1)
     return {"n": len(plays), "uniq": len(c), "uniq_ratio": len(c) / max(1, len(plays)),
             "top1": top[0][1] if top else 0, "top3": sum(x[1] for x in top),
-            "same_up": same / trans, "max_run": best}
+            "same_up": same / trans, "max_run": best,
+            "genre_fam": sum(1 for g in gs if g >= 0.8) / trans, "genre_far": sum(1 for g in gs if g == 0) / trans,
+            "mood": statistics.mean(ms) if ms else 0, "cat": statistics.mean(cs) if cs else 0}
 
 
 def agg(rows):
@@ -226,14 +237,10 @@ def agg(rows):
 
 
 VARIANTS = [
-    ("A 현행(서버 v3.286 · exclude 30)", {"server": "old", "excl": 30, "cap": 40}),
-    ("B exclude 70 만", {"server": "old", "excl": 70, "cap": 80}),
-    ("C 서버 개선 만(exclude 30)", {"server": "new", "excl": 30, "cap": 40}),
-    ("D 서버 개선 + exclude 70 (제안)", {"server": "new", "excl": 70, "cap": 80}),
-    ("D-탐색 없음", {"server": "new", "excl": 70, "cap": 80, "explore": 0.0}),
-    ("D-hub 감쇠 없음", {"server": "new", "excl": 70, "cap": 80, "nohub": True}),
-    ("D + 기억 24시간", {"server": "new", "excl": 70, "cap": 80, "win": 24}),
-    ("D + 기억 48시간", {"server": "new", "excl": 70, "cap": 80, "win": 48}),
+    ("A v3.286(10-12 이전)", {"server": "old", "excl": 30, "cap": 40}),
+    ("V v3.359(현재 운영)", {"server": "v59", "excl": 70, "cap": 80, "explore": 0.25}),
+    ("F v3.360 곡 느낌 점수", {"server": "new", "excl": 70, "cap": 80}),
+    ("F + 설치 앱(exclude 30 그대로)", {"server": "new", "excl": 30, "cap": 40}),
 ]
 import os
 if os.environ.get("SIM_ONLY"):  # 예: SIM_ONLY=A,D,24,48 — 이름 앞부분 일치
@@ -273,13 +280,13 @@ async def run_scenario(cat, scenario, user_kind, reps, seed):
 
 def table(title, res):
     print(f"\n### {title}")
-    print("| 방식 | 재생 수 | 고유곡 | 고유 비율 | 최다 반복 곡 | 상위3곡 합 | 같은 제작자 연속 비율 | 최장 같은 제작자 연속(평균/최악) | 출처 비율 |")
-    print("|---|---|---|---|---|---|---|---|---|")
+    print("| 방식 | 다음 곡 같은 장르 계열 | 장르 무관 | 분위기 유사 | 카테고리 겹침 | 최다 반복 | 상위3곡 합 | 고유곡 | 같은 제작자 연속 | 최장 연속(평균/최악) | 출처 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     for name, r in res.items():
         tot = sum(r["src"].values()) or 1
         src = " ".join(f"{k}{v * 100 / tot:.0f}%" for k, v in sorted(r["src"].items(), key=lambda x: -x[1]))
-        print(f"| {name} | {r['n']:.0f} | {r['uniq']:.1f} | {r['uniq_ratio'] * 100:.0f}% | {r['top1']:.1f} | {r['top3']:.1f} | "
-              f"{r['same_up'] * 100:.1f}% | {r['max_run']:.1f} / {r['max_run_worst']} | {src} |")
+        print(f"| {name} | {r['genre_fam'] * 100:.0f}% | {r['genre_far'] * 100:.0f}% | {r['mood']:.2f} | {r['cat']:.2f} | "
+              f"{r['top1']:.1f} | {r['top3']:.1f} | {r['uniq']:.1f} | {r['same_up'] * 100:.1f}% | {r['max_run']:.1f} / {r['max_run_worst']} | {src} |")
 
 
 async def main():
@@ -290,7 +297,9 @@ async def main():
     PG = FakePG(cat)
     mongo = FakeMongo(cat)
     FAKE_REDIS = FakeRedis()
-    for T in (T_NEW, T_OLD):
+    global META
+    META = {t["id"]: t for t in cat}
+    for T in (T_NEW, T_OLD, T_V59):
         T.get_mongo = lambda: mongo
         T.get_redis = lambda: FAKE_REDIS
         T.logger.disabled = True

@@ -2100,6 +2100,7 @@ _RELATED_SAME_UPLOADER_MULT = 0.35  # v3.286 — 같은 제작자 연속 쏠림 
 _RELATED_RELAX_KEEP = 15            # v3.286 — 후보 소진 시 최근 N곡만 계속 제외(나머지는 다시 허용)
 # v3.356 [RelatedVariety3] hub 곡 반복(10-12 대표 지적) — hub 감쇠·탐색·같은 제작자 연속 상한
 from ..services import related_variety as _rv
+from ..services import related_feel as _rf  # v3.360 — 곡 느낌 점수(장르·분위기·카테고리·템포)
 
 
 def _weighted_sample_ranks(n_cands: int, need: int, temp: float = _RELATED_VEC_TEMP, mults=None) -> list:
@@ -2202,32 +2203,33 @@ async def get_related_tracks(
         if sel:
             sources_used.append(stage)
 
-    # ── 0차(v3.356): 탐색 — EXPLORE_P 확률로 장르 무관 신곡·덜 들은 곡 ──────────────────
-    if _rv.should_explore():
-        try:
-            skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
-            cond = {"is_public": True, "_id": {"$nin": skip_oids}, "title": {"$not": _INST_TITLE_RE}}
-            n = _rv.EXPLORE_POOL_EACH
-            newest = await mongo.tracks.find(cond).sort("created_at", -1).limit(n).to_list(length=n)
-            least = await mongo.tracks.find(cond).sort("play_count", 1).limit(n).to_list(length=n)
-            seen: set = set()
-            pool = []
-            for d in newest + least:
-                if str(d["_id"]) not in seen:
-                    seen.add(str(d["_id"]))
-                    pool.append(d)
-            base = [(_RELATED_SAME_UPLOADER_MULT if (_seed_up and str(d.get("uploader_id") or "") == _seed_up) else 1.0)
-                    for d in pool]
-            sel = _rv.weighted_pick(_variety_weights(pool, base), limit)
-            _take(pool, sel, "explore")
-            logger.info("[related] track=%s explore pool=%d picked=%d", track_id, len(pool), len(sel))
-        except Exception:
-            logger.exception("[related] track=%s explore stage failed, fallback", track_id)
+    # ── 1차(v3.360): 곡 느낌 점수(장르·분위기·카테고리·템포) — 기획사명·가사·제목 미사용 ──────────
+    # v3.359 의 장르 무관 탐색 25% 는 폐지("비슷한 장르·분위기로" — 대표 10-13). 신곡 노출은 비슷한 곡 안에서 가중으로.
+    try:
+        skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
+        cond = {"is_public": True, "_id": {"$nin": skip_oids}, "title": {"$not": _INST_TITLE_RE}}
+        lite = await mongo.tracks.find(cond, {
+            "genre": 1, "mood": 1, "categories": 1, "bpm": 1, "tempo": 1, "uploader_id": 1, "created_at": 1,
+        }).to_list(length=5000)
+        ranked = _rf.rank_candidates(seed_doc, lite)
+        cands = [r[0] for r in ranked]
+        base = [r[2] * (_RELATED_SAME_UPLOADER_MULT if (_seed_up and str(d.get("uploader_id") or "") == _seed_up) else 1.0)
+                for r, d in zip(ranked, cands)]
+        sel = _rv.weighted_pick(_variety_weights(cands, base), limit - len(picked))
+        if sel:
+            full = await mongo.tracks.find({"_id": {"$in": [cands[i]["_id"] for i in sel]}}).to_list(length=len(sel))
+            by_id = {d["_id"]: d for d in full}
+            docs = [by_id[cands[i]["_id"]] for i in sel if cands[i]["_id"] in by_id]
+            _take(docs, list(range(len(docs))), "feel")
+        logger.info("[related] track=%s feel pool=%d top=%s picked=%d blocked=%s", track_id, len(lite),
+                    [round(r[1], 2) for r in ranked[:5]], len(sel), bool(_blocked))
+    except Exception:
+        logger.exception("[related] track=%s feel stage failed, fallback", track_id)
 
-    # ── 1차: pgvector NN from the stored seed embedding ──────────────────────
+    # ── 2차(v3.360 부터 폴백): pgvector NN from the stored seed embedding ─────────────
     try:
         row = None
-        if len(picked) < limit:  # v3.356 — 탐색으로 이미 채웠으면 생략
+        if len(picked) < limit:  # v3.360 — 느낌 점수로 채웠으면 생략
             row = await pg.fetchrow(
                 "SELECT embedding FROM track_embeddings WHERE track_id = $1", track_id
             )

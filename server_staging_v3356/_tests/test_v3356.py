@@ -29,6 +29,21 @@ ok("blocked_uploader 2연속만", RV.blocked_uploader("X", "X") == "X" and RV.bl
 ok("previous_track_id 기준곡 건너뜀", RV.previous_track_id(["s", "p", "q"], "s") == "p" and RV.previous_track_id(["s"], "s") is None)
 ok("scope_for", RV.scope_for({"id": "u1"}) == "u:u1" and RV.scope_for(None) == "g")
 
+# ── v3.360 곡 느낌 점수 ──
+import app.services.related_feel as RF
+ok("장르 표기 통일(댄스=Dance Pop 계열)", RF.genre_sim(["댄스"], ["Dance Pop"]) == 0.8)
+ok("장르 같은 표기 1.0", RF.genre_sim(["힙합"], ["힙합"]) == 1.0)
+ok("장르 계열: 붐뱁·K-Hip-hop·Rap = 힙합", all(RF.genre_family(g) == "hiphop" for g in ("붐뱁", "K-Hip-hop", "Rap", "감성힙합")))
+ok("장르 이웃 0.4(힙합~R&B)", RF.genre_sim(["힙합"], ["R&B"]) == 0.4)
+ok("장르 무관 0(트로트~trance)", RF.genre_sim(["트로트"], ["trance"]) == 0.0)
+ok("분위기 가까움 > 먼 것", RF.mood_sim(["밝고 경쾌한"], ["Upbeat"]) > RF.mood_sim(["밝고 경쾌한"], ["슬프고 우울한"]))
+ok("카테고리 자카드", RF.cat_sim(["휴식", "잠자기"], ["휴식"]) == 0.5)
+a = {"genre": ["인디"], "mood": ["잔잔하고 편안한"], "categories": ["휴식"], "uploader_nickname": "DDui", "lyrics": "밤 밤 밤"}
+b = {"genre": ["인디"], "mood": ["잔잔하고 편안한"], "categories": ["휴식"], "uploader_nickname": "다른사람", "lyrics": "아침"}
+c = {"genre": ["trance"], "mood": ["몽환적·신비로운"], "categories": ["파티"], "uploader_nickname": "DDui", "lyrics": "밤 밤 밤"}
+ok("기획사명·가사는 점수에 안 들어감", RF.feel_score(a, b) == 1.0 and RF.feel_score(a, c) < 0.4)
+ok("tempo 반/배속 동일 취급", RF.tempo_sim({"bpm": 70}, {"tempo": 140}) == 1.0)
+
 
 class BrokenRedis:
     def pipeline(self): raise ConnectionError("down")
@@ -79,12 +94,18 @@ async def main():
         same += up[r["tracks"][0]["id"]] == big
     ok(f"2연속은 허용(300회 중 {same})", same > 0)
 
-    # 탐색 100% → source explore, 기준곡·제외곡 미포함
-    RV.EXPLORE_P = 1.0
+    # v3.360 곡 느낌 단계 — 출처 feel, 제외 준수, 같은 장르 계열 위주, 기획사명과 무관
     ex = ids[1:60]
     r = await T.get_related_tracks(ids[0], exclude=",".join(ex), limit=3, pg=S.PG, current_user=None)
     got = [t["id"] for t in r["tracks"]]
-    ok("탐색 출처·제외 준수", r["source"] == "explore" and len(got) == 3 and not (set(got) & (set(ex) | {ids[0]})))
+    ok("feel 출처·제외 준수", r["source"] == "feel" and len(got) == 3 and not (set(got) & (set(ex) | {ids[0]})))
+    gen = {t["id"]: t["genre"] for t in cat}
+    same = 0
+    for _ in range(100):
+        rr = await T.get_related_tracks(ids[0], exclude=None, limit=1, pg=S.PG, current_user=None)
+        same += RF.genre_sim(gen[ids[0]], gen[rr["tracks"][0]["id"]]) >= 0.8
+    ok(f"feel 같은 장르 계열 {same}/100", same >= 90)
+    ok("feel 응답은 전체 문서 직렬화", {"id", "title", "genre", "play_count", "artist_name"} <= set(r["tracks"][0]))
 
     # hub 감쇠: 한 곡을 개인 카운터로 20회 뽑힌 것으로 만들면 그 곡 선택이 크게 준다
     RV.EXPLORE_P = 0.0
