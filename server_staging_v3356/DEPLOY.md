@@ -65,3 +65,14 @@ age1(미배포)도 같은 파일을 고친다. `_merge_age1/tracks.py` = age1 + 
 ## 승인 대기
 - (a) 실데이터 덤프 — **완료**(10-12 대표 승인).
 - (b) 서버 운영 반영·재기동, (c) 웹 배포 — 대기.
+
+## 운영 반영 (2026-10-13, 대표 승인) — 운영 버전 표기 **v3.359**
+(스테이징 폴더명 v3356 은 작업 시작 시 번호. 그 사이 다른 세션이 v3.356~358 을 써서 운영 표기는 v3.359. 서버 코드 주석의 "v3.356" = v3.359.)
+- 서버 13:17 KST 무렵: md5 가드 통과(584fcce…) → 백업 /home/ubuntu/maidol/backups/pre_v3356_20261013T041725Z, tracks.py.bak_pre_v3356,
+  로그 maidol-app_pre_v3356_20261013T041725Z.log → 진행 작업 4종 0건(재기동 직전 재확인도 0) → 정식 명령 재기동 → /api/health ok.
+  운영 md5: tracks.py 129d87d3fdc55c460a4d6f11feba6607, related_variety.py 56fb6f32dc879ac15c8d1d6372660d20.
+  확인: related 12회 200(explore 1·vector 11), 잘못된 id 404, /api/tracks/{id} 200, /api/auth/login 422(라우트 정상), 공개 도메인 200,
+  Redis related:picks:g:* 생성(TTL ≈25h), 재기동 후 Traceback/ERROR 0. (확인용 12회 호출이 전체 카운터에 들어감 — 24h 후 소멸, 영향 미미)
+- 웹 web build 202610131321: 커밋 abf75e3 → deploy.sh app → /app data-src AppEntry-849f6e63….js, 번들에
+  `recentlyPlayedIds||[]).slice(0,70)`·`.slice(0,80)` 확인, v3.357 로딩 막대(data-src) 유지.
+- 진행 작업 확인 스크립트: `_tests/inflight_check.py`(읽기 전용).
