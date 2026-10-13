@@ -104,3 +104,10 @@ ssh $H "cd $R && sudo nice -n 19 docker build -q -t maidol-app:latest . && sudo 
 # 5) 확인: 헬스, 공개 경로 curl(차트·상세·검색·앨범·OAuth 시작 302), 라우트 매핑, 로그 [age] sweep 에러 없음
 curl -fsS http://127.0.0.1:9006/api/health
 ```
+
+## 진행 기록
+- 2026-10-13 20:10 KST — 운영 tracks.py 가 v3.356(관련곡 다양화, 04:17 UTC 배포)으로 바뀌어 3-way 병합. 신규 탐색(explore) 단계에도 연령 조건을 넣었고, 관련곡의 보는 사람은 이제 로그인 세션(current_user)을 우선 쓴다. `_orig`·MD5SUMS 를 새 서버본으로 바꿨다. 병합본 테스트 78/78, 라우트 diff 는 신규 6개뿐.
+- 2026-10-13 20:20 KST — 처리방침 추가 개정 게시(공고 10-13·시행 10-20). /privacy(제1조·제6조 Anthropic 행·제10조 ⑩·제12조 ③·추가 개정 안내), /privacy/2026-10-19 보관본, /news 공지. wrangler 배포 8b477b3e, 라이브 확인. 백업 homepage/privacy_index_pre_age_20261013.html.bak·news_index_pre_age_20261013.html.bak.
+- 2026-10-13 20:12 KST — 대표 승인(「오늘 심야 배포」)에 따라 EC2 에서 **10-14 03:00 KST 자동 배포 예약**(`/home/ubuntu/maidol/deploy_age1/run.sh`, 로그 run.log). Mac 이 잠들어도 실행된다.
+  - 단계: md5 가드 → 진행 작업 4종 0건(06시까지 5분 간격 재확인) → 백업(backups/pre_age1_<UTC>) → 파일·관리자 웹·.env 두 줄 → nice 빌드 → 정식 run → 헬스·공개 경로 점검 → 실패하면 자동 롤백(maidol-app:pre_age1).
+  - 예약 취소: `ssh maidol-ec2 'pkill -f "deploy_age1/run.sh"'`

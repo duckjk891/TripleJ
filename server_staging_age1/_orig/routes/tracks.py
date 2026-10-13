@@ -2098,6 +2098,8 @@ _RELATED_VEC_TEMP = 3.0      # rank 가중 w=1/(rank+TEMP) — 클수록 상위 
 
 _RELATED_SAME_UPLOADER_MULT = 0.35  # v3.286 — 같은 제작자 연속 쏠림 감쇠(실측 52~54% vs 무작위 27%)
 _RELATED_RELAX_KEEP = 15            # v3.286 — 후보 소진 시 최근 N곡만 계속 제외(나머지는 다시 허용)
+# v3.356 [RelatedVariety3] hub 곡 반복(10-12 대표 지적) — hub 감쇠·탐색·같은 제작자 연속 상한
+from ..services import related_variety as _rv
 
 
 def _weighted_sample_ranks(n_cands: int, need: int, temp: float = _RELATED_VEC_TEMP, mults=None) -> list:
@@ -2126,6 +2128,7 @@ async def get_related_tracks(
     exclude: str = Query(None),
     limit: int = 1,
     pg=Depends(get_pg),
+    current_user=Depends(get_current_user_optional),  # v3.356 — hub 감쇠 카운터 범위(로그인=개인)
 ):
     """관련곡 추천 (무인증).
 
@@ -2170,12 +2173,67 @@ async def get_related_tracks(
     def _skip_ids() -> set:
         return exclude_ids | picked_ids | {track_id}
 
+    # v3.356 [RelatedVariety3] — hub 감쇠 카운터·같은 제작자 연속 상한 준비(실패 시 감쇠 없음 = 종전 동작)
+    _seed_up = str(seed_doc.get("uploader_id") or "")
+    _scope = _rv.scope_for(current_user)
+    try:
+        _redis = get_redis()
+    except Exception:
+        _redis = None
+    _counts = await _rv.recent_pick_counts(_redis, _scope)
+    _blocked = None
+    _prev_id = _rv.previous_track_id(exclude_order, track_id)
+    if _seed_up and _prev_id and ObjectId.is_valid(_prev_id):
+        try:
+            _prev = await mongo.tracks.find_one({"_id": ObjectId(_prev_id)}, {"uploader_id": 1})
+            _blocked = _rv.blocked_uploader(_seed_up, str((_prev or {}).get("uploader_id") or ""))
+        except Exception:
+            logger.exception("[related] track=%s prev uploader lookup failed", track_id)
+
+    def _variety_weights(docs: list, base: list, strict: bool = True) -> list:
+        w = [b * _rv.hub_mult(str(d["_id"]), _counts, _scope) for b, d in zip(base, docs)]
+        return _rv.apply_block(w, docs, _blocked, strict=strict)
+
+    def _take(docs: list, sel: list, stage: str) -> None:
+        for i in sel:
+            d = docs[i]
+            picked_ids.add(str(d["_id"]))
+            picked.append(_serialize_track(d))
+        if sel:
+            sources_used.append(stage)
+
+    # ── 0차(v3.356): 탐색 — EXPLORE_P 확률로 장르 무관 신곡·덜 들은 곡 ──────────────────
+    if _rv.should_explore():
+        try:
+            skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
+            cond = {"is_public": True, "_id": {"$nin": skip_oids}, "title": {"$not": _INST_TITLE_RE}}
+            n = _rv.EXPLORE_POOL_EACH
+            newest = await mongo.tracks.find(cond).sort("created_at", -1).limit(n).to_list(length=n)
+            least = await mongo.tracks.find(cond).sort("play_count", 1).limit(n).to_list(length=n)
+            seen: set = set()
+            pool = []
+            for d in newest + least:
+                if str(d["_id"]) not in seen:
+                    seen.add(str(d["_id"]))
+                    pool.append(d)
+            base = [(_RELATED_SAME_UPLOADER_MULT if (_seed_up and str(d.get("uploader_id") or "") == _seed_up) else 1.0)
+                    for d in pool]
+            sel = _rv.weighted_pick(_variety_weights(pool, base), limit)
+            _take(pool, sel, "explore")
+            logger.info("[related] track=%s explore pool=%d picked=%d", track_id, len(pool), len(sel))
+        except Exception:
+            logger.exception("[related] track=%s explore stage failed, fallback", track_id)
+
     # ── 1차: pgvector NN from the stored seed embedding ──────────────────────
     try:
-        row = await pg.fetchrow(
-            "SELECT embedding FROM track_embeddings WHERE track_id = $1", track_id
-        )
-        if row is None or row["embedding"] is None:
+        row = None
+        if len(picked) < limit:  # v3.356 — 탐색으로 이미 채웠으면 생략
+            row = await pg.fetchrow(
+                "SELECT embedding FROM track_embeddings WHERE track_id = $1", track_id
+            )
+        if len(picked) >= limit:
+            pass
+        elif row is None or row["embedding"] is None:
             logger.warning("[related] track=%s no stored embedding, fallback to genre", track_id)
         else:
             k = limit + len(exclude_ids) + _RELATED_EXTRA_K
@@ -2209,17 +2267,13 @@ async def get_related_tracks(
                 docs = await cursor.to_list(length=len(cand_ids))
                 docs.sort(key=lambda d: rank_by_id.get(str(d["_id"]), len(rank_by_id)))
                 # v3.271 — 상위 고정 대신 rank-가중 샘플링(유사도 우선은 유지하되 매번 다른 조합)
-                _seed_up = str(seed_doc.get("uploader_id") or "")
+                # v3.356 — + hub 감쇠(최근 많이 뽑힌 곡 ×1/(1+c)) + 같은 제작자 3연속 차단
                 _mults = [(_RELATED_SAME_UPLOADER_MULT if (_seed_up and str(d.get("uploader_id") or "") == _seed_up) else 1.0)
                           for d in docs]
-                sel = _weighted_sample_ranks(len(docs), limit, mults=_mults)
-                logger.info("[related] track=%s vector sample n=%d sel=%s", track_id, len(docs), sel[:8])
-                for i in sel:
-                    d = docs[i]
-                    picked_ids.add(str(d["_id"]))
-                    picked.append(_serialize_track(d))
-                if picked:
-                    sources_used.append("vector")
+                base = [w * m for w, m in zip(_rv.rank_weights(len(docs), _RELATED_VEC_TEMP), _mults)]
+                sel = _rv.weighted_pick(_variety_weights(docs, base), limit - len(picked))
+                logger.info("[related] track=%s vector sample n=%d sel=%s blocked=%s", track_id, len(docs), sel[:8], bool(_blocked))
+                _take(docs, sel, "vector")
     except Exception:
         logger.exception("[related] track=%s vector stage failed, fallback", track_id)
 
@@ -2243,12 +2297,9 @@ async def get_related_tracks(
                     "title": {"$not": _INST_TITLE_RE},  # v3.271
                 }).sort("play_count", -1).limit(pool_n)
                 pool = await cursor.to_list(length=pool_n)
-                docs = _random.sample(pool, min(need, len(pool)))  # v3.271 — 상위 풀 무작위
-                for d in docs:
-                    picked_ids.add(str(d["_id"]))
-                    picked.append(_serialize_track(d))
-                if docs:
-                    sources_used.append("genre")
+                # v3.271 상위 풀 무작위 → v3.356 hub 감쇠 가중·같은 제작자 3연속 차단
+                sel = _rv.weighted_pick(_variety_weights(pool, [1.0] * len(pool)), need)
+                _take(pool, sel, "genre")
             else:
                 logger.info("[related] track=%s seed has no genre, skip genre fallback", track_id)
         except Exception:
@@ -2270,12 +2321,9 @@ async def get_related_tracks(
                 "title": {"$not": _INST_TITLE_RE},  # v3.271
             }).sort("play_count", -1).limit(pool_n)
             pool = await cursor.to_list(length=pool_n)
-            docs = _random.sample(pool, min(need, len(pool)))  # v3.271
-            for d in docs:
-                picked_ids.add(str(d["_id"]))
-                picked.append(_serialize_track(d))
-            if docs:
-                sources_used.append("popular")
+            # v3.271 무작위 → v3.356 hub 감쇠 가중(같은 제작자 차단은 후보가 남을 때만)
+            sel = _rv.weighted_pick(_variety_weights(pool, [1.0] * len(pool), strict=False), need)
+            _take(pool, sel, "popular")
         except Exception:
             logger.exception("[related] track=%s popular stage failed", track_id)
 
@@ -2300,19 +2348,20 @@ async def get_related_tracks(
             # 오래전에 들은 곡 우선 = exclude 목록 뒤쪽일수록(또는 목록에 없을수록) 가중 ↑
             pos = {t: i for i, t in enumerate(exclude_order)}
             pool.sort(key=lambda d: -pos.get(str(d["_id"]), len(exclude_order) + 1))
-            sel = _weighted_sample_ranks(len(pool), need)
-            for i in sel:
-                d = pool[i]
-                picked_ids.add(str(d["_id"]))
-                picked.append(_serialize_track(d))
-            if sel:
-                sources_used.append("relaxed")
+            base = _rv.rank_weights(len(pool), _RELATED_VEC_TEMP)  # v3.356 + hub 감쇠·제작자 차단(후보 있을 때만)
+            sel = _rv.weighted_pick(_variety_weights(pool, base, strict=False), need)
+            _take(pool, sel, "relaxed")
             logger.info("[related] track=%s relaxed exclude=%d keep=%d pool=%d picked=%d",
                         track_id, len(exclude_order), len(keep), len(pool), len(sel))
         except Exception:
             logger.exception("[related] track=%s relaxed stage failed", track_id)
 
     source = sources_used[0] if len(sources_used) == 1 else ("mixed" if sources_used else "popular")
+    # v3.356 — hub 감쇠 카운터 기록(로그인은 개인+전체, 비로그인은 전체)
+    _new_ids = [t["id"] for t in picked]
+    await _rv.note_picks(_redis, _scope, _new_ids)
+    if _scope != "g":
+        await _rv.note_picks(_redis, "g", _new_ids)
     await _attach_album_info(mongo, picked)  # B-11 — 배치 1쿼리
     logger.info("[related] track=%s done n=%d source=%s", track_id, len(picked), source)
     return {"tracks": picked, "source": source}
