@@ -129,9 +129,11 @@ export function applyArtistRenameToPlayback(characterId: string, name: string): 
 // v3.286 [RelatedVariety] (조사 10-06): 큐 전체를 exclude 로 보내 카탈로그(112곡)를 다 덮어 추천이 빈손 →
 // 자동재생 종료·저장 큐 같은 순서 반복(exclude≥95 의 83% 빈 응답). 최근 30곡 + 현재 위치 ±5곡만 제외하고,
 // 최근 재생 순(앞=최근)으로 보낸다 — 서버는 후보 소진 시 앞쪽 15곡만 유지하고 완화(v3.286 서버).
+// v3.359 [RelatedVariety3] (대표 지적 10-12 "같은 곡이 계속 반복"): 기억을 카탈로그(공개 149곡)의 절반 수준인
+// 70곡으로 — 고갈은 서버 완화 단계가 막는다. 서버는 hub 곡 감쇠·탐색·같은 제작자 3연속 차단을 함께 적용.
 export function buildRelatedExclude(): string[] {
   const s = usePlayerStore.getState();
-  const recent = (((s as any).recentlyPlayedIds as string[]) || []).slice(0, 30);
+  const recent = (((s as any).recentlyPlayedIds as string[]) || []).slice(0, 70);
   const ci = Math.max(0, s.currentIndex);
   const win = s.queue.slice(Math.max(0, ci - 5), ci + 6).map((t: any) => t?.id).filter(Boolean).map(String);
   return Array.from(new Set([...recent, ...win]));

@@ -422,12 +422,12 @@ export const usePlayerStore = create<PlayerState>()(
         if (idx >= 0 && (isInstTrack(queue[idx]) || tried.has(idx))) return -1;
         return idx;
       },
-      // v3.271 [RelatedVariety]: 최근 재생 이력(최대 40곡) — 관련곡 추천 exclude 원천(영속)
+      // v3.271 [RelatedVariety]: 최근 재생 이력(v3.359 최대 80곡) — 관련곡 추천 exclude 원천(영속)
       noteRecentlyPlayed: (trackId: string) => {
         if (!trackId) return;
         const prev = get().recentlyPlayedIds || [];
         if (prev[0] === trackId) return;
-        const next = [trackId, ...prev.filter((x: string) => x !== trackId)].slice(0, 40);
+        const next = [trackId, ...prev.filter((x: string) => x !== trackId)].slice(0, 80);
         set({ recentlyPlayedIds: next });
       },
       getNextIndex: () => {
