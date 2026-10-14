@@ -42,6 +42,8 @@ interface DmMessage {
   // v3.274: 다중 이미지(서버가 단일도 1원소 배열로 승격 동봉) — 렌더는 배열 단일화
   image_object_names?: string[] | null;
   image_urls?: (string | null)[] | null;
+  // v3.359 [Governance]: 상담 AI 가 보낸 답변(사람이 아닌 AI 답변임을 표시)
+  ai_generated?: boolean;
 }
 
 // v3.207(⑥): 첨부 선검증 — 백엔드 /upload/dm-image 계약(feed-image 복제: jpg/png/webp ≤15MB)과 짝
@@ -315,6 +317,9 @@ export default function DmChatScreen() {
           ) : null}
         </View>
         <View style={styles.msgMeta}>
+          {!mine && item.ai_generated ? (
+            <AppText variant="caption" tone="accent" accessibilityLabel="AI 답변">AI 답변 · </AppText>
+          ) : null}
           <AppText variant="caption" tone="muted">{fmtClock(item.created_at)}</AppText>
           {!mine ? (
             <TouchableOpacity onPress={() => setReportMsg(item.id)} accessibilityLabel="메시지 신고">

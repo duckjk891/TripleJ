@@ -68,6 +68,7 @@ import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import MyReportsScreen from './screens/MyReportsScreen';
+import CreationReportScreen from './screens/CreationReportScreen'; // v3.359 창작 기록 보기
 import BlockedUsersScreen from './screens/BlockedUsersScreen'; // v3.294 [Block]
 import StarHistoryScreen from './screens/StarHistoryScreen'; // v3.230 A7-3
 import { useRewardNotice } from './hooks/useRewardNotice'; // v3.230 A7-2
@@ -214,6 +215,7 @@ export type RootStackParamList = {
   DmInbox: undefined;
   Notifications: undefined;
   MyReports: undefined;
+  CreationReport: { trackId: string; title?: string }; // v3.359
   BlockedUsers: undefined;
   // v3.230 A7-3(D8): 스타(⭐) 적립·사용 내역
   StarHistory: undefined;
@@ -991,6 +993,7 @@ export default function App() {
             <RootStack.Screen name="DmInbox" component={DmInboxScreen} options={({ navigation }) => stackHeader(navigation, '메시지')} />
             <RootStack.Screen name="Notifications" component={NotificationsScreen} options={({ navigation }) => stackHeader(navigation, '알림')} />
             <RootStack.Screen name="MyReports" component={MyReportsScreen} />
+            <RootStack.Screen name="CreationReport" component={CreationReportScreen} />
             <RootStack.Screen name="BlockedUsers" component={BlockedUsersScreen} options={({ navigation }) => stackHeader(navigation, '차단한 사용자')} />
             <RootStack.Screen name="StarHistory" component={StarHistoryScreen} options={({ navigation }) => stackHeader(navigation, '스타 내역')} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />

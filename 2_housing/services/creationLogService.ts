@@ -144,6 +144,38 @@ export async function adoptCreationSession(id: string | null | undefined): Promi
   if (__DEV__) console.log('[CreationLog] 세션 채택(편곡):', sessionId);
 }
 
+/**
+ * v3.359 [Governance] 발매 곡의 후속 연출(커버·영상) 지시 기록 — 곡 세션을 부모로 잇는 후속 세션에 DIRECTION 1건.
+ * (발매로 FINALIZED 된 세션에는 이벤트를 더할 수 없음 — 서버 409). 곡별 창작 리포트의 follow_ups 로 함께 보인다.
+ * 실패 무해(기능 비차단). 같은 곡은 이번 실행 동안 같은 후속 세션을 재사용.
+ */
+const followUps = new Map<string, { sid: string; seq: number }>();
+export async function logFollowUpDirection(trackId: string, payload: Record<string, any>): Promise<void> {
+  if (disabled || !trackId || !useAuthStore.getState().token) return;
+  try {
+    let f = followUps.get(trackId);
+    if (!f) {
+      const res = await api.post('/sessions', {
+        app_version: appVersion(),
+        platform: Constants.platform?.ios ? 'ios' : Constants.platform?.android ? 'android' : 'web',
+        engine_list: ['image'],
+        parent_track_id: trackId,
+      }, { timeout: 15000 });
+      const sid = res.data?.session_id ? String(res.data.session_id) : '';
+      if (!sid) return;
+      f = { sid, seq: 0 };
+      followUps.set(trackId, f);
+    }
+    f.seq += 1;
+    await api.post(`/sessions/${f.sid}/events`, {
+      events: [{ event_id: uuidv4(), client_seq: f.seq, type: 'DIRECTION', client_ts: new Date().toISOString(), payload }],
+    }, { timeout: 15000 });
+    if (__DEV__) console.log('[CreationLog] 후속 연출 기록', { trackId, stage: payload?.stage });
+  } catch (err: any) {
+    console.warn('[CreationLog] 후속 연출 기록 실패(무시)', { trackId, status: err?.response?.status });
+  }
+}
+
 /** 세션 종료(FINALIZE 확정 후) — 다음 곡 흐름은 새 세션으로 시작 */
 export function endCreationSession(): void {
   if (__DEV__) console.log('[CreationLog] 세션 종료:', sessionId, '잔여 큐:', queue.length);

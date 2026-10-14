@@ -61,6 +61,8 @@ import { finalizeArtistJob, type CoverReturnTarget } from '../services/generatio
 import { isCoverPendingGeneration, hasCoverDialogueSnapshot, hasCoverUserProgress } from '../utils/directorResume';
 import { REFINE_STEPS, REFINE_TYPICAL_TEXT, refineStepIndex, type ProgressStep } from '../utils/refineProgress';
 import { useAiConsentGate } from '../utils/policyConsent';
+import { getCreationSessionId, logCreationEvent, logFollowUpDirection } from '../services/creationLogService'; // v3.359
+import { buildCoverDirection } from '../utils/creationDirection';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -1074,6 +1076,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         ? (coverExtras.virtualArtStyle || undefined) : undefined,
     };
     console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
+    // v3.359 [Governance] 커버 연출 지시 기록 — 발매 전이면 지금 창작 세션, 발매 곡이면 후속 세션(앨범 커버는 곡이 아니라 제외)
+    if (!albumMode) {
+      const dir = buildCoverDirection(payload as any);
+      if (getCreationSessionId()) logCreationEvent('DIRECTION', dir);
+      else if (trackId) void logFollowUpDirection(String(trackId), dir);
+    }
     // v3.228 W2: 서버 원장 요청 ID — POST 직전 발급·추적 등록(응답 유실·재진입·앱 재시작 후 회수)
     const requestId = newRequestId();
     const genKey = registerGenJob({

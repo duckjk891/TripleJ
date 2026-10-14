@@ -92,3 +92,41 @@ export function buildComposeDirection(p: {
     },
   };
 }
+
+/** v3.359 [Governance] 커버 연출 지시 — 사람이 정한 스타일·구도·표정·색감·배경·아티스트 포함 여부 */
+export function buildCoverDirection(p: {
+  title?: string; style?: string; shot?: string; expression?: string; palette?: string;
+  background_prompt?: string; background_object_name?: string; lyrics_excerpt?: string;
+  character_object_name?: string; character_kind?: string; character_art_style?: string;
+}): DirectionPayload {
+  const answers: DirectionPayload['answers'] = {
+    title: clip(p.title, 200), style: clip(p.style), shot: clip(p.shot), expression: clip(p.expression),
+    palette: clip(p.palette), background: clip(p.background_prompt), background_photo: !!p.background_object_name,
+    lyrics_excerpt: clip(p.lyrics_excerpt, 300), with_artist: !!p.character_object_name,
+    artist_kind: clip(p.character_kind), art_style: clip(p.character_art_style),
+  };
+  const typed: string[] = [];
+  if (!isBlank(p.style)) typed.push('style');
+  if (!isBlank(p.background_prompt)) typed.push('background');
+  return {
+    stage: 'cover',
+    answers,
+    typed_fields: typed,
+    reference: {
+      text: !isBlank(p.style) || !isBlank(p.background_prompt),
+      audio: false,
+      link: false,
+      named_work: looksLikeNamedWork(p.style) || looksLikeNamedWork(p.background_prompt),
+    },
+  };
+}
+
+/** v3.359 [Governance] 영상 연출 지시 — 형식·배치·가사 표시·글꼴·배경·자막 위치·구간 */
+export function buildVideoDirection(params: Record<string, any>): DirectionPayload {
+  const answers: DirectionPayload['answers'] = {};
+  Object.entries(params || {}).slice(0, 30).forEach(([k, v]) => {
+    answers[k] = typeof v === 'number' || typeof v === 'boolean' ? v : clip(v, 200);
+  });
+  if (!Object.keys(answers).length) answers.format = '';
+  return { stage: 'video', answers, typed_fields: [], reference: { text: false, audio: false, link: false, named_work: false } };
+}

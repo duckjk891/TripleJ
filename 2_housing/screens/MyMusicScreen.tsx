@@ -1180,6 +1180,8 @@ export default function MyMusicScreen({ navigation }: any) {
             : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),
           // v3.269 [30]: 발매 후 아티스트 재지정 — 만료 팝업 '아티스트 없이 진행'으로 나간 곡 구제
           { icon: 'user', label: '아티스트 지정', onPress: () => setRetagTrack(actionTrack) },
+          // v3.359 [Governance] 창작 기록 보기 — 저작권 등록 근거(사람의 지시·편집·선택 + 위변조 검증)
+          { icon: 'file-text', label: '창작 기록 보기', onPress: () => navigation.getParent()?.navigate('CreationReport', { trackId: String(actionTrack.id), title: actionTrack.title }) },
           { icon: 'trash-2', label: '삭제', danger: true, onPress: () => handleDeleteTrack(String(actionTrack.id), actionTrack.title) },
         ] : undefined}
       />

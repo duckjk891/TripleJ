@@ -70,6 +70,8 @@ import { savedTrackStreamUrl } from '../services/musicService';
 import { applyPlaybackAudioMode } from '../services/audioMode';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAiConsentGate } from '../utils/policyConsent';
+import { logFollowUpDirection } from '../services/creationLogService'; // v3.359
+import { buildVideoDirection } from '../utils/creationDirection';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -1185,6 +1187,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 다른 화면에 다녀와도 작업은 계속 진행돼요 — 완성되면 알려드릴게요.');
       setStep('making');
       console.info('[VideoDirector] share-video 생성', { trackId: track.id, rid: requestId.slice(0, 8), ...params });
+      void logFollowUpDirection(String(track.id), buildVideoDirection(params)); // v3.359 [Governance] 영상 연출 지시 기록
       try {
         const res = await api.post(`/tracks/${track.id}/share-video`, null, {
           params, timeout: 300000, headers: genRequestHeaders(requestId),
