@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>접속기록 점검 기록부</title>
+<style>
+  :root { --ink:#1b1830; --soft:#5b5675; --line:#dcd8ea; --accent:#6d3fd6; --note:#fff6e0; }
+  body { margin:0; background:#fff; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; line-height:1.7; }
+  main { max-width:820px; margin:0 auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:17px; margin:28px 0 8px; padding-bottom:6px; border-bottom:2px solid var(--accent); }
+  p, li { font-size:14px; }
+  .meta { color:var(--soft); font-size:13px; }
+  table { width:100%; border-collapse:collapse; margin:8px 0; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:7px 8px; text-align:left; vertical-align:top; }
+  th { background:#f4f1fb; }
+  td.blank { height:28px; }
+  .todo { background:var(--note); padding:2px 6px; border-radius:4px; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+<h1>접속기록 점검 기록부 (월 1회)</h1>
+<p class="meta">주식회사 로터스에이아이 · MAIDOL · 근거: 「개인정보의 안전성 확보조치 기준」 제8조(접속기록 월 1회 이상 점검), 내부관리계획 제10조<br>
+점검 자료: 관리자 기록(admin_logs) — 매월 초 지난달 요약표를 Claude 에게 요청하면 아래 항목대로 뽑아 드립니다.</p>
+
+<h2>1. 점검 정보</h2>
+<table>
+<tr><th style="width:30%">점검 대상 기간</th><td class="blank">20  .  .  . ~ 20  .  .  .</td></tr>
+<tr><th>점검일</th><td class="blank"></td></tr>
+<tr><th>점검자</th><td class="blank"></td></tr>
+<tr><th>관리자 계정 수(점검 시점)</th><td class="blank">개 (지난달 대비 증감:    )</td></tr>
+</table>
+
+<h2>2. 점검 항목</h2>
+<table>
+<tr><th style="width:5%">#</th><th>항목</th><th style="width:16%">결과</th><th style="width:28%">비고</th></tr>
+<tr><td>1</td><td>관리자 권한 부여·회수가 승인 내역과 일치하는가</td><td>□ 적정 □ 이상</td><td></td></tr>
+<tr><td>2</td><td>한 관리자가 짧은 시간에 많은 사용자 정보를 열람했는가(예: 1시간 30명 이상)</td><td>□ 없음 □ 있음</td><td></td></tr>
+<tr><td>3</td><td>업무 시간 외(예: 22시~07시) 열람이 있었는가 — 있으면 사유 확인</td><td>□ 없음 □ 있음</td><td></td></tr>
+<tr><td>4</td><td>원본 사진·신고 증거 열람에 업무상 사유(신고 처리 등)가 있는가</td><td>□ 적정 □ 확인 필요</td><td></td></tr>
+<tr><td>5</td><td>상담 대화 열람이 상담 처리 목적이었는가</td><td>□ 적정 □ 확인 필요</td><td></td></tr>
+<tr><td>6</td><td>얼굴 인증 면제 부여·해제에 사유가 적혀 있는가</td><td>□ 적정 □ 확인 필요</td><td></td></tr>
+<tr><td>7</td><td>회원 정보 다운로드·대량 변경(제재·포인트 조정 등)이 승인된 작업인가</td><td>□ 적정 □ 확인 필요</td><td></td></tr>
+<tr><td>8</td><td>접속기록이 빠짐없이 쌓이고 있는가(기록 누락·삭제 흔적 없음)</td><td>□ 적정 □ 이상</td><td></td></tr>
+</table>
+
+<h2>3. 관리자별 열람 요약</h2>
+<table>
+<tr><th>관리자</th><th>사용자 상세</th><th>원본 사진·미디어</th><th>신고 증거</th><th>상담 대화</th><th>변경 작업</th></tr>
+<tr><td class="blank"></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td class="blank"></td><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+
+<h2>4. 이상 사항과 조치</h2>
+<table>
+<tr><th style="width:30%">이상 사항</th><th>조치 내용</th><th style="width:18%">완료일</th></tr>
+<tr><td class="blank"></td><td></td><td></td></tr>
+<tr><td class="blank"></td><td></td><td></td></tr>
+</table>
+
+<h2>5. 확인</h2>
+<table>
+<tr><th>개인정보 보호책임자</th><td class="blank">성명:                 서명:                 일자:</td></tr>
+</table>
+<p class="meta">보관: 점검 기록부는 2년 이상 보관합니다.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 사용 대장</title>
+<style>
+  :root { --ink:#1b1830; --soft:#5b5675; --line:#dcd8ea; --accent:#6d3fd6; --note:#fff6e0; --hi:#fde8e8; --mid:#fff3d6; --lo:#e8f6ec; }
+  body { margin:0; background:#fff; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; line-height:1.6; }
+  main { max-width:1100px; margin:0 auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:17px; margin:28px 0 8px; padding-bottom:6px; border-bottom:2px solid var(--accent); }
+  p, li { font-size:14px; }
+  .meta { color:var(--soft); font-size:13px; }
+  .wrap { overflow-x:auto; }
+  table { width:100%; min-width:900px; border-collapse:collapse; margin:8px 0; font-size:12.5px; }
+  th, td { border:1px solid var(--line); padding:6px 7px; text-align:left; vertical-align:top; }
+  th { background:#f4f1fb; position:sticky; top:0; }
+  .hi { background:var(--hi); font-weight:700; } .mid { background:var(--mid); font-weight:700; } .lo { background:var(--lo); font-weight:700; }
+  .todo { background:var(--note); padding:1px 5px; border-radius:4px; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+<h1>AI 사용 대장</h1>
+<p class="meta">주식회사 로터스에이아이 · MAIDOL · 기준일 2026-10-14(서버 코드·운영 설정 확인) · 관리: 개인정보 보호책임자<br>
+규칙: 새 AI 기능이나 외부 업체를 붙이기 <b>전에</b> 이 표에 한 줄을 추가하고 처리방침·동의 문구와 맞는지 확인한다. 분기 1회, 그리고 기능 출시·업체 변경 때 다시 점검한다.</p>
+
+<h2>1. 기능별 AI 사용 현황</h2>
+<div class="wrap">
+<table>
+<tr><th>기능</th><th>AI·업체(국가)</th><th>보내는 데이터</th><th>사람에게 미치는 영향</th><th>동의·고지</th><th>통제 장치</th><th>위험</th></tr>
+<tr><td>작사 디렉터(가사·번역·아티스트 설명)</td><td>OpenAI(미국), Anthropic(미국)</td><td>대화 답변·주제·키워드 등 입력 글</td><td>창작물 귀속·저작권</td><td>가입 시 국외 이전 동의</td><td>창작 기록(지시·가사 버전·해시 체인), 작품명 표현 표시, 수정·삭제 불가 보호</td><td class="lo">낮음</td></tr>
+<tr><td>작곡·편곡·MR</td><td>sunoapi.org(미국)</td><td>가사, 장르·보컬 선택, 참고 음원(선택)</td><td>저작권(참고 음원 의거성)</td><td>국외 이전 동의 + 참고 음악 녹음 시 음성 동의</td><td>창작 기록, 참고 음원 사용 표시, 비슷한 가사 재시도 집계</td><td class="mid">중간</td></tr>
+<tr><td>가사 타이밍 인식(가사 영상)</td><td>Wonder AI(미국), Suno 타임스탬프</td><td>생성 음원·가사</td><td>없음(표시용)</td><td>국외 이전 동의</td><td>—</td><td class="lo">낮음</td></tr>
+<tr><td>내 목소리 학습</td><td>sunoapi.org(미국)</td><td>녹음·업로드 음성</td><td>음성 도용</td><td>음성 AI 처리 동의(이용 직전)</td><td>본인 목소리 확인 안내, 탈퇴 시 파기, Suno 쪽은 시간 경과 시 자동 만료</td><td class="hi">높음</td></tr>
+<tr><td>아티스트 이미지(실사·가상)</td><td>Google Gemini(미국), OpenAI(미국)</td><td>올린 사진(얼굴 포함 가능), 생성 시트</td><td>초상·딥페이크</td><td>사진 AI 처리 동의(사진 고르기 직전, v3.360)</td><td>얼굴 인증(본인 사진 확인), 원본 탈퇴 시 파기, 관리자 원본 열람 기록</td><td class="hi">높음</td></tr>
+<tr><td>얼굴 인증</td><td>AWS Rekognition(라이브니스: 일본 도쿄 / 얼굴 대조: 서울)</td><td>실시간 촬영 얼굴, 얼굴 특징정보(암호화 저장)</td><td>오판 시 실사 아티스트 생성 제한(자동화된 결정)</td><td>얼굴 인증(생체정보) 동의</td><td>촬영 원본 즉시 파기, 이의 제기 → 사람 검토·면제(감사 기록), 탈퇴 시 파기</td><td class="hi">높음</td></tr>
+<tr><td>커버 이미지</td><td>OpenAI(미국), Google Gemini(미국), Anthropic(프롬프트 보조)</td><td>곡 제목·스타일·가사 문구·배경 사진·아티스트 이미지</td><td>초상(아티스트 포함 시)</td><td>국외 이전 동의</td><td>창작 기록(커버 지시, v3.359)</td><td class="mid">중간</td></tr>
+<tr><td>영상(뮤직비디오·숏폼)</td><td>Kling(중국/싱가포르), fal.ai Seedance(미국), xAI Grok(미국)</td><td>이미지·장면 설명 등 생성 입력</td><td>초상</td><td>국외 이전 동의</td><td>창작 기록(영상 지시), <b>Sync Labs 사용 중지(v3.360)</b></td><td class="mid">중간</td></tr>
+<tr><td>공유 영상(가사 영상)</td><td>자체 처리(서버 ffmpeg)</td><td>—</td><td>없음</td><td>—</td><td>외부 전송 없음</td><td class="lo">낮음</td></tr>
+<tr><td>곡 연령 등급 분류</td><td>Anthropic Claude(미국)</td><td>곡 제목·가사·커버 이미지(아티스트 이미지·음원은 보내지 않음)</td><td>노출 범위(어린이·청소년) 결정</td><td>처리방침 추가 개정 — <b>시행일(10-20)부터 분류 시작</b></td><td>시행 전 외부 전송 없음, 실패 시 15세 간주, 관리자 수정 가능</td><td class="mid">중간</td></tr>
+<tr><td>고객 상담 AI</td><td>OpenAI(미국)</td><td>문의 내용, 사용자 정보 일부</td><td>자동 답변(현재 꺼짐 — 초안만)</td><td>처리방침</td><td>AI 답변 표시(v3.359), 관리자 확인 후 발송, 상담 대화 열람 기록</td><td class="mid">중간</td></tr>
+<tr><td>추천·검색(임베딩)</td><td>OpenAI(미국)</td><td>곡 메타·검색어</td><td>노출 순위</td><td>국외 이전 동의</td><td>—</td><td class="lo">낮음</td></tr>
+<tr><td>신고 얼굴 일괄 대조</td><td>AWS</td><td>신고 증거 이미지·등록 얼굴</td><td>제재(관리자 확정 후)</td><td>처리방침</td><td>관리자 단일 확정, 신고 증거 열람 기록</td><td class="mid">중간</td></tr>
+<tr><td>본인확인(휴대폰)</td><td>다날(국내 — 본인확인기관)</td><td>본인확인 결과(생년월일·성별·DI)</td><td>가입·만 14세 미만 판정</td><td>처리방침(위탁)</td><td>DI 일방향 암호화, 번호·이름 미저장</td><td class="mid">중간</td></tr>
+</table>
+</div>
+
+<h2>2. 사용 중지·금지</h2>
+<ul>
+<li><b>Sync Labs</b>(립싱크) — 2026-10-14 사용 중지. 처리방침 미기재, 사용자 음원 외부 AI 전송 금지 원칙.</li>
+<li>사용자가 직접 올린 음원은 외부 AI로 보내지 않는다(예외: 2026-10-06 가사 재정렬 10곡 1회).</li>
+<li>처리방침·이 대장에 없는 업체로 개인정보를 보내지 않는다.</li>
+</ul>
+
+<h2>3. 다음 점검 때 확인할 것</h2>
+<ul>
+<li><span class="todo">고영향 AI 해당 여부</span> — 얼굴 인증 활용 범위(AI기본법). 과학기술정보통신부 문의 권장.</li>
+<li><span class="todo">개인정보 영향평가</span> — 얼굴·음성 기능(민간은 권장 사항).</li>
+<li>상담 AI 자동 답변을 켤 때: 처리방침 자동화된 결정 조항·사람 상담 전환 안내 확인.</li>
+<li>연령 등급 분류 시작(10-20) 뒤 첫 주 결과 점검.</li>
+</ul>
+
+<h2>4. 변경 이력</h2>
+<div class="wrap">
+<table>
+<tr><th>날짜</th><th>내용</th><th>확인자</th></tr>
+<tr><td>2026-10-07</td><td>첫 AI 거버넌스 점검(기능별 위험 등급)</td><td></td></tr>
+<tr><td>2026-10-14</td><td>대장 작성. 사진 AI 동의 추가, Sync Labs 중지, 창작 기록 수정·삭제 불가, 커버·영상 지시 기록, 탈퇴 시 민감 정보 파기, 로그 보존기간 적용</td><td></td></tr>
+</table>
+</div>
+</main>
+</body>
+</html>
