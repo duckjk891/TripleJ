@@ -102,7 +102,7 @@ function handleMediaError(audio: HTMLAudioElement): void {
   const online = typeof navigator !== 'undefined' ? navigator.onLine : null;
   console.warn('[WebAudio] media error', {
     code, msg: String((audio.error as any)?.message || '').slice(0, 80), vis, online,
-    srcKind: audio.src.includes('/stream-proxy/') ? 'proxy' : 'presigned',
+    srcKind: audio.src.startsWith('blob:') ? 'blob' : audio.src.includes('/stream-proxy/') ? 'proxy' : 'presigned', // v3.360 blob=미리 받은 곡
   });
   const errText = `MediaError code=${code ?? 'unknown'}`;
   let target: string | null = null;
@@ -283,6 +283,11 @@ function ensureElement(): HTMLAudioElement {
   }
   el = audio;
   return audio;
+}
+
+/** v3.360 [Prebuffer]: 현재 오디오 src(미리 받은 blob 해제 판정용) */
+export function webCurrentSrc(): string {
+  return el?.src || '';
 }
 
 /** ended 핸들러 내부 전용 — 동기 src 교체 + play() (autoplay 정책상 비동기 개입 금지) */

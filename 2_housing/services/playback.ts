@@ -37,7 +37,9 @@ import {
   webResumeIfStalled,
   setWebStatusCb,
   webSwapSrcAndPlay,
+  webCurrentSrc,
 } from './webAudioElement';
+import { prebufferTrack, releaseStalePlaying, takePrebuffered } from './webPrebuffer';
 
 // v3.70: 로드 세대 토큰 — 로딩 도중 사용자가 플레이어를 닫거나 다른 곡으로 전환하면
 // 늦게 완료된 createAsync 결과(유령 사운드)를 즉시 폐기한다.
@@ -59,7 +61,8 @@ export function syncMediaSessionForTrack(track: any): void {
     {
       title: track?.title || 'MAIDOL',
       artist: track?.artist_name || track?.uploader_nickname,
-      artworkUrl: trackCoverUri(track),
+      // v3.360: 잠금화면 아트워크는 640px 서버 썸네일 — 원본(6~8MB PNG)을 곡 경계마다 받아 다음 곡 로드와 대역폭을 다투던 것 제거
+      artworkUrl: trackCoverUri(track, 640),
     },
     {
       play: () => {
@@ -147,7 +150,10 @@ function webSyncAdvance(idx: number, reason: 'ended' | 'remote-next'): boolean {
   if (!next?.id) return false;
   const nid = String(next.id);
   // v3.272 [BGWeb-Android]: 자동 스왑은 **항상 결정적 proxy** — presigned 간헐 code 4 노출면 제거.
-  const url = streamProxyUrl(next); // v3.345 미발매곡만 ?token=
+  // v3.360 [Prebuffer]: 미리 받아 둔 곡이면 blob 주소 — 곡 경계에서 네트워크가 필요 없다(화면 꺼짐 끊김 대책)
+  const pre = takePrebuffered(nid);
+  const same = nid === String(s.track?.id ?? '') ? webCurrentSrc() : ''; // 한 곡 반복 — 지금 src 재사용(blob 포함)
+  const url = pre || same || streamProxyUrl(next); // v3.345 미발매곡만 ?token=
   if (!webSwapSrcAndPlay(url)) return false;
   s.playTrackAtIndex(idx); // track 갱신 → 구독이 mediaSession 메타 동기화
   // v3.225: 자동 진행 표식 — 404 등 MediaError 시 skipUnplayableOnAutoAdvance 가 건너뜀
@@ -159,9 +165,19 @@ function webSyncAdvance(idx: number, reason: 'ended' | 'remote-next'): boolean {
   }
   // 미니 경로(makeStatusCallback) 콜백은 이전 곡 클로저 — 새 곡 기준으로 재설치(PlayerScreen 콜백은 유지)
   if (getWebStatusCbOwner() === 'playback') setWebStatusCb(makeStatusCallback(next), 'playback');
-  console.warn('[WebAudio] 동기 src 교체 이어재생', { trackId: nid, idx, reason });
+  console.warn('[WebAudio] 동기 src 교체 이어재생', { trackId: nid, idx, reason, pre: !!pre });
   preQueueRelatedIfLast(); // v3.275: 이 곡이 마지막이면 관련곡 선적재
   return true;
+}
+
+// v3.360 [Prebuffer]: 자동으로 넘어갈 다음 곡(웹) 미리 받기 — 한 곡 반복은 같은 src 라 불필요
+function prebufferNextWeb(): void {
+  if (Platform.OS !== 'web') return;
+  const s = usePlayerStore.getState();
+  if (!s.track?.id || s.repeat === 'one') return;
+  const idx = s.getNextAutoIndex();
+  const next = idx >= 0 ? s.queue[idx] : null;
+  if (next?.id && String(next.id) !== String(s.track.id)) prebufferTrack(next);
 }
 
 let preQueueFor: string | null = null;
@@ -184,7 +200,11 @@ function preQueueRelatedIfLast(attempt = 0): void {
       });
       const t = (res.data?.tracks || [])[0];
       const st = usePlayerStore.getState();
-      if (!t?.id || String(st.track?.id) !== cid) return; // 관련곡 없음 / 그 사이 곡 전환
+      if (!t?.id || String(st.track?.id) !== cid) {
+        // v3.360: 종전엔 무로그 — 빈 응답이면 곡 끝난 뒤 조회(경계 네트워크)로 밀리므로 원인 추적용 기록
+        if (!t?.id) console.warn('[BGWeb] 관련곡 선적재 빈 응답', { for: cid, source: res.data?.source ?? null });
+        return; // 관련곡 없음 / 그 사이 곡 전환
+      }
       // v3.286: 이미 큐 앞쪽에 있던 곡이면 현재 곡 뒤로 옮긴다(옛 순서로 되감기 방지)
       const added = st.placeNextAfterCurrent({
         ...t, id: t.id, title: t.title,
@@ -193,6 +213,7 @@ function preQueueRelatedIfLast(attempt = 0): void {
         __reco: true, // v3.338 [Reco]: 추천곡 표식 — 재생목록(내 곡)에 쌓이지 않고 듣고 지나가면 빠진다
       }) >= 0;
       console.warn('[BGWeb] 관련곡 선적재', { for: cid, next: t.id, added, source: res.data?.source });
+      if (added) prebufferNextWeb(); // v3.360 [Prebuffer]: 추천곡도 곡이 끝나기 전에 미리 받는다
     } catch (err: any) {
       // 실패 — 곡이 끝나기 전에 백오프 재시도(5·15·30s, 최대 3회). 그래도 실패면 종전 경로(곡 종료 후 조회)
       console.warn('[BGWeb] 관련곡 선적재 실패', { for: cid, attempt, status: err?.response?.status ?? null, message: err?.message });
@@ -295,7 +316,19 @@ if (Platform.OS === 'web') {
       syncMediaSessionForTrack(t);
       // v3.275: 어느 경로(PlayerScreen 자체 로더 포함)로 곡이 바뀌어도 "마지막 곡이면 관련곡 선적재"
       setTimeout(() => preQueueRelatedIfLast(), 1500);
+      // v3.360 [Prebuffer]: 현재 곡이 자리 잡은 뒤(8초) 다음 곡 전체를 미리 받는다(재생 중 = 네트워크 허용 구간)
+      setTimeout(() => prebufferNextWeb(), 8000);
+      releaseStalePlaying();
     }
+  });
+  // v3.360 [Prebuffer]: 재생목록이 바뀌면(담기·순서 변경·추천 배치) 다음 곡이 달라질 수 있어 다시 판단
+  let pbQueueRef: any = null;
+  let pbTimer: any = null;
+  usePlayerStore.subscribe((s: any) => {
+    if (s.queue === pbQueueRef) return;
+    pbQueueRef = s.queue;
+    clearTimeout(pbTimer);
+    pbTimer = setTimeout(() => prebufferNextWeb(), 3000);
   });
 
   // v3.217 ①(a): ended 연속재생 — 프리페치해 둔 URL로 동기 src 교체+play().

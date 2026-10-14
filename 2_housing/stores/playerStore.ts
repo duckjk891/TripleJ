@@ -47,7 +47,7 @@ interface PlayerState {
   currentIndex: number;
   isPlayerScreenOpen: boolean;
   shuffle: boolean;
-  /** v3.271 — 최근 재생 trackId(최신순, 40캡) — 추천 exclude 원천 */
+  /** v3.271 — 최근 재생 trackId(최신순, v3.359 80캡) — 추천 exclude 원천 */
   recentlyPlayedIds: string[];
   noteRecentlyPlayed: (trackId: string) => void;
   /** v3.271 — 자동 진행 전용: Inst 곡 스킵 */
@@ -159,6 +159,47 @@ export const isInstTrack = (t: any): boolean => /\(Inst\.\)\s*$/.test(String(t?.
 // v3.288 [MiniHide] 미니플레이어 숨김 요청 주체 집합(비영속)
 const _miniHideTags = new Set<string>();
 
+// v3.360 [ShuffleBag] (대표 10-14 "계속 반복"): 종전 셔플은 매번 무작위 복원 추출이라 작은 목록에서 같은 곡이
+// 연달아·자주 나왔고(실측 14곡 목록에서 2·8·2·3·1·9·2·3) 목록이 끝나지 않아 추천으로 넘어가지도 않았다.
+// 이제 한 바퀴 동안 같은 곡을 다시 고르지 않고, 다 돌면 전체 반복일 때만 새 바퀴·아니면 끝(→ 추천 이어듣기).
+// '다음 곡'은 곡마다 한 번만 정해 기억한다 — 미리 받기(prebuffer)가 받아 둔 곡과 실제 다음 곡이 같아야 하므로.
+let _shufflePlayed = new Set<string>();
+let _shuffleRecent: string[] = []; // 최근 고른 순서 — 새 바퀴 시작 때 직전 바퀴 뒤쪽 절반은 바로 다시 안 나오게
+let _shuffleNext: { forId: string; nextId: string } | null = null;
+export const resetShuffleBag = (): void => {
+  _shufflePlayed = new Set<string>();
+  _shuffleRecent = [];
+  _shuffleNext = null;
+};
+export const pickShuffleNext = (queue: any[], currentIndex: number, allowWrap: boolean): number => {
+  const curId = String(queue[currentIndex]?.id ?? '');
+  if (_shuffleNext && _shuffleNext.forId === curId) {
+    const remembered = _shuffleNext.nextId;
+    const i = queue.findIndex((t) => String(t?.id) === remembered);
+    if (i >= 0 && i !== currentIndex) return i;
+  }
+  if (curId) _shufflePlayed.add(curId);
+  const others = queue.map((_, i) => i).filter((i) => i !== currentIndex);
+  let unplayed = others.filter((i) => !_shufflePlayed.has(String(queue[i]?.id)));
+  if (!unplayed.length) {
+    if (!allowWrap) {
+      _shuffleNext = null;
+      return -1;
+    }
+    _shufflePlayed = new Set<string>(); // 새 바퀴 — 지금 곡도 이번 바퀴에 다시 한 번(쿨다운이 뒤로 미룸)
+    unplayed = others;
+  }
+  // 바퀴 경계에서 직전에 들은 곡(최근 절반)이 바로 다시 나오지 않게 — 가능하면 뒤로 미룬다(건너뛰지는 않음)
+  const recent = new Set(_shuffleRecent.slice(-Math.floor(queue.length / 2)));
+  const fresh = unplayed.filter((i) => !recent.has(String(queue[i]?.id)));
+  const pool = fresh.length ? fresh : unplayed;
+  if (!pool.length) return -1;
+  const idx = pool[Math.floor(Math.random() * pool.length)];
+  _shuffleNext = { forId: curId, nextId: String(queue[idx]?.id) };
+  if (curId) _shuffleRecent = [..._shuffleRecent, curId].slice(-queue.length);
+  return idx;
+};
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => {
@@ -216,6 +257,7 @@ export const usePlayerStore = create<PlayerState>()(
       // v3.253 [CrewRecog]: 큐 교체 = 귀속 재설정 지점 — source 있으면 곡 id 스냅샷과 함께 설정,
       // 없으면(기존 호출부: 개인 플리·앨범·playTrackNow replace) 이전 귀속 해제.
       setQueue: (queue, source) => {
+        resetShuffleBag(); // v3.360 [ShuffleBag] — 새 목록 = 새 바퀴
         const queueSource: QueueSource | null = source
           ? { ...source, track_ids: queue.map((t: any) => String(t?.id ?? t?.track_id ?? '')).filter(Boolean) }
           : null;
@@ -363,7 +405,7 @@ export const usePlayerStore = create<PlayerState>()(
         saveOwnerQueue();
       },
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
-      toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
+      toggleShuffle: () => { resetShuffleBag(); set((s) => ({ shuffle: !s.shuffle })); }, // v3.360 새 바퀴
       cycleRepeat: () => set((s) => ({
         repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
       })),
@@ -406,8 +448,7 @@ export const usePlayerStore = create<PlayerState>()(
         const step = (i: number) => (i < queue.length - 1 ? i + 1 : (repeat === 'off' ? -1 : 0));
         let idx: number;
         if (shuffle && queue.length > 1) {
-          idx = Math.floor(Math.random() * queue.length);
-          if (idx === currentIndex) idx = (idx + 1) % queue.length;
+          idx = pickShuffleNext(queue, currentIndex, repeat !== 'off'); // v3.360 [ShuffleBag] — 자동과 같은 다음 곡
         } else {
           idx = step(currentIndex);
         }
@@ -436,9 +477,7 @@ export const usePlayerStore = create<PlayerState>()(
         if (repeat === 'one') return currentIndex; // 같은 곡 반복
         if (shuffle) {
           if (queue.length === 1) return repeat === 'all' ? 0 : -1;
-          let next = Math.floor(Math.random() * queue.length);
-          if (next === currentIndex) next = (next + 1) % queue.length;
-          return next;
+          return pickShuffleNext(queue, currentIndex, repeat === 'all'); // v3.360 [ShuffleBag]
         }
         if (currentIndex < queue.length - 1) return currentIndex + 1;
         return repeat === 'all' ? 0 : -1; // 큐 끝 → all이면 처음으로

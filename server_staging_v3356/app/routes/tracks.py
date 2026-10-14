@@ -27,6 +27,8 @@ from ..services.media_urls import browser_video_url, internal_presign
 from ..services import kids_policy  # v3.232 F3·F6 — 어린이 곡 댓글·음원 업로드(킬 스위치 OFF 면 no-op)
 from ..services.word_filter import social_filter_on, word_filter_response  # v3.232 G1 · v3.233 소통 경로 전체 적용
 
+from ..services import age_rating  # age1 — 곡 연령 등급
+
 router = APIRouter(prefix="/api/tracks")
 
 logger = logging.getLogger(__name__)
@@ -774,9 +776,12 @@ async def list_tracks(
     tag: str = None,
     sort: str = "play_count",
     pg=Depends(get_pg),
+    request: Request = None,
 ):
     mongo = get_mongo()
     query = {"is_public": True}
+    # age1 — 어린이는 전체 등급만(성인·청소년 쿼리는 그대로)
+    query.update(age_rating.mongo_filter(await age_rating.viewer_max_from_request(request)))
 
     if genre:
         query["genre"] = genre
@@ -948,7 +953,7 @@ def _category_exact_match(q: str) -> Optional[str]:
     return None
 
 
-async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
+async def _regex_search_tracks(mongo, q: str, page: int, limit: int, age_q: Optional[dict] = None) -> dict:
     """Original MongoDB regex search. Used as the semantic-search fallback."""
     # v3.231 S2 — 검색어를 정규식 리터럴로 이스케이프("R&B"·"(" ·".*" 가 정규식 오류나
     # 전체 매치가 되지 않게). 두 검색 백엔드가 모두 죽었을 때만 타는 경로.
@@ -969,6 +974,8 @@ async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
             {"categories": {"$regex": pat, "$options": "i"}},
         ],
     }
+    if age_q:
+        query.update(age_q)  # age1
     total = await mongo.tracks.count_documents(query)
     cursor = mongo.tracks.find(query).sort("play_count", -1).skip((page - 1) * limit).limit(limit)
     tracks = await cursor.to_list(length=limit)
@@ -983,7 +990,7 @@ async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
     }
 
 
-async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple:
+async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int, age_q: Optional[dict] = None) -> tuple:
     """Hybrid track search core: pgvector (semantic) + Elasticsearch BM25 (nori +
     fuzzy), fused with Reciprocal Rank Fusion (RRF). Returns (payload, mode)
     where payload is the unchanged {tracks, pagination} response body.
@@ -1122,7 +1129,7 @@ async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple
             "[tracks.search] mode=regex q_len=%d reason=no_candidates vec_ok=%s es_ok=%s",
             q_len, vec_ok, es_ok,
         )
-        return await _regex_search_tracks(mongo, q, page, limit), "regex"
+        return await _regex_search_tracks(mongo, q, page, limit, age_q), "regex"
 
     try:
         fused_ids = rrf_fuse(
@@ -1134,7 +1141,7 @@ async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple
         rank_by_id = {tid: i for i, tid in enumerate(fused_ids)}
         object_ids = [ObjectId(tid) for tid in fused_ids if ObjectId.is_valid(tid)]
 
-        cursor = mongo.tracks.find({"_id": {"$in": object_ids}, "is_public": True})
+        cursor = mongo.tracks.find({"_id": {"$in": object_ids}, "is_public": True, **(age_q or {})})
         docs = await cursor.to_list(length=len(object_ids))
 
         # Preserve fused RRF order.
@@ -1162,7 +1169,7 @@ async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple
         )
     except Exception as e:
         logger.warning("[tracks.search] mode=regex q_len=%d reason=fuse_error: %s", q_len, e)
-        return await _regex_search_tracks(mongo, q, page, limit), "regex"
+        return await _regex_search_tracks(mongo, q, page, limit, age_q), "regex"
 
 
 def _engkor_retry_query(q: str) -> Optional[str]:
@@ -1242,7 +1249,8 @@ async def search_tracks(
         return JSONResponse(status_code=400, content={"error": "검색어를 입력해주세요."})
 
     mongo = get_mongo()
-    payload, mode = await _hybrid_search_core(mongo, pg, q, page, limit)
+    _age_q = age_rating.mongo_filter(await age_rating.viewer_max_for(current_user))  # age1
+    payload, mode = await _hybrid_search_core(mongo, pg, q, page, limit, _age_q)
 
     # --- v169: wrong-IME (한/영키) fallback — single retry, no recursion ---
     if int((payload.get("pagination") or {}).get("total", 0)) == 0:
@@ -1253,7 +1261,7 @@ async def search_tracks(
                 len(q), len(converted),
             )
             retry_payload, retry_mode = await _hybrid_search_core(
-                mongo, pg, converted, page, limit
+                mongo, pg, converted, page, limit, _age_q
             )
             if int((retry_payload.get("pagination") or {}).get("total", 0)) > 0:
                 payload, mode = retry_payload, f"retry_engkor:{retry_mode}"
@@ -1673,6 +1681,12 @@ async def update_track(
     if doc.get("uploader_id") != current_user["id"]:
         return JSONResponse(status_code=403, content={"error": "자신의 트랙만 수정할 수 있습니다."})
 
+    # age1 — 19 등급(연령 제한) 차단 곡은 소유자가 공개로 바꿀 수 없다(관리자 등급 수정·내용 수정 후 재분류로만 해제)
+    if body.is_public is True and doc.get("age_blocked") and age_rating.block19_active():
+        logger.info("[age] republish_blocked track=%s owner=%s", track_id[:8], current_user["id"][:8])
+        return JSONResponse(status_code=403, content={
+            "error": age_rating.AGE_BLOCKED_OWNER_MESSAGE, "code": age_rating.AGE_RESTRICTED_CODE, "age_rating": "19"})
+
     # v137 — 신고 블라인드 트랙은 소유자가 재공개(공개 전환) 불가
     if body.is_public is True and doc.get("report_blinded"):
         logger.info("[report] track republish_blocked track=%s owner=%s", track_id[:8], current_user["id"][:8])
@@ -1774,6 +1788,10 @@ async def update_track(
     await redis.delete(f"cache:track:v4:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
+    # age1 — 제목·커버·공개 전환이면 연령 등급 스위퍼를 깨운다(분류는 스위퍼가 근거 변화로 판단)
+    if any(k in update_data for k in ("title", "cover_image_url", "is_public")):
+        age_rating.kick()
+
     # Fetch and return updated document
     updated_doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
 
@@ -1801,13 +1819,16 @@ async def get_track_music_video(
     mongo = get_mongo()
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
-        {"generation_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+        {"generation_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1, "age_rating": 1, "age_blocked": 1},
     )
     if not doc:
         return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
 
     # v196 ① 직링크 가드 — 비공개·블라인드 트랙 MV 는 소유자(또는 admin) 외 404.
     # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
         logger.info("[report] track mv_denied track=%s", track_id[:8])
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
@@ -1849,6 +1870,9 @@ async def get_track_lyrics_timeline(
     # v196 ① 직링크 가드 — 광역 except 진입 **전에** 배치한다.
     # (아래 try 안에 두면 404 응답이 삼켜져 200 {"has_timestamps": false} 로 바뀔 수 있다)
     # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user) \
             and not await _club_unreleased_access(doc, track_id, current_user):  # v3.345 크루 멤버 미발매곡
         logger.info("[report] track lyrics_denied track=%s", track_id[:8])
@@ -1902,6 +1926,9 @@ async def get_track_beats(
         return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
 
     is_owner = doc.get("uploader_id") == current_user["id"]
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     if not is_owner and not doc.get("is_public", True):
         return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
 
@@ -2000,11 +2027,15 @@ async def stream_track_proxy(
     mongo = get_mongo()
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
-        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1, "age_rating": 1, "age_blocked": 1},
     )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
+    # age1 — 등급 초과·19 차단(?token= 쿼리도 request 에서 읽는다)
+    _ag = await age_rating.gate(doc, current_user, request)
+    if _ag is not None:
+        return _ag
     if _is_hidden_track(doc):
         viewer = current_user
         if viewer is None and token:
@@ -2130,6 +2161,7 @@ async def get_related_tracks(
     limit: int = 1,
     pg=Depends(get_pg),
     current_user=Depends(get_current_user_optional),  # v3.356 — hub 감쇠 카운터 범위(로그인=개인)
+    request: Request = None,
 ):
     """관련곡 추천 (무인증).
 
@@ -2141,6 +2173,8 @@ async def get_related_tracks(
     """
     # limit clamp: default 1, max 5
     limit = max(1, min(limit, 5))
+    # age1 — 다음 곡·추천도 보는 사람 등급 안에서만(어린이 = 전체 등급)
+    _aq = age_rating.mongo_filter(await age_rating.viewer_max_for(current_user, request))
 
     # exclude: comma-separated track ids
     exclude_ids = set()
@@ -2207,7 +2241,7 @@ async def get_related_tracks(
     # v3.359 의 장르 무관 탐색 25% 는 폐지("비슷한 장르·분위기로" — 대표 10-13). 신곡 노출은 비슷한 곡 안에서 가중으로.
     try:
         skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
-        cond = {"is_public": True, "_id": {"$nin": skip_oids}, "title": {"$not": _INST_TITLE_RE}}
+        cond = {"is_public": True, **_aq, "_id": {"$nin": skip_oids}, "title": {"$not": _INST_TITLE_RE}}  # age1 연령 필터
         lite = await mongo.tracks.find(cond, {
             "genre": 1, "mood": 1, "categories": 1, "bpm": 1, "tempo": 1, "uploader_id": 1, "created_at": 1,
         }).to_list(length=5000)
@@ -2263,7 +2297,7 @@ async def get_related_tracks(
                 rank_by_id = {tid: i for i, tid in enumerate(cand_ids)}
                 cursor = mongo.tracks.find({
                     "_id": {"$in": [ObjectId(tid) for tid in cand_ids]},
-                    "is_public": True,
+                    "is_public": True, **_aq,
                     "title": {"$not": _INST_TITLE_RE},  # v3.271 — Inst 추천 제외
                 })
                 docs = await cursor.to_list(length=len(cand_ids))
@@ -2293,7 +2327,7 @@ async def get_related_tracks(
                 need = limit - len(picked)
                 pool_n = max(need * _RELATED_POOL_MULT, 15)
                 cursor = mongo.tracks.find({
-                    "is_public": True,
+                    "is_public": True, **_aq,
                     "genre": genre_cond,
                     "_id": {"$nin": skip_oids},
                     "title": {"$not": _INST_TITLE_RE},  # v3.271
@@ -2318,7 +2352,7 @@ async def get_related_tracks(
             need = limit - len(picked)
             pool_n = max(need * _RELATED_POOL_MULT, 15)
             cursor = mongo.tracks.find({
-                "is_public": True,
+                "is_public": True, **_aq,
                 "_id": {"$nin": skip_oids},
                 "title": {"$not": _INST_TITLE_RE},  # v3.271
             }).sort("play_count", -1).limit(pool_n)
@@ -2338,7 +2372,7 @@ async def get_related_tracks(
             need = limit - len(picked)
             pool_n = max(need * _RELATED_POOL_MULT, 15)
             # 기준곡과 같은 장르 우선, 없으면 전체
-            cond = {"is_public": True, "_id": {"$nin": keep_oids}, "title": {"$not": _INST_TITLE_RE}}
+            cond = {"is_public": True, **_aq, "_id": {"$nin": keep_oids}, "title": {"$not": _INST_TITLE_RE}}
             g = seed_doc.get("genre")
             pool = []
             if g:
@@ -2385,6 +2419,10 @@ async def get_track(
     cached = await redis.get(f"cache:track:v4:{track_id}")
     if cached:
         track = json.loads(cached)
+        # age1 — 등급 초과·19 차단은 숨김 가드보다 먼저(403 age_restricted)
+        _ag = await age_rating.gate(track, current_user)
+        if _ag is not None:
+            return _ag
         # v138 직링크 가드 — 캐시 히트 경로에도 동일 적용 (캐시 데이터는 전체
         # 도큐먼트 직렬화라 is_public/report_blinded 포함 — 스키마 승격 불필요)
         if _is_hidden_track(track) and not _can_view_hidden_track(track, current_user) \
@@ -2403,6 +2441,9 @@ async def get_track(
     if not doc:
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     # v138 직링크 가드 — 비공개·블라인드 트랙은 소유자(또는 admin) 외 404
     if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user) \
             and not await _club_unreleased_access(doc, track_id, current_user):  # v3.345
@@ -2747,6 +2788,7 @@ async def upload_track(
 
     mongo = get_mongo()
     await mongo.tracks.insert_one(doc)
+    age_rating.kick()  # age1 — 발매 즉시 연령 등급 분류(스위퍼)
     logger.info("[tracks] publish track_id=%s cats=%s", str(track_id), categories_list)
 
     # StarEcon(v158) — 발매 보상 ⭐+5 (best-effort, never affects the upload).
@@ -3159,6 +3201,7 @@ async def upload_from_generation(
     }
 
     await mongo.tracks.insert_one(doc)
+    age_rating.kick()  # age1 — 발매 즉시 연령 등급 분류(스위퍼)
     # v3.293 [WeeklyMission] 내 아티스트로 AI 생성곡 발매 → 주간 미션 진행(+ 발매 시 AI 커버면 커버 미션도). best-effort.
     try:
         from ..services import weekly_missions as _wm
@@ -3317,11 +3360,14 @@ async def stream_track(
     mongo = get_mongo()
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
-        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1, "age_rating": 1, "age_blocked": 1},
     )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     # v138 직링크 가드 — 비공개·블라인드 트랙 스트림은 소유자(또는 admin) 외 404
     if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user) \
             and not await _club_unreleased_access(doc, track_id, current_user):  # v3.345 크루 멤버 미발매곡
@@ -3358,6 +3404,9 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
 
     # v196 ① 직링크 가드 — 비공개·블라인드 트랙 다운로드는 소유자(또는 admin) 외 404.
     # 반드시 아래 Redis 차트 집계보다 **앞**에 둔다(차단된 다운로드가 차트에 계상되면 안 됨).
+    _ag = await age_rating.gate(doc, user)  # age1
+    if _ag is not None:
+        return _ag
     if _is_hidden_track(doc) and not _can_view_hidden_track(doc, user):
         logger.info("[report] track download_denied track=%s", track_id[:8])
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
@@ -3462,10 +3511,13 @@ async def share_performed(track_id: str, user: dict = Depends(get_current_user))
     mongo = get_mongo()
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
-        {"character_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+        {"character_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1, "age_rating": 1, "age_blocked": 1},
     )
     if not doc:
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
+    _ag = await age_rating.gate(doc, user)  # age1
+    if _ag is not None:
+        return _ag
     hidden = _is_hidden_track(doc)
     if hidden and not _can_view_hidden_track(doc, user):
         logger.info("[Recog] share denied(hidden) track=%s", track_id[:8])
@@ -3649,10 +3701,14 @@ async def create_share_video(
         # v3.214 ④: title(제목 drawtext)·source_track_id(Inst 파생 판별) 프로젝션 추가
         {"cover_image_url": 1, "audio_url": 1, "is_public": 1,
          "generation_id": 1, "variant_index": 1, "recognized_timestamps": 1,
-         "title": 1, "source_track_id": 1, "duration_sec": 1},
+         "title": 1, "source_track_id": 1, "duration_sec": 1,
+         "uploader_id": 1, "age_rating": 1, "age_blocked": 1},  # age1
     )
     if not doc or not doc.get("is_public", True):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     if not doc.get("cover_image_url"):
         return JSONResponse(status_code=400, content={"error": "커버 이미지가 없는 곡입니다."})
     if not doc.get("audio_url"):
@@ -3866,7 +3922,7 @@ async def create_share_video(
 
 
 @router.get("/{track_id}/share-video/clip-info")
-async def get_share_video_clip_info(track_id: str):
+async def get_share_video_clip_info(track_id: str, request: Request):
     """v3.281 [52]: 15초 클립(kakao) 구간 선택 보조 정보 (무인증·읽기 전용, 공개 곡만 — POST 와 동일 조건).
 
     응답: {track_id, duration(초|null — tracks.duration_sec), clip_seconds(15),
@@ -3885,10 +3941,14 @@ async def get_share_video_clip_info(track_id: str):
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
         {"is_public": 1, "generation_id": 1, "variant_index": 1,
-         "recognized_timestamps": 1, "duration_sec": 1},
+         "recognized_timestamps": 1, "duration_sec": 1,
+         "uploader_id": 1, "age_rating": 1, "age_blocked": 1},  # age1
     )
     if not doc or not doc.get("is_public", True):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    _ag = await age_rating.gate(doc, None, request)  # age1
+    if _ag is not None:
+        return _ag
     duration = doc.get("duration_sec")
     try:
         duration = float(duration) if duration else None
@@ -3965,9 +4025,14 @@ async def quote_share_video(
                      fontoutline=fontoutline, outlinecolor=outlinecolor)
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
-    doc = await get_mongo().tracks.find_one({"_id": ObjectId(track_id)}, {"is_public": 1, "duration_sec": 1})
+    doc = await get_mongo().tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"is_public": 1, "duration_sec": 1, "uploader_id": 1, "age_rating": 1, "age_blocked": 1})
     if not doc or not doc.get("is_public", True):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    _ag = await age_rating.gate(doc, current_user)  # age1
+    if _ag is not None:
+        return _ag
     _clip = normalize_clip(format, clip_start, clip_end, doc.get("duration_sec"))
     cs, ce = _clip if _clip else (None, None)
     cached = await asyncio.to_thread(
@@ -4034,6 +4099,14 @@ async def get_share_video_file(
 
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+
+    # age1 — 공유영상(제목·가사·커버가 박힘)도 연령 가드. 필터 OFF 면 조회 없이 통과(종전 동작).
+    if age_rating.filter_enabled():
+        _adoc = await get_mongo().tracks.find_one(
+            {"_id": ObjectId(track_id)}, {"uploader_id": 1, "age_rating": 1, "age_blocked": 1})
+        _ag = await age_rating.gate(_adoc, None, request) if _adoc else None
+        if _ag is not None:
+            return _ag
 
     # v3.282: 구간 — POST video_url 의 정규화값(멱등 재정규화, duration 클램프는 POST 가 끝냄)
     _clip = normalize_clip(format, clip_start, clip_end)
@@ -4437,9 +4510,13 @@ async def get_share_video_by_object(object_name: str, request: Request, download
         return JSONResponse(status_code=404, content={"error": "영상을 찾을 수 없습니다."})
     track_id = m.group(1)
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"is_public": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)}, {"is_public": 1, "uploader_id": 1, "age_rating": 1, "age_blocked": 1})
     if not doc or not doc.get("is_public", True):
         return JSONResponse(status_code=404, content={"error": "영상을 찾을 수 없습니다."})
+    _ag = await age_rating.gate(doc, None, request)  # age1
+    if _ag is not None:
+        return _ag
     try:
         return await _stream_video_with_range(
             request, object_name, f"maidol_{track_id}.mp4", download=bool(download),
