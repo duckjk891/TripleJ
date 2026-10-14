@@ -100,3 +100,16 @@ age1(미배포)도 같은 파일을 고친다. `_merge_age1/tracks.py` = age1 + 
   설치 앱(exclude 30 그대로)도 같은 장르 계열 82~84% — 반복만 조금 많음(최다 4.0/6.5).
 - 예시(`_sim/examples.py`): '네 감자가 더 컸어'(발라드·슬픔) 종전 → Dance Pop·시티팝·인디·R&B·트로트 / 변경 → 너 없는 밤·AI의 감정(발라드)·Cake(acoustic Sad)·미칠거같아(R&B 슬픔)·별빛사랑(발라드).
 - 배포 대상: app/routes/tracks.py, app/services/related_feel.py(신규), app/services/related_variety.py. 기준 md5 = 운영 v3.359(tracks.py 129d87d3…, related_variety.py 56fb6f32…). 웹 변경 없음.
+
+## v3.360 운영 반영 (2026-10-14, 대표 승인)
+- 서버 03:46 UTC: related 1차 = 곡 느낌 점수(related_feel.py), 장르 무관 탐색 폐지. 배포 중 운영 tracks.py 가 다른 세션 배포로 2번 바뀜
+  (b9626fcf age1 → cb1916c2 Governance AI 마커) — 매번 md5 가드로 중단 후 3-way 재병합·테스트 30/30. 운영 md5 tracks.py 81478157…,
+  related_feel 3b254ee8…, related_variety 99f7515c…. 백업 backups/pre_v3360_20261014T034537Z. 확인: 록 곡 → 추천 3곡 모두 록.
+- 웹 build 202610141246(21ba7c9): 셔플 한 바퀴 중복 없음·다음 곡 고정, 다음 곡 미리 받기(blob), 잠금화면 아트워크 640.
+  ⚠ 이 빌드에 다른 세션의 커밋 전 v3.359 Governance 웹 변경 7파일이 포함됨(배포 전 작업 트리 점검을 배포와 한 명령으로 돌린 실수). tsc·운영 화면·콘솔 정상 확인. 이후 그 세션이 d61c99e 로 커밋.
+- 웹 build 202610141310(46e3aaa, v3.360b): 곡 누름 = 다음은 추천(재생목록엔 누른 곡만, 대표 10-14 확정 — v3.338 '가' 안 변경),
+  이전 = 실제 들은 순서(빠진 추천곡 복원·셔플 포함). 플레이리스트 '듣기'·재생목록 화면 재생은 목록 순서 → 끝나면 추천.
+  테스트: 실제 playerStore 코드 Node 시나리오 15/15, 셔플 8회 반복, 미리 받기 모듈 9/9.
+  운영 브라우저 확인(비로그인·모바일 크기): 차트 Monarch(힙합) 탭 → 즉시 related → 추천 '대머리 김부장'(힙합) → 0.3초 뒤 미리 받기 fetch
+  → '다음' = 추천곡 재생 → '이전' = Monarch 복귀.
+- 미확인: 화면 꺼짐 백그라운드 곡 전환은 실기기에서만 재현 가능 — 1~2일 뒤 frontend.log 에서 `"pre": true`·`[Prebuffer]`·`media error` 비율로 확인.
