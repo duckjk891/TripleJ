@@ -96,7 +96,7 @@ export default function DraggableQueue({ data, currentIndex, onReorder, onPress,
               <View style={{ flex: 1 }}>
                 <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
                 <AppText variant="caption" tone="muted" numberOfLines={1}>
-                  {q?.__reco ? <AppText variant="caption" tone="accent">추천 · </AppText> : null}
+                  {q?.__reco ? <AppText variant="caption" tone="accent">추천 · </AppText> : q?.__tap ? <AppText variant="caption" tone="accent">바로 듣기 · </AppText> : null /* v3.361 담지 않은 곡 */}
                   {q?.artist_name || q?.uploader_nickname || '아티스트'}
                 </AppText>
               </View>

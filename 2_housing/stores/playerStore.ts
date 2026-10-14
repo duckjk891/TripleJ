@@ -33,6 +33,8 @@ export interface PreviewLimit {
 
 /** v3.338 [Reco]: 자동 이어듣기 추천곡 표식 — 재생목록(내 곡)과 구분, 듣고 지나가면 큐에서 빠진다 */
 export const isRecoTrack = (t: any): boolean => !!t?.__reco;
+/** v3.361 [TapPlay]: 재생목록에 남지 않는 임시 곡 — 추천곡(__reco) + 곡 누름으로 바로 재생한 곡(__tap) */
+export const isTransientTrack = (t: any): boolean => !!t?.__reco || !!t?.__tap;
 
 interface PlayerState {
   /** v3.343 [CrewPreview] 비회원 미리 듣기 제한(큐 교체 시 해제, 크루 화면이 다시 건다) */
@@ -105,6 +107,9 @@ interface PlayerState {
   /** v3.360 [TapRadio] 추천 이어듣기가 현재 곡 뒤에 놓은 곡 id(이미 목록에 있던 곡이 추천으로 옮겨진 경우 포함) */
   recoNextId: string | null;
   startRadio: (trackId: string) => void;
+  /** v3.361 [TapPlay] 곡 하나 누름 — 재생목록에 담지 않고 지금 곡 뒤에 임시로 두고 그 자리로(이미 내가 담은 곡이면 그 자리).
+   *  지난 곡의 남은 추천은 정리. track 은 바꾸지 않음(호출부 로더가 재생). 반환: 재생할 인덱스 */
+  playTapped: (track: any) => number;
   cycleRepeat: () => void;
   playTrackAtIndex: (index: number) => void;
   /** 셔플/반복 고려해서 다음 인덱스 반환. 없으면 -1. */
@@ -226,7 +231,7 @@ export function radioNext(st: { queue: any[]; currentIndex: number; repeat: Repe
   const cur = st.queue[st.currentIndex];
   if (!cur?.id) return null;
   const curId = String(cur.id);
-  if (curId !== st.radioSeedId && !isRecoTrack(cur) && curId !== st.recoNextId) return null;
+  if (curId !== st.radioSeedId && !isTransientTrack(cur) && curId !== st.recoNextId) return null;
   const nx = st.queue[st.currentIndex + 1];
   if (nx?.id && (isRecoTrack(nx) || String(nx.id) === st.recoNextId) && String(nx.id) !== curId) return st.currentIndex + 1;
   return -1;
@@ -244,7 +249,7 @@ export const usePlayerStore = create<PlayerState>()(
       const kept: any[] = [];
       let idx = -1;
       queue.forEach((t, i) => {
-        if (isRecoTrack(t) && i !== currentIndex) return;
+        if (isTransientTrack(t) && i !== currentIndex) return; // v3.361 누른 곡(__tap)도 보관함 제외
         if (i === currentIndex) idx = kept.length;
         kept.push(t);
       });
@@ -252,10 +257,10 @@ export const usePlayerStore = create<PlayerState>()(
     };
     // v3.338 [Reco]: 지나간 추천곡(현재 위치 앞의 __reco)을 큐에서 뺀다 — 추천은 듣고 지나가면 재생목록에 쌓이지 않는다.
     const pruneRecoBefore = (queue: any[], index: number): { queue: any[]; index: number } => {
-      if (!queue.some((t, i) => i < index && isRecoTrack(t))) return { queue, index };
+      if (!queue.some((t, i) => i < index && isTransientTrack(t))) return { queue, index };
       let removed = 0;
       const next = queue.filter((t, i) => {
-        if (i < index && isRecoTrack(t)) { removed += 1; return false; }
+        if (i < index && isTransientTrack(t)) { removed += 1; return false; } // v3.361 지나간 누른 곡도 정리
         return true;
       });
       return { queue: next, index: index - removed };
@@ -283,6 +288,28 @@ export const usePlayerStore = create<PlayerState>()(
       // 누른 곡은 종전처럼 재생목록에 담기고, 추천곡은 담기지 않는다(v3.338 [Reco]). 플레이리스트 '듣기'
       // (setQueue)·재생목록 화면에서 고른 곡은 목록 순서대로. 반복 '한 곡'은 그대로 우선.
       startRadio: (trackId) => set({ radioSeedId: trackId ? String(trackId) : null, recoNextId: null }),
+      // v3.361 [TapPlay] (대표 10-14, 오리쟁이 제보 6acf01ea "누른 곡이 모르는 12곡 뒤 13번째로 들어감"):
+      // "누르면 바로 재생, 재생목록엔 담지 않음, 뒤로 추천 — 재생목록은 내가 담은 곡만". v3.223 append 관행 폐지.
+      playTapped: (track) => {
+        if (!track?.id) return -1;
+        const id = String(track.id);
+        const { queue, currentIndex } = get();
+        const curItem = currentIndex >= 0 ? queue[currentIndex] : undefined;
+        // 지금 곡 뒤에 남은 임시 곡(직전 곡의 추천·누른 곡)은 정리 — 새 곡 기준 추천이 바로 이어지게
+        let q = queue.filter((t, i) => !(i > currentIndex && isTransientTrack(t)));
+        let cur = curItem ? q.indexOf(curItem) : -1;
+        let at = q.findIndex((t) => String(t?.id) === id && !isTransientTrack(t)); // 내가 담은 곡이면 그 자리
+        if (at < 0 && curItem && String(curItem.id) === id) at = cur; // 지금 곡을 다시 누름
+        if (at < 0) {
+          at = cur + 1;
+          q = q.slice();
+          q.splice(at, 0, { ...track, __tap: true });
+        }
+        const pr = pruneRecoBefore(q, at);
+        set({ queue: pr.queue, currentIndex: pr.index, radioSeedId: id, recoNextId: null });
+        saveOwnerQueue();
+        return pr.index;
+      },
       recentlyPlayedIds: [] as string[],
       repeat: 'off' as RepeatMode,
       // v3.198: sound가 truthy면 이번 세션에 재생을 시작한 것 — sessionActive를 setter 한 곳에서 일괄 마킹.
@@ -311,10 +338,10 @@ export const usePlayerStore = create<PlayerState>()(
         if (!track?.id) return false;
         const { queue } = get();
         // v3.338 [Reco]: 추천으로 들어와 있던 곡을 사용자가 직접 담으면 '내 곡'으로 전환(추천 표식 제거)
-        const recoIdx = queue.findIndex((t) => String(t?.id) === String(track.id) && isRecoTrack(t));
+        const recoIdx = queue.findIndex((t) => String(t?.id) === String(track.id) && isTransientTrack(t));
         if (recoIdx >= 0) {
           const q = queue.slice();
-          const { __reco, ...rest } = q[recoIdx] as any;
+          const { __reco, __tap, ...rest } = q[recoIdx] as any; // v3.361 누른 곡을 '담기'하면 내 곡으로
           q[recoIdx] = rest;
           set({ queue: q });
           saveOwnerQueue();
