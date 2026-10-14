@@ -4606,3 +4606,13 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 앱 「창작 기록 보기」(마이뮤직 곡 ⋮ → CreationReport): 위변조 검증 결과, 사람이 한 일 요약, 창작 지시(발매 후 커버·영상 포함), 가사 버전(AI 초안·직접 수정 펼쳐 보기), 전체 기록.
 - 검증: 서버 — 운영 DB(PG 트랜잭션 ROLLBACK·Mongo 테스트 전용 id 정리) 5/5(탈퇴 파기 6종·실제 곡 사본 AI 태그·업로드 곡 제외·면제 부여/중복 409/목록/해제 + 감사 로그·라우트), 읽기 전용 5/5(곡→세션·남의 곡 차단·리포트 follow_ups·404·라우트). 앱 — 단위 9/9(커버·영상 지시·리포트 문장·KST), tsc 0. 배포 2회(md5 가드·백업 pre-v3359·pre-v3359b·진행 0건·재기동): health ok·oauth 3종 302·Traceback 0, TTL 4종 운영 확인.
 - 대표 결정 필요(미적용): 사진 AI 처리 동의 시점, Sync Labs(MV 립싱크 — 처리방침 미기재·음원 외부 전송 금지 원칙 충돌) 경로 차단 여부, 창작 기록 DB 추가 전용 계정 분리(운영 DB 변경), 처리방침 보존기간표·자동화된 결정 조항(외부 연동 세션), PIA·AI 사용 대장·내부통제 담당자, 학습 목소리의 Suno 측 삭제 가능 여부, 비로그인 재생 기록(IP 기반) 보존기간.
+
+## v3.360 — 2026-10-14 — 거버넌스 결정 반영: 사진 AI 동의·Sync Labs 중지·창작 기록 추가 전용·비로그인 재생 기록 보존 (서버·웹)
+
+대표 결정(10-14): "1번 가(실사 아티스트 사진 고르기 직전), 2번 가(Sync Labs 차단), 3번 승인(창작 기록 추가 전용), 5번 비로그인 30일."
+- 사진 AI 처리 동의: 실사 아티스트 사진 고르기 직전 1회(utils/photoConsent + PhotoConsentHost, 서버 user_consents photo_ai·판 2026-10-14.photo1). 문구는 음성 동의와 같은 원칙(회사 이름·'해외 AI 업체' 대신 일반 표현, 협력사·국가는 처리방침). 서버 강제는 구 네이티브 빌드 보호를 위해 보류(앱 게이트).
+- Sync Labs 중지: services/sync_labs_service 단일 관문(_sync_create_with_files)에서 차단(SYNC_LABS_ENABLED=False) + MV 립싱크 자동 단계 건너뜀(원래 영상 유지). 재시도 API 도 같은 관문이라 차단.
+- 창작 기록 추가 전용: DB 트리거(services/creation_log_guard, 기동 시 멱등) — events·lyrics_versions UPDATE·DELETE·TRUNCATE 금지, sessions DELETE·TRUNCATE 금지 + 발매 확정(FINALIZED) 세션 UPDATE 금지(진행 중 세션 확정만 허용). 관리자(슈퍼유저) 계정도 막힘(해제는 DROP TRIGGER — 운영 승인 작업). 새 DB 계정·비밀번호 없이 같은 효과.
+- 비로그인 재생 기록(guest_play_logs, IP 해시) TTL — 대표 "30일", 월간 차트가 최대 31일치를 세므로 32일(TOP100 은 누적 재생수라 무관).
+- 템포 문의 확인: 박자 분석(madmom, CPU 대량 사용) 은 계속 꺼짐(BEATS_EXTRACTION_ENABLED=false, 최근 곡 전부 beats=skipped, 48시간 로그 0건, 서버 부하 0.3). 곡의 BPM 값은 작곡 때 고른 템포(작곡 요청 문구 "템포는 N BPM")라 분석이 아님.
+- 검증: 트리거 6/6(트랜잭션 안 생성 → 수정·삭제·확정 세션 수정·TRUNCATE 차단, 진행 중 세션 확정 허용, Sync Labs 차단 — 롤백 후 트리거 0), tsc 0. 배포(md5 가드·백업 pre-v3360·진행 작업 1건 끝날 때까지 대기 후 재기동): health ok·oauth 3종 302·트리거 6개·guest TTL 32일·Traceback 0.

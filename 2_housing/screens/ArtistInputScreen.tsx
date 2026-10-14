@@ -61,6 +61,7 @@ import {
   type ArtistStep,
 } from '../utils/artistAnswerEdit';
 import { useAiConsentGate } from '../utils/policyConsent';
+import { ensurePhotoAiConsent } from '../utils/photoConsent'; // v3.360
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
@@ -717,6 +718,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       showAlert(KIDS_TEXT.restrictedTitle, KIDS_TEXT.photoBlocked);
       return;
     }
+    // v3.360 [PhotoConsent] 사진을 고르기 전 얼굴 사진 AI 처리 동의(대표 10-14 결정 — 실사 아티스트 사진 선택 직전 1회)
+    if (!(await ensurePhotoAiConsent('ArtistInput.pickPhoto'))) return;
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (!res.canceled && res.assets && res.assets[0]) {
