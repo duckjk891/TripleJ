@@ -4652,5 +4652,5 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 서버 tracks.py: POST /tracks/{id}/share-video·GET clip-info — 비공개 곡은 소유자·admin 만 통과(그 외 404 그대로). GET share-video/object — 비공개 곡은 로그인 헤더 또는 ?token=(stream-proxy 관행)으로 소유자 확인. 공개 곡·파일 프록시(/share-video/file)는 무변경.
 - 앱: VideoDirectorScreen — 비공개 곡 선택 차단·"공개 곡만 가능해요" 안내 제거, 목록 표기 "차트 미공개 곡", 지난 영상 칩도 비공개 곡에 표시(재생 URL 에 토큰). services/api currentAuthToken(), trackService.shareVideoObjectUrl(objectName, isPrivate).
 - 검증: 게이트 17/17(격리 컨테이너 — 소유자·관리자 통과, 타인·비로그인·잘못된 토큰 404, 공개 곡 무변경), tsc 0. 서버 배포(md5 가드·백업 pre-v3366·진행 0건): health ok·oauth 3종 302·clip-info 공개 200/비공개 비로그인 404·object 비공개 비로그인 404·Traceback 0.
-- 웹: 같은 폴더에서 재생목록 세션(v3.360b 후속)이 작업 중이라 그 세션의 다음 웹 배포에 함께 나감(구 앱은 기존처럼 비공개 곡 선택 차단 — 서버 변경과 호환).
+- 웹: 재생목록 세션의 곡 누름 변경(703d178)이 대표 결정 '지금 방식 유지'로 되돌려진 뒤(e39bae4) 웹 배포 — 실서비스 번들에 '차트 미공개 곡' 확인. 구 네이티브 앱은 기존처럼 비공개 곡 선택 차단(서버와 호환).
 - 같은 날 공식 계정 답장 3건 발송(지유·오리쟁이·올리, 대표 승인), 휴식 단축 과다 차감 환불 6명 5,490⭐(대표 승인, 이력 '휴식 단축 환불', 재실행 중복 없음).
