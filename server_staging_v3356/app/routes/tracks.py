@@ -3396,7 +3396,7 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
     mongo = get_mongo()
     doc = await mongo.tracks.find_one(
         {"_id": ObjectId(track_id)},
-        {"audio_url": 1, "title": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1,
+        {"audio_url": 1, "title": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1, "ai_model": 1, "generation_id": 1, "inst_job_id": 1, "ai_audio_marked": 1,
          "character_id": 1},  # v3.251 — 인지도 훅용(귀속 아티스트)
     )
     if not doc or not doc.get("audio_url"):
@@ -3487,6 +3487,13 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
     # Get presigned URL for download
     # v202-r: 중앙 헬퍼 internal_presign — 내부 endpoint 서명 유지(종전 동작),
     # secure/region/자격증명 스위치만 중앙 반영. (public host 는 hairpin NAT 로 회귀 유발)
+    # v3.359 [Governance] AI 생성 음원 표시 — 처음 다운로드될 때 음원 파일에 'AI 생성' 메타데이터(ID3) 1회 기록(best-effort)
+    try:
+        from ..services.ai_audio_marker import ensure_ai_marker
+        await ensure_ai_marker(mongo, doc)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[AIMark] download hook failed track=%s err=%s", track_id[:8], type(e).__name__)
+
     url = internal_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))
     if not url:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})

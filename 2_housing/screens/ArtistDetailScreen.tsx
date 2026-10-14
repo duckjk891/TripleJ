@@ -129,7 +129,7 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
 
   const handleTrackPress = (track: Track) => {
     // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — tracks 통째 setQueue 교체 제거(재생목록 보존)
-    const idx = usePlayerStore.getState().playTapped(track); // v3.361 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+    const idx = usePlayerStore.getState().playTapped(track); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
     const q = usePlayerStore.getState().queue;
     if (__DEV__) console.info('[ArtistDetail] 곡 탭 → 큐 추가+재생', { id: track.id, idx, queueLen: q.length });
     navigation.navigate('Player', { track });

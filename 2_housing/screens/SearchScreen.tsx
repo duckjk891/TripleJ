@@ -185,7 +185,7 @@ export default function SearchScreen() {
       api.post('/tracks/search/click', { q, track_id: t.id }).catch(() => {});
     }
     // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — results 통째 setQueue 교체 제거(재생목록 보존)
-    const idx = usePlayerStore.getState().playTapped(t); // v3.361 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+    const idx = usePlayerStore.getState().playTapped(t); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
     const queueNow = usePlayerStore.getState().queue;
     if (__DEV__) console.info('[SearchScreen] 곡 탭 → 큐 추가+재생', { id: t.id, idx, queueLen: queueNow.length });
     navigation.navigate('Player', { track: t });

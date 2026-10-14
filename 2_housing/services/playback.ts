@@ -1065,7 +1065,7 @@ export async function playTrackNow(
     await loadAndPlayTrack(q[idx] || track);
     return;
   }
-  // v3.361 [TapPlay]: 곡 하나 재생 = 재생목록에 담지 않고 바로 재생(지금 곡 뒤 임시 자리), 뒤로 추천 이어듣기
+  // v3.367 [TapPlay]: 곡 하나 재생 = 재생목록에 담지 않고 바로 재생(지금 곡 뒤 임시 자리), 뒤로 추천 이어듣기
   const store2 = usePlayerStore.getState();
   let idx = store2.playTapped(track);
   const q = usePlayerStore.getState().queue;

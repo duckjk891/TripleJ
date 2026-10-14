@@ -222,7 +222,7 @@ export default function ChartScreen() {
       return;
     }
     // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
-    const idx = usePlayerStore.getState().playTapped(track); // v3.361 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+    const idx = usePlayerStore.getState().playTapped(track); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
     const q = usePlayerStore.getState().queue;
     if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     // v3.267 [추천 이어듣기](대표 지시 + 피드백2 [34]): 차트에서 곡을 "직접 고른" 순간은
@@ -266,7 +266,7 @@ export default function ChartScreen() {
       ? (index === playerStore.currentIndex
         ? <View style={[trackRowStyles.rank, { alignItems: 'center' }]}><Feather name="play" size={14} color={colors.accent.primary} /></View>
         : (item as any).__reco || (item as any).__tap
-          // v3.338 [Reco]: 자동 이어듣기 추천곡 — 번호 대신 '추천' 표식(내가 담은 곡과 구분) · v3.361 누른 곡(담지 않음)
+          // v3.338 [Reco]: 자동 이어듣기 추천곡 — 번호 대신 '추천' 표식(내가 담은 곡과 구분) · v3.367 누른 곡(담지 않음)
           ? <AppText variant="caption" center style={trackRowStyles.rank} tone="accent">{(item as any).__reco ? '추천' : '바로'}</AppText>
           : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
       : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
