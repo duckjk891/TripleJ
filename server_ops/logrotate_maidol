@@ -1,0 +1,12 @@
+# v3.363 MAIDOL 앱 로그 — 주 1회 압축, 13주(약 90일) 보관
+/home/ubuntu/maidol/logs/frontend.log /home/ubuntu/maidol/logs/gen_jobs.log /home/ubuntu/maidol/logs/db_backup.log /home/ubuntu/maidol/logs/log_cleanup.log {
+    weekly
+    rotate 13
+    maxage 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su ubuntu ubuntu
+}

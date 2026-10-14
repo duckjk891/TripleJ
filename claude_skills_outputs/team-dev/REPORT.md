@@ -4626,3 +4626,11 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 ## v3.362 — 2026-10-14 — 처리방침 추가 개정(보존기간표·자동화된 결정) 앱 안내 줄 (웹)
 - 대표 "게시"(외부 연동 세션) — lotusai.co.kr/privacy 제3조 보존기간표·제9조의2 자동화된 결정 게시(10-14 공고·10-21 시행, 이전 판 /privacy/2026-10-20 보관).
 - 재동의 팝업 요약(POLICY_CHANGE_LINES)에 "개인정보 보유 기간을 항목별로 정리하고, 실사 아티스트 얼굴 대조(자동화된 결정)의 기준과 설명·이의 제기 방법을 안내해요(10월 21일 시행)." 추가. 탈퇴 시 재생·다운로드 기록 비식별화는 v3.361 로 이미 운영 반영.
+
+## v3.363 — 2026-10-14 — DB 정기 백업 + 서버 로그 정리 (서버 운영)
+대표: "백업이랑 로그 정리 진행해."
+- DB 백업(server_ops/db_backup.sh → EC2 /home/ubuntu/maidol/scripts, ubuntu cron 매일 04:30 KST): Postgres(pg_dump -Fc) + MongoDB(mongodump archive gzip). 로컬 backups/db 7일(700/600) + S3 비공개 오디오 버킷 _backups/db/ 30일(앱 컨테이너 root 로 EC2 역할 업로드 — server_ops/backup_s3.py, 30일 지난 사본 자동 삭제). DB 비밀번호는 각 컨테이너 안 환경값만 사용(스크립트·로그 미기록). 첫 백업 Postgres 1.9MB·Mongo 3.6MB.
+- 복구 시험(첫 회): 임시 컨테이너(외부망 차단)에 복원 → Postgres users 67·playlists 13·creation_log.events 3,472 원본과 일치, Mongo tracks 181·characters 41·play_logs 30,437. 임시 컨테이너 삭제.
+- 로그 정리(server_ops/log_cleanup.sh, root cron 매일 04:50 KST): 배포 시 저장한 서비스 로그·주간 작업 로그 90일, 컨테이너 json 로그 200MB 넘으면 비움(MongoDB 2.2GB → 정리, 전체 3.6MB). /etc/logrotate.d/maidol: frontend·gen_jobs·db_backup·log_cleanup 로그 주 1회 압축 13주.
+- 기타: backups/env* 설정 백업 600 으로 제한. 서비스 health ok·DB 컨테이너 4종 healthy.
+- 내부관리계획 초안 제11·12조 반영(서비스 로그 90일·재생 기록 비식별·창작 기록 보관·백업/복구 시험). 권장: 백업 전용 S3 버킷(버전 관리·수명 주기) — AWS 콘솔 필요.
