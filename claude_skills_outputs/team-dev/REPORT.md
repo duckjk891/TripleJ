@@ -4634,3 +4634,8 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 로그 정리(server_ops/log_cleanup.sh, root cron 매일 04:50 KST): 배포 시 저장한 서비스 로그·주간 작업 로그 90일, 컨테이너 json 로그 200MB 넘으면 비움(MongoDB 2.2GB → 정리, 전체 3.6MB). /etc/logrotate.d/maidol: frontend·gen_jobs·db_backup·log_cleanup 로그 주 1회 압축 13주.
 - 기타: backups/env* 설정 백업 600 으로 제한. 서비스 health ok·DB 컨테이너 4종 healthy.
 - 내부관리계획 초안 제11·12조 반영(서비스 로그 90일·재생 기록 비식별·창작 기록 보관·백업/복구 시험). 권장: 백업 전용 S3 버킷(버전 관리·수명 주기) — AWS 콘솔 필요.
+
+## v3.364 — 2026-10-14 — 백업 전용 S3 저장소 (운영)
+대표: "백업 전용 저장소를 내가 만들어? 너가 만들 수 있으면 너가 만들어봐."
+- EC2 역할은 버킷 생성 권한 없음 → 맥의 AWS 배포 사용자(maidol-deploy, 같은 계정)로 생성: maidol-db-backups-prod(서울). 공개 접근 전면 차단, 버전 관리, 기본 암호화(SSE-S3·버킷 키), 수명 주기(현재 35일·지난 버전 30일·미완료 업로드 7일), 버킷 정책 — EC2 역할(maidol-ec2)은 PutObject·GetObject·ListBucket 만(삭제 불가 — 서버가 털려도 백업 삭제 불가), HTTPS 외 접근 거부.
+- server_ops/backup_s3.py → 새 버킷 db/ 로 업로드(보관은 수명 주기가 담당), db_backup.sh 주석 갱신. 실행 확인: 새 버킷에 Postgres·Mongo 백업 업로드, 서버 역할의 삭제 시도 AccessDenied 확인, 미디어 버킷의 임시 사본(_backups/) 2개 정리.

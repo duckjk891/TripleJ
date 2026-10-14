@@ -2,7 +2,7 @@
 # v3.363 [Governance] DB 정기 백업(내부관리계획 제12조) — 매일 04:30 KST(cron, ubuntu 계정).
 #   Postgres(aimu, pg_dump -Fc) + MongoDB(aimu, mongodump archive gzip)
 #   → 로컬 /home/ubuntu/maidol/backups/db (7일, 권한 700/600)
-#   → S3 비공개 오디오 버킷 _backups/db/ (30일, 서버 밖 사본 — AWS 저장 시 암호화). 업로드는 앱 컨테이너(EC2 역할 권한)로.
+#   → S3 백업 전용 버킷 maidol-db-backups-prod/db/ (35일 + 지난 버전 30일, 비공개·버전 관리·암호화, 서버는 삭제 불가 — v3.364). 업로드는 앱 컨테이너(EC2 역할 권한)로.
 #   비밀번호는 각 DB 컨테이너 안의 환경값을 그 안에서만 읽는다(이 스크립트·로그에 남기지 않음).
 set -uo pipefail
 TS=$(date -u +%Y%m%dT%H%M%SZ)
