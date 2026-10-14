@@ -100,6 +100,11 @@ interface PlayerState {
   setCurrentIndex: (i: number) => void;
   setPlayerScreenOpen: (v: boolean) => void;
   toggleShuffle: () => void;
+  /** v3.360 [TapRadio] 곡 하나를 직접 누른 곡 id(비영속) — 이 곡·추천곡을 듣는 동안 다음 곡은 추천에서만 */
+  radioSeedId: string | null;
+  /** v3.360 [TapRadio] 추천 이어듣기가 현재 곡 뒤에 놓은 곡 id(이미 목록에 있던 곡이 추천으로 옮겨진 경우 포함) */
+  recoNextId: string | null;
+  startRadio: (trackId: string) => void;
   cycleRepeat: () => void;
   playTrackAtIndex: (index: number) => void;
   /** 셔플/반복 고려해서 다음 인덱스 반환. 없으면 -1. */
@@ -200,6 +205,33 @@ export const pickShuffleNext = (queue: any[], currentIndex: number, allowWrap: b
   return idx;
 };
 
+// v3.360 [PrevHistory] (대표 10-14 "이전곡 누르면 이전으로 돌아가고"): 종전 '이전'은 목록상 앞 칸(셔플이면 무작위)이라
+// ① 셔플 중 엉뚱한 곡 ② 듣고 지나간 추천곡은 목록에서 빠져(v3.338) 방금 들은 곡으로 못 돌아갔다.
+// 이제 이번 세션에 실제로 들은 순서를 기억해 그 순서대로 되돌아간다(목록에서 빠진 추천곡은 현재 곡 앞에 다시 넣는다).
+let _playHistory: any[] = [];
+export const notePlayedForPrev = (track: any): void => {
+  if (!track?.id) return;
+  const last = _playHistory[_playHistory.length - 1];
+  if (last && String(last.id) === String(track.id)) return;
+  _playHistory = [..._playHistory, track].slice(-100);
+};
+export const resetPlayHistory = (): void => {
+  _playHistory = [];
+};
+
+/** v3.360 [TapRadio]: 누른 곡(또는 그 뒤 추천곡)을 듣는 중이면 다음 곡 = 바로 뒤 추천곡, 없으면 -1(→ 추천 조회).
+ *  그 밖(목록에서 고른 곡 등)은 null — 종전 규칙(순서·셔플·반복)을 따른다. 반복 '한 곡'은 종전 규칙 우선. */
+export function radioNext(st: { queue: any[]; currentIndex: number; repeat: RepeatMode; radioSeedId: string | null; recoNextId: string | null }): number | null {
+  if (!st.radioSeedId || st.repeat === 'one') return null;
+  const cur = st.queue[st.currentIndex];
+  if (!cur?.id) return null;
+  const curId = String(cur.id);
+  if (curId !== st.radioSeedId && !isRecoTrack(cur) && curId !== st.recoNextId) return null;
+  const nx = st.queue[st.currentIndex + 1];
+  if (nx?.id && (isRecoTrack(nx) || String(nx.id) === st.recoNextId) && String(nx.id) !== curId) return st.currentIndex + 1;
+  return -1;
+}
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => {
@@ -245,6 +277,12 @@ export const usePlayerStore = create<PlayerState>()(
       miniHidden: false,
       sessionActive: false,
       shuffle: false,
+      radioSeedId: null,
+      recoNextId: null,
+      // v3.360 [TapRadio] (대표 10-14 확정): 곡 하나를 직접 누르면 그 곡 다음은 비슷한 추천곡이 이어진다.
+      // 누른 곡은 종전처럼 재생목록에 담기고, 추천곡은 담기지 않는다(v3.338 [Reco]). 플레이리스트 '듣기'
+      // (setQueue)·재생목록 화면에서 고른 곡은 목록 순서대로. 반복 '한 곡'은 그대로 우선.
+      startRadio: (trackId) => set({ radioSeedId: trackId ? String(trackId) : null, recoNextId: null }),
       recentlyPlayedIds: [] as string[],
       repeat: 'off' as RepeatMode,
       // v3.198: sound가 truthy면 이번 세션에 재생을 시작한 것 — sessionActive를 setter 한 곳에서 일괄 마킹.
@@ -258,6 +296,8 @@ export const usePlayerStore = create<PlayerState>()(
       // 없으면(기존 호출부: 개인 플리·앨범·playTrackNow replace) 이전 귀속 해제.
       setQueue: (queue, source) => {
         resetShuffleBag(); // v3.360 [ShuffleBag] — 새 목록 = 새 바퀴
+        set({ radioSeedId: null, recoNextId: null }); // v3.360 [TapRadio] 목록 재생 = 목록 순서대로
+        resetPlayHistory(); // v3.360 [PrevHistory] 새 목록 — '이전'은 이 목록 안에서
         const queueSource: QueueSource | null = source
           ? { ...source, track_ids: queue.map((t: any) => String(t?.id ?? t?.track_id ?? '')).filter(Boolean) }
           : null;
@@ -290,6 +330,7 @@ export const usePlayerStore = create<PlayerState>()(
         if (!track?.id) return -1;
         const { queue, currentIndex } = get();
         const id = String(track.id);
+        if (isRecoTrack(track)) set({ recoNextId: id }); // v3.360 [TapRadio] 목록에 있던 곡이 옮겨져도 '추천 다음 곡'으로 인정
         const q = queue.slice();
         let cur = currentIndex;
         const old = q.findIndex((t) => String(t?.id) === id);
@@ -344,6 +385,7 @@ export const usePlayerStore = create<PlayerState>()(
         saveOwnerQueue();
       },
       resetOnLogout: async () => {
+        resetPlayHistory(); resetShuffleBag(); // v3.360 계정 바뀜 — 들은 순서·셔플 기억 초기화
         const { sound } = get();
         if (sound) { try { await sound.unloadAsync(); } catch {} }
         saveOwnerQueue(); // 로그아웃 전 현재 목록을 그 계정 보관함에 저장 → 다음 로그인 때 복원
@@ -421,6 +463,8 @@ export const usePlayerStore = create<PlayerState>()(
       // (대표 확정 — 직접 탭 재생·수동 다음 버튼은 그대로). 전곡 Inst면 getNextIndex 결과 유지.
       getNextAutoIndex: () => {
         const { queue, repeat, currentIndex } = get();
+        const radio = radioNext(get());
+        if (radio !== null) return radio; // v3.360 [TapRadio]
         const isInst = isInstTrack;
         let idx = get().getNextIndex();
         if (idx < 0) return idx;
@@ -445,6 +489,8 @@ export const usePlayerStore = create<PlayerState>()(
       getNextManualIndex: () => {
         const { queue, currentIndex, shuffle, repeat } = get();
         if (queue.length === 0) return -1;
+        const radio = radioNext({ ...get(), repeat: 'off' }); // v3.360 [TapRadio] 수동 '다음'도 추천으로(한 곡 반복이어도)
+        if (radio !== null) return radio;
         const step = (i: number) => (i < queue.length - 1 ? i + 1 : (repeat === 'off' ? -1 : 0));
         let idx: number;
         if (shuffle && queue.length > 1) {
@@ -486,12 +532,23 @@ export const usePlayerStore = create<PlayerState>()(
         const { queue, currentIndex, shuffle, repeat } = get();
         if (queue.length === 0) return -1;
         if (repeat === 'one') return currentIndex;
-        if (shuffle) {
-          if (queue.length === 1) return 0;
-          let prev = Math.floor(Math.random() * queue.length);
-          if (prev === currentIndex) prev = (prev + 1) % queue.length;
-          return prev;
+        // v3.360 [PrevHistory]: 실제로 들은 순서대로 한 곡 뒤로
+        const cur = queue[currentIndex];
+        if (_playHistory.length >= 2 && cur?.id && String(_playHistory[_playHistory.length - 1]?.id) === String(cur.id)) {
+          const prevTrack = _playHistory[_playHistory.length - 2];
+          const pid = String(prevTrack.id);
+          let i = -1;
+          for (let k = currentIndex - 1; k >= 0; k--) if (String(queue[k]?.id) === pid) { i = k; break; }
+          if (i < 0) i = queue.findIndex((t) => String(t?.id) === pid);
+          _playHistory = _playHistory.slice(0, -1); // 지금 곡을 기록에서 빼 다음 '이전'은 더 앞으로
+          if (i >= 0 && i !== currentIndex) return i;
+          // 듣고 지나가 목록에서 빠진 추천곡 — 현재 곡 바로 앞에 다시 넣고 그 자리로
+          const q = queue.slice();
+          q.splice(currentIndex, 0, { ...prevTrack, __reco: true });
+          set({ queue: q, currentIndex: currentIndex + 1 });
+          return currentIndex;
         }
+        if (shuffle) return currentIndex > 0 ? currentIndex - 1 : (repeat === 'all' ? queue.length - 1 : -1); // 기록 없음 — 목록상 앞
         if (currentIndex > 0) return currentIndex - 1;
         return repeat === 'all' ? queue.length - 1 : -1;
       },

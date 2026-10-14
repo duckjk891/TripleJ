@@ -152,6 +152,7 @@ export default function UserChannelScreen() {
     const q = usePlayerStore.getState().queue;
     const idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     if (__DEV__) console.info('[UserChannel] 곡 탭 → 큐 추가+재생', { id: track.id, idx, queueLen: q.length });
     navigation.navigate('Player', { track });
   };

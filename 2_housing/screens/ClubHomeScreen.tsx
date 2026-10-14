@@ -983,6 +983,7 @@ export default function ClubHomeScreen() {
                       const q = usePlayerStore.getState().queue;
                       const idx = q.findIndex((t: any) => String(t?.id) === String(b.track.id));
                       playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+                      usePlayerStore.getState().startRadio(String(b.track.id)); // v3.360 [TapRadio]
                       navigation.navigate('Player', { track: b.track });
                     }}
                   />

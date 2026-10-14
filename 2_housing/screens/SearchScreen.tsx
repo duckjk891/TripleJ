@@ -189,6 +189,7 @@ export default function SearchScreen() {
     const queueNow = usePlayerStore.getState().queue;
     const idx = queueNow.findIndex((x: any) => String(x?.id) === String(t.id));
     playerStore.setCurrentIndex(idx >= 0 ? idx : queueNow.length - 1);
+    usePlayerStore.getState().startRadio(String(t.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     if (__DEV__) console.info('[SearchScreen] 곡 탭 → 큐 추가+재생', { id: t.id, idx, queueLen: queueNow.length });
     navigation.navigate('Player', { track: t });
   };

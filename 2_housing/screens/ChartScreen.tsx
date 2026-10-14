@@ -226,6 +226,7 @@ export default function ChartScreen() {
     const q = usePlayerStore.getState().queue;
     const idx = q.findIndex((t: any) => String(t?.id) === String(track.id)); // v3.223 O-1 정규화(addToQueue와 동일 판정)
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     // v3.267 [추천 이어듣기](대표 지시 + 피드백2 [34]): 차트에서 곡을 "직접 고른" 순간은
     // 그 곡 중심의 감상 시작 — ① 잔존 셔플 해제(다음 곡이 랜덤으로 튀던 [34] 근본 원인),

@@ -138,6 +138,7 @@ export default function AlbumDetailScreen() {
     const q = usePlayerStore.getState().queue;
     const idx = q.findIndex((t: any) => String(t.id) === String(track.id));
     playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     navigation.navigate('Player', { track: rowTrack });
   };
 

@@ -14,7 +14,7 @@ import { Audio } from 'expo-av';
 // v3.205: 다음 곡 로컬 프리다운로드 — expo-file-system v19+는 신 API에서
 // cacheDirectory/downloadAsync가 빠져 legacy를 사용(ArtistLoadingScreen.tsx:15 관행)
 import * as FileSystem from 'expo-file-system/legacy';
-import { usePlayerStore } from '../stores/playerStore';
+import { usePlayerStore, radioNext, notePlayedForPrev } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
 import api, { streamProxyUrl } from './api';
 import { trackCoverUri } from '../utils/coverUri';
@@ -186,7 +186,8 @@ function preQueueRelatedIfLast(attempt = 0): void {
   if (Platform.OS !== 'web') return;
   const s = usePlayerStore.getState();
   const cur = s.track;
-  if (!cur?.id || s.repeat !== 'off') return;
+  if (!cur?.id || s.repeat === 'one') return;
+  if (s.repeat === 'all' && radioNext(s as any) === null) return; // v3.360 [TapRadio] 누른 곡 흐름이면 전체 반복이어도 추천
   if (s.getNextAutoIndex() >= 0) return; // 다음 곡 있음
   const cid = String(cur.id);
   if (preQueueFor === cid && attempt === 0) return; // 이 곡에 대해 진행 중/완료
@@ -313,6 +314,7 @@ if (Platform.OS === 'web') {
     const tid = t?.id != null ? String(t.id) : null;
     if (tid && tid !== msTrackId) {
       msTrackId = tid;
+      notePlayedForPrev(t); // v3.360 [PrevHistory] 실제로 들은 순서
       syncMediaSessionForTrack(t);
       // v3.275: 어느 경로(PlayerScreen 자체 로더 포함)로 곡이 바뀌어도 "마지막 곡이면 관련곡 선적재"
       setTimeout(() => preQueueRelatedIfLast(), 1500);
@@ -1069,6 +1071,7 @@ export async function playTrackNow(
   let idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
   if (idx < 0) idx = q.length - 1; // 방어(정상 경로 도달 불가)
   usePlayerStore.getState().playTrackAtIndex(idx);
+  usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
   if (__DEV__) console.info('[playback] playTrackNow append', { id: track.id, idx, queue: q.length });
   maybeHydrateCover(q[idx] || track); // v3.215 ⑤: 커버 결손 스냅샷 방어(백그라운드 — 재생과 병행)
   await loadAndPlayTrack(q[idx] || track);
