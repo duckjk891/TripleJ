@@ -465,14 +465,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           if (preset) {
             useMusicStore.getState().clearVideoDraft();
             setShowResumeNotice(false);
-            if (preset.is_public === false) {
-              showAlert('공개 곡만 가능해요', '공유 영상은 차트에 공개된 곡으로만 만들 수 있어요.\n마이페이지에서 곡을 공개로 전환한 뒤 다시 시도해주세요.');
-            } else {
-              setSelected(preset);
-              setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
-                { type: 'director', text: FORMAT_QUESTION }]);
-              setStep('format');
-            }
+            // v3.366: 비공개(차트 미공개) 곡도 본인 곡이면 영상 생성 가능(대표 결정 10-14)
+            setSelected(preset);
+            setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
+              { type: 'director', text: FORMAT_QUESTION }]);
+            setStep('format');
             setLoadingTracks(false);
             return;
           }
@@ -563,10 +560,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   };
 
   const handlePickTrack = (t: MyTrack) => {
-    if (t.is_public === false) {
-      showAlert('공개 곡만 가능해요', '공유 영상은 차트에 공개된 곡으로만 만들 수 있어요.\n마이페이지에서 곡을 공개로 전환한 뒤 다시 시도해주세요.');
-      return;
-    }
+    // v3.366: 비공개 곡도 선택 가능(서버가 소유자만 허용)
+    if (__DEV__ && t.is_public === false) console.info('[VideoDirector] 비공개 곡 선택', { id: t.id });
     setSelected(t);
     setPickedClip(null); // v3.281/v3.282: 구간은 곡마다 새로
     pushUser(t.title, 'pick');
@@ -575,16 +570,16 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   };
 
   // v3.230 A3(D9): 지난번 만든 영상 무료 재열람 — 새 요청·⭐ 확인·휴식 게이트·원장 등록 없이 결과 화면으로.
-  // 칩은 공개 곡에만(object 프록시는 공개 곡만 200) 표시한다.
+  // v3.366: 비공개 곡도 표시 — object 프록시가 ?token= 으로 소유자 확인.
   const pastVideoForSelected: ShareVideoItem | null =
-    selected && selected.is_public !== false ? pastVideos[selected.id] ?? null : null;
+    selected ? pastVideos[selected.id] ?? null : null;
   const handleOpenPastVideo = () => {
     const item = pastVideoForSelected;
     if (!item || busyRef.current || step === 'making') return;
     console.info('[VideoDirector] 지난 영상 열기', { trackId: item.track_id, format: item.format ?? null });
     pushUser('지난번 만든 영상 보기', 'format');
     // v3.281/v3.282: object name `_t{s}`(카톡 15초)·`_t{s}-{e}` 접미 = 지정 구간, 없으면 기본 구간
-    showVideoDone(shareVideoObjectUrl(item.object_name), item.format, clipOfObjectName(item.object_name));
+    showVideoDone(shareVideoObjectUrl(item.object_name, selected?.is_public === false), item.format, clipOfObjectName(item.object_name));
   };
 
   // ── v3.281 [52] → v3.282: 구간 자르기(트리머) ─────────────────────────────────
@@ -1670,7 +1665,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
                         : <View style={[styles.trackCover, styles.trackCoverPh]}><AppText tone="muted">♪</AppText></View>}
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <AppText style={styles.trackTitle} numberOfLines={1}>{t.title}</AppText>
-                        {t.is_public === false ? <AppText variant="caption" tone="muted">비공개 — 공유 영상 불가</AppText> : null}
+                        {t.is_public === false ? <AppText variant="caption" tone="muted">차트 미공개 곡</AppText> : null}
                       </View>
                       <Feather name="chevron-right" size={16} color={colors.text.muted} />
                     </TouchableOpacity>

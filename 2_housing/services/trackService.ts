@@ -12,7 +12,7 @@
 //     ※ MAIDOL UploadPage.jsx:1566은 type='track' 전송(구버전) — 백엔드는 'cover'만 허용 → 'cover' 사용.
 // web/native FormData 분기는 voiceService.appendAudioFile / albumService.appendImageFile 관행 재사용.
 import { Platform } from 'react-native';
-import api, { BACKEND_BASE_URL } from './api';
+import api, { BACKEND_BASE_URL, currentAuthToken } from './api';
 import { FALLBACK_POINT_COSTS } from './pointCosts';
 
 // 서버 제한값(위 계약 주석의 단일 소스) — 클라 선검증용
@@ -232,7 +232,9 @@ export function latestShareVideoByTrack(items: ShareVideoItem[]): Record<string,
   return out;
 }
 
-/** object 프록시 재생 URL(공개 곡만 재생 가능 — 호출부가 공개 여부를 먼저 확인) */
-export function shareVideoObjectUrl(objectName: string): string {
-  return `${BACKEND_BASE_URL}/api/tracks/share-video/object/${objectName.split('/').map(encodeURIComponent).join('/')}`;
+/** object 프록시 재생 URL. v3.366: 비공개(차트 미공개) 곡은 소유자만 — ?token= 으로 본인 확인 */
+export function shareVideoObjectUrl(objectName: string, isPrivate = false): string {
+  const base = `${BACKEND_BASE_URL}/api/tracks/share-video/object/${objectName.split('/').map(encodeURIComponent).join('/')}`;
+  const token = isPrivate ? currentAuthToken() : null;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }

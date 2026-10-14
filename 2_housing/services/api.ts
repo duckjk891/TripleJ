@@ -23,6 +23,11 @@ const api = axios.create({
 // Auth token - managed directly to avoid circular dependency
 let _authToken: string | null = null;
 
+/** v3.366: <video src> 처럼 헤더를 못 싣는 비공개 곡 URL 용(?token=) — stream-proxy 관행 */
+export function currentAuthToken(): string | null {
+  return _authToken;
+}
+
 export function setAuthToken(token: string | null) {
   _authToken = token;
   if (token) {
