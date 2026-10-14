@@ -979,8 +979,11 @@ export default function ClubHomeScreen() {
                     track={{ ...b.track, id: String(b.track.id) }}
                     onPress={() => {
                       // 곡 단위 탭 = append 관행(FeedScreen v3.223 ①)
-                      const idx = usePlayerStore.getState().playTapped(b.track); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+                      playerStore.addToQueue(b.track);
                       const q = usePlayerStore.getState().queue;
+                      const idx = q.findIndex((t: any) => String(t?.id) === String(b.track.id));
+                      playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+                      usePlayerStore.getState().startRadio(String(b.track.id)); // v3.360 [TapRadio]
                       navigation.navigate('Player', { track: b.track });
                     }}
                   />

@@ -134,8 +134,11 @@ export default function AlbumDetailScreen() {
     if (__DEV__) console.info('[AlbumDetail] 재생(append)', { albumId, trackId: track?.id });
     // 앨범 상세 cover_image는 조립된 프록시 경로 — 큐에는 object명(cover_image_url)만 남긴다
     const rowTrack = toRowTrack(track);
-    const idx = usePlayerStore.getState().playTapped(rowTrack); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+    playerStore.addToQueue(rowTrack);
     const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => String(t.id) === String(track.id));
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     navigation.navigate('Player', { track: rowTrack });
   };
 

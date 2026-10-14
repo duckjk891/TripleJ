@@ -148,8 +148,11 @@ export default function UserChannelScreen() {
   // v3.223 E-3: 곡 탭 = append(차트 곡 탭 관행 1:1) — 목록 통째 setQueue 교체 제거(재생목록 보존)
   const playTrack = (track: any) => {
     if (!track?.id) return;
-    const idx = usePlayerStore.getState().playTapped(track); // v3.367 [TapPlay] 누르면 바로 재생·재생목록엔 안 담음·뒤로 추천
+    playerStore.addToQueue(track);
     const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
     if (__DEV__) console.info('[UserChannel] 곡 탭 → 큐 추가+재생', { id: track.id, idx, queueLen: q.length });
     navigation.navigate('Player', { track });
   };

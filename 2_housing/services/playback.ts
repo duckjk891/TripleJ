@@ -1065,12 +1065,13 @@ export async function playTrackNow(
     await loadAndPlayTrack(q[idx] || track);
     return;
   }
-  // v3.367 [TapPlay]: 곡 하나 재생 = 재생목록에 담지 않고 바로 재생(지금 곡 뒤 임시 자리), 뒤로 추천 이어듣기
-  const store2 = usePlayerStore.getState();
-  let idx = store2.playTapped(track);
+  // append — 차트 관행: addToQueue(중복 방지 내장) 후 해당 곡 인덱스에서 재생
+  store.addToQueue(track);
   const q = usePlayerStore.getState().queue;
-  if (idx < 0) idx = Math.max(0, q.length - 1); // 방어(정상 경로 도달 불가)
+  let idx = q.findIndex((t: any) => String(t?.id) === String(track.id));
+  if (idx < 0) idx = q.length - 1; // 방어(정상 경로 도달 불가)
   usePlayerStore.getState().playTrackAtIndex(idx);
+  usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
   if (__DEV__) console.info('[playback] playTrackNow append', { id: track.id, idx, queue: q.length });
   maybeHydrateCover(q[idx] || track); // v3.215 ⑤: 커버 결손 스냅샷 방어(백그라운드 — 재생과 병행)
   await loadAndPlayTrack(q[idx] || track);
