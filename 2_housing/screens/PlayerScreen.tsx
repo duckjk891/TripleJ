@@ -257,8 +257,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   const detailToggleRef = useRef<View>(null);
   useEffect(() => () => unregisterAnchor('player-detail-toggle'), []);
   const [mediaTab, setMediaTab] = useState<'song' | 'video' | 'mv'>('song');   // 노래/동영상/MV 전환
-  // v3.370: MV 원본 비율(재생 준비 시 실측) — 정사각 프레임 안에 잘림 없이 맞춘다. 기본 16:9
-  const [mvSize, setMvSize] = useState<{ w: number; h: number }>({ w: 16, h: 9 });
+  // v3.371: MV는 소리를 끈 채 곡 재생 위치를 따라간다(곡 = 기준 시계) — 탭을 오가도 곡·가사가 끊기지 않게.
+  const mvRef = useRef<any>(null);
+  const songClockRef = useRef<{ ms: number; at: number }>({ ms: 0, at: 0 }); // 마지막 곡 위치와 그 시각
+  const mvSeekingRef = useRef(false);
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
@@ -767,15 +769,41 @@ export default function PlayerScreen({ route, navigation }: any) {
     return () => { cancelled = true; };
   }, [currentId]);
 
-  // v3.370: MV 탭 — MV가 붙은 곡만. MV 자체 오디오와 겹치지 않게 곡을 일시정지(탭을 떠나면 MV는 언마운트로 정지)
+  // v3.370→v3.371: MV 탭 — MV가 붙은 곡만. 곡은 그대로 재생(재생바·재생 버튼이 곡과 MV를 함께 조작),
+  // MV 영상은 음소거로 곡 위치에 맞춰 따라간다(MV 소리 = 곡 소리, 0ms 정렬 실측).
   const hasMv = !!(fullTrack as any)?.music_video_url;
-  const openMvTab = async () => {
-    console.info('[PlayerScreen] MV 탭 열기', { id: currentId });
+  useEffect(() => { songClockRef.current = { ms: position, at: Date.now() }; }, [position]);
+  // 곡 위치는 수백 ms 간격으로만 갱신 — 재생 중이면 지난 시간만큼 앞으로 보정한 '지금' 위치
+  const songNowMs = () => {
+    const c = songClockRef.current;
+    return isPlaying ? c.ms + Math.min(2000, Date.now() - c.at) : c.ms;
+  };
+  const openMvTab = () => {
+    console.info('[PlayerScreen] MV 탭 열기', { id: currentId, positionMs: songNowMs() });
     setMediaTab('mv');
-    if (soundRef.current) {
-      try { await soundRef.current.pauseAsync(); setIsPlaying(false); playerStore.setIsPlaying(false); } catch (err) {
-        console.warn('[PlayerScreen] MV 진입 — 곡 일시정지 실패', { err });
-      }
+  };
+  // 곡 재생/정지 → MV 영상도 같이(웹은 shouldPlay 변경을 무시해 명령으로 직접 맞춘다)
+  useEffect(() => {
+    const v = mvRef.current;
+    if (mediaTab !== 'mv' || !v) return;
+    (isPlaying ? v.playAsync() : v.pauseAsync()).catch((err: any) =>
+      console.warn('[PlayerScreen] MV 재생/정지 맞춤 실패', { isPlaying, message: err?.message }));
+    if (isPlaying) void syncMvToSong('resume');
+  }, [isPlaying, mediaTab]);
+
+  // 영상 위치가 곡과 0.4초 넘게 벌어지면(탭 진입·재생바 이동·버퍼링) 곡 위치로 맞춘다
+  const syncMvToSong = async (reason: string) => {
+    const v = mvRef.current;
+    if (!v || mvSeekingRef.current) return;
+    mvSeekingRef.current = true;
+    try {
+      const target = songNowMs();
+      await v.setPositionAsync(target, { toleranceMillisBefore: 100, toleranceMillisAfter: 100 });
+      if (__DEV__) console.info('[PlayerScreen] MV 위치 맞춤', { reason, positionMs: target });
+    } catch (err: any) {
+      console.warn('[PlayerScreen] MV 위치 맞춤 실패', { reason, message: err?.message });
+    } finally {
+      mvSeekingRef.current = false;
     }
   };
 
@@ -938,8 +966,6 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 현재 곡 재로드(loadAndPlay 내부에서 applyPlaybackAudioMode 재호출)로 복구.
   // 전환이 어떤 이유로 죽어도 "재생버튼 1탭"이 복구 경로가 된다.
   const togglePlayPause = async () => {
-    // v3.370: MV를 보는 중 곡 재생을 누르면 노래 탭으로 — MV 오디오와 곡이 겹치지 않게
-    if (mediaTab === 'mv') setMediaTab('song');
     try {
       const snd = soundRef.current;
       if (snd) {
@@ -1144,35 +1170,28 @@ export default function PlayerScreen({ route, navigation }: any) {
           정사각 프레임(coverH×coverH, 라운드) — 두 탭 전환 시 크기·위치가 완전히 일치. */}
       <View style={styles.coverWrapper}>
         {mediaTab === 'mv' && hasMv ? (
-          // v3.370: MV 탭 — 프레임 높이는 노래 탭과 같게(전환 시 아래 UI가 흔들리지 않게), 영상은 원본 비율 그대로
-          // 가운데 배치(가로 영상 = 위아래 여백, 세로 영상 = 좌우 여백). 전체 화면은 영상 컨트롤로.
-          <View style={[styles.mvFrame, { width: coverH, height: coverH }]}>
-            <View
-              style={[
-                styles.mvBox,
-                mvSize.w >= mvSize.h
-                  ? { width: coverH, height: Math.round((coverH * mvSize.h) / mvSize.w) }
-                  : { height: coverH, width: Math.round((coverH * mvSize.w) / mvSize.h) },
-              ]}
-            >
-              <Video
-                source={{ uri: (fullTrack as any).music_video_url }}
-                style={{ width: '100%', height: '100%' }}
-                useNativeControls
-                shouldPlay
-                resizeMode={ResizeMode.CONTAIN}
-                onReadyForDisplay={(e: any) => {
-                  const ns = e?.naturalSize;
-                  if (ns?.width > 0 && ns?.height > 0) {
-                    const w = ns.orientation === 'portrait' && ns.width > ns.height ? ns.height : ns.width;
-                    const h = ns.orientation === 'portrait' && ns.width > ns.height ? ns.width : ns.height;
-                    if (__DEV__) console.info('[PlayerScreen] MV 비율', { w, h });
-                    setMvSize({ w, h });
-                  }
-                }}
-                onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
-              />
-            </View>
+          // v3.371(대표): 가로는 화면 끝까지, 높이는 커버와 같게 — 영상은 잘리지 않게 가운데(남는 위아래는 검정).
+          // 컨트롤은 아래 재생바·재생 버튼(곡)이 담당 — 영상은 음소거로 곡 위치를 따라간다.
+          <View style={[styles.mvFrame, { height: coverH }]}>
+            <Video
+              ref={mvRef}
+              source={{ uri: (fullTrack as any).music_video_url }}
+              style={StyleSheet.absoluteFill}
+              // 웹: <video> 가 원본 크기(1920×1080)로 그려져 왼쪽 위만 보이던 문제 — 틀에 꽉 채우고 비율 유지
+              videoStyle={{ width: '100%', height: '100%', objectFit: 'contain' } as any}
+              resizeMode={ResizeMode.CONTAIN}
+              isMuted
+              shouldPlay={isPlaying}
+              progressUpdateIntervalMillis={500}
+              onLoad={() => { void syncMvToSong('load'); }}
+              onPlaybackStatusUpdate={(st: any) => {
+                if (!st?.isLoaded || mvSeekingRef.current) return;
+                if (!isPlaying && st.isPlaying) { mvRef.current?.pauseAsync().catch(() => {}); return; }
+                if (Math.abs((st.positionMillis ?? 0) - songNowMs()) > 400) void syncMvToSong('drift');
+              }}
+              onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
+            />
+            <View style={styles.aiBadge}><AppText style={styles.aiBadgeText}>AI 생성</AppText></View>
           </View>
         ) : mediaTab === 'video' ? (
           <View style={[styles.videoSquare, { width: coverH, height: coverH }]}>
@@ -1837,9 +1856,8 @@ const styles = StyleSheet.create({
   coverSquare: { borderRadius: 16 },
   // v3.161d: 동영상 탭 정사각 프레임 — 노래 탭과 동일 크기·라운드
   videoSquare: { borderRadius: 16, overflow: 'hidden' },
-  // v3.370: MV 탭 — 정사각 자리 안에 원본 비율 영상(검은 바탕 없이 가운데)
-  mvFrame: { alignItems: 'center', justifyContent: 'center' },
-  mvBox: { borderRadius: 16, overflow: 'hidden', backgroundColor: '#000' },
+  // v3.371: MV 탭 — 가로 화면 끝까지 × 커버 높이, 영상은 비율 유지 가운데(남는 곳 검정)
+  mvFrame: { alignSelf: 'stretch', backgroundColor: '#000', overflow: 'hidden' },
   // v3.171: AI 생성 뱃지 (커버 우하단 — MAIDOL v137 관행)
   aiBadge: {
     position: 'absolute', right: 8, bottom: 8,
