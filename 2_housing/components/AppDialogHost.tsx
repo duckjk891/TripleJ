@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useDialogStore, type DialogButton } from '../stores/dialogStore';
 import { colors } from '../theme/colors';
+import { useWebBackClose } from '../utils/webBackClose';
 
 // v3.85: 전역 앱 내 다이얼로그 호스트 — App 루트에 1회 마운트.
 // 디자인은 components/ConfirmDialog와 동일 계열(백드롭·카드·버튼 톤).
@@ -24,6 +25,10 @@ export default function AppDialogHost() {
     return () => clearTimeout(t);
   }, [lockUntil]);
 
+  // v3.369: 웹 뒤로 가기 = 다이얼로그 닫기(취소와 같음). 훅은 조기 반환 전에 — 실제 닫기는 아래 분기가 ref 로 지정.
+  const backCloseRef = useRef<() => void>(() => {});
+  useWebBackClose(!!dialog, () => backCloseRef.current());
+
   if (!dialog) return null;
 
   // v3.236 A1: 커스텀 본문 다이얼로그 — 카드 안에 제목 + 콘텐츠. 버튼·잠금·닫기는 콘텐츠가 담당.
@@ -35,6 +40,7 @@ export default function AppDialogHost() {
       if (custom.onRequestClose) custom.onRequestClose();
       else closeCustom();
     };
+    backCloseRef.current = requestClose;
     return (
       <Modal visible transparent animationType="fade" onRequestClose={requestClose}>
         <View style={styles.backdrop}>
@@ -62,6 +68,7 @@ export default function AppDialogHost() {
   };
   // 백드롭/뒤로가기 = cancel 버튼(있으면), 없으면 마지막 버튼으로 닫기
   const close = () => press(cancelBtn ?? dialog.buttons[dialog.buttons.length - 1]);
+  backCloseRef.current = close;
 
   const vertical = dialog.buttons.length >= 3;
 

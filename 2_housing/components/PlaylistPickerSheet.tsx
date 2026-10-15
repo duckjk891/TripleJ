@@ -17,6 +17,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 // v3.245: 클럽 공유 플레이리스트 섹션 — 내가 멤버인 클럽들의 플리에도 동일하게 담기
 import { CLUB_LABEL, getMyClubs, listClubPlaylists } from '../services/clubService'; // v3.252 리네이밍 라벨
+import { useWebBackClose } from '../utils/webBackClose';
 
 interface Props {
   visible: boolean;
@@ -28,6 +29,7 @@ interface Props {
 interface ClubPlRow { id: string; title: string; track_count?: number; clubName: string }
 
 export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Props) {
+  useWebBackClose(visible, onClose); // v3.369: 웹 뒤로 가기 = 시트 닫기(앱 종료 방지)
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [clubPlaylists, setClubPlaylists] = useState<ClubPlRow[]>([]); // v3.245: 없으면 섹션 숨김

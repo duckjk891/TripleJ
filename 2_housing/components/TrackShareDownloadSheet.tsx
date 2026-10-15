@@ -19,6 +19,7 @@ import { trackShareUrl } from '../utils/trackShare';
 import { fetchWebMediaFile, canShareWebFile, shareWebFile, downloadWebFile } from '../utils/webMediaSave';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { useWebBackClose } from '../utils/webBackClose';
 
 export type SheetMode = 'share' | 'download';
 
@@ -128,6 +129,7 @@ export async function downloadTrackMp3(
 }
 
 export default function TrackShareDownloadSheet({ visible, mode, track, onClose }: Props) {
+  useWebBackClose(visible, onClose); // v3.369: 웹 뒤로 가기 = 시트 닫기(앱 종료 방지)
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
   const [busy, setBusy] = useState<string | null>(null); // 진행 중 항목 key

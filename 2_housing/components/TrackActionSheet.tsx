@@ -22,6 +22,7 @@ import { openLoginModal } from '../utils/loginModal';
 import PlaylistPickerSheet from './PlaylistPickerSheet';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { useWebBackClose } from '../utils/webBackClose';
 
 /** 화면별 추가 메뉴 항목(플레이리스트에서 제거, 공유, 다운로드 등) */
 export interface ExtraAction {
@@ -54,6 +55,7 @@ export default function TrackActionSheet({
   shareable = true, shareOwn, onShared, onSharePublished,
 }: Props) {
   const navigation = useNavigation<any>();
+  useWebBackClose(!!track, onClose); // v3.369: 웹 뒤로 가기 = 시트 닫기(앱 종료 방지)
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
   const likedMap = useLikesStore((s) => s.liked);
