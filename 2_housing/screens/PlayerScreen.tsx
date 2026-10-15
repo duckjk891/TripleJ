@@ -44,7 +44,7 @@ import { useArtistStore } from '../stores/artistStore';
 // v3.217 ①(a): createTrackSound — 웹 단일 audio element 재사용 팩토리(네이티브는 createAsync 그대로).
 //   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
 // v3.235 B6: 공유 링크 진입 웹 자동재생 차단 → '탭해서 듣기' 오버레이(단일 element 동기 play)
-import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture } from '../services/webAudioElement';
+import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture, webAudioEl } from '../services/webAudioElement';
 import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
@@ -775,7 +775,21 @@ export default function PlayerScreen({ route, navigation }: any) {
   const hasMv = !!(fullTrack as any)?.music_video_url;
   useEffect(() => { songClockRef.current = { ms: position, at: Date.now() }; }, [position]);
   // 곡 위치는 수백 ms 간격으로만 갱신 — 재생 중이면 지난 시간만큼 앞으로 보정한 '지금' 위치
+  // v3.374: 웹은 곡 <audio> 요소(expo-av Sound._key)의 실제 시간을 직접 읽는다 — 상태 콜백 지연(실측 0.19초)으로
+  // 영상·자막이 늦던 문제. 네이티브는 기존 추정(마지막 위치 + 경과 시간).
+  const webSongEl = (): HTMLMediaElement | null => {
+    if (Platform.OS !== 'web') return null;
+    // 웹 곡 재생은 단일 <audio> 재사용 계층(services/webAudioElement) — 그 요소가 곡의 실제 시계.
+    // (예비: expo-av 기본 Sound 라면 _key 가 <audio>)
+    const shared = webAudioEl();
+    if (shared && shared.src) return shared;
+    const snd: any = usePlayerStore.getState().sound || soundRef.current;
+    const k = snd?._key;
+    return k && typeof k.currentTime === 'number' ? (k as HTMLMediaElement) : null;
+  };
   const songNowMs = () => {
+    const el = webSongEl();
+    if (el) return el.currentTime * 1000;
     const c = songClockRef.current;
     return isPlaying ? c.ms + Math.min(2000, Date.now() - c.at) : c.ms;
   };
@@ -825,10 +839,46 @@ export default function PlayerScreen({ route, navigation }: any) {
     // position: 정지 중 재생바 이동도 반영
   }, [mediaTab, lyricsTimeline, isPlaying, isPlaying ? 0 : position]);
   const mvSubtitle = mvSubIdx >= 0 ? lyricsTimeline[mvSubIdx]?.text || '' : '';
+  // v3.374: 웹 정밀 동기 — 매 프레임 영상 시간과 곡 시간을 비교해 0.3초 넘으면 바로 맞추고,
+  // 20ms~0.3초는 영상 속도를 살짝 조절해 따라잡는다(점프 없이 입모양 맞춤).
+  const mvFrameRef = useRef<any>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || mediaTab !== 'mv' || !isPlaying) return;
+    let raf = 0;
+    let lastLog = 0;
+    const loop = () => {
+      const a = webSongEl();
+      const v: HTMLVideoElement | null = mvFrameRef.current?.querySelector?.('video') ?? null;
+      // 이동(seek) 중에는 판단하지 않는다 — 이동이 끝나기 전에 다시 이동시키면 계속 뒤처짐(실측 왕복 -0.5초)
+      // 곡 소리가 멈춤·버퍼링 중이면 영상도 기다린다(재개 직후 영상만 먼저 달려 나가던 문제), 곡이 다시 나오면 같이 출발
+      if (a && v) {
+        const audioRunning = !a.paused && a.readyState >= 3;
+        if (!audioRunning && !v.paused) v.pause();
+        else if (audioRunning && v.paused) void v.play().catch(() => {});
+      }
+      if (a && v && v.readyState >= 2 && !v.seeking && !a.paused) {
+        const drift = v.currentTime - a.currentTime; // + = 영상이 앞섬
+        if (Math.abs(drift) > 0.3) {
+          v.currentTime = a.currentTime + 0.12; // 이동 지연만큼 살짝 앞에 — 남는 차이는 속도 조절이 마무리
+          v.playbackRate = 1;
+        } else if (Math.abs(drift) > 0.02) {
+          v.playbackRate = Math.max(0.9, Math.min(1.1, 1 - drift * 0.5));
+        } else if (v.playbackRate !== 1) {
+          v.playbackRate = 1;
+        }
+        if (__DEV__ && Date.now() - lastLog > 2000) { lastLog = Date.now(); console.info('[PlayerScreen] MV 동기', { driftMs: Math.round(drift * 1000) }); }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [mediaTab, isPlaying]);
+
   // 곡 재생/정지 → MV 영상도 같이(웹은 shouldPlay 변경을 무시해 명령으로 직접 맞춘다)
   useEffect(() => {
     const v = mvRef.current;
     if (mediaTab !== 'mv' || !v) return;
+    if (Platform.OS === 'web' && isPlaying) return; // 웹 재생 중은 프레임 동기 루프가 곡 소리에 맞춰 출발시킨다
     (isPlaying ? v.playAsync() : v.pauseAsync()).catch((err: any) =>
       console.warn('[PlayerScreen] MV 재생/정지 맞춤 실패', { isPlaying, message: err?.message }));
     if (isPlaying) void syncMvToSong('resume');
@@ -1220,7 +1270,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         {mediaTab === 'mv' && hasMv ? (
           // v3.371(대표): 가로는 화면 끝까지, 높이는 커버와 같게 — 영상은 잘리지 않게 가운데(남는 위아래는 검정).
           // 컨트롤은 아래 재생바·재생 버튼(곡)이 담당 — 영상은 음소거로 곡 위치를 따라간다.
-          <View style={[styles.mvFrame, { height: coverH }]} onLayout={(e) => setMvFrameW(e.nativeEvent.layout.width)}>
+          <View ref={mvFrameRef} style={[styles.mvFrame, { height: coverH }]} onLayout={(e) => setMvFrameW(e.nativeEvent.layout.width)}>
             <Video
               ref={mvRef}
               source={{ uri: (fullTrack as any).music_video_url }}
@@ -1231,7 +1281,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               isMuted
               shouldPlay={isPlaying}
               progressUpdateIntervalMillis={500}
-              onLoad={() => { void syncMvToSong('load'); }}
+              onLoad={() => { if (Platform.OS !== 'web') void syncMvToSong('load'); }}
               onReadyForDisplay={(e: any) => {
                 const ns = e?.naturalSize;
                 if (ns?.width > 0 && ns?.height > 0) setMvAspect(ns.width / ns.height);
@@ -1239,7 +1289,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               onPlaybackStatusUpdate={(st: any) => {
                 if (!st?.isLoaded || mvSeekingRef.current) return;
                 if (!isPlaying && st.isPlaying) { mvRef.current?.pauseAsync().catch(() => {}); return; }
-                if (Math.abs((st.positionMillis ?? 0) - songNowMs()) > 400) void syncMvToSong('drift');
+                if (Platform.OS !== 'web' && Math.abs((st.positionMillis ?? 0) - songNowMs()) > 400) void syncMvToSong('drift');
               }}
               onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
             />

@@ -286,6 +286,11 @@ function ensureElement(): HTMLAudioElement {
 }
 
 /** v3.360 [Prebuffer]: 현재 오디오 src(미리 받은 blob 해제 판정용) */
+/** v3.374: 현재 곡 재생 요소(웹 단일 <audio>) — MV 영상·자막을 곡의 실제 시간에 정밀하게 맞출 때 읽기 전용으로 쓴다 */
+export function webAudioEl(): HTMLAudioElement | null {
+  return el;
+}
+
 export function webCurrentSrc(): string {
   return el?.src || '';
 }
