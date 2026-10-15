@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../utils/appAlert';
 import { Audio, Video, ResizeMode } from 'expo-av';
+import * as Font from 'expo-font';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -781,7 +782,49 @@ export default function PlayerScreen({ route, navigation }: any) {
   const openMvTab = () => {
     console.info('[PlayerScreen] MV 탭 열기', { id: currentId, positionMs: songNowMs() });
     setMediaTab('mv');
+    void loadLyricsTimeline('mv'); // v3.372: MV 자막
+    void loadMvSubtitleFont();
   };
+
+  // v3.372(대표): MV 자막 — 에스코어드림 5 Medium(500). 공식 배포 OTF 원본 그대로(라이선스: 수정 금지·재배포 가능,
+  // 안내 assets/fonts/SCDream_LICENSE.png). MV 탭을 처음 열 때만 불러온다(곡 화면 첫 로딩 무영향).
+  const [mvFontReady, setMvFontReady] = useState(false);
+  const loadMvSubtitleFont = async () => {
+    if (mvFontReady) return;
+    try {
+      await Font.loadAsync({ SCDream5: require('../assets/fonts/SCDream5.otf') });
+      setMvFontReady(true);
+    } catch (err: any) {
+      console.error('[PlayerScreen] MV 자막 폰트 로드 실패(기본 글꼴로 표시)', { message: err?.message });
+    }
+  };
+  // MV 실제 표시 영역 — 틀(가로 화면 끝까지 × 커버 높이) 안에서 원본 비율로 가운데
+  const [mvFrameW, setMvFrameW] = useState(0);
+  const [mvAspect, setMvAspect] = useState(16 / 9);
+  // 현재 자막 줄 — 대표 지시서(10-15): start ≤ 지금 < end 인 줄 하나만, 확인은 requestAnimationFrame(곡 시계 보정값)으로.
+  const [mvSubIdx, setMvSubIdx] = useState(-1);
+  const subIdxAt = (sec: number) => {
+    let lo = 0, hi = lyricsTimeline.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (lyricsTimeline[mid].start <= sec) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return ans >= 0 && sec < lyricsTimeline[ans].end ? ans : -1;
+  };
+  useEffect(() => {
+    if (mediaTab !== 'mv' || lyricsTimeline.length === 0) { setMvSubIdx(-1); return; }
+    let raf = 0;
+    let last = -2;
+    const tick = () => {
+      const idx = subIdxAt(songNowMs() / 1000);
+      if (idx !== last) { last = idx; setMvSubIdx(idx); }
+      if (isPlaying) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => { if (raf) cancelAnimationFrame(raf); };
+    // position: 정지 중 재생바 이동도 반영
+  }, [mediaTab, lyricsTimeline, isPlaying, isPlaying ? 0 : position]);
+  const mvSubtitle = mvSubIdx >= 0 ? lyricsTimeline[mvSubIdx]?.text || '' : '';
   // 곡 재생/정지 → MV 영상도 같이(웹은 shouldPlay 변경을 무시해 명령으로 직접 맞춘다)
   useEffect(() => {
     const v = mvRef.current;
@@ -810,11 +853,16 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 동영상 탭 열기 — 가사 싱크(lyrics-timeline) 로드(트랙당 1회). v3.370: MV는 MV 탭으로 분리
   const openVideoTab = async () => {
     setMediaTab('video');
+    await loadLyricsTimeline('video');
+  };
+
+  // 가사 싱크(lyrics-timeline) 로드(트랙당 1회) — 동영상 탭·MV 자막 공용
+  const loadLyricsTimeline = async (via: 'video' | 'mv') => {
     const tid = usePlayerStore.getState().track?.id || currentId;
     if (!tid || lyricsFetchedRef.current === tid) return;
     lyricsFetchedRef.current = tid;
     setLyricsLoading(true);
-    if (__DEV__) console.info('[PlayerScreen] 동영상탭 — lyrics-timeline 로드', { tid });
+    if (__DEV__) console.info('[PlayerScreen] lyrics-timeline 로드', { tid, via });
     try {
       const res = await api.get(`/tracks/${tid}/lyrics-timeline`);
       const segs = res.data?.has_timestamps ? (res.data?.segments || []) : [];
@@ -1172,7 +1220,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         {mediaTab === 'mv' && hasMv ? (
           // v3.371(대표): 가로는 화면 끝까지, 높이는 커버와 같게 — 영상은 잘리지 않게 가운데(남는 위아래는 검정).
           // 컨트롤은 아래 재생바·재생 버튼(곡)이 담당 — 영상은 음소거로 곡 위치를 따라간다.
-          <View style={[styles.mvFrame, { height: coverH }]}>
+          <View style={[styles.mvFrame, { height: coverH }]} onLayout={(e) => setMvFrameW(e.nativeEvent.layout.width)}>
             <Video
               ref={mvRef}
               source={{ uri: (fullTrack as any).music_video_url }}
@@ -1184,6 +1232,10 @@ export default function PlayerScreen({ route, navigation }: any) {
               shouldPlay={isPlaying}
               progressUpdateIntervalMillis={500}
               onLoad={() => { void syncMvToSong('load'); }}
+              onReadyForDisplay={(e: any) => {
+                const ns = e?.naturalSize;
+                if (ns?.width > 0 && ns?.height > 0) setMvAspect(ns.width / ns.height);
+              }}
               onPlaybackStatusUpdate={(st: any) => {
                 if (!st?.isLoaded || mvSeekingRef.current) return;
                 if (!isPlaying && st.isPlaying) { mvRef.current?.pauseAsync().catch(() => {}); return; }
@@ -1191,6 +1243,41 @@ export default function PlayerScreen({ route, navigation }: any) {
               }}
               onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
             />
+            {(() => {
+              // v3.372 자막 — 기준은 '영상 높이'(1080px 기준값 비율): 글자 3.87%, 자간 -0.069em, 기울기 -11.9°,
+              // 그림자 2px/1080(0.19%) 검정 60%, 글자 아랫선(베이스라인)이 영상 바닥에서 7.4% 위, 가운데, 흰색.
+              const frameW = mvFrameW || winW; // 웹에서 onLayout 이 늦거나 없을 때 — 틀은 화면 가로 끝까지
+              if (!mvSubtitle || frameW <= 0) return null;
+              const vidH = Math.min(coverH, frameW / mvAspect);
+              const vidW = vidH * mvAspect;
+              // 지시서 CSS 그대로: font-size 3.87cqh(작은 폰 가독성 최소 12px — 지시서 검토 항목), bottom 7.4cqh,
+              // text-shadow 0.19cqh, 한 줄(nowrap)
+              const fs = Math.max(12, vidH * 0.0387);
+              const shadow = Math.max(1, vidH * 0.0019);
+              const bottom = (coverH - vidH) / 2 + vidH * 0.074;
+              return (
+                <View pointerEvents="none" style={[styles.mvSubWrap, { bottom, left: (frameW - vidW) / 2, width: vidW }]}>
+                  <Text
+                    style={{
+                      fontFamily: mvFontReady ? 'SCDream5' : undefined,
+                      fontWeight: '500',
+                      fontSize: fs,
+                      letterSpacing: -0.069 * fs,
+                      color: '#FFFFFF',
+                      textAlign: 'center',
+                      textShadowColor: 'rgba(0,0,0,0.6)',
+                      textShadowOffset: { width: shadow, height: shadow },
+                      textShadowRadius: 0,
+                      transform: [{ skewX: '-11.9deg' }],
+                      ...(Platform.OS === 'web' ? ({ whiteSpace: 'nowrap' } as any) : null),
+                    }}
+                    numberOfLines={Platform.OS === 'web' ? undefined : 1}
+                  >
+                    {mvSubtitle}
+                  </Text>
+                </View>
+              );
+            })()}
             <View style={styles.aiBadge}><AppText style={styles.aiBadgeText}>AI 생성</AppText></View>
           </View>
         ) : mediaTab === 'video' ? (
@@ -1858,6 +1945,7 @@ const styles = StyleSheet.create({
   videoSquare: { borderRadius: 16, overflow: 'hidden' },
   // v3.371: MV 탭 — 가로 화면 끝까지 × 커버 높이, 영상은 비율 유지 가운데(남는 곳 검정)
   mvFrame: { alignSelf: 'stretch', backgroundColor: '#000', overflow: 'hidden' },
+  mvSubWrap: { position: 'absolute', alignItems: 'center' },
   // v3.171: AI 생성 뱃지 (커버 우하단 — MAIDOL v137 관행)
   aiBadge: {
     position: 'absolute', right: 8, bottom: 8,
