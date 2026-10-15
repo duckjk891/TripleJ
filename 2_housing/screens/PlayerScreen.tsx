@@ -256,7 +256,9 @@ export default function PlayerScreen({ route, navigation }: any) {
   // (v3.207 ① player-add 등록은 스텝 교체로 제거 — 키는 registry에 주석 존치)
   const detailToggleRef = useRef<View>(null);
   useEffect(() => () => unregisterAnchor('player-detail-toggle'), []);
-  const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
+  const [mediaTab, setMediaTab] = useState<'song' | 'video' | 'mv'>('song');   // 노래/동영상/MV 전환
+  // v3.370: MV 원본 비율(재생 준비 시 실측) — 정사각 프레임 안에 잘림 없이 맞춘다. 기본 16:9
+  const [mvSize, setMvSize] = useState<{ w: number; h: number }>({ w: 16, h: 9 });
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
@@ -765,13 +767,21 @@ export default function PlayerScreen({ route, navigation }: any) {
     return () => { cancelled = true; };
   }, [currentId]);
 
-  // 동영상 탭 열기 — 가사 싱크(lyrics-timeline) 로드(트랙당 1회)
+  // v3.370: MV 탭 — MV가 붙은 곡만. MV 자체 오디오와 겹치지 않게 곡을 일시정지(탭을 떠나면 MV는 언마운트로 정지)
+  const hasMv = !!(fullTrack as any)?.music_video_url;
+  const openMvTab = async () => {
+    console.info('[PlayerScreen] MV 탭 열기', { id: currentId });
+    setMediaTab('mv');
+    if (soundRef.current) {
+      try { await soundRef.current.pauseAsync(); setIsPlaying(false); playerStore.setIsPlaying(false); } catch (err) {
+        console.warn('[PlayerScreen] MV 진입 — 곡 일시정지 실패', { err });
+      }
+    }
+  };
+
+  // 동영상 탭 열기 — 가사 싱크(lyrics-timeline) 로드(트랙당 1회). v3.370: MV는 MV 탭으로 분리
   const openVideoTab = async () => {
     setMediaTab('video');
-    // v3.48(B5): MV가 있으면 자체 오디오와 겹치지 않게 곡을 일시정지
-    if ((fullTrack as any)?.music_video_url && soundRef.current) {
-      try { await soundRef.current.pauseAsync(); setIsPlaying(false); playerStore.setIsPlaying(false); } catch {}
-    }
     const tid = usePlayerStore.getState().track?.id || currentId;
     if (!tid || lyricsFetchedRef.current === tid) return;
     lyricsFetchedRef.current = tid;
@@ -928,6 +938,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 현재 곡 재로드(loadAndPlay 내부에서 applyPlaybackAudioMode 재호출)로 복구.
   // 전환이 어떤 이유로 죽어도 "재생버튼 1탭"이 복구 경로가 된다.
   const togglePlayPause = async () => {
+    // v3.370: MV를 보는 중 곡 재생을 누르면 노래 탭으로 — MV 오디오와 곡이 겹치지 않게
+    if (mediaTab === 'mv') setMediaTab('song');
     try {
       const snd = soundRef.current;
       if (snd) {
@@ -1120,27 +1132,55 @@ export default function PlayerScreen({ route, navigation }: any) {
           <Feather name="film" size={14} color={mediaTab === 'video' ? colors.text.primary : colors.text.muted} />
           <AppText variant="caption" tone={mediaTab === 'video' ? 'primary' : 'muted'}>동영상</AppText>
         </TouchableOpacity>
+        {hasMv ? (
+          <TouchableOpacity style={[styles.mediaTab, mediaTab === 'mv' && styles.mediaTabActive]} onPress={openMvTab} accessibilityLabel="MV">
+            <Feather name="video" size={14} color={mediaTab === 'mv' ? colors.text.primary : colors.text.muted} />
+            <AppText variant="caption" tone={mediaTab === 'mv' ? 'primary' : 'muted'}>MV</AppText>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Cover Art / 동영상(가사 싱크) — v3.161d(대표): 동영상 탭도 노래 탭과 동일한
           정사각 프레임(coverH×coverH, 라운드) — 두 탭 전환 시 크기·위치가 완전히 일치. */}
       <View style={styles.coverWrapper}>
-        {mediaTab === 'video' ? (
-          <View style={[styles.videoSquare, { width: coverH, height: coverH }]}>
-            {(fullTrack as any)?.music_video_url ? (
-              // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
+        {mediaTab === 'mv' && hasMv ? (
+          // v3.370: MV 탭 — 프레임 높이는 노래 탭과 같게(전환 시 아래 UI가 흔들리지 않게), 영상은 원본 비율 그대로
+          // 가운데 배치(가로 영상 = 위아래 여백, 세로 영상 = 좌우 여백). 전체 화면은 영상 컨트롤로.
+          <View style={[styles.mvFrame, { width: coverH, height: coverH }]}>
+            <View
+              style={[
+                styles.mvBox,
+                mvSize.w >= mvSize.h
+                  ? { width: coverH, height: Math.round((coverH * mvSize.h) / mvSize.w) }
+                  : { height: coverH, width: Math.round((coverH * mvSize.w) / mvSize.h) },
+              ]}
+            >
               <Video
                 source={{ uri: (fullTrack as any).music_video_url }}
                 style={{ width: '100%', height: '100%' }}
                 useNativeControls
+                shouldPlay
                 resizeMode={ResizeMode.CONTAIN}
+                onReadyForDisplay={(e: any) => {
+                  const ns = e?.naturalSize;
+                  if (ns?.width > 0 && ns?.height > 0) {
+                    const w = ns.orientation === 'portrait' && ns.width > ns.height ? ns.height : ns.width;
+                    const h = ns.orientation === 'portrait' && ns.width > ns.height ? ns.width : ns.height;
+                    if (__DEV__) console.info('[PlayerScreen] MV 비율', { w, h });
+                    setMvSize({ w, h });
+                  }
+                }}
                 onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
               />
-            ) : lyricsTimeline.length > 0 ? (
+            </View>
+          </View>
+        ) : mediaTab === 'video' ? (
+          <View style={[styles.videoSquare, { width: coverH, height: coverH }]}>
+            {lyricsTimeline.length > 0 ? (
               <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={coverH} />
             ) : (
               <View style={[styles.coverPlaceholder, { width: '100%', height: '100%' }]}>
-                <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
+                <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : '가사 싱크가\n준비되면 제공돼요'}</AppText>
               </View>
             )}
             {/* v3.171(대표): AI 생성 뱃지 — MAIDOL v137 플랫폼 고지, 전 곡 공통 */}
@@ -1797,6 +1837,9 @@ const styles = StyleSheet.create({
   coverSquare: { borderRadius: 16 },
   // v3.161d: 동영상 탭 정사각 프레임 — 노래 탭과 동일 크기·라운드
   videoSquare: { borderRadius: 16, overflow: 'hidden' },
+  // v3.370: MV 탭 — 정사각 자리 안에 원본 비율 영상(검은 바탕 없이 가운데)
+  mvFrame: { alignItems: 'center', justifyContent: 'center' },
+  mvBox: { borderRadius: 16, overflow: 'hidden', backgroundColor: '#000' },
   // v3.171: AI 생성 뱃지 (커버 우하단 — MAIDOL v137 관행)
   aiBadge: {
     position: 'absolute', right: 8, bottom: 8,

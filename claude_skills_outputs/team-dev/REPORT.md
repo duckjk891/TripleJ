@@ -4670,3 +4670,10 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 공식 답장 발송(대표 승인): DDui(커버 옷 세부 디자인 차이 — AI 재생성 한계 안내, 신고 resolved), 지유(뒤로 가기 수정 예고·꾸미기 현재 착장 미리 선택 안내).
 - 매일 CS 예약 작업 생성: 【매일】MAIDOL DM·오류 신고 답장(10:05, 조사→초안→대표 승인 후 발송), 스크립트 server_ops/cs/.
 - 검증: tsc 0, 브라우저 기록 모의 11/11(열기·뒤로 닫기·내비게이터 무반응·앱 종료 없음·버튼 닫기 정리·동시 화면 이동 유지·묻힌 칸 건너뛰기·겹친 시트 순서).
+
+## v3.370 — 2026-10-15 — 대머리 김부장 커버 교체·기획사 이전 + Now Playing MV 탭 (운영 데이터 + 웹)
+대표: "대머리 김부장(김진주) 커버를 이 이미지로, lovvepearl 기획사로 곡 이전" / "다운로드의 대머리 김부장 mp4 — MV가 있는 곡은 MV 탭을 하나 더 만들어 재생, 영상 비율 고려".
+- 곡 6ac47eef(대머리 김부장 · 김진주): 커버 → covers/refined/<lovvepearl>/6ac47eef/v1.png(대표 제공 이미지), uploader_id·uploader_nickname → lovvepearl. 이전 기록 백업 EC2 backups/track_6ac47eef_backup_pre_transfer.json. 아티스트 김진주(캐릭터)는 오리쟁이 소유 그대로(곡만 이전). 공유 미리보기(og.jpg)는 커버 경로 키라 자동 갱신.
+- MV: 원본 1920×1080 24fps 86초 8.7Mbps(94MB) → 스트리밍용 같은 해상도 2.3Mbps(25MB, faststart) 재인코딩(nice 19·2스레드, 2분). 이미지 버킷 mv/manual/6ac47eef/ 에 스트리밍본·원본 보관, mv_jobs 에 부착 레코드(source=admin_upload, user_id 없음 — 사용자 MV 목록 비노출) → 기존 곡 상세의 has_music_video·music_video_url(직접 presign, 서버 부하 없음)로 노출. 서버 코드 변경 없음. 곡 상세 Redis 캐시 1건 삭제.
+- 앱 PlayerScreen: MV 있는 곡만 [노래][동영상][MV] 3탭. MV 탭 = 정사각 자리(노래 탭과 같은 높이 — 전환 시 아래 UI 고정) 안에 원본 비율 그대로 가운데(가로 영상 위아래 여백, 세로 영상 좌우 여백, 재생 준비 시 실제 비율 측정), 열면 곡 일시정지·MV 자동 재생, 탭을 떠나면 정지, MV 중 재생 버튼 = 노래 탭 복귀. 동영상 탭은 가사 싱크 전용.
+- 검증: tsc 0, 곡 API has_music_video=true·MV URL 206(범위 요청), 커버·기획사 API 반영 확인.
