@@ -223,6 +223,19 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   // v3.277 [GuestCompose]: 비로그인(게스트) 체험 곡 여부 — 렌더용(핸들러는 isGuestNow() 로 최신 판정)
   const isGuest = !useAuthStore((s) => s.user);
   const lyricsStore = useLyricsStore();
+  // v3.368: 발매 시 작사 store 정리는 그 store 가 '이 곡의 가사'를 들고 있을 때만 —
+  // 작곡 중 작업실에서 새 작사를 시작했다면(store 가 다른 작업) 그 작업본을 지우지 않는다.
+  const resetLyricsIfThisSong = () => {
+    const ls = useLyricsStore.getState();
+    const songLyrics = (useMusicStore.getState().lyrics || '').trim();
+    const draftLyrics = (ls.generatedLyrics || '').trim();
+    const startedOther = !draftLyrics && ls.draftStep > 0 && (ls.draftChat?.length ?? 0) > 0;
+    if (startedOther || (draftLyrics && songLyrics && draftLyrics !== songLyrics)) {
+      console.info('[Save] 작사 store 유지 — 다른 작사 작업 진행 중', { startedOther, hasDraftLyrics: !!draftLyrics });
+      return;
+    }
+    ls.reset();
+  };
   // v3.281 [63]: 이 화면 포커스 중엔 미니를 숨기므로(setMiniHidden) 하단 여백도 실제 노출 판정으로
   const hasMiniPlayer = usePlayerStore(selectMiniPlayerVisible);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -919,7 +932,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       // prompt: 작곡 디렉터가 받은 풍부한 파라미터를 요약 텍스트로 합쳐서 저장.
       // 가사는 별도 lyrics 필드에 들어가니 여기선 제외.
       prompt: buildPromptSummary(store, lyricsStore),
-      lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
+      lyrics: store.lyrics || lyricsStore.generatedLyrics || undefined, // v3.368: 이 곡을 만든 가사 우선(작곡 중 새 작사를 시작해도 섞이지 않게)
       ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
       // v3.93: 2-variant 확정 — 선택한 클립이 트랙이 됨 (tracks.py:1386 variant_index, 0=BC)
       variant_index: selectedVariant,
@@ -970,7 +983,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       setIsSaved(true);
       // BUG-3 픽스: 발매 보상은 트랙 저장 성공 직후에만 지급 (같은 generation 재지급 가드)
       grantReleaseRewards(String(payload.generation_id), trackId);
-      lyricsStore.reset();
+      resetLyricsIfThisSong();
       // v3.219 [ComposeDraft]: 발매 성공 = 작곡 대화 완주 — draft 클리어(다음 곡은 새 대화)
       store.clearComposeDraft();
       store.clearReferenceLink(); // v3.276 [RefLink]: 작곡 완료 — 링크 참조 비움(다음 곡 오염 차단)
@@ -1015,7 +1028,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           genre: store.genre || undefined,
           mood: store.mood || undefined,
           prompt: buildPromptSummary(store, lyricsStore), // v3.166: 커버 경유 저장도 '이야기' 요약으로 통일
-          lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
+          lyrics: store.lyrics || lyricsStore.generatedLyrics || undefined, // v3.368: 이 곡을 만든 가사 우선(작곡 중 새 작사를 시작해도 섞이지 않게)
           ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
           // v3.93: 커버 경유 저장도 동일하게 선택 variant로 확정
           variant_index: selectedVariant,
@@ -1047,7 +1060,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         setIsSaved(true);
         // BUG-3 픽스: 커버 경유 저장도 동일하게 저장 성공 직후 지급 (중복 가드 공유)
         grantReleaseRewards(String(payload.generation_id), trackId);
-        lyricsStore.reset();
+        resetLyricsIfThisSong();
         // v3.219 [ComposeDraft]: 커버 경유 발매 성공도 동일 — 작곡 draft 클리어
         store.clearComposeDraft();
         store.clearReferenceLink(); // v3.276 [RefLink]: 작곡 완료 — 링크 참조 비움

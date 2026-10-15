@@ -56,6 +56,7 @@ import {
   getDirectorResumeTarget,
   hasDirectorWorkInProgress,
   type DirectorResumeTarget,
+  isLyricsCompleted,
 } from '../utils/directorResume';
 import { openLoginModal } from '../utils/loginModal';
 import { isGuestTrialUsed, getGuestSong, getGuestComposeStatus, guestComposeStreamUrl, clearGuestPendingGen, type GuestSong } from '../utils/guestTrial';
@@ -834,6 +835,38 @@ export default function MapScreen({ navigation }: Props) {
     proceedDirectorPress(type);
   };
 
+  // v3.368: 작사가 이미 끝난 상태(가사 있음)에서 작사가를 누르면 — 새 작사 대화 또는 지난 가사 보기.
+  // 지난 가사는 만들 때 가사 보관함에 저장돼 있어 새로 시작해도 잃지 않는다(작곡은 보관함에서 다시 고를 수 있음).
+  const openLyricistAfterCompleted = () => {
+    console.info('[Map] [lyricist] 끝난 작사 — 새로 작사/지난 가사 선택');
+    showAlert('새로 작사할까요?', '새로 시작하면 작업 중이던 가사는 비워져요.\n처음 만든 가사는 가사 보관함에서 다시 볼 수 있어요.', [
+      {
+        text: '지난 가사 보기',
+        style: 'cancel',
+        onPress: () => {
+          console.info('[Map] [lyricist] 지난 가사 보기');
+          openResumeTarget('lyricist', { route: 'LyricsResult', reason: 'lyrics-completed-view' });
+        },
+      },
+      {
+        text: '새로 작사하기',
+        onPress: () => {
+          console.info('[Map] [lyricist] 새로 작사 — 작사 store 초기화 후 대화 시작');
+          const ls = useLyricsStore.getState();
+          ls.reset();
+          ls.setStyle(''); // LyricsInput '처음부터 다시'와 동치(잔존 style 차단)
+          const director = DIRECTORS.find((x) => x.type === 'lyricist');
+          navigation.navigate('Dialogue', {
+            directorType: 'lyricist',
+            directorName: DIRECTOR_NAMES.lyricist,
+            directorRole: DIRECTOR_ROLES.lyricist,
+            directorY: director?.y ?? 0,
+          });
+        },
+      },
+    ]);
+  };
+
   // v3.118: 휴식 게이트 통과 후의 원래 디렉터 탭 흐름 (기존 handleDirectorPress 본문 분리)
   const proceedDirectorPress = (type: DirectorType) => {
 
@@ -850,6 +883,11 @@ export default function MapScreen({ navigation }: Props) {
       // 1명이면 자동 선택
       if (hiredLyricists.length === 1 && !selectedByCategory.lyricist) {
         selectForCategory('lyricist', hiredLyricists[0]);
+      }
+      // v3.368: 이미 끝난 작사면 새로 작사/지난 가사 선택
+      if (isLyricsCompleted()) {
+        openLyricistAfterCompleted();
+        return;
       }
       // 이미 프롬프트가 있으면 리뷰 화면으로
       if (lyricsStore.generatedPrompt) {
@@ -1198,6 +1236,8 @@ export default function MapScreen({ navigation }: Props) {
                         if (resumeTarget) {
                           restoreLyricsCreationMode();
                           openResumeTarget('lyricist', resumeTarget);
+                        } else if (!tutorialVisible && isLyricsCompleted()) {
+                          openLyricistAfterCompleted(); // v3.368
                         } else if (lyricsStore.generatedPrompt) {
                           navigation.navigate('LyricsPromptReview' as any);
                         } else {

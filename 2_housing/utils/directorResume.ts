@@ -11,6 +11,15 @@ type LyricsSnap = ReturnType<typeof useLyricsStore.getState>;
 type MusicSnap = ReturnType<typeof useMusicStore.getState>;
 
 // ── 작사 ──
+/**
+ * v3.368: 이번 작사가 이미 끝났나(가사가 만들어짐) — 끝난 작사는 바로 가기·이어서 하기 대상이 아니다.
+ * 작사가를 다시 누르면 휴식 게이트 → "새로 작사 / 지난 가사 보기" 선택(대표 10-15: 휴식 중 작사가를 눌렀더니
+ * 지난 요청 화면이 뜨고, 뒤로 가기는 작업실로 가버림).
+ */
+export function isLyricsCompleted(s: Pick<LyricsSnap, 'generatedLyrics'> = useLyricsStore.getState()): boolean {
+  return !!(s.generatedLyrics && s.generatedLyrics.trim());
+}
+
 /** LyricsInput 진행 대화 draft가 이어가기 대상인가 (v3.219 LyricsInputScreen 마운트 규칙 그대로) */
 export function isLyricsDraftResumable(s: Pick<LyricsSnap, 'draftStep' | 'draftChat'> = useLyricsStore.getState()): boolean {
   return s.draftStep > 0 && s.draftChat.length > 0;
@@ -128,6 +137,8 @@ export function getDirectorResumeTarget(type: DirectorType): DirectorResumeTarge
   switch (type) {
     case 'lyricist': {
       const s = useLyricsStore.getState();
+      // v3.368: 이미 끝난 작사는 보존본이 아니다(맵 휴식 게이트를 건너뛰고 지난 요청 화면으로 가던 문제)
+      if (isLyricsCompleted(s)) return null;
       // 요청서가 있으면 기존대로 요청 확인 화면이 우선
       if (s.generatedPrompt) return { route: 'LyricsPromptReview', reason: 'lyrics-prompt' };
       if (isLyricsDraftResumable(s)) return { route: 'LyricsInput', reason: 'lyrics-draft' };
@@ -175,6 +186,5 @@ export function getDirectorResumeTarget(type: DirectorType): DirectorResumeTarge
 export function hasDirectorWorkInProgress(type: DirectorType): boolean {
   const target = getDirectorResumeTarget(type);
   if (!target) return false;
-  if (type === 'lyricist' && useLyricsStore.getState().generatedLyrics) return false;
   return true;
 }
