@@ -8,7 +8,7 @@ self.addEventListener('push', function (event) {
   var title = data.title || 'MAIDOL';
   var options = {
     body: data.body || '새 알림이 있어요',
-    icon: '/favicon.ico',
+    icon: '/icon-192.png',
     badge: '/favicon.ico',
     tag: data.tag || 'maidol',
     renotify: true,
