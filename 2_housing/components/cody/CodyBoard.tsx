@@ -11,6 +11,7 @@ import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { brandNameOf, type AdItem, type Cat } from '../../utils/codyCatalog';
 import { adImageUrl } from './codyShared';
+import AdThumbImage from './AdThumbImage';
 
 interface Props {
   /** 대상 캐릭터 시트 미리보기 URL — 없으면 실루엣 플레이스홀더 */
@@ -182,7 +183,7 @@ export default function CodyBoard({
                   >
                     {it ? (
                       url ? (
-                        <Image source={{ uri: url }} style={s.cardImg} resizeMode="contain" />
+                        <AdThumbImage objectName={it.image_object_name} style={s.cardImg} resizeMode="contain" />
                       ) : (
                         <AppText style={s.cardNoImg} numberOfLines={3}>{it.name}</AppText>
                       )

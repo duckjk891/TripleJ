@@ -8,6 +8,7 @@ import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { CATEGORIES, type AdItem, type Cat } from '../../utils/codyCatalog';
 import { adImageUrl } from './codyShared';
+import AdThumbImage from './AdThumbImage';
 
 interface Props {
   selected: Partial<Record<Cat, AdItem>>;
@@ -70,7 +71,7 @@ export default function SelectedItemsStrip({ selected, currentCat, staleIds, onJ
               ]}
             >
               {url ? (
-                <Image source={{ uri: url }} style={s.img} />
+                <AdThumbImage objectName={it!.image_object_name} style={s.img} />
               ) : it ? (
                 <AppText style={s.noImgText} numberOfLines={2}>{it.name}</AppText>
               ) : null}

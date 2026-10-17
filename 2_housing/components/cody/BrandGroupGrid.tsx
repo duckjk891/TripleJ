@@ -20,6 +20,7 @@ import {
 } from '../../utils/codyCatalog';
 import CodyItemCard from './CodyItemCard';
 import { adImageUrl, pickerStyles as styles } from './codyShared';
+import AdThumbImage from './AdThumbImage';
 
 interface Props {
   pickerLoading: boolean;
@@ -180,7 +181,7 @@ export default function BrandGroupGrid({
                 const it = g.thumbs[k];
                 const url = it ? adImageUrl(it.image_object_name) : null;
                 return url ? (
-                  <Image key={k} source={{ uri: url }} style={styles.groupThumb} />
+                  <AdThumbImage key={k} objectName={it!.image_object_name} style={styles.groupThumb} />
                 ) : (
                   <View key={k} style={[styles.groupThumb, styles.groupThumbEmpty]} />
                 );

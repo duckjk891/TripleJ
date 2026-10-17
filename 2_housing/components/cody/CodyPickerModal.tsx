@@ -37,6 +37,7 @@ import BrandGroupGrid from './BrandGroupGrid';
 import SelectedItemsStrip from './SelectedItemsStrip';
 import CodyBoard from './CodyBoard';
 import { adImageUrl, getSampleItems, pickerStyles as styles } from './codyShared';
+import AdThumbImage from './AdThumbImage';
 
 interface Props {
   pickerCat: Cat | null;
@@ -328,7 +329,7 @@ export default function CodyPickerModal({
                     >
                       <View style={styles.itemImgWrap}>
                         {url ? (
-                          <Image source={{ uri: url }} style={styles.itemImg} />
+                          <AdThumbImage objectName={item.image_object_name} style={styles.itemImg} />
                         ) : (
                           <View style={[styles.itemImg, styles.itemImgFallback]}>
                             <AppText style={{ fontSize: 28 }}>?</AppText>

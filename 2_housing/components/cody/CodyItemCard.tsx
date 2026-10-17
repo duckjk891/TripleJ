@@ -8,6 +8,7 @@ import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { brandNameOf, formatPrice, type AdItem } from '../../utils/codyCatalog';
 import { adImageUrl, pickerStyles as styles } from './codyShared';
+import AdThumbImage from './AdThumbImage';
 import { useIsChild } from '../../utils/kidsMode';
 
 interface Props {
@@ -48,7 +49,7 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
     >
       <View style={styles.itemImgWrap}>
         {url ? (
-          <Image source={{ uri: url }} style={styles.itemImg} />
+          <AdThumbImage objectName={item.image_object_name} style={styles.itemImg} />
         ) : (
           <View style={[styles.itemImg, styles.itemImgFallback]}>
             <AppText style={{ fontSize: 28 }}>?</AppText>

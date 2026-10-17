@@ -61,6 +61,15 @@ export function adImageUrl(objectName?: string): string | null {
   return `${BACKEND_BASE_URL}/api/business/items/image/${objectName}`;
 }
 
+/** v3.375 [CodyThumb]: 목록용 썸네일(긴 변 320px JPEG) — ads/<경로>.<ext> → ads/thumb320/<경로>.jpg (같은 이미지 프록시로 제공) */
+export function adThumbUrl(objectName?: string): string | null {
+  if (!objectName || !objectName.startsWith('ads/') || objectName.startsWith('ads/thumb320/')) return adImageUrl(objectName);
+  const rest = objectName.slice('ads/'.length);
+  const dot = rest.lastIndexOf('.');
+  const base = dot > 0 ? rest.slice(0, dot) : rest;
+  return `${BACKEND_BASE_URL}/api/business/items/image/ads/thumb320/${base}.jpg`;
+}
+
 // 피커 모달·필터 바·브랜드 그리드 공용 스타일 (원본 styles 중 모달/피커 전용 항목 그대로)
 export const pickerStyles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(13, 8, 32, 0.85)', justifyContent: 'flex-end' },
