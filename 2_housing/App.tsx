@@ -37,6 +37,9 @@ import {
   consumePendingTrackLink,
   peekPendingTrackLink,
 } from './utils/trackLink';
+// v3.376 [DmLink] 메일 등 외부 링크 `?open=dm` → 메시지함
+import { captureWebDmLink, peekPendingDmLink, takePendingDmLink } from './utils/dmLink';
+import { openLoginModal } from './utils/loginModal';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -691,6 +694,7 @@ captureWebTrackLink();
 // v3.305 [ClubLink] 웹 `?club=&i=&album=` 캡처 — 트랙 링크와 같은 시점(주소 변경 전). 초대 코드는 7일 보관.
 captureWebClubLink();
 captureWebIdentityReturn(); // v3.349 웹 본인확인 같은 탭 복귀(?identity=done&rid=&status=) 1회 캡처
+captureWebDmLink(); // v3.376 [DmLink] `?open=dm` 1회 캡처
 
 // v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
 //  로그인 복원(restoreQueueFor)이 재생목록을 계정 보관함으로 교체하므로 그 뒤에 붙여야 링크 곡이 남고,
@@ -706,6 +710,39 @@ function markBootAuthSettled(reason: string) {
   if (peekPendingTrackLink()) console.info('[TrackLink] auth-settled', { reason });
   tryConsumeTrackLink();
   tryConsumeClubLink();
+  tryConsumeDmLink();
+}
+
+// v3.376 [DmLink] 메시지함 링크 착지 — 부팅 세션 정착 뒤 1회. 로그인돼 있으면 메시지함,
+//  아니면 로그인 창을 띄우고 로그인되는 순간 메시지함으로(구독 1회).
+let dmLinkAuthUnsub: (() => void) | null = null;
+function tryConsumeDmLink() {
+  if (!peekPendingDmLink()) return;
+  try {
+    if (!navigationRef.isReady()) return;
+    const routeName = navigationRef.getCurrentRoute()?.name;
+    if (!routeName || routeName === 'Splash') return;
+    if (!bootAuthSettled && Date.now() - appBootAt < TRACK_LINK_AUTH_WAIT_MAX_MS) return;
+  } catch {
+    return;
+  }
+  if (useAuthStore.getState().user) {
+    takePendingDmLink();
+    console.info('[DmLink] 착지 — 메시지함');
+    (navigationRef.navigate as any)('DmInbox');
+    return;
+  }
+  console.info('[DmLink] 비로그인 — 로그인 창 후 메시지함');
+  openLoginModal({ reason: 'dm_link' });
+  if (!dmLinkAuthUnsub) {
+    dmLinkAuthUnsub = useAuthStore.subscribe((st: any) => {
+      if (!st.user || !peekPendingDmLink()) return;
+      takePendingDmLink();
+      dmLinkAuthUnsub?.();
+      dmLinkAuthUnsub = null;
+      setTimeout(() => { try { (navigationRef.navigate as any)('DmInbox'); } catch (err: any) { console.error('[DmLink] 이동 실패', { message: err?.message }); } }, 600);
+    });
+  }
 }
 
 // v3.305 [ClubLink] 크루 링크 착지 — Splash 뒤·부팅 세션 정착 뒤 1회. 앨범 링크면 앨범 화면, 아니면 크루 화면(플리·앨범 탭).
@@ -751,7 +788,7 @@ function tryConsumeTrackLink() {
 function useTrackLinkCapture() {
   useEffect(() => {
     // 정착 신호 유실 대비 — 상한 대기 뒤 1회 재시도(웹·네이티브 공통)
-    const t = setTimeout(() => { tryConsumeTrackLink(); tryConsumeClubLink(); }, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
+    const t = setTimeout(() => { tryConsumeTrackLink(); tryConsumeClubLink(); tryConsumeDmLink(); }, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
     if (Platform.OS === 'web') return () => clearTimeout(t); // 웹은 모듈 로드 시 캡처
     const onUrl = (url: string | null) => {
       if (captureNativeTrackLink(url)) tryConsumeTrackLink();
