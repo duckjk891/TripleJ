@@ -4750,7 +4750,7 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
   - 확인: http→https 301, 앱 API(health·oauth 3종 302·/ads/active 200) 무영향, api.maidol.ai.kr/admin/#/brands → admin.maidol.ai.kr/admin/#/… 이동(#경로 유지), 광고주 사이트 로그인 요청 서버 도달(없는 계정 → '맞지 않아요'). 스크린샷 claude_skills_outputs/business_portal/screens/.
 - 남은 일: 관리자 웹 운영 로그인 확인(대표 — 새 주소는 로그인 1회 다시), 실제 광고주 계정 발급은 관리자 웹에서. Cloudflare Access(회사 메일 인증)는 2단계(프록시 켬 + SSL 전체(엄격) 확인 필요). 옛 주소 /api/admin/* 는 api 호스트에도 계속 열려 있음(앱 영향 없음, 좁히려면 별도).
 
-## v3.380 — 2026-10-19 — 관리자 웹 회사 메일 인증(Cloudflare Access) 준비 (안내문 + nginx 초안, 운영 변경 0)
+## v3.380 — 2026-10-19 — 관리자 웹 회사 메일 인증(Cloudflare Access) 적용 (Cloudflare + nginx 우회 차단 + Origin CA)
 대표(10-19): 주소 이전 후 2단계로 admin.maidol.ai.kr 앞에 Cloudflare Access(@lotusai.co.kr 메일 6자리 코드).
 - 현재 상태(실측): admin·api·business A 3.37.146.1 **회색**(응답 server: nginx, cf-ray 없음), maidol.ai.kr·app.maidol.ai.kr 은 이미 주황(Cloudflare 응답) — 존 SSL 모드 = **Full**(대표 확인 10-19 — 리다이렉트 루프 없음, 단 원본 인증서 미검증). 모드를 존 전체로 바꾸지 않고 admin 호스트만 Configuration Rule(SSL Strict)로 거는 안을 안내.
 - 인증서: admin = certbot nginx authenticator(HTTP-01), 만료 2027-01-17. **회색 상태 `certbot renew --dry-run --cert-name admin.maidol.ai.kr` 성공**(기준선). 프록시+Access 뒤에선 /.well-known/acme-challenge 가 Access 로그인으로 막힐 가능성이 높아(아래 표식 검사를 켜면 확실히 막힘) → Cloudflare Origin CA(15년, CSR 방식이라 키는 서버 밖으로 안 나감)로 교체하는 안 + 교체 시 certbot delete 필요(갱신 때 인증서 줄 되돌림 방지).
