@@ -15,8 +15,9 @@ const COMMON_LINES = [
 
 const PERIOD_LABEL: Record<Exclude<ChartCriteriaTab, 'top100'>, string> = {
   daily: '오늘(0시부터)',
-  weekly: '이번 주(월요일 0시부터)',
-  monthly: '이번 달(1일 0시부터)',
+  // v3.378 (대표 10-19): 주간·월간 = 최근 7일·30일(오늘 포함) — 서버 _period_start_kst 와 1:1
+  weekly: '최근 7일(오늘 포함) 동안',
+  monthly: '최근 30일(오늘 포함) 동안',
 };
 
 export function chartCriteriaText(tab: ChartCriteriaTab): { title: string; message: string } {
