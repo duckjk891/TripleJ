@@ -4731,3 +4731,18 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - 서버(routes/charts.py `_period_start_kst`): weekly=오늘 0시−6일, monthly=오늘 0시−29일(오늘 포함, 날짜 경계 — 재생수가 계정·곡·KST 날짜 단위이고 비로그인 기록도 day 단위). 일간(오늘 0시부터)·TOP100(누적)·집계 규칙은 그대로.
 - 앱(utils/chartCriteria.ts): 차트 기준 안내 "최근 7일(오늘 포함) 동안 / 최근 30일(오늘 포함) 동안 모인 재생으로 순위를 정해요."
 - 검증: 실DB 격리 테스트 7/7(기간 시작점·1일에도 초기화 없음·주간 합계 63→765·곡별 주간≥일간), 배포(md5 가드·백업 pre-v3378·진행 0건): health ok·oauth 3종 302·Traceback 0, 배포 후 주간 1위 「대머리 김부장」 16회(일간 1위 3회와 다름). tsc 0.
+
+## v3.379 — 2026-10-19 — 관리자 주소 이전(admin.maidol.ai.kr) + 광고주 사이트(business.maidol.ai.kr) (서버 + 관리자 웹 + 새 웹)
+대표(10-19): 관리자 주소를 admin.maidol.ai.kr 로, business.maidol.ai.kr 은 '소개 + 광고주 전용 관리 화면'(2번안). 호스팅 = EC2(관리자 웹과 같은 방식, 추천안 채택). 계정 = 관리자 웹 발급 + 임시 비밀번호(첫 로그인 변경), 문의 = 양식 → 관리자 웹, Cloudflare Access = 2단계, '입힌 아티스트' 표 노출.
+- 계획·시안: claude_skills_outputs/business_portal/plan_mockup.html (대표 확인 후 구현).
+- 서버(routes/business.py·admin_ads.py, 스테이징 server_staging_v3379biz, md5 가드·.bak_pre_v3379·이미지 pre-v3379-live):
+  - 기간 = KST '오늘/최근 7일/최근 30일'(종전 UTC 0시·월요일/1일 초기화 — 차트 v3.378 과 같은 문제), chart_data 는 KST 일별(7/30점, 날짜별 60회 집계 → 묶음 2회).
+  - 대시보드 500개 상한 제거(브랜드샵 8,185개 중 500개만 합산되던 문제) — 합계는 전체, 상품 표는 성과 순 상위 500 + item_total.
+  - GET /ads 쪽 나누기·검색·상태(page 없으면 종전 동작 그대로), GET /ads/item/{id}(※ /ads/{id} 로 두면 공개 /ads/active·/ads/catalog 를 가로챔).
+  - 신규: POST /session/refresh, POST /password(앱 /auth/me/password 규칙 재사용 + 임시 표식 해제), POST /inquiries(무인증, IP 해시 1시간 5건, 봇 함정 칸, 1년 TTL), 관리자 POST /admin/ads/advertisers(계정 발급·임시 비밀번호 1회 응답)·/{id}/reset-password(세션 끊음)·GET/PATCH /admin/ads/inquiries.
+  - 임시 비밀번호 표식(business_profiles.must_change_password + 해시 지문 temp_pw_fp) — 이메일 코드 재설정으로 바뀌면 지문 불일치로 자동 해제. PUT /profile 첫 저장 NameError 수정.
+- 관리자 웹(워크트리 claude/distracted-jennings-dc69d7, e6716df4 push): '광고주 계정 만들기'·'임시 비밀번호 다시 발급'(한 번만 표시·안내문 복사), 메뉴 '광고 문의'(배지·메모·처리 완료), 관리 기록 라벨. deploy_admin.sh 재기동 명령을 정식(-e S3_REGION·로그 볼륨·진행 작업 0건 확인)으로 교체.
+- 광고주 사이트(같은 브랜치 0_platform_music/business_web): 소개·문의 양식, 로그인(일반 계정 거절·비밀번호 재설정 코드), 대시보드, 내 상품(검색·카테고리·상태·쪽·노출 스위치·등록/수정/삭제, 운영 숨김 잠금), 상품별 성과, 회사 정보, 비밀번호. MAIDOL 보라 톤, 사이트 안 다이얼로그만, 오류 원문 비노출, 금액 비노출. 배포 deploy_business.sh → EC2 /var/www/maidol-business(재시작 없음, rollback 가능).
+- 검증: 모의 서버로 전 화면(PC·휴대폰 375px, 가로 넘침 0). 운영 DB 격리 테스트 — 읽기 58/58(경로 매핑·KST·브랜드샵/무신사 대시보드 합계 = 직접 집계·목록), 쓰기 46/46(대표 승인: 계정 발급→임시 비번 로그인→변경→재발급·세션 끊김·지문 해제·상품 CRUD·문의 5건 후 429·관리자 처리) 후 테스트 데이터 전부 삭제(계정·상품·S3·문의·감사 로그·세션·rate 키·dau).
+- 배포(14:35 KST, 진행 작업 0건): health ok, oauth 3종 302, Traceback 0, 공개 /ads/active 200·새 경로 무인증 401, /admin 새 번들. (재기동 전 docker logs 저장은 logs 폴더 권한으로 실패 — 앱 로그 파일은 볼륨에 그대로)
+- 남은 일: 대표 Cloudflare DNS(A admin·business → 3.37.146.1, 회색 구름) → nginx maidol-admin·maidol-business 추가 + certbot → 확인 후 api.maidol.ai.kr/admin 301. 설정 초안 server_staging_v3379biz/nginx/.
