@@ -219,9 +219,6 @@ function AdvertisersView() {
   const [q, setQ] = useState('');
   const [days, setDays] = useState('30');
   const [selected, setSelected] = useState(null);
-  const [creating, setCreating] = useState(false);
-  const [tempInfo, setTempInfo] = useState(null);
-
   const fetchList = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -265,15 +262,7 @@ function AdvertisersView() {
               onClick={() => setDays(o.value)}>{o.label}</button>
           ))}
         </div>
-        <button className="btn btn--primary" onClick={() => setCreating(true)}>+ 광고주 계정 만들기</button>
       </div>
-      {creating && (
-        <CreateAdvertiserModal
-          onClose={() => setCreating(false)}
-          onCreated={(info) => { setCreating(false); setTempInfo({ ...info, title: `${info.company_name} 광고주 계정을 만들었어요` }); fetchList(); }}
-        />
-      )}
-      {tempInfo && <TempPasswordModal info={tempInfo} onClose={() => setTempInfo(null)} />}
 
       {error && <p className="error-msg">{error}</p>}
       {loading ? <p className="loading">로딩 중…</p> : (
@@ -608,16 +597,35 @@ function BrandsView() {
 
 export default function BrandsPage() {
   const [tab, setTab] = useState('brands');
+  // v3.379 — '광고주 계정 만들기'는 어느 탭에서든 보이게 머리글에 둔다(두 번째 탭에만 있어 찾지 못함, 10-19).
+  const [creating, setCreating] = useState(false);
+  const [tempInfo, setTempInfo] = useState(null);
+  const [listKey, setListKey] = useState(0);
   return (
     <div>
-      <h2 className="page-title">브랜드 / 광고주</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+        <h2 className="page-title" style={{ margin: 0 }}>브랜드 / 광고주</h2>
+        <button className="btn btn--primary" onClick={() => setCreating(true)}>+ 광고주 계정 만들기</button>
+      </div>
       <div className="filters">
         <div className="filter-group">
           <button className={`filter-btn ${tab === 'brands' ? 'active' : ''}`} onClick={() => setTab('brands')}>브랜드별</button>
           <button className={`filter-btn ${tab === 'advertisers' ? 'active' : ''}`} onClick={() => setTab('advertisers')}>광고주 계정별</button>
         </div>
       </div>
-      {tab === 'brands' ? <BrandsView /> : <AdvertisersView />}
+      {tab === 'brands' ? <BrandsView /> : <AdvertisersView key={listKey} />}
+      {creating && (
+        <CreateAdvertiserModal
+          onClose={() => setCreating(false)}
+          onCreated={(info) => {
+            setCreating(false);
+            setTempInfo({ ...info, title: `${info.company_name} 광고주 계정을 만들었어요` });
+            setTab('advertisers');
+            setListKey((k) => k + 1);
+          }}
+        />
+      )}
+      {tempInfo && <TempPasswordModal info={tempInfo} onClose={() => setTempInfo(null)} />}
     </div>
   );
 }
