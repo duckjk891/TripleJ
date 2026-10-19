@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   getAdvertisers, getAdvertiser, setItemHidden,
   getBrands, setBrandHidden, renameBrand, getItems,
+  createAdvertiser, resetAdvertiserPassword,
 } from '../api';
 import AuthImage from '../components/AuthImage';
 import { appPrompt, appAlert, appConfirm } from '../components/dialog';
@@ -13,9 +14,78 @@ const DAYS_OPTS = [
   { value: '90', label: '90일' },
 ];
 
+const BUSINESS_URL = 'https://business.maidol.ai.kr';
+
+// v3.379 — 임시 비밀번호는 이 창에서 한 번만 보여 준다(서버에 원문 저장 안 함). 관리자가 담당자에게 전달.
+function TempPasswordModal({ info, onClose }) {
+  const [copied, setCopied] = useState('');
+  const text = `MAIDOL 광고주 사이트 계정 안내\n주소: ${BUSINESS_URL}\n아이디(이메일): ${info.email}\n임시 비밀번호: ${info.temp_password}\n처음 로그인하면 새 비밀번호를 정하는 화면이 나옵니다.`;
+  const copy = async (val, label) => {
+    try { await navigator.clipboard.writeText(val); setCopied(label); } catch { setCopied('fail'); }
+  };
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal__title">{info.title}</h3>
+        <p className="cell-sub" style={{ marginBottom: 12 }}>임시 비밀번호는 <b>지금 한 번만</b> 보입니다. 창을 닫기 전에 복사해 담당자에게 전달해 주세요.</p>
+        <table style={{ width: '100%', marginBottom: 12 }}>
+          <tbody>
+            <tr><td className="cell-sub" style={{ width: 110 }}>광고주 사이트</td><td>{BUSINESS_URL}</td></tr>
+            <tr><td className="cell-sub">아이디(이메일)</td><td>{info.email}</td></tr>
+            <tr><td className="cell-sub">임시 비밀번호</td><td><code style={{ fontSize: '1.05rem', letterSpacing: '.04em' }}>{info.temp_password}</code></td></tr>
+          </tbody>
+        </table>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn--sm" onClick={() => copy(info.temp_password, 'pw')}>비밀번호만 복사</button>
+          <button className="btn btn--sm" onClick={() => copy(text, 'all')}>안내문 전체 복사</button>
+          {copied && <span className="cell-sub" style={{ alignSelf: 'center' }}>{copied === 'fail' ? '복사하지 못했어요. 직접 선택해 복사해 주세요.' : '복사했어요.'}</span>}
+        </div>
+        <div className="modal__footer"><button className="btn btn--primary" onClick={onClose}>전달했어요, 닫기</button></div>
+      </div>
+    </div>
+  );
+}
+
+function CreateAdvertiserModal({ onClose, onCreated }) {
+  const [f, setF] = useState({ company_name: '', email: '', contact_name: '', contact_phone: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!f.company_name.trim() || !f.email.trim()) { setError('회사명과 담당자 이메일은 꼭 넣어 주세요.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      const res = await createAdvertiser(f);
+      onCreated(res.data);
+    } catch (err) {
+      setError(err.response?.data?.error || '광고주 계정을 만들지 못했습니다.');
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="modal-overlay" onClick={() => !busy && onClose()}>
+      <form className="modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <h3 className="modal__title">광고주 계정 만들기</h3>
+        <p className="cell-sub" style={{ marginBottom: 12 }}>광고주 사이트({BUSINESS_URL})에 로그인할 계정을 만듭니다. 만들면 임시 비밀번호가 한 번 보이고, 광고주는 첫 로그인 때 새 비밀번호를 정합니다.</p>
+        <div className="form-row"><label>회사(브랜드)명 *</label><input className="input" value={f.company_name} onChange={set('company_name')} maxLength={50} autoFocus /></div>
+        <div className="form-row"><label>담당자 이메일 (로그인 아이디) *</label><input className="input" type="email" value={f.email} onChange={set('email')} maxLength={120} /></div>
+        <div className="form-row"><label>담당자 이름</label><input className="input" value={f.contact_name} onChange={set('contact_name')} maxLength={50} /></div>
+        <div className="form-row"><label>담당자 연락처</label><input className="input" value={f.contact_phone} onChange={set('contact_phone')} maxLength={40} /></div>
+        {error && <p className="error-msg">{error}</p>}
+        <div className="modal__footer">
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>취소</button>
+          <button type="submit" className="btn btn--primary" disabled={busy}>{busy ? '만드는 중…' : '계정 만들기'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AdvertiserDetail({ userId, days, onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [tempInfo, setTempInfo] = useState(null);
 
   const fetchDetail = useCallback(() => {
     getAdvertiser(userId, { days })
@@ -36,6 +106,18 @@ function AdvertiserDetail({ userId, days, onBack }) {
       fetchDetail();
     } catch (err) {
       await appAlert(err.response?.data?.error || '숨김 설정에 실패했습니다.');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const a = data?.advertiser || {};
+    const ok = await appConfirm(`${data?.profile?.company_name || a.nickname} 계정의 임시 비밀번호를 새로 발급할까요?\n지금 로그인된 광고주 사이트는 로그아웃되고, 새 임시 비밀번호로 다시 로그인해야 합니다.`);
+    if (!ok) return;
+    try {
+      const res = await resetAdvertiserPassword(userId);
+      setTempInfo({ ...res.data, title: '임시 비밀번호를 새로 발급했어요' });
+    } catch (err) {
+      await appAlert(err.response?.data?.error || '임시 비밀번호를 발급하지 못했습니다.');
     }
   };
 
@@ -69,7 +151,14 @@ function AdvertiserDetail({ userId, days, onBack }) {
           </tbody>
         </table>
         {!p && <p className="cell-sub" style={{ marginTop: 8 }}>비즈니스 프로필 미등록 계정입니다.</p>}
+        {a.role === 'customer' && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
+            <button className="btn btn--sm" onClick={handleResetPassword}>임시 비밀번호 다시 발급</button>
+            <span className="cell-sub">광고주 사이트: <a href={BUSINESS_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>{BUSINESS_URL.replace('https://', '')}</a></span>
+          </div>
+        )}
       </div>
+      {tempInfo && <TempPasswordModal info={tempInfo} onClose={() => setTempInfo(null)} />}
 
       <div className="stats-grid">
         <div className="stat-card"><span className="stat-label">착장 선택 (노출, {data.days}일)</span><span className="stat-value">{(s.impressions ?? 0).toLocaleString()}</span></div>
@@ -130,6 +219,8 @@ function AdvertisersView() {
   const [q, setQ] = useState('');
   const [days, setDays] = useState('30');
   const [selected, setSelected] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [tempInfo, setTempInfo] = useState(null);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -174,7 +265,15 @@ function AdvertisersView() {
               onClick={() => setDays(o.value)}>{o.label}</button>
           ))}
         </div>
+        <button className="btn btn--primary" onClick={() => setCreating(true)}>+ 광고주 계정 만들기</button>
       </div>
+      {creating && (
+        <CreateAdvertiserModal
+          onClose={() => setCreating(false)}
+          onCreated={(info) => { setCreating(false); setTempInfo({ ...info, title: `${info.company_name} 광고주 계정을 만들었어요` }); fetchList(); }}
+        />
+      )}
+      {tempInfo && <TempPasswordModal info={tempInfo} onClose={() => setTempInfo(null)} />}
 
       {error && <p className="error-msg">{error}</p>}
       {loading ? <p className="loading">로딩 중…</p> : (

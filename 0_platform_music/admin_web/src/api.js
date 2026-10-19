@@ -173,6 +173,11 @@ export const fetchMediaBlob = (objectName) =>
 // ---- advertisers (브랜드/광고주) ----
 export const getAdvertisers = (params) => API.get('/admin/ads/advertisers', { params });
 export const getAdvertiser = (userId, params) => API.get(`/admin/ads/advertisers/${userId}`, { params });
+// v3.379 광고주 사이트(business.maidol.ai.kr) — 계정 발급·임시 비밀번호 재발급, 입점·광고 문의
+export const createAdvertiser = (body) => API.post('/admin/ads/advertisers', body);
+export const resetAdvertiserPassword = (userId) => API.post(`/admin/ads/advertisers/${userId}/reset-password`);
+export const getInquiries = (params) => API.get('/admin/ads/inquiries', { params });
+export const updateInquiry = (id, body) => API.patch(`/admin/ads/inquiries/${id}`, body);
 
 export const getBrands = (params) => API.get('/admin/items/brands', { params });
 export const setBrandHidden = (brand, hidden, reason) =>

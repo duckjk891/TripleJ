@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth';
-import { getCsUnreadCount, getReports, getIssueSummary } from '../api';
+import { getCsUnreadCount, getReports, getIssueSummary, getInquiries } from '../api';
 
 const MENU = [
   { group: '현황' },
@@ -13,6 +13,7 @@ const MENU = [
   { to: '/feeds', label: '피드', icon: '📝' },
   { to: '/reports', label: '신고 처리', icon: '🚨', badge: 'reports' },
   { to: '/issues', label: '오류 신고', icon: '🐞', badge: 'issues' },
+  { to: '/inquiries', label: '광고 문의', icon: '📮', badge: 'inquiries' },
   { group: '운영' },
   { to: '/tracks', label: '곡 관리', icon: '🎵' },
   { to: '/age-ratings', label: '연령 등급', icon: '🔞' },
@@ -29,7 +30,7 @@ export default function Layout({ children }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [badges, setBadges] = useState({ cs: 0, reports: 0, issues: 0 });
+  const [badges, setBadges] = useState({ cs: 0, reports: 0, issues: 0, inquiries: 0 });
   const [navOpen, setNavOpen] = useState(false);
 
   // 사이드바 배지 (1분 폴링) — 미읽음 문의 · 대기 신고 · 미처리 오류 신고
@@ -40,6 +41,7 @@ export default function Layout({ children }) {
       getCsUnreadCount().then((r) => set('cs', r.data.count || 0)).catch(() => {});
       getReports({ status: 'pending', limit: 1 }).then((r) => set('reports', r.data.pagination?.total || 0)).catch(() => {});
       getIssueSummary().then((r) => set('issues', r.data.received || 0)).catch(() => {});
+      getInquiries({ status: 'new', limit: 1 }).then((r) => set('inquiries', r.data.new_count || 0)).catch(() => {});
     };
     tick();
     const t = setInterval(tick, 60000);
@@ -59,7 +61,7 @@ export default function Layout({ children }) {
   };
 
   const current = MENU.find((m) => m.to && (m.end ? location.pathname === m.to : location.pathname.startsWith(m.to)));
-  const totalBadge = badges.cs + badges.reports + badges.issues;
+  const totalBadge = badges.cs + badges.reports + badges.issues + badges.inquiries;
 
   return (
     <div className={`layout ${navOpen ? 'nav-open' : ''}`}>

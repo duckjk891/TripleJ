@@ -100,8 +100,13 @@ open(p, 'w').write(src)
 print('patched' if changed else 'already patched')
 EOF"
 
-echo "== 4/5 docker build + 컨테이너 교체"
-ssh $HOST "cd $REMOTE && nice -n 19 docker build -t maidol-app:latest . && docker stop maidol-app && docker rm maidol-app && docker run -d --name maidol-app --network host --restart unless-stopped --env-file $REMOTE/.env maidol-app:latest"
+echo "== 4/5 docker build + 진행 중 작업 확인 + 컨테이너 교체"
+# v3.379: 정식 재기동 명령(-e S3_REGION·로그 볼륨)과 진행 중 작업 0건 확인(/tmp/inflight.py) — 구 명령은 로그가 컨테이너 안에만 쌓였다.
+TAG=pre-admin-$(date -u +%Y%m%dT%H%M%SZ)
+ssh $HOST "sudo docker tag maidol-app:latest maidol-app:$TAG && cd $REMOTE && sudo nice -n 19 docker build -q -t maidol-app:latest ."
+ssh $HOST "sudo docker cp /tmp/inflight.py maidol-app:/tmp/inflight.py && sudo docker exec -w /srv/app -e PYTHONPATH=/srv/app maidol-app python /tmp/inflight.py" | tee /tmp/admin_inflight.txt
+grep -q "TOTAL 0" /tmp/admin_inflight.txt || { echo "!! 진행 중 작업이 있어 재기동 중단 — 잠시 뒤 다시 실행하세요"; exit 1; }
+ssh $HOST "sudo docker logs maidol-app 2>&1 | sudo tee /home/ubuntu/maidol/logs/maidol-app_$TAG.log >/dev/null; sudo docker stop -t 60 maidol-app && sudo docker rm maidol-app && cd $REMOTE && sudo docker run -d --name maidol-app --network host --restart unless-stopped --env-file .env -e S3_REGION=ap-northeast-2 -v /home/ubuntu/maidol/logs:/srv/app/logs maidol-app:latest"
 
 echo "== 5/5 헬스 체크"
 for i in $(seq 1 30); do

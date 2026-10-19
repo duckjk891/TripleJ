@@ -14,10 +14,12 @@ const ACTIONS = {
   official_feed_create: '공식 피드 작성', official_feed_delete: '공식 피드 삭제',
   official_comment: '공식 댓글 작성', official_comment_delete: '공식 댓글 삭제',
   items_import: '착장 CSV 가져오기', item_update: '착장 수정', item_delete: '착장 삭제',
+  ads_admin_hide: '광고 상품 숨김', ads_admin_unhide: '광고 상품 숨김 해제',
+  ads_advertiser_create: '광고주 계정 발급', ads_advertiser_reset_password: '광고주 임시 비밀번호 재발급', ads_inquiry_update: '광고 문의 처리',
 };
 const TARGETS = {
   user: '사용자', track: '곡', feed: '피드', comment: '피드 댓글', track_comment: '곡 댓글', dm_message: 'DM 메시지',
-  club: '크루', club_post: '크루 글', club_member: '크루 멤버', club_message: '크루 채팅', issue: '오류 신고', report: '신고',
+  ad_item: '광고 상품', business_inquiry: '광고 문의', club: '크루', club_post: '크루 글', club_member: '크루 멤버', club_message: '크루 채팅', issue: '오류 신고', report: '신고',
 };
 
 export default function LogsPage() {

@@ -18,6 +18,7 @@ import MessagesPage from './pages/Messages';
 import FeedsPage from './pages/Feeds';
 import IssuesPage from './pages/Issues';
 import LogsPage from './pages/Logs';
+import InquiriesPage from './pages/Inquiries';
 
 function Protected({ children }) {
   const { isAuthed } = useAuth();
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/feeds" element={<Protected><FeedsPage /></Protected>} />
           <Route path="/issues" element={<Protected><IssuesPage /></Protected>} />
           <Route path="/logs" element={<Protected><LogsPage /></Protected>} />
+          <Route path="/inquiries" element={<Protected><InquiriesPage /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>
