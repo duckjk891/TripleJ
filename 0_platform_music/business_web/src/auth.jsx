@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { getToken, getStoredUser, saveAuth, clearAuth, getTokenIssuedAt, refreshSession } from './api';
+import { isDemo, enterDemo, exitDemo, DEMO_USER } from './demo/demoApi';
 
 const AuthContext = createContext(null);
 
@@ -9,7 +10,8 @@ const CHECK_EVERY_MS = 6 * 3600 * 1000;
 export const BUSINESS_ROLES = ['customer', 'admin'];
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(getStoredUser());
+  const [demo, setDemo] = useState(isDemo());
+  const [user, setUser] = useState(isDemo() ? DEMO_USER : getStoredUser());
   // 임시 비밀번호 계정 — 새 비밀번호를 정하기 전에는 다른 화면으로 가지 않는다(GET /profile 로 판정).
   const [mustChange, setMustChange] = useState(false);
 
@@ -18,14 +20,18 @@ export function AuthProvider({ children }) {
     setUser(userInfo);
   };
   const signOut = () => {
+    if (demo) { exitDemo(); setDemo(false); setUser(getStoredUser()); return; }
     clearAuth();
     setUser(null);
     setMustChange(false);
   };
-  const isAuthed = Boolean(getToken() && user && BUSINESS_ROLES.includes(user.role));
+  // 예시 화면 들어가기/나가기 — 로그인 정보는 건드리지 않는다(나가면 원래 상태로)
+  const startDemo = () => { enterDemo(); setDemo(true); setUser(DEMO_USER); setMustChange(false); };
+  const endDemo = () => { exitDemo(); setDemo(false); setUser(getStoredUser()); };
+  const isAuthed = demo || Boolean(getToken() && user && BUSINESS_ROLES.includes(user.role));
 
   useEffect(() => {
-    if (!isAuthed) return undefined;
+    if (!isAuthed || demo) return undefined;
     let alive = true;
     const maybeRefresh = () => {
       if (!getToken() || Date.now() - getTokenIssuedAt() < REFRESH_AFTER_MS) return;
@@ -42,10 +48,10 @@ export function AuthProvider({ children }) {
     const onVisible = () => { if (document.visibilityState === 'visible') maybeRefresh(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { alive = false; clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
-  }, [isAuthed]);
+  }, [isAuthed, demo]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthed, signIn, signOut, mustChange, setMustChange }}>
+    <AuthContext.Provider value={{ user, isAuthed, signIn, signOut, mustChange, setMustChange, demo, startDemo, endDemo }}>
       {children}
     </AuthContext.Provider>
   );

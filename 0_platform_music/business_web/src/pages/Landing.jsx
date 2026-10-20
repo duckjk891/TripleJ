@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Brand from '../components/Brand';
 import { appAlert } from '../components/dialog';
 import { sendInquiry, friendlyError } from '../api';
@@ -21,7 +21,10 @@ const CAN = [
 ];
 
 export default function Landing() {
-  const { isAuthed } = useAuth();
+  const { isAuthed, demo, startDemo } = useAuth();
+  const nav = useNavigate();
+  const realAuthed = isAuthed && !demo;
+  const openDemo = () => { startDemo(); nav('/dashboard'); };
   const [f, setF] = useState(EMPTY);
   const [sending, setSending] = useState(false);
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
@@ -54,7 +57,8 @@ export default function Landing() {
           <a href="#/" aria-label="MAIDOL Business 처음으로"><Brand /></a>
           <div className="lnav__act">
             <button className="btn btn--ghost btn--sm hide-sm" onClick={goContact}>광고 문의</button>
-            <Link className="btn btn--primary btn--sm" to={isAuthed ? '/dashboard' : '/login'}>{isAuthed ? '광고주 화면' : '광고주 로그인'}</Link>
+            <button className="btn btn--ghost btn--sm hide-sm" onClick={openDemo}>예시 화면</button>
+            <Link className="btn btn--primary btn--sm" to={realAuthed ? '/dashboard' : '/login'}>{realAuthed ? '광고주 화면' : '광고주 로그인'}</Link>
           </div>
         </div>
       </header>
@@ -67,8 +71,9 @@ export default function Landing() {
             <p>MAIDOL 사용자는 자기 AI 아티스트에게 옷을 입혀 곡 커버와 뮤직비디오를 만듭니다. 브랜드 상품이 그 착장 목록에 들어가고, 곡과 함께 퍼집니다.</p>
             <div className="row">
               <button className="btn btn--primary btn--lg" onClick={goContact}>입점·광고 문의하기</button>
-              <Link className="btn btn--lg" to={isAuthed ? '/dashboard' : '/login'}>광고주 로그인</Link>
+              <button className="btn btn--lg" onClick={openDemo}>예시 화면 둘러보기</button>
             </div>
+            <p className="hero__hint">로그인 없이 광고주 화면(대시보드·상품·성과)을 예시 데이터로 미리 볼 수 있어요. 이미 계정이 있다면 <Link to={realAuthed ? '/dashboard' : '/login'}>광고주 로그인</Link>.</p>
           </div>
           <div className="hero__visual" aria-hidden="true">
             {/* 화면 배율별로 미리 줄인 사진 — 브라우저가 3배 넘게 줄이면 사진 속 작은 글자가 뭉개졌다(v3.381) */}

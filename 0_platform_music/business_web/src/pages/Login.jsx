@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Brand from '../components/Brand';
 import { appAlert } from '../components/dialog';
@@ -6,7 +6,7 @@ import { useAuth, BUSINESS_ROLES } from '../auth';
 import { login, getProfile, getRemember, saveAuth, clearAuth, requestReset, confirmReset, friendlyError } from '../api';
 
 export default function Login() {
-  const { isAuthed, signIn, setMustChange } = useAuth();
+  const { isAuthed, signIn, setMustChange, demo, endDemo, startDemo } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const [email, setEmail] = useState('');
@@ -17,7 +17,9 @@ export default function Login() {
   const [resetOpen, setResetOpen] = useState(false);
   const expired = loc.search.includes('expired=1');
 
-  if (isAuthed) return <Navigate to="/dashboard" replace />;
+  // 예시 화면을 보다 로그인 화면으로 오면 예시를 끝내고 진짜 로그인을 받는다
+  useEffect(() => { if (demo) endDemo(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (isAuthed && !demo) return <Navigate to="/dashboard" replace />;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -63,7 +65,7 @@ export default function Login() {
           <label className="check check--sm"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /><span>로그인 상태 유지</span></label>
           <button type="button" className="linkbtn" onClick={() => setResetOpen(true)}>비밀번호를 잊으셨나요?</button>
         </div>
-        <div className="login__foot">계정이 없으신가요? <Link to="/" onClick={() => setTimeout(() => document.getElementById('contact')?.scrollIntoView(), 50)}>입점 문의 남기기</Link></div>
+        <div className="login__foot">계정이 없으신가요? <Link to="/" onClick={() => setTimeout(() => document.getElementById('contact')?.scrollIntoView(), 50)}>입점 문의 남기기</Link> · <button type="button" className="linkbtn" onClick={() => { startDemo(); nav('/dashboard'); }}>예시 화면 둘러보기</button></div>
       </form>
       {resetOpen && <ResetDialog initialEmail={email} onClose={() => setResetOpen(false)} />}
     </div>

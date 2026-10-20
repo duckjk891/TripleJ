@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { isDemo, demoAdapter, DEMO_PASSTHROUGH } from './demo/demoApi';
 
 // MAIDOL 광고주 사이트 API — 같은 주소(business.maidol.ai.kr)의 /api 를 nginx 가 서버로 넘긴다.
 // 이 주소에서는 /api/business/*, /api/auth/login, /api/auth/password-reset/* 만 열려 있다.
@@ -44,6 +45,11 @@ export const saveAuth = (token, user, remember = getRemember()) => {
 const API = axios.create({ baseURL: '/api', timeout: 60000 });
 
 API.interceptors.request.use((config) => {
+  // 예시 화면(로그인 없이 둘러보기): 서버 대신 브라우저 안의 예시 데이터(demo/demoApi.js). 입점 문의·로그인은 실제 서버로.
+  if (isDemo() && !DEMO_PASSTHROUGH.some((p) => String(config.url || '').startsWith(p))) {
+    config.adapter = demoAdapter;
+    return config;
+  }
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -133,9 +139,12 @@ export const getBrandInsights = (period, category) => API.get('/business/insight
 export const sendInquiry = (body) => API.post('/business/inquiries', body);
 
 // 상품 이미지 — 공개 이미지 프록시(ads/ 아래만). 목록에는 320px 썸네일을 먼저 쓴다(v3.375).
-export const imageUrl = (obj) => (obj && obj.startsWith('ads/') ? `/api/business/items/image/${obj}` : null);
+export const imageUrl = (obj) => {
+  if (obj && obj.startsWith('data:image/')) return obj; // 예시 화면 그림 상품
+  return obj && obj.startsWith('ads/') ? `/api/business/items/image/${obj}` : null;
+};
 export const thumbUrl = (obj) => {
-  if (!obj || !obj.startsWith('ads/') || obj.startsWith('ads/thumb320/')) return imageUrl(obj);
+  if (!obj || !obj.startsWith('ads/') || obj.startsWith('ads/thumb320/')) return imageUrl(obj); // data: 는 imageUrl 이 그대로
   const rest = obj.slice(4);
   const dot = rest.lastIndexOf('.');
   return `/api/business/items/image/ads/thumb320/${dot > 0 ? rest.slice(0, dot) : rest}.jpg`;

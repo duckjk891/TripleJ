@@ -383,3 +383,11 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .cell-star small { display: block; color: var(--ink-mute); font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .tbl--stars th, .tbl--stars td { padding-left: 6px; padding-right: 6px; }
 .grid2--panels { align-items: start; }
+
+/* ---------- 예시 화면(로그인 없이 둘러보기) ---------- */
+.hero .hero__hint { font-size: 13px; color: var(--ink-mute); margin: 14px 0 0; }
+.hero__hint a { color: var(--violet-soft); }
+.demo-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap; background: linear-gradient(90deg, rgba(251, 191, 36, .14), rgba(139, 92, 246, .14)); border: 1px solid rgba(251, 191, 36, .4); border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; position: sticky; top: 0; z-index: 15; backdrop-filter: blur(8px); }
+.demo-bar b { color: var(--gold); }
+.demo-bar__act { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 860px) { .demo-bar { top: 56px; } }

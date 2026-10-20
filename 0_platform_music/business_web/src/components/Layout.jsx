@@ -19,7 +19,7 @@ const MENU = [
 ];
 
 export default function Layout() {
-  const { user, signOut, mustChange, setMustChange } = useAuth();
+  const { user, signOut, mustChange, setMustChange, demo, endDemo } = useAuth();
   const [profile, setProfile] = useState(null);
   const [open, setOpen] = useState(false);
   const nav = useNavigate();
@@ -38,7 +38,11 @@ export default function Layout() {
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setOpen(false); }, [loc.pathname]);
 
+  const leaveDemo = () => { endDemo(); nav('/', { replace: true }); };
+  const goInquiry = () => { endDemo(); nav('/', { replace: true }); setTimeout(() => document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' }), 80); };
+
   const logout = async () => {
+    if (demo) { leaveDemo(); return; }
     if (await appConfirm('로그아웃할까요?', { okText: '로그아웃' })) {
       signOut();
       nav('/login', { replace: true });
@@ -77,10 +81,19 @@ export default function Layout() {
           </nav>
           <div className="side__foot">
             <a className="side__link" href="#/">MAIDOL Business 소개</a>
-            <button className="side__link side__logout" onClick={logout}>로그아웃</button>
+            <button className="side__link side__logout" onClick={logout}>{demo ? '예시 화면 나가기' : '로그아웃'}</button>
           </div>
         </aside>
         <main className="main">
+          {demo && (
+            <div className="demo-bar" role="note">
+              <span><b>예시 화면</b> · 지금 보시는 숫자와 상품은 모두 지어낸 예시예요. 실제 광고주 화면과 같은 구성이고, 저장은 되지 않아요.</span>
+              <span className="demo-bar__act">
+                <button className="btn btn--primary btn--sm" onClick={goInquiry}>입점 문의하기</button>
+                <button className="btn btn--sm" onClick={leaveDemo}>예시 화면 나가기</button>
+              </span>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>
