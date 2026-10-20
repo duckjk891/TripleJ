@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { importItems, listImportJobs, getImportJob, friendlyError } from '../api';
 import { appConfirm, appAlert, toast } from '../components/dialog';
+import PhotoUpload from '../components/PhotoUpload';
 
 // v3.381 엑셀/CSV 대량 등록 — 양식 받기 → 파일 고르기 → 미리 검사 → 등록(서버가 사진을 받아 저장, 진행률 표시).
 // 서버: POST /api/business/ads/import(dry_run), GET /api/business/ads/import-jobs[/id]
@@ -28,6 +29,8 @@ function downloadTemplate() {
 }
 
 export default function Upload() {
+  // 10-20 피드백: 사진 파일을 가진 브랜드도 올릴 수 있게 '사진 파일과 함께' 방법을 추가(기본)
+  const [method, setMethod] = useState('files');
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState('append');
   const [activate, setActivate] = useState(true);
@@ -117,9 +120,20 @@ export default function Upload() {
       <div className="page__head">
         <div>
           <h1>엑셀로 한꺼번에 등록</h1>
-          <p className="muted">상품이 많으면 양식에 적어 한 번에 올리세요. 사진은 적어 주신 사진 주소에서 MAIDOL이 받아 옵니다.</p>
+          <p className="muted">상품이 많으면 양식에 적어 한 번에 올리세요. 사진은 파일로 함께 올리거나, 사진 주소(인터넷 링크)를 적으면 MAIDOL이 받아 와요.</p>
         </div>
       </div>
+
+      <div className="method-tabs" role="tablist" aria-label="사진 올리는 방법">
+        <button role="tab" aria-selected={method === 'files'} className={method === 'files' ? 'is-on' : ''} onClick={() => setMethod('files')}>
+          <b>사진 파일과 함께 올리기</b><small>사진이 컴퓨터에 파일로 있을 때 · CSV + 사진 폴더</small>
+        </button>
+        <button role="tab" aria-selected={method === 'url'} className={method === 'url' ? 'is-on' : ''} onClick={() => setMethod('url')}>
+          <b>사진 주소로 올리기</b><small>쇼핑몰 사진 링크가 있을 때 · 엑셀/CSV</small>
+        </button>
+      </div>
+
+      {method === 'files' ? <PhotoUpload /> : (<>
 
       {job && (
         <section className="panel">
@@ -222,6 +236,7 @@ export default function Upload() {
           </div>
         </section>
       )}
+      </>)}
     </div>
   );
 }

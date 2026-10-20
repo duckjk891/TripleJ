@@ -150,12 +150,20 @@ function insights(period, cat) {
       { key: '미입력', count: Math.round(reacted * 0.06) },
     ],
     subs: Object.values(subs).sort((a, b) => b.clicks - a.clicks),
-    stars: ARTISTS.map((nickname, i) => ({
-      nickname, worn_count: Math.max(1, Math.round(14 - i * 1.3 + rnd(i) * 2)),
-      click_count: Math.round((60 - i * 5) * mul + 2), wish_count: Math.round((48 - i * 4) * mul + 1),
-      follower_count: Math.round(2400 / (i + 1) + rnd(i * 5) * 80),
-      items: top.slice(i % 5, (i % 5) + 2).map((t) => t.name),
-    })),
+    // 부위·기간에 따라 달라지게(실제 서버처럼 고른 부위 상품만, 입힌 곡은 기간과 무관한 누적)
+    stars: ARTISTS.map((nickname, i) => {
+      const mine = top.filter((t, k) => rnd(k * 13 + i * 7 + 1) < 0.28);
+      if (!mine.length) return null;
+      const share = mine.reduce((sum, t) => sum + t.pop, 0) * (1.15 - i * 0.06);
+      return {
+        nickname,
+        worn_count: Math.max(1, Math.round(share * 3.2 + rnd(i + (cat || '').length) * 2)),
+        click_count: Math.round(share * 26 * mul + rnd(i * 3) * 2),
+        wish_count: Math.round(share * 20 * mul + rnd(i * 5) * 2),
+        follower_count: Math.round(2400 / (i + 1) + rnd(i * 5) * 80),
+        items: mine.slice(0, 2).map((t) => t.name),
+      };
+    }).filter(Boolean).sort((a, b) => b.worn_count - a.worn_count || b.click_count - a.click_count),
   };
 }
 

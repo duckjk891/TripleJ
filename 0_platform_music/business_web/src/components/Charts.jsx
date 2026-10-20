@@ -2,7 +2,8 @@
 // (클릭이 착장 선택보다 훨씬 작아 한 축에 그리면 선이 바닥에 붙기 때문).
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR');
 
-export function TrendChart({ data = [] }) {
+// highlightLast: '오늘'을 고르면 마지막(오늘) 막대만 밝게, 나머지는 흐리게 — 7일 그래프 안에서 오늘이 어디인지 보이게(10-20 피드백).
+export function TrendChart({ data = [], highlightLast = false }) {
   const W = 640; const H = 180; const PADL = 8; const PADR = 8; const PADT = 14; const PADB = 26;
   const n = data.length;
   if (!n) return <div className="empty">아직 기록이 없어요.</div>;
@@ -25,12 +26,16 @@ export function TrendChart({ data = [] }) {
             <stop offset="0" stopColor="#a78bfa" />
             <stop offset="1" stopColor="#6d28d9" stopOpacity=".55" />
           </linearGradient>
+          <linearGradient id="barToday" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#fde68a" />
+            <stop offset="1" stopColor="#f59e0b" stopOpacity=".7" />
+          </linearGradient>
         </defs>
         {[0.25, 0.5, 0.75, 1].map((f) => (
           <line key={f} x1={PADL} x2={W - PADR} y1={PADT + innerH * (1 - f)} y2={PADT + innerH * (1 - f)} className="chart__grid" vectorEffect="non-scaling-stroke" />
         ))}
         {data.map((d, i) => (
-          <rect key={d.label} x={x(i) - bw / 2} y={yI(d.impressions)} width={bw} height={Math.max(0, PADT + innerH - yI(d.impressions))} rx="3" fill="url(#barg)">
+          <rect key={d.label} x={x(i) - bw / 2} y={yI(d.impressions)} width={bw} height={Math.max(0, PADT + innerH - yI(d.impressions))} rx="3" fill={highlightLast && i === n - 1 ? 'url(#barToday)' : 'url(#barg)'} opacity={highlightLast && i !== n - 1 ? 0.35 : 1}>
             <title>{`${d.label} · 착장 선택 ${fmt(d.impressions)} · 클릭 ${fmt(d.clicks)}`}</title>
           </rect>
         ))}
@@ -43,7 +48,11 @@ export function TrendChart({ data = [] }) {
         ))}
       </div>
       <div className="trend__axis" aria-hidden="true">
-        {data.map((d, i) => (i % labelEvery === 0 ? <span key={d.label} style={{ left: `${(x(i) / W) * 100}%` }}>{d.label}</span> : null))}
+        {data.map((d, i) => {
+          const today = highlightLast && i === n - 1;
+          if (!today && i % labelEvery !== 0) return null;
+          return <span key={d.label} className={today ? 'is-today' : ''} style={{ left: `${(x(i) / W) * 100}%` }}>{today ? `오늘 ${d.label}` : d.label}</span>;
+        })}
       </div>
     </div>
   );

@@ -15,20 +15,34 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [show, setShow] = useState(SHOW_STEP);
+  const [itemCat, setItemCat] = useState(''); // 상품별 성과 부위 필터(10-20 피드백) — 표만 거른다(위 합계는 전체)
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError('');
     getDashboard(period)
-      .then((res) => { if (alive) { setData(res.data); setShow(SHOW_STEP); } })
+      .then((res) => { if (alive) { setData({ ...res.data, _period: period }); setShow(SHOW_STEP); } })
       .catch((err) => { if (alive) setError(friendlyError(err, '성과를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [period]);
 
-  const items = data?.items || [];
-  const itemTotal = data?.item_total ?? items.length;
+  const allItems = data?.items || [];
+  const items = itemCat ? allItems.filter((it) => it.category === itemCat) : allItems;
+  const itemTotal = data?.item_total ?? allItems.length;
+  const catCount = (c) => allItems.filter((it) => it.category === c).length;
+  // '오늘'일 때 어제와 비교(추이 그래프의 마지막 두 날)
+  const chart = data?.chart_data || [];
+  // 기간을 바꾼 직후 새 데이터가 오기 전에는 비교하지 않는다(이전 기간 숫자로 잘못된 % 가 잠깐 보였다)
+  const isDaily = data?._period === 'daily';
+  const yesterday = isDaily && chart.length >= 2 ? chart[chart.length - 2] : null;
+  const vsYesterday = (today, prev) => {
+    if (!yesterday) return undefined;
+    if (!prev) return today ? '어제 0' : '어제와 같아요';
+    const d = Math.round(((today - prev) / prev) * 100);
+    return `어제 ${fmt(prev)} · ${d > 0 ? `+${d}` : d}%`;
+  };
 
   return (
     <div className="page">
@@ -43,18 +57,18 @@ export default function Dashboard() {
       {error && <div className="notice notice--err">{error}</div>}
 
       <div className={`kpis ${loading ? 'is-loading' : ''}`}>
-        <Kpi label="착장 선택" value={fmt(data?.total_impressions)} hint="사용자가 착장 목록에서 이 상품을 골라 입혀 본 횟수(같은 사람은 6시간에 1번만 셉니다)." />
-        <Kpi label="상품 페이지 클릭" value={fmt(data?.total_clicks)} hint="곡 화면 등에서 착장을 눌러 상품 페이지로 이동한 횟수." />
+        <Kpi label="착장 선택" value={fmt(data?.total_impressions)} sub={vsYesterday(data?.total_impressions, yesterday?.impressions)} hint="사용자가 착장 목록에서 이 상품을 골라 입혀 본 횟수(같은 사람은 6시간에 1번만 셉니다)." />
+        <Kpi label="상품 페이지 클릭" value={fmt(data?.total_clicks)} sub={vsYesterday(data?.total_clicks, yesterday?.clicks)} hint="곡 화면 등에서 착장을 눌러 상품 페이지로 이동한 횟수." />
         <Kpi label="클릭률" value={`${Number(data?.ctr || 0).toFixed(1)}%`} hint="클릭 ÷ 착장 선택." />
         <Kpi label="담김" value={fmt(data?.total_wishes)} sub="지금 담겨 있는 수" hint="사용자가 '담기'로 저장해 둔 수(기간과 관계없이 현재 기준)." />
       </div>
 
       <section className="panel">
         <div className="panel__head">
-          <h2>{period === 'monthly' ? '최근 30일' : '최근 7일'} 추이</h2>
+          <h2>{period === 'monthly' ? '최근 30일' : '최근 7일'} 추이{isDaily && <span className="muted small"> · 노란 막대가 오늘</span>}</h2>
           <div className="legend"><span><i className="lg-bar" />착장 선택</span><span><i className="lg-line" />클릭</span></div>
         </div>
-        {loading && !data ? <div className="skeleton" style={{ height: 180 }} /> : <TrendChart data={data?.chart_data || []} />}
+        {loading && !data ? <div className="skeleton" style={{ height: 180 }} /> : <TrendChart data={chart} highlightLast={isDaily} />}
       </section>
 
       <BrandInsights period={period} />
@@ -62,10 +76,21 @@ export default function Dashboard() {
       <section className="panel">
         <div className="panel__head">
           <h2>상품별 성과</h2>
-          <span className="muted small">클릭 많은 순 · 상품을 누르면 자세히 볼 수 있어요{itemTotal > items.length ? ` · 상위 ${items.length.toLocaleString()}개` : ''}</span>
+          <span className="muted small">클릭 많은 순 · 상품을 누르면 자세히 볼 수 있어요{itemTotal > allItems.length ? ` · 상위 ${allItems.length.toLocaleString()}개` : ''}</span>
         </div>
+        {allItems.length > 0 && (
+          <div className="chips chips--filter" role="group" aria-label="상품별 성과 부위">
+            {['', ...CATEGORIES].map((c) => {
+              const n = c ? catCount(c) : allItems.length;
+              if (c && !n) return null;
+              return <button key={c || 'all'} className={`chip chip--sm ${itemCat === c ? 'is-on' : ''}`} onClick={() => { setItemCat(c); setShow(SHOW_STEP); }}>{c || '전체'} <span className="chip__n">{n.toLocaleString()}</span></button>;
+            })}
+          </div>
+        )}
         {loading && !data ? (
           <div className="skeleton" style={{ height: 220 }} />
+        ) : allItems.length > 0 && items.length === 0 ? (
+          <div className="empty">이 부위에는 상품이 없어요.</div>
         ) : items.length === 0 ? (
           <div className="empty">
             아직 등록한 상품이 없어요.<br />
@@ -195,7 +220,7 @@ function BrandInsights({ period }) {
         <section className="panel">
           <div className="panel__head">
             <h2>내 옷을 입힌 아티스트</h2>
-            <span className="muted small">공개 곡 기준</span>
+            <span className="muted small" title="입힌 곡은 공개된 곡을 기간과 관계없이 모두 센 수예요. 클릭·담김은 고른 기간 동안 그 아티스트 곡에서 나온 수예요.">{cat ? `${cat} 상품만` : '전체 상품'} · 입힌 곡은 누적</span>
           </div>
           {loading && !ins ? <div className="skeleton" style={{ height: 160 }} /> : stars.length === 0 ? (
             <div className="empty">아직 내 옷을 입힌 공개 곡이 없어요.</div>
@@ -223,15 +248,18 @@ function BrandInsights({ period }) {
       </div>
       <section className={`panel ${loading ? 'is-loading' : ''}`}>
         <div className="panel__head">
-          <h2>세부 종류별 성과</h2>
-          <span className="muted small">이름을 보고 자동으로 나눈 종류예요(앱 착장 목록과 같은 기준)</span>
+          <h2>옷 종류별 성과{cat ? <span className="muted small"> · {cat}</span> : null}</h2>
         </div>
+        <p className="panel__desc">내 상품을 니트·스니커즈처럼 <b>옷 종류</b>로 묶어서, 어떤 종류가 사용자에게 많이 선택되고 클릭됐는지 보여 줘요. 종류는 상품 이름을 보고 MAIDOL이 자동으로 나눠요(앱 착장 목록의 세부 종류와 같아요).</p>
+        {subs.length > 0 && subs[0].clicks + subs[0].impressions > 0 && (
+          <p className="panel__best">가장 반응이 좋은 종류: <b>{subs[0].category} · {subs[0].sub}</b> — 상품 {fmt(subs[0].items)}개, 착장 선택 {fmt(subs[0].impressions)}번, 클릭 {fmt(subs[0].clicks)}번</p>
+        )}
         {loading && !ins ? <div className="skeleton" style={{ height: 140 }} /> : subs.length === 0 ? (
           <div className="empty">아직 등록한 상품이 없어요.</div>
         ) : (
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>종류</th><th className="num">상품</th><th className="num">착장 선택</th><th className="num">클릭</th><th className="num">클릭률</th><th className="num">담김</th></tr></thead>
+              <thead><tr><th>옷 종류</th><th className="num" title="이 종류에 들어가는 내 상품 수">상품 수</th><th className="num" title="사용자가 이 종류 상품을 골라 입혀 본 횟수">착장 선택</th><th className="num" title="상품 페이지로 이동한 횟수">클릭</th><th className="num" title="클릭 ÷ 착장 선택">클릭률</th><th className="num" title="'담기'로 저장한 횟수(고른 기간)">담기</th></tr></thead>
               <tbody>
                 {subs.slice(0, 20).map((r) => (
                   <tr key={`${r.category}-${r.sub}`}>
