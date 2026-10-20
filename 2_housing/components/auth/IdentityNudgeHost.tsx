@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { getIdentityConfig, getOnboardingStatus } from '../../services/identityService';
 import { showAlert } from '../../utils/appAlert';
 import { startIdentityVerify } from '../../utils/identityVerify';
+import { waitModalTurn } from '../../utils/modalTurn';
 
 export const NUDGE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const KEY = (uid: string) => `maidol_identity_nudge_v1:${uid}`;
@@ -25,6 +26,7 @@ export default function IdentityNudgeHost() {
   useEffect(() => {
     if (!uid || verified || kid) return;
     let alive = true;
+    let turn: ReturnType<typeof waitModalTurn> | null = null;
     const t = setTimeout(async () => {
       try {
         const cfg = await getIdentityConfig();
@@ -33,6 +35,10 @@ export default function IdentityNudgeHost() {
         if (!alive || ob?.required) return; // 가입 마무리 화면이 본인확인을 이미 안내
         const raw = await AsyncStorage.getItem(KEY(uid)).catch(() => null);
         if (!alive || !nudgeDue(raw ? Number(raw) : null)) return;
+        // v3.384 [ModalTurn]: 다른 팝업(출석·재동의·ATT 등)이 다 닫힌 뒤 차례로
+        turn = waitModalTurn('identity-nudge', 0);
+        await turn.promise;
+        if (!alive) return;
         if (useAuthStore.getState().user?.id == null || String(useAuthStore.getState().user?.id) !== uid) return;
         AsyncStorage.setItem(KEY(uid), String(Date.now())).catch(() => {});
         console.info('[IdentityNudge] 유도 팝업 노출', { uid: uid.slice(0, 8) });
@@ -48,7 +54,7 @@ export default function IdentityNudgeHost() {
         console.error('[IdentityNudge] 확인 실패', { message: err?.message });
       }
     }, DELAY_MS);
-    return () => { alive = false; clearTimeout(t); };
+    return () => { alive = false; clearTimeout(t); turn?.cancel(); };
   }, [uid, verified, kid]);
 
   return null;

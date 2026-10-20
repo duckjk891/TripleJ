@@ -16,6 +16,8 @@ import { getOnboardingStatus } from '../../services/identityService';
 import { openPolicyPage } from '../../utils/policyLinks';
 import { showAlert } from '../../utils/appAlert';
 import { markPolicyAgreed } from '../../utils/policyConsent';
+import AppDialogHost from '../AppDialogHost';
+import { useModalTurn } from '../../utils/modalTurn';
 
 export const POLICY_EFFECTIVE_DATE = '2026-10-19'; // 공고 10-12 + 7일(외부 연동 세션 게시 확정)
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -66,7 +68,9 @@ export default function PolicyReconsentGate() {
     return () => { alive = false; };
   }, [uid, isChild]);
 
-  if (!visible) return null;
+  // v3.384 [ModalTurn]: 로그인 직후 다른 팝업과 겹치지 않게 차례를 받아 띄운다(iOS 화면 막힘 방지)
+  const shown = useModalTurn('policy-reconsent', visible, 3);
+  if (!shown) return null;
 
   const agree = async () => {
     if (busy) return;
@@ -114,6 +118,7 @@ export default function PolicyReconsentGate() {
           </View>
         </View>
       </View>
+      <AppDialogHost nestedIn="policy-reconsent" />
     </Modal>
   );
 }

@@ -5,9 +5,12 @@ import { colors } from '../../theme/colors';
 import { usePolicyConsentStore } from '../../utils/policyConsent';
 import { openPolicyPage } from '../../utils/policyLinks';
 import { POLICY_CHANGE_LINES, POLICY_EFFECTIVE_DATE } from './PolicyReconsentGate';
+import { useRootModalOpen } from '../../utils/modalTurn';
+import AppDialogHost from '../AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 export default function PolicyConsentHost() {
   const visible = usePolicyConsentStore((s) => s.visible);
+  useRootModalOpen('policy-consent', visible); // v3.384 [ModalTurn]
   const resolve = usePolicyConsentStore((s) => s.resolve);
   const answer = (ok: boolean) => resolve?.(ok);
   return (
@@ -36,6 +39,7 @@ export default function PolicyConsentHost() {
           </View>
         </View>
       </View>
+      <AppDialogHost nestedIn="policy-consent" active={visible} />
     </Modal>
   );
 }

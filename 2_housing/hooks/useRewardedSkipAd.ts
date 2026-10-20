@@ -19,6 +19,7 @@ import { Platform } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
 import { ADMOB_REWARDED_AD_UNIT_ANDROID, ADMOB_REWARDED_AD_UNIT_IOS, ADMOB_TEST_DEVICE_IDS } from '../constants/ads';
 import { isKidsRestrictedUser } from '../utils/kidsRestricted';
+import { isTrackingAsked, markTrackingNotNeeded, requestTrackingOnce, whenTrackingSettled } from '../utils/trackingConsent';
 
 // try-require 게이트 — web 은 metro 에서 빈 모듈, Expo Go 는 require 실패
 // v3.215: 실기기(1.1.4)에서 광고 버튼 미노출 진단 — 실패 사유를 warn 으로 승격(릴리즈 원격 로그 수집 대상).
@@ -78,9 +79,10 @@ export const isRewardedSkipAdReady = (): boolean => !!preloadedAd && preloadedRe
 let childAdConfigApplied = false;
 let childAdConfigPending: Promise<boolean> | null = null;
 let mobileAdsInitPromise: Promise<void> | null = null;
-// v3.332 [ATT]: 추적 허용 요청 1회(앱 실행 단위 — OS 가 응답을 기억하므로 재실행 시에도 팝업은 처음 한 번만)
-let trackingAsked = false;
-let trackingAskPending: Promise<void> | null = null;
+// v3.332 [ATT]: 광고 로드 직전 추적 허용 요청은 이제 예비 경로(v3.384 — 로그인 직후 TrackingPromptHost 가 먼저 묻는다).
+// 이 경로는 실행당 1번만 시도(팝업이 못 떠 undetermined 로 돌아와도 광고 로드를 막지 않게).
+let adPathAttTried = false;
+let adPathAttPending = false;
 
 /** 어린이 요청의 pre-load 재사용 키 — 성인은 기존과 같이 userId 그대로 */
 const preloadKeyFor = (userId: string, child: boolean): string => (child ? `${userId}|child` : userId);
@@ -134,6 +136,7 @@ export function preloadRewardedSkipAd(): void {
   const child = isKidsRestrictedUser(useAuthStore.getState().user);
   const preloadKey = preloadKeyFor(userId, child);
   if (preloadedAd && preloadedForUserId === preloadKey) return; // 로드 중 또는 준비 완료 — 재사용
+  if (child) markTrackingNotNeeded('child_ad'); // v3.384 어린이는 ATT 없이 광고 초기화 진행(비맞춤)
   if (child && !childAdConfigApplied) {
     clearPreload(); // 성인 설정으로 받아 둔 광고 폐기
     if (!childAdConfigPending) {
@@ -144,21 +147,15 @@ export function preloadRewardedSkipAd(): void {
     return;
   }
   // v3.332 [ATT]: iOS 성인 — 첫 광고 로드 전에 추적 허용(ATT) 1회 요청(응답 후 이어서 로드). 어린이는 요청하지 않음(비맞춤 광고만).
-  if (Platform.OS === 'ios' && !child && !trackingAsked) {
-    if (!trackingAskPending) {
-      trackingAskPending = (async () => {
-        try {
-          const att = require('expo-tracking-transparency');
-          const r = await att.requestTrackingPermissionsAsync();
-          console.info('[AdReward] ATT', { status: r?.status });
-        } catch (e) {
-          console.warn('[AdReward] ATT 요청 실패(광고는 비맞춤으로 계속)', { msg: String(e).slice(0, 120) });
-        } finally {
-          trackingAsked = true;
-          trackingAskPending = null;
-        }
-      })();
-      trackingAskPending.then(() => preloadRewardedSkipAd());
+  // v3.384: 보통은 로그인 직후 이미 물었다(isTrackingAsked) — 여기는 그때 못 물은 경우의 예비. 광고 다이얼로그가 떠 있으니 차례 대기 없이.
+  if (Platform.OS === 'ios' && !child && !isTrackingAsked() && !adPathAttTried) {
+    if (!adPathAttPending) {
+      adPathAttPending = true;
+      requestTrackingOnce('ad_preload').finally(() => {
+        adPathAttTried = true;
+        adPathAttPending = false;
+        preloadRewardedSkipAd();
+      });
     }
     return;
   }
@@ -304,8 +301,9 @@ export async function initRewardedAds(): Promise<void> {
   // v3.232 K5: 진행 promise 보관(아동 설정 적용이 init 완료 뒤에 오도록) — 초기화 동작 자체는 현행 그대로
   mobileAdsInitPromise = (async () => {
     try {
-      // v3.332 [ATT]: 추적 허용(ATT) 요청은 앱 시작이 아니라 '로그인한 성인'의 첫 광고 로드 직전으로 이동
-      // (ensureTrackingAsked — preloadRewardedSkipAd). 로그인·연령 확인 전·어린이에게는 팝업이 뜨지 않는다.
+      // v3.384 [ATT]: 광고 SDK 초기화는 추적 허용(ATT) 응답 뒤 — iOS 는 로그인한 성인에게 로그인 직후 묻고(TrackingPromptHost),
+      // 어린이·이미 답한 기기는 묻지 않고 바로 풀린다. 비회원은 광고를 받지 않으므로 로그인 전엔 초기화하지 않는다.
+      await whenTrackingSettled();
       const mobileAds = admob.MobileAds();
       // (아동 설정이 먼저 적용·진행 중이면 덮어쓰지 않음 — 아동 설정에 테스트 기기 포함. 성인 실행은 항상 false)
       if (ADMOB_TEST_DEVICE_IDS.length > 0 && !childAdConfigApplied && !childAdConfigPending) {

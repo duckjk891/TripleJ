@@ -21,9 +21,11 @@ import { consumeIdentityReturn } from '../../utils/identityReturn';
 import { getMyGuardianConsent, requestMyGuardianConsent, type MyGuardianConsent } from '../../services/guardianConsentService';
 import { shareOrCopy } from '../../utils/clubJoin';
 import QrCode from './QrCode';
-import { openAccountMerge } from '../../utils/accountMerge';
+import { openAccountMerge, useAccountMergeStore } from '../../utils/accountMerge';
 import { showAlert } from '../../utils/appAlert';
 import { friendlyErrorMessage } from '../../utils/friendlyError';
+import AppDialogHost from '../AppDialogHost';
+import { useModalTurn } from '../../utils/modalTurn';
 
 /** YYYY-MM-DD 또는 YYYYMMDD → Date(유효한 과거 날짜만) */
 export function parseBirthInput(raw: string): string | null {
@@ -153,7 +155,14 @@ export default function SignupCompleteGate() {
     return () => { alive = false; };
   }, [userId]);
 
-  if (!userId) return null;
+  // v3.384 [ModalTurn]: 로그인 창이 닫히고(닫힘 애니메이션 끝) 다른 팝업이 없을 때 띄운다 — 동시에 띄우면 iOS 에서
+  // 화면이 막힐 수 있다(애플 심사 10-20 iPad). 꼭 떠야 하는 창이라 15초 넘게 막히면 그대로 띄운다.
+  // 계정 통합 화면이 열리면 잠시 내려간다(통합이 끝나면 다시 뜸).
+  const merging = useAccountMergeStore((s) => !!s.rid);
+  const want = !!userId && !merging && ((phase === 'guardian' && !!guardian) || phase === 'under14' || !!status?.required);
+  const shown = useModalTurn('signup-complete', want, 5, 15000);
+
+  if (!userId || !shown) return null;
   if (phase === 'guardian' && guardian) {
     const url = guardian.consent_url;
     const stale = guardian.status === 'rejected' || guardian.status === 'expired' || !url;
@@ -220,6 +229,7 @@ export default function SignupCompleteGate() {
             <AppText variant="footnote" tone="muted">로그아웃</AppText>
           </TouchableOpacity>
         </ScrollView>
+        <AppDialogHost nestedIn="signup-complete" />
       </Modal>
     );
   }
@@ -237,6 +247,7 @@ export default function SignupCompleteGate() {
             </TouchableOpacity>
           </View>
         </View>
+        <AppDialogHost nestedIn="signup-complete" />
       </Modal>
     );
   }
@@ -390,6 +401,7 @@ export default function SignupCompleteGate() {
             </TouchableOpacity>
           </ScrollView>
       </View>
+      <AppDialogHost nestedIn="signup-complete" />
     </Modal>
   );
 }

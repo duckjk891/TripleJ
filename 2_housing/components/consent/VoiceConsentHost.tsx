@@ -5,9 +5,12 @@ import { colors } from '../../theme/colors';
 import { CONSENTS } from '../../constants/consentTexts';
 import { useVoiceConsentStore } from '../../utils/voiceConsent';
 import { openPolicyPage } from '../../utils/policyLinks';
+import { useRootModalOpen } from '../../utils/modalTurn';
+import AppDialogHost from '../AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 export default function VoiceConsentHost() {
   const visible = useVoiceConsentStore((s) => s.visible);
+  useRootModalOpen('voice-consent', visible); // v3.384 [ModalTurn]
   const resolve = useVoiceConsentStore((s) => s.resolve);
   const c = (CONSENTS as any).voice_ai;
   const answer = (ok: boolean) => resolve?.(ok);
@@ -32,6 +35,7 @@ export default function VoiceConsentHost() {
           </View>
         </View>
       </View>
+      <AppDialogHost nestedIn="voice-consent" active={visible} />
     </Modal>
   );
 }

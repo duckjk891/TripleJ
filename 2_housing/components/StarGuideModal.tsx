@@ -14,6 +14,8 @@ import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 import WeeklyMissionCard from './WeeklyMissionCard';
 import StarHistoryPanel from './StarHistoryPanel';
 import { useEarnGuideStore, unseenEarnNewsIds } from '../stores/earnGuideStore';
+import { useRootModalOpen } from '../utils/modalTurn';
+import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
@@ -33,6 +35,7 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
 
 export default function StarGuideModal() {
   const open = useUiStore((s) => s.starGuideOpen);
+  useRootModalOpen('star-guide', open); // v3.384 [ModalTurn]
   const close = useUiStore((s) => s.closeStarGuide);
   const openInvite = useUiStore((s) => s.openInvite);
   const openAttendance = useUiStore((s) => s.openAttendance);
@@ -147,6 +150,7 @@ export default function StarGuideModal() {
           )}
         </TouchableOpacity>
       </TouchableOpacity>
+      <AppDialogHost nestedIn="star-guide" active={open} />
     </Modal>
   );
 }

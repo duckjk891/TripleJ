@@ -13,6 +13,8 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
 import { isBenefitActive } from '../utils/shareMessage';
 import { SHARE_BENEFIT_FALLBACK } from '../constants/shareMessages';
+import { useRootModalOpen } from '../utils/modalTurn';
+import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 // 공유 타깃 라벨 — v3.212: 카카오톡 1종만(네이티브 공유 시트 위임). 링크 복사는 별도 버튼.
 const SHARE_BUTTONS: { key: string; label: string }[] = [
@@ -21,6 +23,7 @@ const SHARE_BUTTONS: { key: string; label: string }[] = [
 
 export default function AppShareModal() {
   const open = useUiStore((s) => s.inviteOpen);
+  useRootModalOpen('app-share', open); // v3.384 [ModalTurn]
   const close = useUiStore((s) => s.closeInvite);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [code, setCode] = useState('');
@@ -118,6 +121,7 @@ export default function AppShareModal() {
           )}
         </TouchableOpacity>
       </TouchableOpacity>
+      <AppDialogHost nestedIn="app-share" active={open} />
     </Modal>
   );
 }

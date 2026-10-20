@@ -66,6 +66,7 @@ import {
   syncTutorialSeenFromServer,
 } from './utils/tutorialGate';
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
+import { waitModalTurn } from './utils/modalTurn'; // v3.384 [ModalTurn]
 import { initNativePush, onNativePushOpened, syncNativePushOnLogin } from './services/pushService';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
@@ -123,6 +124,7 @@ import UpdateGate from './components/UpdateGate'; // v3.324 앱 업데이트 안
 import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333 소셜 가입 마무리(서버 스위치 켜기 전엔 미표시)
 import AccountMergeHost from './components/auth/AccountMergeHost'; // v3.352 1인 1계정 통합 화면
 import IdentityNudgeHost from './components/auth/IdentityNudgeHost'; // v3.352 ⭐ 본인인증 유도
+import TrackingPromptHost from './components/TrackingPromptHost'; // v3.384 [ATT] 로그인 직후 추적 허용 1회
 import { captureWebIdentityReturn } from './utils/identityReturn'; // v3.349
 import PolicyReconsentGate from './components/consent/PolicyReconsentGate'; // v3.340 처리방침 재동의
 import PolicyConsentHost from './components/consent/PolicyConsentHost'; // v3.341 디렉터 진입 동의 게이트
@@ -631,7 +633,6 @@ function MainTabs() {
 // 전역 모달(출석/초대) + 최초 로그인 시 출석 팝업 자동 오픈
 function GlobalModals() {
   const user = useAuthStore((s) => s.user);
-  const openAttendance = useUiStore((s) => s.openAttendance);
   const fetchBalance = usePointsStore((s) => s.fetchBalance);
   const prevUserRef = useRef<any>(null);
   // v3.230 A7-2: 가입 선물·추천 보상 1회 안내(로그인 직후·앱 복귀)
@@ -644,16 +645,22 @@ function GlobalModals() {
     if (!user || !earnGuide.loaded) return;
     const items = unpromptedEarnNews(earnGuide);
     if (!items.length) return;
+    // v3.384 [ModalTurn]: 로그인 직후 다른 팝업(가입 마무리·출석·재동의·ATT)이 다 닫힌 뒤 차례로
+    let turn: ReturnType<typeof waitModalTurn> | null = null;
     const t = setTimeout(() => {
-      earnGuide.markPrompted();
-      console.info('[EarnNews] 새 소식 1회 안내', { ids: items.map((i) => i.id) });
-      // v3.306: 짧게 — 항목명·한 줄 요약만, 상세는 상단 ⭐ 팝업(같은 화면)
-      showAlert(`새 미션 ${items.length}개가 생겼어요`, items.map((i) => `• ${i.title}: ${i.short}`).join('\n'), [
-        { text: '나중에', style: 'cancel' },
-        { text: '미션 보기', onPress: () => openStarGuideGlobal() },
-      ]);
+      turn = waitModalTurn('earn-news', 0);
+      turn.promise.then(() => {
+        if (!useAuthStore.getState().user) return;
+        earnGuide.markPrompted();
+        console.info('[EarnNews] 새 소식 1회 안내', { ids: items.map((i) => i.id) });
+        // v3.306: 짧게 — 항목명·한 줄 요약만, 상세는 상단 ⭐ 팝업(같은 화면)
+        showAlert(`새 미션 ${items.length}개가 생겼어요`, items.map((i) => `• ${i.title}: ${i.short}`).join('\n'), [
+          { text: '나중에', style: 'cancel' },
+          { text: '미션 보기', onPress: () => openStarGuideGlobal() },
+        ]);
+      });
     }, 4000);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); turn?.cancel(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, earnGuide.loaded, earnGuide.seenIds, earnGuide.promptedIds]);
   useEffect(() => {
@@ -672,13 +679,15 @@ function GlobalModals() {
         const { data } = await api.get('/attendance/status');
         if (data?.checked_today === false) {
           if (__DEV__) console.info('[GlobalModals] 오늘 미출석 → 출석 팝업 자동 오픈');
-          openAttendance();
+          // v3.384 [ModalTurn]: 로그인 창 닫힘·가입 마무리·재동의·ATT 뒤에 차례로(iOS 는 창 두 개를 겹쳐 띄우지 못함)
+          await waitModalTurn('attendance', 1).promise;
+          if (useAuthStore.getState().user) useUiStore.setState({ attendanceOpen: true });
         }
       } catch (err: any) {
         console.error('[GlobalModals] 자동 출석 상태 확인 실패', { status: err?.response?.status });
       }
     })();
-  }, [user, openAttendance, fetchBalance]);
+  }, [user, fetchBalance]);
   return (
     <>
       <AttendanceModal />
@@ -1107,6 +1116,7 @@ export default function App() {
           <SignupCompleteGate />
           <AccountMergeHost />
           <IdentityNudgeHost />
+          <TrackingPromptHost />
           <PolicyReconsentGate />
           <PolicyConsentHost />
           <VoiceConsentHost />

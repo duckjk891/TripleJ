@@ -18,6 +18,8 @@ import { runGuestClaimIfPending } from '../../utils/guestTrial';
 import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
+import AppDialogHost from '../AppDialogHost';
+import { useRootModalOpen } from '../../utils/modalTurn';
 
 // v3.279 [LyricsOwner] 1회 정리 — 이 버전 이전에 로그아웃한 기기에는 이전 계정의 작사 대화가 남아 있다.
 // 부팅 시 비로그인이면 한 번만 비운다(이후엔 로그아웃 시점에 계정 보관함으로 옮기므로 재발 없음).
@@ -44,6 +46,7 @@ export default function LoginModalHost() {
   const [visible, setVisible] = useState(false);
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const afterLoginRef = useRef<(() => void) | null>(null);
+  useRootModalOpen('login', visible); // v3.384 [ModalTurn] 로그인 직후 자동 팝업은 이 창이 닫히고 나서
 
   useEffect(() => {
     setLoginModalOpener((opts?: LoginModalOptions) => {
@@ -116,6 +119,8 @@ export default function LoginModalHost() {
           </View>
         </View>
       </KeyboardAvoidingView>
+      {/* v3.384: 로그인 오류 등 다이얼로그는 이 창 안에서(iOS 는 루트 다이얼로그를 이 창 위에 못 띄움) */}
+      <AppDialogHost nestedIn="login" active={visible} />
     </Modal>
   );
 }

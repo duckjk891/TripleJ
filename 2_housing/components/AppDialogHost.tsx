@@ -3,12 +3,18 @@ import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useDialogStore, type DialogButton } from '../stores/dialogStore';
 import { colors } from '../theme/colors';
 import { useWebBackClose } from '../utils/webBackClose';
+import { useDialogOwner, useRootModalOpen } from '../utils/modalTurn';
 
 // v3.85: 전역 앱 내 다이얼로그 호스트 — App 루트에 1회 마운트.
 // 디자인은 components/ConfirmDialog와 동일 계열(백드롭·카드·버튼 톤).
 // 버튼 1개=단독 확인, 2개=[취소][확인] 가로, 3개 이상=세로 스택.
-export default function AppDialogHost() {
-  const dialog = useDialogStore((s) => s.queue[0]);
+// v3.384 [ModalTurn]: nestedIn = 루트 팝업 창(Modal) 안에 둔 호스트 — 그 창이 떠 있는(active) 동안은 창 안에서 띄운다
+// (iOS 는 루트에 나란히 둔 Modal 을 다른 창 위에 겹쳐 띄우지 못한다). 루트 호스트는 창이 없을 때만 띄운다.
+export default function AppDialogHost({ nestedIn, active = true }: { nestedIn?: string; active?: boolean } = {}) {
+  const isOwner = useDialogOwner(nestedIn ?? null, active);
+  const head = useDialogStore((s) => s.queue[0]);
+  const dialog = isOwner ? head : undefined;
+  useRootModalOpen('dialog', !nestedIn && !!dialog);
   const dismiss = useDialogStore((s) => s.dismiss);
   // v3.230 A5-5: lockMs 다이얼로그 — 표시 후 잠금 시간 동안 cancel 외 버튼 무반응(같은 위치 연타 흡수).
   // 잠금 해제 시각은 다이얼로그 id별로 렌더 중 1회 고정(effect 전 첫 프레임부터 잠금), 해제 시 리렌더.

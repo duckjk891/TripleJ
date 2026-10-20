@@ -18,6 +18,8 @@ import { isCrewAreaRoute, onDeferredWelcomeRequest } from '../utils/deferredWelc
 import { navigationRef } from '../services/navigationRef';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { useRootModalOpen } from '../utils/modalTurn';
+import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 export const WELCOME_GUIDE_SEEN_KEY = 'maidol_welcome_guide_seen_v1';
 
@@ -134,6 +136,7 @@ export default function WelcomeGuide() {
     if (i !== index && i >= 0 && i < SLIDES.length) setIndex(i);
   };
 
+  useRootModalOpen('welcome', visible); // v3.384 [ModalTurn]
   if (!visible) return null;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={() => close('skip')}>
@@ -183,6 +186,7 @@ export default function WelcomeGuide() {
           </View>
         </View>
       </View>
+      <AppDialogHost nestedIn="welcome" />
     </Modal>
   );
 }

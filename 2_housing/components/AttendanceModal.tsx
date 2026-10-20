@@ -10,6 +10,8 @@ import { usePointsStore } from '../stores/pointsStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
+import { useRootModalOpen } from '../utils/modalTurn';
+import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 
 interface Cell { day: number; reward: number; claimed: boolean }
 interface Status {
@@ -23,6 +25,7 @@ interface Status {
 
 export default function AttendanceModal() {
   const open = useUiStore((s) => s.attendanceOpen);
+  useRootModalOpen('attendance', open); // v3.384 [ModalTurn]
   const close = useUiStore((s) => s.closeAttendance);
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
@@ -154,6 +157,7 @@ export default function AttendanceModal() {
           {toast ? <View style={styles.toast}><AppText tone="primary" center>{toast}</AppText></View> : null}
         </TouchableOpacity>
       </TouchableOpacity>
+      <AppDialogHost nestedIn="attendance" active={open} />
     </Modal>
   );
 }

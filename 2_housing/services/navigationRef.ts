@@ -1,4 +1,5 @@
 import { CommonActions, createNavigationContainerRef } from '@react-navigation/native';
+import { noteModalTransition } from '../utils/modalTurn';
 
 // 전역 네비게이션 ref — 전역 모달 등 화면 밖 컨텍스트에서 이동에 사용.
 export const navigationRef = createNavigationContainerRef<any>();
@@ -24,6 +25,7 @@ export function resetToChartTab() {
     return;
   }
   if (__DEV__) console.info('[navigationRef] resetToChartTab — 차트 탭으로 리셋');
+  noteModalTransition(); // v3.384 [ModalTurn] 로그인 착지 화면 전환(모달 화면 닫힘 포함) 뒤에 자동 팝업
   navigationRef.dispatch(
     CommonActions.reset({
       index: 0,

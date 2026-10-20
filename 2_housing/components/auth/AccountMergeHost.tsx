@@ -12,6 +12,8 @@ import { confirmMerge, declineMerge, getMergePreview, getMergeStatus, type Merge
 import { useAuthStore } from '../../stores/authStore';
 import { showAlert } from '../../utils/appAlert';
 import { friendlyErrorMessage } from '../../utils/friendlyError';
+import AppDialogHost from '../AppDialogHost';
+import { useModalTurn } from '../../utils/modalTurn';
 
 const POLL_MS = 3000;
 const POLL_MAX_MS = 3 * 60 * 1000;
@@ -55,7 +57,9 @@ export default function AccountMergeHost() {
     return () => { alive = false; };
   }, [rid, finish]);
 
-  if (!rid) return null;
+  // v3.384 [ModalTurn]: 가입 마무리 창 등이 내려간 뒤(닫힘 애니메이션 끝) 띄운다 — iOS 는 창 두 개를 겹쳐 띄우지 못한다
+  const shown = useModalTurn('account-merge', !!rid, 6, 15000);
+  if (!rid || !shown) return null;
 
   const swapTo = async (token: string | undefined) => {
     if (token) {
@@ -185,6 +189,8 @@ export default function AccountMergeHost() {
           </TouchableOpacity>
         ) : null}
       </ScrollView>
+      {/* v3.384: 합치기 확인 등 다이얼로그는 이 창 안에서(iOS) */}
+      <AppDialogHost nestedIn="account-merge" />
     </Modal>
   );
 }

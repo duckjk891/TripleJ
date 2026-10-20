@@ -7,6 +7,7 @@ import { usePointsStore } from '../stores/pointsStore';
 import { getPointsHistory } from '../services/pointsHistoryService';
 import { navigateGlobal } from '../services/navigationRef';
 import { showAlert } from '../utils/appAlert';
+import { waitModalTurn } from '../utils/modalTurn';
 import {
   buildRewardNotice,
   loadSeenRecord,
@@ -77,6 +78,9 @@ export async function checkRewardNotice(trigger: 'login' | 'resume'): Promise<vo
       clearSignupReferral();
     }
     if (plan.dialogs.length > 0) {
+      // v3.384 [ModalTurn]: 로그인 직후 다른 팝업이 다 닫힌 뒤 차례로(iOS 는 창 두 개를 겹쳐 띄우지 못함)
+      await waitModalTurn('reward-notice', 0).promise;
+      if (String(useAuthStore.getState().user?.id ?? '') !== uid) return;
       usePointsStore.getState().fetchBalance();
       plan.dialogs.forEach((d) => {
         showAlert(d.title, d.message, [

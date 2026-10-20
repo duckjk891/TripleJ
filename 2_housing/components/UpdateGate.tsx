@@ -10,6 +10,8 @@ import api from '../services/api';
 import { navigationRef } from '../services/navigationRef';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
+import { useRootModalOpen } from '../utils/modalTurn';
+import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 import {
   APP_VERSION, WEB_BUILD, UPDATE_BUSY_ROUTES, decideUpdate, parseBundleName, versionLabel,
   type UpdateLevel, type VersionConfig,
@@ -177,6 +179,7 @@ export default function UpdateGate() {
     console.info('[AppUpdate] 나중에');
   };
 
+  useRootModalOpen('update', visible && level !== 'none'); // v3.384 [ModalTurn]
   if (!visible || level === 'none') return null;
   const force = level === 'force';
   const msg = (config?.message || '').trim()
@@ -204,6 +207,7 @@ export default function UpdateGate() {
           </View>
         </View>
       </View>
+      <AppDialogHost nestedIn="update" />
     </Modal>
   );
 }
