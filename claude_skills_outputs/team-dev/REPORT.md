@@ -4765,3 +4765,28 @@ DM·문의 조사(읽기 전용, 10-11)에서 코드 수정 필요 4건 중 바�
 - Origin CA 교체(17:42 KST): 대표가 CSR 로 발급(SAN admin.maidol.ai.kr 단일, 만료 2041-10-15) → 공개키 md5 3자(인증서·CSR·서버 키) 일치 확인 → /etc/ssl/maidol-cf-origin/admin.maidol.ai.kr.pem(644) 설치, maidol-admin.v3380(Origin CA 경로) 적용(백업 nginx_pre_v3380_originca_20261019T084210Z, nginx -t → reload). 확인: 서버가 Origin CA 제공·Cloudflare(Strict) 경유 302 Access·서버 IP 직접 403·api 는 LE 그대로·api/business 200·api /api/admin 404. 대표 관리자 탭 요청(/api/admin/cs/unread-count 등) Access 경유 200, 접속 IP 가 실제 IP(222.100.…)로 기록(real_ip 동작).
 - (대표 승인) 안 쓰는 admin LE 인증서 `certbot delete`(사전 백업 위 폴더/letsencrypt_admin, nginx 에는 주석 참조만) — 남은 certbot 인증서 api(12-16)·business(01-17).
 - 주의(되돌리기): admin 을 회색으로 되돌리면 Origin CA 는 브라우저가 신뢰하지 않음 → 회색 전환 시 백업 nginx_pre_v3380_20261019T075908Z 의 maidol-admin 복원 + `certbot --nginx -d admin.maidol.ai.kr` 재발급(회색이면 Access·HTTP-01 문제 없음). Cloudflare IP 대역 변경 시 conf.d/cloudflare_v3380.conf·snippets/cloudflare_realip_v3380.conf 갱신. 표식 검사는 존재 여부만(서명 검증은 FastAPI 쪽 별도 작업 후보).
+
+## v3.381 — 2026-10-20 — 광고주 사이트 글씨 깨짐 수정 + 대량 등록·상품 목록 강화·브랜드 반응 분석 (적용 완료)
+
+대표(10-19) "광고주 사이트 글씨가 엄청 깨져 보이거든? 어드민의 브랜드/광고주/착장아이템 기능도 다 들어가 있지가 않잖아. 업로드할 수 있게도, 착장아이템 관리도." → 기능 차이 표로 확인. 대표 답: 브랜드 하나가 로그인하니 브랜드별 묶기 대신 **카테고리 세분화·필터, 클릭수·성비·어떤 아티스트가 내 옷을 입히는지**, 엑셀/CSV 대량 등록(전부 바꾸기 포함), 상품 목록 강화. 무신사 스탠다드 예시·임의 수치는 **내부 확인용 모의 화면만**. 깨짐은 "맥"에서 봤다고 함.
+
+**글씨 깨짐 원인(확인)** — 대표 맥에 일반 해상도(1배) 외장 모니터 24MP55 연결. 1배 화면 재현(헤드리스 크롬 배율 1):
+1. 첫 화면 휴대폰 사진(780px)을 248px로 브라우저가 3배 넘게 줄여 사진 속 작은 글자(좋아요·댓글·0:04)가 뭉개지고, '곡 화면 · 착장' 표시가 사진 아래 글자(가사·프롬프트·착장·댓글) 위에 겹침 → 260/520/780px 미리 줄인 사진 srcset, 표시를 사진 밖으로, 휴대폰 290px로 키움.
+2. 대시보드 그래프 날짜 글자가 SVG 안이라 화면 폭 따라 줄어 휴대폰에서 약 5px → 날짜·점은 HTML(12px), 막대·선만 SVG.
+3. 메뉴 기호(⚿ ▦ ◎ ✎ ☰ ⓘ)는 글꼴에 따라 네모로 깨질 수 있어 SVG 아이콘으로.
+4. 글꼴 대체 목록에 Apple SD Gothic Neo·맑은 고딕·Noto Sans KR, -webkit-font-smoothing 은 레티나에서만, jsDelivr preconnect. 11px 이하 글자 12px로. (HTML charset 은 meta utf-8 로 정상, 웹글꼴 92개 조각 정상 로드 확인)
+
+**기능(광고주 본인 상품만)**
+- 내 상품: 카테고리 → **세부 종류**(앱 꾸미기 카탈로그와 같은 규칙 _catalog_classify, 아우터·니트·데님 등, 건수 표시)·대상·노출 상태·**색상 계열** 필터, 정렬(최근·클릭·착장 선택·담김·클릭률·이름), **사진/표 보기**(표: 최근 30일 착장 선택·클릭·클릭률·담김), 체크로 고르기·이 쪽 전체·**조건에 맞는 전체** → 보이게/숨기기/삭제(운영 숨김은 안 풀림).
+- **엑셀로 한꺼번에 등록**(새 메뉴): 양식(.csv) → .xlsx/.csv(utf-8·cp949) 올리기 → 미리 검사(새로 등록·이미 있음(같은 주소+색상)·고칠 줄 쉬운 말 목록) → 추가/**전부 바꾸기**(새로 다 넣은 뒤 예전 대량 등록분만 삭제, 직접 등록분 유지) → 진행률(창 닫아도 계속). 헤더 별칭(무신사·29CM 양식, 관리자 '여성_상의' 부위 형식), '니트·청바지·운동화'처럼 적어도 카테고리 판별. 1만 개·10MB.
+- 대시보드 '내 브랜드에 반응한 사람들': 성별 비율 막대·연령대(5명 미만 기타(소수), 만 14세 미만 제외), **내 옷을 입힌 아티스트**(공개곡 착장 수·그 곡에서 나온 클릭·담김·팔로워·대표 상품), **세부 종류별 성과**, 카테고리 칩.
+
+**서버(business.py, 기준 3404fde6 → d8938540)** — GET /ads(sort 보낼 때만 새 형식, 없으면 예전 그대로), POST /ads/bulk, POST /ads/import·GET import-jobs(/id), GET /insights(2분 캐시), 한 개 등록·사진 교체 때 thumb320 생성. 대량 등록 사진 받기는 **사설·내부·메타데이터 주소·80/443 외 포트 차단**(리다이렉트마다 재검사), PIL 로 사진 확인+썸네일, 24개 묶음마다 진행 저장, 심장박동 90초 끊기면 **재기동 뒤 자동 이어서**(광고주 요청·앱 카탈로그 요청 때 2분에 한 번 확인 — lifespan 이라 라우터 startup 불가), 사용자당 동시 1건. 새 컬렉션 business_import_jobs. 스테이징 /Users/pearl/TripleJ/server_staging_v3381biz(APPLY.md, _tests: TestClient+mongomock 33개 통과).
+
+**검증** — 모의 서버(dev/mock_server.mjs, 무신사 스탠다드 34개 실제 상품명·사진 주소·임의 성과, MOCK_PLAIN=1 이면 예전 예시)로 PC·375px 전 화면: 필터·표·고르기→숨기기 확인창→반영, CSV 미리 검사→등록→진행률→끝(못 한 줄 표시), 대시보드 반응 패널, 상품 상세, 가로 넘침 없음(375). 운영 로그인 화면은 계정 비밀번호가 없어 직접 못 봄(서버 라우트·401 확인으로 대체).
+
+**배포(대표 승인 "지금 올리기", 10-20)** — 커밋 워크트리 ca7a048(push). 서버: md5 가드 → business.py.bak_pre_v3381 → 교체, 진행 작업 4종(gen_jobs·generations 30분·character_jobs·inst_jobs) 0건 확인 → 로그 백업 maidol-app_pre_v3381_* → 정식 docker run(-e S3_REGION·-v logs), 헬스 약 12초. route→함수 매핑 확인(bulk·import·import-jobs·insights 새 함수, catalog·active 기존), catalog·active 200, insights·새 목록 비로그인 401, 공개 business 경유 insights 401. 사이트: deploy_business.sh(직전 판 .prev 보관, 되돌리기 `./deploy_business.sh rollback`), 운영 첫 화면 새 사진(srcset) 확인.
+
+**남은 것** — 앱 분류 규칙이 '크루넥 니트'를 맨투맨으로 분류(item_taxonomy, 앱 꾸미기 화면과 공통 — 바꾸면 앱도 바뀜). 대량 등록 상품은 seed_source=business_import 라 앱 카탈로그 source 가 'platform'으로 표시(브랜드 직접 등록과 같은 처리 — 필요하면 'brand' 판정에 포함). 관리자 웹 착장 아이템 화면엔 이번 기능(세부 종류·한꺼번에 바꾸기) 미반영. business-portal 세션의 '예시 화면' 패치는 이 커밋 위에 적용 예정.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
