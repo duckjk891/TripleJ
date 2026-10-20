@@ -87,7 +87,7 @@ export default function Layout() {
         <main className="main">
           {demo && (
             <div className="demo-bar" role="note">
-              <span><b>예시 화면</b> · 지금 보시는 숫자와 상품은 모두 지어낸 예시예요. 실제 광고주 화면과 같은 구성이고, 저장은 되지 않아요.</span>
+              <span><b>예시 화면</b> · 지금 보시는 숫자와 상품은 모두 예시예요. 실제 광고주 화면과 같은 구성이고, 저장은 되지 않아요.</span>
               <span className="demo-bar__act">
                 <button className="btn btn--primary btn--sm" onClick={goInquiry}>입점 문의하기</button>
                 <button className="btn btn--sm" onClick={leaveDemo}>예시 화면 나가기</button>
