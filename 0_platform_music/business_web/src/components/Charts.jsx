@@ -16,32 +16,36 @@ export function TrendChart({ data = [] }) {
   const yC = (v) => PADT + innerH - (v / maxC) * innerH;
   const pts = data.map((d, i) => `${x(i)},${yC(d.clicks)}`).join(' ');
   const labelEvery = n > 10 ? Math.ceil(n / 6) : 1;
+  // 날짜 글자는 SVG 밖(HTML)에 둔다 — SVG 안 글자는 화면 폭에 따라 같이 줄어 휴대폰에서 5px 남짓으로 뭉개졌다(v3.381).
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="기간별 착장 선택과 클릭 추이">
-      <defs>
-        <linearGradient id="barg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#a78bfa" />
-          <stop offset="1" stopColor="#6d28d9" stopOpacity=".55" />
-        </linearGradient>
-      </defs>
-      {[0.25, 0.5, 0.75, 1].map((f) => (
-        <line key={f} x1={PADL} x2={W - PADR} y1={PADT + innerH * (1 - f)} y2={PADT + innerH * (1 - f)} className="chart__grid" />
-      ))}
-      {data.map((d, i) => (
-        <g key={d.label}>
-          <rect x={x(i) - bw / 2} y={yI(d.impressions)} width={bw} height={Math.max(0, PADT + innerH - yI(d.impressions))} rx="3" fill="url(#barg)">
+    <div className="trend">
+      <svg viewBox={`0 0 ${W} ${H - PADB + 6}`} className="chart" role="img" aria-label="기간별 착장 선택과 클릭 추이" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="barg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#a78bfa" />
+            <stop offset="1" stopColor="#6d28d9" stopOpacity=".55" />
+          </linearGradient>
+        </defs>
+        {[0.25, 0.5, 0.75, 1].map((f) => (
+          <line key={f} x1={PADL} x2={W - PADR} y1={PADT + innerH * (1 - f)} y2={PADT + innerH * (1 - f)} className="chart__grid" vectorEffect="non-scaling-stroke" />
+        ))}
+        {data.map((d, i) => (
+          <rect key={d.label} x={x(i) - bw / 2} y={yI(d.impressions)} width={bw} height={Math.max(0, PADT + innerH - yI(d.impressions))} rx="3" fill="url(#barg)">
             <title>{`${d.label} · 착장 선택 ${fmt(d.impressions)} · 클릭 ${fmt(d.clicks)}`}</title>
           </rect>
-          {i % labelEvery === 0 && <text x={x(i)} y={H - 8} textAnchor="middle" className="chart__label">{d.label}</text>}
-        </g>
-      ))}
-      <polyline points={pts} fill="none" stroke="#fbbf24" strokeWidth="2.5" strokeLinejoin="round" />
-      {data.map((d, i) => (
-        <circle key={`c${d.label}`} cx={x(i)} cy={yC(d.clicks)} r="3" fill="#fbbf24">
-          <title>{`${d.label} · 클릭 ${fmt(d.clicks)}`}</title>
-        </circle>
-      ))}
-    </svg>
+        ))}
+        <polyline points={pts} fill="none" stroke="#fbbf24" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+      {/* 점은 늘어나지 않게 HTML 로 — preserveAspectRatio=none 에서 SVG 원은 타원이 된다 */}
+      <div className="trend__dots" aria-hidden="true">
+        {data.map((d, i) => (
+          <i key={d.label} title={`${d.label} · 클릭 ${fmt(d.clicks)}`} style={{ left: `${(x(i) / W) * 100}%`, top: `${(yC(d.clicks) / (H - PADB + 6)) * 100}%` }} />
+        ))}
+      </div>
+      <div className="trend__axis" aria-hidden="true">
+        {data.map((d, i) => (i % labelEvery === 0 ? <span key={d.label} style={{ left: `${(x(i) / W) * 100}%` }}>{d.label}</span> : null))}
+      </div>
+    </div>
   );
 }
 

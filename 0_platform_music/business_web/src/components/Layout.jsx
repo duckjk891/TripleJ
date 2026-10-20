@@ -4,16 +4,18 @@ import { useAuth } from '../auth';
 import { getProfile } from '../api';
 import { appConfirm } from './dialog';
 import Brand from './Brand';
+import Icon from './Icons';
 
 // 회사 정보(사이드바 이름·임시 비밀번호 여부)를 하위 화면과 공유
 const ProfileContext = createContext({ profile: null, reload: () => {} });
 export const useProfile = () => useContext(ProfileContext);
 
 const MENU = [
-  { to: '/dashboard', label: '대시보드', icon: '◎' },
-  { to: '/items', label: '내 상품', icon: '▦' },
-  { to: '/profile', label: '회사 정보', icon: '✎' },
-  { to: '/password', label: '비밀번호 변경', icon: '⚿' },
+  { to: '/dashboard', label: '대시보드', icon: 'dashboard' },
+  { to: '/items', label: '내 상품', icon: 'items', end: true },
+  { to: '/items/upload', label: '엑셀로 한꺼번에 등록', icon: 'upload' },
+  { to: '/profile', label: '회사 정보', icon: 'profile' },
+  { to: '/password', label: '비밀번호 변경', icon: 'key' },
 ];
 
 export default function Layout() {
@@ -49,7 +51,7 @@ export default function Layout() {
     <ProfileContext.Provider value={{ profile, reload }}>
       <div className="app">
         <header className="topbar">
-          <button className="icon-btn" aria-label="메뉴 열기" onClick={() => setOpen(true)}>☰</button>
+          <button className="icon-btn" aria-label="메뉴 열기" onClick={() => setOpen(true)}><Icon name="menu" size={20} /></button>
           <Brand small />
           <span className="topbar__co">{company}</span>
         </header>
@@ -65,10 +67,11 @@ export default function Layout() {
               <NavLink
                 key={m.to}
                 to={m.to}
+                end={m.end}
                 className={({ isActive }) => `side__link ${isActive ? 'is-on' : ''} ${mustChange && m.to !== '/password' ? 'is-locked' : ''}`}
                 onClick={(e) => { if (mustChange && m.to !== '/password') e.preventDefault(); }}
               >
-                <i aria-hidden="true">{m.icon}</i>{m.label}
+                <i aria-hidden="true"><Icon name={m.icon} /></i>{m.label}
               </NavLink>
             ))}
           </nav>

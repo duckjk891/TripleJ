@@ -9,6 +9,7 @@ import Items from './pages/Items';
 import ItemDetail from './pages/ItemDetail';
 import Profile from './pages/Profile';
 import Password from './pages/Password';
+import Upload from './pages/Upload';
 
 function Private({ children }) {
   const { isAuthed, mustChange } = useAuth();
@@ -28,6 +29,7 @@ export default function App() {
           <Route element={<Private><Layout /></Private>}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/items" element={<Items />} />
+            <Route path="/items/upload" element={<Upload />} />
             <Route path="/items/:id" element={<ItemDetail />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/password" element={<Password />} />

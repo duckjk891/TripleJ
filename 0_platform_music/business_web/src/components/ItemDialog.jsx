@@ -117,6 +117,7 @@ export default function ItemDialog({ item, onClose, onSaved }) {
           <label className="field">색상<input className="input" value={f.color} maxLength={30} onChange={(e) => set('color', e.target.value)} /></label>
         </div>
         <label className="field">판매 페이지 상품명 (선택)<input className="input" value={f.product_name} maxLength={120} onChange={(e) => set('product_name', e.target.value)} placeholder="쇼핑몰에 등록된 정식 상품명" /></label>
+        <p className="footnote">세부 종류(아우터·니트·데님 등)는 이름을 보고 자동으로 나눠요. ‘오버핏 니트’처럼 종류가 드러나게 적으면 앱에서 찾기 쉬워요.</p>
         {error && <div className="notice notice--err" role="alert">{error}</div>}
         <div className="dialog__actions dialog__actions--split">
           {!isNew ? <button className="btn btn--text-danger" disabled={busy} onClick={remove}>상품 삭제</button> : <span />}

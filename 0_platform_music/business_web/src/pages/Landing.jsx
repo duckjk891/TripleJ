@@ -70,8 +70,18 @@ export default function Landing() {
               <Link className="btn btn--lg" to={isAuthed ? '/dashboard' : '/login'}>광고주 로그인</Link>
             </div>
           </div>
-          <div className="hero__phone" aria-hidden="true">
-            <img src="./img/shot-player.jpg" alt="" />
+          <div className="hero__visual" aria-hidden="true">
+            {/* 화면 배율별로 미리 줄인 사진 — 브라우저가 3배 넘게 줄이면 사진 속 작은 글자가 뭉개졌다(v3.381) */}
+            <div className="hero__phone">
+              <img
+                src="./img/shot-player-520.jpg"
+                srcSet="./img/shot-player-260.jpg 260w, ./img/shot-player-520.jpg 520w, ./img/shot-player.jpg 780w"
+                sizes="(max-width: 820px) 200px, 290px"
+                width="290"
+                height="628"
+                alt=""
+              />
+            </div>
             <span className="hero__chip">곡 화면 · 착장</span>
           </div>
         </div>

@@ -106,10 +106,28 @@ export const updateItem = (id, formData) => API.put(`/business/ads/${id}`, formD
 export const deleteItem = (id) => API.delete(`/business/ads/${id}`);
 export const toggleItem = (id) => API.patch(`/business/ads/${id}/toggle`);
 
+// v3.381 — 새 목록(세부 종류·색상·대상 필터, 성과 정렬, 상품별 최근 30일 성과). sort 를 보내야 새 형식으로 온다.
+export const listItemsRich = (params) => API.get('/business/ads', { params: { sort: 'recent', ...params } });
+// 한꺼번에 바꾸기: action = show | hide | delete, ids 또는 filter(지금 목록 조건) 중 하나
+export const bulkItems = (body) => API.post('/business/ads/bulk', body, { timeout: 120000 });
+// 엑셀/CSV 대량 등록 — dryRun=true 는 검사만
+export const importItems = (file, { mode = 'append', dryRun = true, activate = true } = {}) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('mode', mode);
+  fd.append('dry_run', dryRun ? 'true' : 'false');
+  fd.append('activate', activate ? 'true' : 'false');
+  return API.post('/business/ads/import', fd, { timeout: 180000 });
+};
+export const listImportJobs = () => API.get('/business/ads/import-jobs');
+export const getImportJob = (id) => API.get(`/business/ads/import-jobs/${id}`);
+
 // ---- performance ----
 export const getDashboard = (period) => API.get('/business/dashboard', { params: { period } });
 export const getInsights = (id, period) => API.get(`/business/ads/${id}/insights`, { params: { period } });
 export const getStars = (id, period) => API.get(`/business/ads/${id}/stars`, { params: { period } });
+// v3.381 — 내 상품 전체 반응(성별·연령대, 내 옷을 입힌 아티스트, 세부 종류별 성과)
+export const getBrandInsights = (period, category) => API.get('/business/insights', { params: { period, ...(category ? { category } : {}) }, timeout: 90000 });
 
 // ---- public ----
 export const sendInquiry = (body) => API.post('/business/inquiries', body);
@@ -125,6 +143,14 @@ export const thumbUrl = (obj) => {
 
 export const CATEGORIES = ['상의', '하의', '신발', '모자', '가방'];
 export const GENDERS = ['남성용', '여성용', '공용'];
+export const SORTS = [
+  { key: 'recent', label: '최근 등록순' },
+  { key: 'clicks', label: '클릭 많은 순' },
+  { key: 'impressions', label: '착장 선택 많은 순' },
+  { key: 'wishes', label: '담김 많은 순' },
+  { key: 'ctr', label: '클릭률 높은 순' },
+  { key: 'name', label: '이름순' },
+];
 export const PERIODS = [
   { key: 'daily', label: '오늘' },
   { key: 'weekly', label: '최근 7일' },
