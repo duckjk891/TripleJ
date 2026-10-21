@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
@@ -46,6 +45,7 @@ import {
 import { STRUCTURE_INTRO, structureExampleBody } from '../utils/lyricsStructureGuide';
 import { showAlert } from '../utils/appAlert';
 import { useAiConsentGate } from '../utils/policyConsent';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -393,11 +393,7 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
   const progressPct = (displayedStep / STEPS.length) * 100;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
-    >
+    <KeyboardAvoid style={styles.container} iosOffset={140}>
       {/* 진행도 바 */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: colors.bg.deepest }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -617,7 +613,7 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
             : null
         }
       />
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

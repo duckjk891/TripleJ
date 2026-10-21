@@ -5,8 +5,7 @@
 import { useState } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
 import { showAlert } from '../utils/appAlert';
-import * as FileSystem from 'expo-file-system/legacy';
-import { saveFileToMaidolFolder } from '../utils/nativeSave';
+import { cacheFileName, downloadToCache, DownloadError, safeFileName, saveToDevice } from '../utils/nativeSave';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
@@ -38,6 +37,10 @@ const VIDEO_FORMATS = {
   kakao: { label: '카톡 프로필 배경 (15초)', icon: 'message-circle' as const, hint: '가사 시작부터 15초 클립 · 최초 1~2분' },
 };
 
+const SNS_NAMES: Record<string, string> = { youtube: 'YouTube 쇼츠', reels: '릴스', tiktok: '틱톡' };
+
+const VIDEO_NAME_SUFFIX = { wide: '가로', sns: '세로', kakao: '카톡 15초' } as const;
+
 // 공유 대상별 폴백 업로드 페이지(모바일 공유 시트가 안 뜰 때)
 const SNS_UPLOAD_URLS: Record<string, string> = {
   youtube: 'https://www.youtube.com/upload',
@@ -50,7 +53,9 @@ const SNS_UPLOAD_URLS: Record<string, string> = {
 // v3.248 B5(A-12): 웹은 window.open(iOS Safari [보기]/[다운로드] 확인창·팝업 차단의 원인) 대신
 // Blob을 받아 기기 공유 시트(navigator.canShare files) 우선, 미지원이면 a[download].
 // 서버 빌드(수 분) 뒤라 사용자 활성화가 만료됐을 수 있어 공유는 팝업 버튼(새 제스처)에서 여는 2단계.
-export async function saveTrackFileToDevice(url: string, filename: string): Promise<void> {
+// v3.391 [NativeSave] 앱: 안드로이드는 폴더 고르기 없이 Music/MAIDOL·Movies/MAIDOL 에 바로 저장(utils/nativeSave),
+// 받기 실패(만료 링크 등)는 "저장 완료" 대신 실패 안내. title = 기기에 보일 파일 이름(웹은 filename 그대로).
+export async function saveTrackFileToDevice(url: string, filename: string, title?: string): Promise<void> {
   if (Platform.OS === 'web') {
     try {
       const isMp3 = /\.mp3$/i.test(filename);
@@ -79,33 +84,55 @@ export async function saveTrackFileToDevice(url: string, filename: string): Prom
     }
     return;
   }
+  const isMp3 = /\.mp3$/i.test(filename);
+  const ext = isMp3 ? 'mp3' : 'mp4';
+  const uri = await downloadForNative(url, title || filename, ext);
+  if (!uri) return;
+  const result = await saveToDevice(uri, isMp3 ? 'audio' : 'video', safeFileName(title || filename, ext));
+  if (result.ok) {
+    showAlert('저장 완료', `${result.place}에 저장했어요.`);
+    return;
+  }
+  if (result.reason === 'permission') {
+    showAlert('권한 필요', '사진 보관함 저장 권한을 허용해야 기기에 저장할 수 있어요. 설정에서 허용한 뒤 다시 눌러 주세요.');
+    return;
+  }
+  // iOS 음원(파일 앱 저장은 공유 시트로만 가능)·저장 실패 — 공유 시트("파일에 저장" 포함)
+  await shareCachedFile(uri, isMp3);
+}
+
+/** 앱: 캐시로 받기 — 실패하면 안내하고 null(만료 링크의 오류 페이지를 파일로 저장하지 않음) */
+async function downloadForNative(url: string, title: string, ext: 'mp3' | 'mp4'): Promise<string | null> {
   try {
-    const dest = `${FileSystem.cacheDirectory}${filename}`;
-    if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
-    const res = await FileSystem.downloadAsync(url, dest);
-    // v1.3.1 [NativeSave]: Android = 다운로드/MAIDOL 폴더 직접 저장(최초 1회 폴더 권한),
-    // 거부·실패 시 아래 기존 공유 시트 폴백. iOS 는 공유 시트("파일에 저장") 유지.
-    const isMp3Name = /\.mp3$/i.test(filename);
-    const saved = await saveFileToMaidolFolder(
-      res.uri, filename.startsWith('MAIDOL_') ? filename : `MAIDOL_${filename}`,
-      isMp3Name ? 'audio/mpeg' : 'video/mp4',
-    );
-    if (saved) {
-      showAlert('저장 완료', '지정한 MAIDOL 폴더에 저장했어요.');
-      return;
-    }
-    if (await Sharing.isAvailableAsync()) {
-      const isMp3 = /\.mp3$/i.test(filename);
-      await Sharing.shareAsync(res.uri, {
-        mimeType: isMp3 ? 'audio/mpeg' : 'video/mp4',
-        UTI: isMp3 ? 'public.mp3' : 'public.mpeg-4',
-      });
-    } else {
-      showAlert('저장 완료', '파일이 저장되었습니다.');
-    }
+    if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { ext });
+    return await downloadToCache(url, cacheFileName(title, ext));
   } catch (err: any) {
-    console.error('[TrackShareDownloadSheet] 기기 저장 실패', { message: err?.message });
-    await Linking.openURL(url).catch(() => {});
+    const e = err as DownloadError;
+    console.error('[TrackShareDownloadSheet] 파일 받기 실패', { code: e?.code, status: e?.status });
+    showAlert('저장하지 못했어요',
+      e?.code === 'http' && e.status && [401, 403, 404, 410].includes(e.status)
+        ? '다운로드 링크가 만료됐어요. 다시 한 번 눌러 주세요.'
+        : '파일을 받지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.');
+    return null;
+  }
+}
+
+async function shareCachedFile(uri: string, isMp3: boolean, dialogTitle?: string): Promise<boolean> {
+  try {
+    if (!(await Sharing.isAvailableAsync())) {
+      showAlert('안내', '이 기기에서는 공유 창을 열 수 없어요.');
+      return false;
+    }
+    await Sharing.shareAsync(uri, {
+      mimeType: isMp3 ? 'audio/mpeg' : 'video/mp4',
+      UTI: isMp3 ? 'public.mp3' : 'public.mpeg-4',
+      dialogTitle,
+    });
+    return true;
+  } catch (err: any) {
+    console.error('[TrackShareDownloadSheet] 공유 창 실패', { message: err?.message });
+    showAlert('오류', '공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.');
+    return false;
   }
 }
 
@@ -121,7 +148,7 @@ export async function downloadTrackMp3(
     const { data } = await api.post(`/tracks/download/${trackId}`);
     const url = data?.download_url;
     if (!url) { showAlert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
-    await saveTrackFileToDevice(url, data?.filename || `${track.title}.mp3`);
+    await saveTrackFileToDevice(url, data?.filename || `${safeFileName(track.title, 'mp3')}`, track.title);
   } catch (err: any) {
     console.error('[TrackShareDownloadSheet] mp3 다운로드 실패', { status: err?.response?.status });
     showAlert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
@@ -171,11 +198,15 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
       showAlert('공유 영상 준비 완료', '영상을 저장·공유한 뒤 해당 SNS 앱에서 업로드해주세요.');
       return;
     }
-    // 네이티브: 생성된 영상을 열어 저장/공유 → 이어서 해당 SNS 업로드 페이지로 이동(기존 동작 유지)
-    await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 영상 열기 실패', { err }));
-    const fallback = SNS_UPLOAD_URLS[key];
-    if (fallback) Linking.openURL(fallback).catch(() => {});
-    showAlert('공유 영상 준비 완료', '영상을 저장한 뒤 열린 페이지에서 업로드해주세요.');
+    // v3.391 네이티브: 예전엔 영상 주소와 업로드 페이지를 연달아 열어 영상 없이 업로드 페이지만 남았다
+    // → 영상을 받아 기기 공유 창(유튜브·인스타그램·틱톡 앱 선택)으로 넘긴다(VideoDirector 공유와 같은 방식).
+    const uri = await downloadForNative(url, `${track.title} 세로`, 'mp4');
+    if (!uri) return;
+    const shared = await shareCachedFile(uri, false, `${SNS_NAMES[key]}에 올리기`);
+    if (!shared) {
+      const fallback = SNS_UPLOAD_URLS[key];
+      if (fallback) Linking.openURL(fallback).catch(() => {});
+    }
   };
 
   const handleCopyLink = async () => {
@@ -201,7 +232,8 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     setBusy(null);
     if (!url) return;
     onClose();
-    await saveToDevice(url, `maidol_${format}.mp4`); // v3.248: 노출 파일명 브랜딩 정정(AIDOL 금지)
+    // v3.248: 노출 파일명 브랜딩 정정(AIDOL 금지). v3.391 앱: 기기에는 '곡 제목 (형식).mp4' 로 저장
+    await saveToDevice(url, `maidol_${format}.mp4`, `${track.title} (${VIDEO_NAME_SUFFIX[format]})`);
   };
 
   const handleDownloadMp3 = async () => {

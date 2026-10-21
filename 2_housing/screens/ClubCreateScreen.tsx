@@ -6,7 +6,7 @@
 // 팝업은 전부 앱 내 다이얼로그(showAlert).
 // v3.252: 리네이밍 — 사용자 노출 명칭 '크루'(CLUB_LABEL 경유, 내부 식별자는 Club 유지).
 import { useState } from 'react';
-import { View, ScrollView, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, ScrollView, TextInput, StyleSheet, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -17,6 +17,7 @@ import { useAuthStore } from '../stores/authStore';
 import { CLUB_LABEL, createClub, getClubErrorCode, MAX_CLUB_GENRES } from '../services/clubService';
 import ClubGenrePicker from '../components/ClubGenrePicker';
 import { getWordFilteredMessage } from '../utils/kidsMode';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const NAME_MAX = 30;
 const DESC_MAX = 300;
@@ -72,7 +73,7 @@ export default function ClubCreateScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoid style={styles.container}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
         <View style={styles.labelRow}>
           <AppText variant="footnote" tone="secondary" style={styles.label}>{`${CLUB_LABEL} 이름`}</AppText>
@@ -119,7 +120,7 @@ export default function ClubCreateScreen() {
           <Button label="만들기" fullWidth loading={busy} onPress={submit} />
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
   Modal,
   Switch,
@@ -44,6 +43,7 @@ import { STRUCTURE_EXAMPLES } from '../utils/lyricsStructureGuide';
 import { logCreationEvent, flushCreationEvents } from '../services/creationLogService';
 import { buildLyricsDirection } from '../utils/creationDirection';
 import { useAiConsentGate } from '../utils/policyConsent';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -269,11 +269,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const displayValue = (v: string) => (v && v !== '없음' ? v : '-');
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
-    >
+    <KeyboardAvoid style={styles.container} iosOffset={140}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
@@ -483,7 +479,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
           </View>
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

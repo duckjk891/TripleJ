@@ -11,7 +11,7 @@
 //  · 웹 사용자 활성화: [공유하기] 탭 핸들러에서 await 없이 곧장 deliverShareText(navigator.share/복사) 호출.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform,
+  View, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, Platform,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,6 +42,7 @@ import {
 } from '../utils/shareMessage';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const log = (event: string, extra?: Record<string, any>) => console.info(`[ShareCompose] ${event}`, extra || {});
 const DISCARD_TITLE = '수정한 내용이 사라져요. 바꿀까요?';
@@ -275,7 +276,7 @@ export default function ShareComposeScreen({ navigation, route }: any) {
   const isDedication = selected?.kind === 'dedication';
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoid style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.trackRow}>
           <TrackCover track={coverTrack} left />
@@ -372,7 +373,7 @@ export default function ShareComposeScreen({ navigation, route }: any) {
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + spacing.md }]}>
         <Button label="공유하기" onPress={onShare} disabled={over || !selected} loading={sending} fullWidth />
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

@@ -19,6 +19,7 @@ import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError, sanitizeServerText } f
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
+import { pickImages } from '../utils/pickImage'; // v3.391 [PickImage]
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
@@ -183,9 +184,9 @@ export default function DmChatScreen() {
       showAlert('안내', `이미지는 최대 ${DM_MAX_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
-    // expo-image-picker 미설치 — 기존 이미지 선택 관행(FeedCompose DocumentPicker image/*) 재사용
+    // v3.391 [PickImage]: 앱은 사진첩(utils/pickImage — HEIC→JPEG), 웹은 예전 파일 선택
     // v3.273: multiple — 남은 슬롯만큼 수용, 초과·형식/용량 불량은 묶어서 1회 안내
-    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await pickImages({ multiple: true, limit: DM_MAX_IMAGES - attachedImages.length }) /* v3.391 앱=사진첩(HEIC→JPEG) */;
     if (res.canceled || !res.assets?.length) return;
     const room = DM_MAX_IMAGES - attachedImages.length;
     const skipped: string[] = [];

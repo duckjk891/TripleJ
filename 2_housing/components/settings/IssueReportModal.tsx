@@ -22,6 +22,7 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import { pickImages as pickImagesFromLibrary } from '../../utils/pickImage'; // v3.391 [PickImage]
 import { useIsChild } from '../../utils/kidsMode';
 import Constants from 'expo-constants';
 import { Feather } from '@expo/vector-icons';
@@ -136,7 +137,7 @@ export default function IssueReportModal({ visible, onClose, initialReason, init
   const pickImages = async (pasted?: PastedAsset[]) => {
     if (busy) return;
     if (images.length >= ISSUE_MAX_IMAGES) { setError(`사진은 최대 ${ISSUE_MAX_IMAGES}장까지 첨부할 수 있어요.`); return; }
-    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await pickImagesFromLibrary({ multiple: true, limit: ISSUE_MAX_IMAGES - images.length }) /* v3.391 앱=사진첩(HEIC→JPEG) */;
     if (res.canceled || !res.assets?.length) return;
     const room = ISSUE_MAX_IMAGES - images.length;
     const valid = res.assets.filter((f) => {

@@ -13,7 +13,7 @@ import {
   Modal,
   KeyboardAvoidingView,
 } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
@@ -239,8 +239,8 @@ export default function SettingsScreen({ navigation, route }: any) {
       return;
     }
     try {
-      // expo-image-picker 미설치 — 기존 이미지 선택 관행(ArtistInputScreen DocumentPicker image/*) 재사용
-      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      // v3.391 [PickImage]: 앱은 사진첩(utils/pickImage — HEIC→JPEG), 웹은 예전 파일 선택
+      const res = await pickImage() /* v3.391 앱=사진첩(HEIC→JPEG) */;
       if (res.canceled || !res.assets || !res.assets[0]) return;
       const file = res.assets[0];
       const mime = file.mimeType || '';

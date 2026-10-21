@@ -8,7 +8,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Animated,
   Easing,
@@ -25,7 +24,7 @@ import { usePointsStore } from '../stores/pointsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { updateAlbumCover } from '../services/albumService';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { uploadCoverBackground } from '../services/trackService';
 import { listLyricsAssets } from '../services/lyricsService';
 // v3.248 B1(A-5)·B2(A-6): 커버 PUT 성공 → 재생 큐/현재곡/보관함 일괄 반영 + 미니플레이어 하단 패딩 판정
@@ -63,6 +62,7 @@ import { REFINE_STEPS, REFINE_TYPICAL_TEXT, refineStepIndex, type ProgressStep }
 import { useAiConsentGate } from '../utils/policyConsent';
 import { getCreationSessionId, logCreationEvent, logFollowUpDirection } from '../services/creationLogService'; // v3.359
 import { buildCoverDirection } from '../utils/creationDirection';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
@@ -1612,7 +1612,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       return;
     }
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      const res = await pickImage() /* v3.391 앱=사진첩(HEIC→JPEG) */;
       if (res.canceled || !res.assets || !res.assets[0]) return;
       const a = res.assets[0];
       if (typeof a.size === 'number' && a.size > 10 * 1024 * 1024) {
@@ -2614,11 +2614,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     const canRefine = !!coverSessionId && !errorMsg && !!coverImageUrl;
 
     return (
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
-      >
+      <KeyboardAvoid style={styles.container} iosOffset={40}>
         <ScrollView contentContainerStyle={[styles.resultContent, { paddingTop: insets.top + 16 }]}>
           {/* 디렉터 메시지 */}
           <View style={styles.directorRow}>
@@ -2775,13 +2771,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             />
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoid>
     );
   }
 
   // ─── 대화 화면 ───
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}>
+    <KeyboardAvoid style={styles.container} iosOffset={140}>
       <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={[{ padding: 16 }, { paddingTop: insets.top + 16 }]} showsVerticalScrollIndicator={false}>
         {chatHistory.map((msg, idx) => (
           <View key={idx} style={[styles.messageRow, msg.type === 'user' ? styles.userRow : styles.dirRow]}>
@@ -3073,7 +3069,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             : null
         }
       />
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

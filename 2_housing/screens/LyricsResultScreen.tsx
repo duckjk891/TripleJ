@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
@@ -37,6 +36,7 @@ import { GUEST_TEXT, isGuestNow, isGuestTrialUsed, isGuestComposeUsed } from '..
 // v3.281 [SectionLyrics]: 가사 수정 = 곡 구성별(벌스·후렴·브릿지) 아코디언 편집 + 전체 보기/직접 편집 탈출구
 import SectionLyricsEditor from '../components/lyrics/SectionLyricsEditor';
 import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -279,10 +279,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardAvoid style={styles.container}>
       <ScrollView
         ref={pageScrollRef}
         keyboardShouldPersistTaps="handled"
@@ -418,7 +415,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

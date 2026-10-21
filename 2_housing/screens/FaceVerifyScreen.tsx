@@ -29,6 +29,7 @@ import {
 } from '../utils/identityGate';
 import { FACE_CONSENT_VERSION, FACE_CONSENT_LABEL, FACE_CONSENT_BODY, FACE_GUARDIAN_NOTICE } from '../constants/faceConsent';
 import { isChildNow, KIDS_TEXT } from '../utils/kidsMode';
+import FrontCameraModal, { isInAppCameraAvailable } from '../components/FrontCameraModal'; // v3.391 [FaceCam]
 
 type Step =
   | 'loading' | 'unavailable' | 'consent' | 'guardian' | 'guardian_waiting'
@@ -51,6 +52,7 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
   const [agreeChecked, setAgreeChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [camOpen, setCamOpen] = useState(false); // v3.391 [FaceCam] 앱 안 전면 카메라
   const statusRef = useRef<FaceVerifyStatus | null>(null);
   const aliveRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -277,6 +279,25 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
   // (타인 사진 업로드로 인증을 우회하는 구멍 차단).
   //  · 웹: <input capture="user"> — 모바일 브라우저가 전면 카메라 촬영 UI로 직행(갤러리 선택지 없음).
   //  · 네이티브: expo-image-picker launchCameraAsync(카메라 전용). 모듈 미탑재 구버전 빌드는 안내.
+  // v3.391 [FaceCam] 시스템 카메라로 찍는 동안 안드로이드가 MAIDOL 을 종료했다가 다시 켠 경우 — 찍어 둔 사진을 이어 받는다
+  useEffect(() => {
+    if (Platform.OS !== 'android' || step !== 'capture') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ImagePicker = require('expo-image-picker');
+        const pending = await ImagePicker.getPendingResultAsync?.();
+        const a = !cancelled && pending && !pending.canceled && Array.isArray(pending.assets) ? pending.assets[0] : null;
+        if (!a?.uri) return;
+        console.info('[FaceVerify] 앱 재시작 전 촬영 결과 복구', { sizeBytes: a.fileSize ?? -1 });
+        runVerify({ uri: a.uri, name: a.fileName || 'selfie.jpg', mimeType: a.mimeType || 'image/jpeg' });
+      } catch (err: any) {
+        console.warn('[FaceVerify] 촬영 결과 복구 확인 실패(무시)', { message: err?.message });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [step, runVerify]);
+
   const handleSelfiePick = async () => {
     if (Platform.OS === 'web') {
       try {
@@ -302,6 +323,11 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm?.granted) {
         showAlert('권한 필요', '얼굴 인증은 실시간 촬영으로만 진행돼요. 카메라 권한을 허용해주세요.');
+        return;
+      }
+      // v3.391 [FaceCam]: 앱 안 전면 카메라 우선(갤럭시 카메라 앱이 전면 요청을 무시하던 문제) — 없는 빌드만 시스템 카메라
+      if (isInAppCameraAvailable()) {
+        setCamOpen(true);
         return;
       }
       const res = await ImagePicker.launchCameraAsync({
@@ -449,6 +475,15 @@ export default function FaceVerifyScreen({ navigation, route }: Props) {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         {renderBody()}
       </ScrollView>
+      <FrontCameraModal
+        visible={camOpen}
+        onClose={() => setCamOpen(false)}
+        onCapture={(pic) => {
+          setCamOpen(false);
+          console.info('[FaceVerify] 셀피 촬영(앱 안 카메라)');
+          runVerify({ uri: pic.uri, name: 'selfie.jpg', mimeType: 'image/jpeg' });
+        }}
+      />
     </View>
   );
 }

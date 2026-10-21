@@ -38,7 +38,8 @@ import {
   peekPendingTrackLink,
 } from './utils/trackLink';
 // v3.376 [DmLink] 메일 등 외부 링크 `?open=dm` → 메시지함
-import { captureWebDmLink, peekPendingDmLink, takePendingDmLink } from './utils/dmLink';
+import { captureWebDmLink, peekPendingDmLink, takePendingDmLink, captureNativeDmLink } from './utils/dmLink';
+import { captureNativeReferral, captureInstallReferrerOnce } from './utils/pendingReferral'; // v3.391 [AppLinks]
 import { openLoginModal } from './utils/loginModal';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -839,9 +840,12 @@ function useTrackLinkCapture() {
     const t = setTimeout(() => { tryConsumeTrackLink(); tryConsumeClubLink(); tryConsumeDmLink(); }, TRACK_LINK_AUTH_WAIT_MAX_MS + 100);
     if (Platform.OS === 'web') return () => clearTimeout(t); // 웹은 모듈 로드 시 캡처
     const onUrl = (url: string | null) => {
+      void captureNativeReferral(url); // v3.391 [AppLinks] 초대 링크(/invite/{code}·?ref=) 추천코드 보관 — 다른 링크와 함께 올 수 있음
       if (captureNativeTrackLink(url)) tryConsumeTrackLink();
       else if (captureNativeClubLink(url)) tryConsumeClubLink(); // v3.305 [ClubLink]
+      else if (captureNativeDmLink(url)) tryConsumeDmLink(); // v3.391 [AppLinks] ?open=dm
     };
+    void captureInstallReferrerOnce(); // v3.391 [AppLinks] 설치 전 초대 링크 → Play 설치 리퍼러로 추천코드
     Linking.getInitialURL().then(onUrl).catch((err: any) =>
       console.error('[TrackLink] 초기 딥링크 조회 실패', { message: err?.message }));
     const sub = Linking.addEventListener('url', ({ url }) => onUrl(url));

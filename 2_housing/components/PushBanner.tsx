@@ -1,5 +1,8 @@
 // v3.298 [WebPush] 알림함 상단 '푸시 켜기' 배너 — 웹(지원 브라우저·아이폰 홈 화면 앱)에서 미구독일 때만. 닫으면 다시 안 보임.
+// v3.391: 닫음 기록을 window.localStorage → AsyncStorage(앱에는 localStorage 가 없어 닫아도 매번 다시 떴다).
+//   웹 AsyncStorage 는 같은 키로 localStorage 를 쓰므로 웹에서 예전에 닫은 기록도 그대로 이어진다.
 import { useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from './ui';
@@ -10,27 +13,34 @@ import { turnOnPushWithFeedback, PUSH_IOS_GUIDE } from './PushToggleRow';
 
 const DISMISS_KEY = 'maidol-push-banner-dismissed-v1';
 
-function dismissed(): boolean {
-  try { return typeof window !== 'undefined' && window.localStorage?.getItem(DISMISS_KEY) === '1'; } catch { return false; }
+async function dismissed(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(DISMISS_KEY)) === '1'; } catch { return false; }
 }
 
 export default function PushBanner() {
   const [show, setShow] = useState(false);
   const support = webPushSupport();
   useEffect(() => {
-    if (support === 'unsupported' || dismissed()) return;
-    if (support === 'ios_needs_install') { setShow(true); return; }
-    if (support === 'native') {
-      // [FCM] 앱 푸시 지원 빌드에서만(구버전 앱은 배너 없음)
-      if (!nativePushSupported()) return;
-      isNativePushEnabled().then((on) => setShow(!on)).catch(() => setShow(false));
-      return;
-    }
-    isWebPushEnabled().then((on) => setShow(!on)).catch(() => setShow(false));
+    if (support === 'unsupported') return undefined;
+    let alive = true;
+    void (async () => {
+      if (await dismissed()) return;
+      if (support === 'ios_needs_install') { if (alive) setShow(true); return; }
+      if (support === 'native') {
+        // [FCM] 앱 푸시 지원 빌드에서만(구버전 앱은 배너 없음)
+        if (!nativePushSupported()) return;
+        const on = await isNativePushEnabled().catch(() => true);
+        if (alive) setShow(!on);
+        return;
+      }
+      const on = await isWebPushEnabled().catch(() => true);
+      if (alive) setShow(!on);
+    })();
+    return () => { alive = false; };
   }, [support]);
   if (!show) return null;
   const close = () => {
-    try { window.localStorage?.setItem(DISMISS_KEY, '1'); } catch { /* 저장 불가 환경 — 이번 화면만 숨김 */ }
+    AsyncStorage.setItem(DISMISS_KEY, '1').catch(() => { /* 저장 불가 환경 — 이번 화면만 숨김 */ });
     setShow(false);
   };
   return (

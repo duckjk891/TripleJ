@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.maidol.app",
+      "sha256_cert_fingerprints": [
+        "01:97:53:47:8F:C5:F9:2C:3B:EC:D5:C0:D1:62:32:76:06:72:9A:28:3C:52:E9:25:D0:34:37:30:0C:00:56:A3",
+        "PLAY_APP_SIGNING_SHA256_여기에_붙여넣기"
+      ]
+    }
+  }
+]

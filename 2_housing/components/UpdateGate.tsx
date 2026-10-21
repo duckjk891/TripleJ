@@ -4,6 +4,9 @@
 //    업데이트 = 페이지 새로고침. 네이티브: android/ios min·latest — 업데이트 = 스토어 열기.
 //  · 작업 중 화면(UPDATE_BUSY_ROUTES)에서는 띄우지 않고, 벗어나면 띄운다(저장 안 된 작업 보호 — 필수 포함).
 //  · [나중에] 는 같은 새 버전에 대해 이번 실행 동안 다시 묻지 않는다.
+//  · v3.391 [OTA] 설치 앱 JS 업데이트(EAS Update): 같은 시점에 확인·미리 받기(utils/otaUpdate). 받아 두면
+//    작업 중 화면·음악 재생 중이 아닐 때만 [지금 적용]/[나중에]를 묻는다(나중에 = 다음에 앱을 새로 켤 때 자동 적용).
+//    스토어 업데이트 안내가 있으면 그쪽이 먼저. 빌드 번호(min_build·latest_build) 비교는 utils/appVersion.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import api from '../services/api';
@@ -12,8 +15,10 @@ import { AppText } from './ui';
 import { colors } from '../theme/colors';
 import { useRootModalOpen } from '../utils/modalTurn';
 import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
+import { usePlayerStore } from '../stores/playerStore';
+import { applyOtaNow, checkAndFetchOta, isOtaEnabled } from '../utils/otaUpdate';
 import {
-  APP_VERSION, WEB_BUILD, UPDATE_BUSY_ROUTES, decideUpdate, parseBundleName, versionLabel,
+  APP_BUILD, APP_VERSION, WEB_BUILD, UPDATE_BUSY_ROUTES, decideUpdate, parseBundleName, versionLabel,
   type UpdateLevel, type VersionConfig,
 } from '../utils/appVersion';
 
@@ -82,6 +87,10 @@ export default function UpdateGate() {
   const [updatePct, setUpdatePct] = useState(-1); // v3.356 진행률(받기 시작 전 -1)
   const dismissedRef = useRef<string>('');
   const pendingKeyRef = useRef<string>('');
+  const [otaId, setOtaId] = useState(''); // v3.391 받아 둔 OTA 업데이트 id
+  const [otaVisible, setOtaVisible] = useState(false);
+  const otaDismissedRef = useRef<string>('');
+  const levelRef = useRef<UpdateLevel>('none');
 
   const isBusy = () => {
     try {
@@ -91,6 +100,14 @@ export default function UpdateGate() {
       return true;
     }
   };
+
+  // v3.391 [OTA] 받아 둔 업데이트 적용 안내 — 스토어 안내 없음·작업 중 아님·재생 중 아님·이번 업데이트에 [나중에] 안 눌렀을 때만
+  const maybeShowOta = useCallback((id: string) => {
+    if (!id || otaDismissedRef.current === id || levelRef.current !== 'none') return;
+    if (usePlayerStore.getState().isPlaying) return;
+    if (isBusy()) return;
+    setOtaVisible(true);
+  }, []);
 
   const maybeShow = useCallback((lv: UpdateLevel, key: string) => {
     if (lv === 'none') { setVisible(false); return; }
@@ -113,16 +130,21 @@ export default function UpdateGate() {
       } else {
         key = String((Platform.OS === 'ios' ? data?.ios?.latest : data?.android?.latest) || '');
       }
-      const lv = decideUpdate({ platform: Platform.OS, appVersion: APP_VERSION, webBuild: WEB_BUILD, config: data, webNewBundle });
+      const lv = decideUpdate({ platform: Platform.OS, appVersion: APP_VERSION, webBuild: WEB_BUILD, config: data, webNewBundle, appBuild: APP_BUILD });
       if (lv !== 'none') console.info('[AppUpdate] 업데이트 감지', { lv, version: versionLabel() });
       setConfig(data);
       setLevel(lv);
+      levelRef.current = lv;
       pendingKeyRef.current = key;
       maybeShow(lv, key);
     } catch (err: any) {
       console.warn('[AppUpdate] 확인 실패(무시)', { status: err?.response?.status, message: err?.message });
     }
-  }, [maybeShow]);
+    if (isOtaEnabled()) {
+      const id = await checkAndFetchOta('gate');
+      if (id) { setOtaId(id); maybeShowOta(id); }
+    }
+  }, [maybeShow, maybeShowOta]);
 
   useEffect(() => {
     const t = setTimeout(check, 3000);
@@ -146,9 +168,18 @@ export default function UpdateGate() {
   useEffect(() => {
     const unsub = navigationRef.addListener?.('state', () => {
       if (level !== 'none' && !visible) maybeShow(level, pendingKeyRef.current);
+      else if (otaId && !otaVisible) maybeShowOta(otaId);
     });
     return () => { try { unsub?.(); } catch {} };
-  }, [level, visible, maybeShow]);
+  }, [level, visible, maybeShow, otaId, otaVisible, maybeShowOta]);
+
+  // v3.391 [OTA] 재생이 멈추면 미뤄 둔 적용 안내를 다시 시도
+  useEffect(() => {
+    if (!otaId) return undefined;
+    return usePlayerStore.subscribe((st, prev) => {
+      if (prev.isPlaying && !st.isPlaying) maybeShowOta(otaId);
+    });
+  }, [otaId, maybeShowOta]);
 
   const doUpdate = async () => {
     if (updating) return;
@@ -179,7 +210,42 @@ export default function UpdateGate() {
     console.info('[AppUpdate] 나중에');
   };
 
-  useRootModalOpen('update', visible && level !== 'none'); // v3.384 [ModalTurn]
+  const otaLater = () => {
+    otaDismissedRef.current = otaId;
+    setOtaVisible(false);
+    console.info('[OTA] 나중에 — 다음 실행 때 적용');
+  };
+  const otaApply = () => {
+    setOtaVisible(false);
+    void applyOtaNow().catch((err: any) => console.warn('[OTA] 적용 실패', { message: err?.message }));
+  };
+
+  const showOta = otaVisible && level === 'none' && !!otaId;
+  useRootModalOpen('update', (visible && level !== 'none') || showOta); // v3.384 [ModalTurn]
+  if (showOta) {
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={otaLater}>
+        <View style={styles.overlay}>
+          <View style={styles.box}>
+            <AppText style={styles.title}>새 기능이 준비됐어요</AppText>
+            <AppText style={styles.body}>
+              업데이트를 미리 받아 두었어요. 지금 적용하면 MAIDOL이 잠깐 다시 켜져요. 나중에 하면 다음에 앱을 켤 때 자동으로 적용돼요.
+            </AppText>
+            <AppText style={styles.ver}>{`현재 ${versionLabel()}`}</AppText>
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={[styles.btn, styles.btnLater]} onPress={otaLater} accessibilityLabel="나중에">
+                <AppText style={styles.btnLaterText}>나중에</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnUpdate]} onPress={otaApply} accessibilityLabel="지금 적용">
+                <AppText style={styles.btnUpdateText}>지금 적용</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+        <AppDialogHost nestedIn="update" />
+      </Modal>
+    );
+  }
   if (!visible || level === 'none') return null;
   const force = level === 'force';
   const msg = (config?.message || '').trim()

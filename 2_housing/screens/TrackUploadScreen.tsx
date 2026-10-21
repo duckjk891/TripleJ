@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
+import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
@@ -109,10 +110,10 @@ export default function TrackUploadScreen({ navigation }: any) {
     }
   };
 
-  // 커버 이미지 선택(선택사항) — expo-image-picker 미설치: DocumentPicker image/* 관행(SettingsScreen)
+  // v3.391 [PickImage]: 앱은 사진첩(utils/pickImage — HEIC→JPEG), 웹은 예전 파일 선택
   const handlePickCover = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      const result = await pickImage() /* v3.391 앱=사진첩(HEIC→JPEG) */;
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       const ext = fileExt(asset.name || '');

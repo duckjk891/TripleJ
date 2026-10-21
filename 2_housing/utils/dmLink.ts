@@ -51,3 +51,13 @@ export function takePendingDmLink(): boolean {
   pending = false;
   return was;
 }
+
+/** v3.391 [AppLinks] 설치 앱: App Link(https://app.maidol.ai.kr/app?open=dm)·aidol://?open=dm 으로 열렸을 때 */
+export function captureNativeDmLink(url: string | null | undefined): boolean {
+  if (Platform.OS === 'web' || !url || url.includes('oauth/callback')) return false;
+  const qm = url.match(/\?([^#]*)/);
+  if (!qm || !isDmLinkSearch(qm[1])) return false;
+  pending = true;
+  console.info('[DmLink] captured(native)');
+  return true;
+}

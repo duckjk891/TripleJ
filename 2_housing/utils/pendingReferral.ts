@@ -116,3 +116,72 @@ export function peekSignupReferral(): { code: string; applied: boolean | null; a
 export function clearSignupReferral(): void {
   lastSignupReferral = null;
 }
+
+// ── v3.391 [AppLinks] 설치 앱: 초대 링크·설치 리퍼러에서 추천코드 받기 ──────────────────────────────
+//  · 링크로 앱이 열림: https://api.maidol.ai.kr/invite/{CODE} · aidol://invite/{CODE} · …?ref={CODE}
+//  · 설치 전 링크 → 설치 후 첫 실행: Play 설치 리퍼러(초대 랜딩의 Play 링크 referrer=ref%3D{CODE})
+//  받은 코드는 7일 보관(source 'link') → 가입 폼 추천코드 자동 입력(AuthPanel) → 가입 시 서버가 보상 지급.
+const INSTALL_REF_CHECKED_KEY = 'maidol-install-referrer-checked-v1';
+
+/** 딥링크/App Link 주소에서 추천코드(순수). OAuth 콜백은 항상 '' */
+export function parseReferralFromUrl(url: string | null | undefined): string {
+  if (!url || typeof url !== 'string' || url.includes('oauth/callback')) return '';
+  const qIdx = url.search(/[?#]/);
+  const base = qIdx >= 0 ? url.slice(0, qIdx) : url;
+  const m = base.match(/(?:^aidol:\/{2,3}|:\/\/[^/]*\/(?:--\/)?)invite\/([A-Za-z0-9]{4,12})\/?$/);
+  if (m) return normalizeReferralCode(m[1]);
+  const qm = url.match(/\?([^#]*)/);
+  if (!qm) return '';
+  try {
+    return normalizeReferralCode(new URLSearchParams(qm[1]).get('ref') || '');
+  } catch {
+    return '';
+  }
+}
+
+/** Play 설치 리퍼러 문자열(`ref=CODE&utm_source=…`)에서 추천코드(순수) */
+export function parseInstallReferrer(raw: string | null | undefined): string {
+  if (!raw || typeof raw !== 'string') return '';
+  try {
+    let s = raw.trim();
+    if (/%3D/i.test(s) && !s.includes('=')) s = decodeURIComponent(s); // 한 번 더 인코딩된 경우
+    return normalizeReferralCode(new URLSearchParams(s).get('ref') || '');
+  } catch {
+    return '';
+  }
+}
+
+/** 설치 앱: 열린 주소에 추천코드가 있으면 보관. 보관했으면 true */
+export async function captureNativeReferral(url: string | null | undefined): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+  const code = parseReferralFromUrl(url);
+  if (!code) return false;
+  const ok = await savePendingReferral(code, 'link');
+  console.info('[ReferralPending] 앱 링크 추천코드 수신', { ok, len: code.length });
+  return ok;
+}
+
+/** 안드로이드 설치 후 첫 실행 1회 — Play 설치 리퍼러의 추천코드 보관(이미 확인했으면 아무것도 안 함) */
+export async function captureInstallReferrerOnce(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    if (await AsyncStorage.getItem(INSTALL_REF_CHECKED_KEY)) return;
+    let raw = '';
+    try {
+      const app = require('expo-application');
+      raw = app?.getInstallReferrerAsync ? String((await app.getInstallReferrerAsync()) || '') : '';
+    } catch (err: any) {
+      // 사이드로드 APK·Play 서비스 없음 — 리퍼러 없음과 같다
+      if (__DEV__) console.info('[ReferralPending] 설치 리퍼러 조회 불가', { message: err?.message });
+    }
+    await AsyncStorage.setItem(INSTALL_REF_CHECKED_KEY, String(Date.now()));
+    const code = parseInstallReferrer(raw);
+    if (!code) return;
+    const existing = await loadPendingReferral();
+    if (existing) return; // 링크로 받은 코드가 이미 있으면 그대로
+    const ok = await savePendingReferral(code, 'link');
+    console.info('[ReferralPending] 설치 리퍼러 추천코드 수신', { ok, len: code.length });
+  } catch (err: any) {
+    console.warn('[ReferralPending] 설치 리퍼러 처리 실패(무시)', { message: err?.message });
+  }
+}

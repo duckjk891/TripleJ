@@ -20,10 +20,8 @@ import {
 } from 'react-native';
 import { Video, ResizeMode, Audio } from 'expo-av';
 import Slider from '@react-native-community/slider';
-import * as FileSystem from 'expo-file-system/legacy';
-import { saveMediaToMaidolAlbum } from '../utils/nativeSave';
+import { cacheFileName, downloadToCache as downloadFileToCache, safeFileName, saveToDevice } from '../utils/nativeSave';
 import * as Sharing from 'expo-sharing';
-import * as MediaLibrary from 'expo-media-library';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
@@ -1358,13 +1356,12 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   // v3.182: 기기 저장(사진 앨범) — 공유와 분리
   // v3.214 ⑥-a: 캐시 파일명 새니타이즈 강화 — 한글·공백·특수문자 연속을 _ 1개로, 40자 상한
   // (한글 긴 제목에서 downloadAsync 실패 → "다운로드만 되고 공유 시트 안 뜸" 증상 봉합 후보 a)
+  // v3.391: HTTP 상태·오류 페이지 확인(utils/nativeSave.downloadToCache) — 실패하면 throw(호출부 catch 가 안내)
   const downloadToCache = async (): Promise<string | null> => {
     if (!videoUrl) return null;
-    const base = (selected?.title || 'maidol').replace(/[^\w가-힣.-]+/g, '_').slice(0, 40) || 'maidol';
-    const dest = `${FileSystem.cacheDirectory}${base}_${madeFormat || 'video'}.mp4`;
-    if (__DEV__) console.info('[VideoDirector] 캐시 다운로드', { dest });
-    const res = await FileSystem.downloadAsync(videoUrl, dest);
-    return res.uri;
+    const name = cacheFileName(`${selected?.title || 'maidol'}_${madeFormat || 'video'}`, 'mp4');
+    if (__DEV__) console.info('[VideoDirector] 캐시 다운로드', { name });
+    return downloadFileToCache(videoUrl, name);
   };
 
   // ── v3.248 B5(A-12): 웹 저장·공유 — Blob 기반 ─────────────────────────────
@@ -1406,20 +1403,19 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           await Linking.openURL(videoUrl);
         }
       } else {
-        // v3.334 [Permissions]: Android 는 '저장만' 권한(writeOnly) — 사진·동영상 읽기 권한(READ_MEDIA_*) 없이 저장
-        // (Google Play 사진·동영상 권한 정책). 앨범 묶기가 안 되는 기기는 saveMediaToMaidolAlbum 이 라이브러리 저장으로 폴백.
-        const { status } = await MediaLibrary.requestPermissionsAsync(Platform.OS === 'android');
-        if (status !== 'granted') {
-          showAlert('권한 필요', '사진 보관함 접근 권한을 허용해야 영상을 저장할 수 있어요.');
-          return;
-        }
+        // v3.334 [Permissions]: Android 는 사진·동영상 읽기 권한(READ_MEDIA_*) 없이 저장(Google Play 정책).
+        // v3.391 [NativeSave]: Android 10+ 는 Movies/MAIDOL 에 바로(권한 불필요 — 13+ 에서 'MAIDOL' 앨범이
+        // 안 만들어지던 문제 해결), 그 밖은 사진 보관함 'MAIDOL' 앨범(저장 권한 요청) — utils/nativeSave.saveToDevice.
         const uri = await downloadToCache();
         if (!uri) throw new Error('download failed');
-        // v1.3.1 [NativeSave]: 사진 앱 'MAIDOL' 앨범에 모아 저장(대표 확정 기본경로)
-        const where = await saveMediaToMaidolAlbum(uri);
-        showAlert('저장 완료', where === 'album'
-          ? "사진 앱의 'MAIDOL' 앨범에 저장됐어요."
-          : '영상이 사진 앨범에 저장됐어요.');
+        const result = await saveToDevice(uri, 'video', safeFileName(`${selected?.title || 'MAIDOL'} 영상`, 'mp4'));
+        if (!result.ok) {
+          showAlert(result.reason === 'permission' ? '권한 필요' : '오류', result.reason === 'permission'
+            ? '사진 보관함 접근 권한을 허용해야 영상을 저장할 수 있어요.'
+            : '영상을 저장하지 못했어요. 잠시 후 다시 시도해주세요.');
+          return;
+        }
+        showAlert('저장 완료', `${result.place}에 저장했어요.`);
       }
       // v3.219 [VideoDraft]: 저장 완료 = 완주 — 선곡/step/대화 draft 클리어(스타일 sticky는 유지)
       useMusicStore.getState().clearVideoDraft();

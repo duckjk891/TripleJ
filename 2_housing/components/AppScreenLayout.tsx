@@ -2,7 +2,6 @@ import { ReactNode } from 'react';
 import {
   View,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
   StyleSheet,
   ViewStyle,
@@ -11,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT as MINI_HEIGHT } from '../stores/playerStore';
 import { colors } from '../theme/colors';
+import KeyboardAvoid from './KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 /**
  * 앱 전반의 공통 화면 레이아웃 래퍼.
@@ -125,13 +125,9 @@ export default function AppScreenLayout({
 
   if (keyboardAvoiding) {
     return (
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? (hasHeader ? 0 : 0) : 0}
-      >
+      <KeyboardAvoid style={styles.flex}>
         {root}
-      </KeyboardAvoidingView>
+      </KeyboardAvoid>
     );
   }
   return root;

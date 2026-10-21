@@ -1,0 +1,24 @@
+--- a/app-worker/_worker.js
++++ b/app-worker/_worker.js
+@@
+ const STATIC_PREFIXES = ['/_expo/', '/assets/'];
++// v3.391 [AppLinks] 앱 링크 확인 파일(안드로이드 App Links·iOS 유니버설 링크) — 정적 파일(.well-known 숨김 폴더)
++//   업로드 누락·확장자 없는 파일의 content-type 문제를 피해 워커가 직접 JSON 으로 응답한다.
++const ASSETLINKS = __ASSETLINKS_JSON__;
++const AASA = __AASA_APP_JSON__;
++const WELL_KNOWN = {
++  '/.well-known/assetlinks.json': ASSETLINKS,
++  '/.well-known/apple-app-site-association': AASA,
++};
+ 
+ export default {
+   async fetch(request, env) {
++    try {
++      const wk = WELL_KNOWN[new URL(request.url).pathname];
++      if (wk) {
++        return new Response(JSON.stringify(wk), {
++          headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600' },
++        });
++      }
++    } catch (e) { /* 아래 정적 처리로 */ }
+     const res = await env.ASSETS.fetch(request);

@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
   useWindowDimensions,
@@ -64,6 +63,7 @@ import { computeComposeLyricsKey, getResumableComposeDraft } from '../utils/dire
 import { VOICE_AGE_OPTIONS, voiceAgeFromLabel, voiceAgeLabel, parseArtistAge } from '../utils/vocalAge';
 import { ensureVoiceAiConsent } from '../utils/voiceConsent';
 import { useAiConsentGate } from '../utils/policyConsent';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -2750,11 +2750,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const progressPct = (displayedStep / totalSteps) * 100;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
-    >
+    <KeyboardAvoid style={styles.container} iosOffset={140}>
       {/* 진행도 바 */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: colors.bg.deepest }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -2877,7 +2873,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
             : null
         }
       />
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 

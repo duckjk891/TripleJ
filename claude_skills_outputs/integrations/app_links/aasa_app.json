@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["C65TP3NV3N.com.maidol.app"],
+        "components": [
+          { "/": "/app", "?": { "open": "dm" } },
+          { "/": "/app", "?": { "track": "?*" } },
+          { "/": "/app", "?": { "club": "?*" } }
+        ]
+      }
+    ]
+  }
+}

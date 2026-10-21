@@ -1,0 +1,16 @@
+// v3.391 [NativeSave] 안드로이드 MediaStore 직접 저장(음원 Music/MAIDOL·영상 Movies/MAIDOL) 로컬 모듈
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.maidolmediasave'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.maidolmediasave"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

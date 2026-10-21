@@ -10,13 +10,12 @@ import {
   ScrollView,
   ActivityIndicator,
   TextInput,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { BACKEND_BASE_URL } from '../services/api';
 import { listArtists } from '../services/characterService';
 import { hasArtistDraftProgress } from '../utils/directorResume';
@@ -64,6 +63,7 @@ import { useAiConsentGate } from '../utils/policyConsent';
 import { ensurePhotoAiConsent } from '../utils/photoConsent'; // v3.360
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.391 [KeyboardCtl] 갤럭시 키보드 가림 — keyboard-controller 통일
 
 // v3.109: "현재 아티스트" 미리보기 카드 제거 — 이 화면은 생성(추가·재생성) 전용.
 // 꾸미기 진입은 MyArtists → ArtistResult가 담당(대표 피드백: 추가 흐름에 꾸미기 노출 금지).
@@ -721,7 +721,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // v3.360 [PhotoConsent] 사진을 고르기 전 얼굴 사진 AI 처리 동의(대표 10-14 결정 — 실사 아티스트 사진 선택 직전 1회)
     if (!(await ensurePhotoAiConsent('ArtistInput.pickPhoto'))) return;
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      const res = await pickImage() /* v3.391 앱=사진첩(HEIC→JPEG) */;
       if (!res.canceled && res.assets && res.assets[0]) {
         const picked = res.assets[0];
         // v3.283 [ArtistPhoto]: 웹 — 4MB 넘는 사진은 긴 변 2048px JPEG 로 줄여 쓴다(얼굴 인증 5MB 한도 —
@@ -875,7 +875,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       return;
     }
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      const res = await pickImage() /* v3.391 앱=사진첩(HEIC→JPEG) */;
       if (!res.canceled && res.assets && res.assets[0]) {
         const file = res.assets[0];
         if (__DEV__) console.info('[ArtistInput] 화풍 이미지 업로드 선택', { name: file.name });
@@ -1460,11 +1460,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
-    >
+    <KeyboardAvoid style={styles.container} iosOffset={140}>
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
@@ -1546,7 +1542,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         )}
         {renderInputArea()}
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardAvoid>
   );
 }
 
