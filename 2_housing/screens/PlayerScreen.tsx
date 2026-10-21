@@ -45,7 +45,9 @@ import { useArtistStore } from '../stores/artistStore';
 //   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
 // v3.235 B6: 공유 링크 진입 웹 자동재생 차단 → '탭해서 듣기' 오버레이(단일 element 동기 play)
 import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture, webAudioEl } from '../services/webAudioElement';
-import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
+import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance, loadAndPlayTrack } from '../services/playback';
+// v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진이면 이 화면의 자체 로더 대신 공용 엔진(플레이어 1개)으로 재생
+import { NATIVE_QUEUE_ENGINE, isEngineSound } from '../services/nativePlayer';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -637,6 +639,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 호출 전 playTrackAtIndex는 완료된 상태여야 한다.
   // v3.225: 자동 진행 전용 로더 — 표식을 달고, 로드 실패 시 재생 불가 곡 건너뛰기에도 재사용된다.
   const advanceViaNetwork = async (nextTrack: TrackData) => {
+    if (NATIVE_QUEUE_ENGINE) { await engineLoad(nextTrack, { auto: true }); return; } // v3.392
     const store = usePlayerStore.getState();
     markAutoAdvance(nextTrack);
     try {
@@ -689,8 +692,28 @@ export default function PlayerScreen({ route, navigation }: any) {
     }
   };
 
+  // v3.392 [NativePlayer]: 안드로이드 엔진 경로 — 공용 loadAndPlayTrack(플레이어 1개 안에서 곡 교체)로 재생하고
+  // 이 화면 진행바는 엔진 Sound 에 콜백만 붙인다(곡 끝·차/잠금화면 다음·이전은 네이티브가 처리 → didJustFinish 없음).
+  // 종전 자체 로더는 '다음' 연타·전환 경합 때 이전 소리를 놓쳐 두 곡이 겹치고 닫아도 안 꺼졌다(대표 10-21 실측).
+  const engineLoad = async (target: TrackData, opts?: { auto?: boolean }) => {
+    const st = usePlayerStore.getState();
+    if (String(st.track?.id ?? '') !== String(target.id)) st.setTrack(target);
+    await loadAndPlayTrack(target, opts?.auto ? { auto: true } : undefined);
+    const snd = usePlayerStore.getState().sound;
+    soundRef.current = snd;
+    if (snd) {
+      snd.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+      setSound(snd);
+      setIsPlaying(true);
+      setPosition(0);
+    } else {
+      setIsPlaying(false);
+    }
+  };
+
   const loadAndPlay = async (target: TrackData = track) => {
     if (!target?.id) return;
+    if (NATIVE_QUEUE_ENGINE) { await engineLoad(target); return; } // v3.392
     discardPreloaded('player-load'); // v3.197: 새 재생 — 이전 곡 기준 핀 프리로드 폐기
     clearAutoAdvance(); // v3.225: 직접 재생 — 실패해도 자동 건너뛰기 없음(현행 정지·1탭 복구)
     try {
@@ -1016,7 +1039,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
     } else {
       // 다른 곡(=클릭한 곡)이면 기존 사운드 정리 후 그 곡을 새로 로드+재생
-      if (playerStore.sound) {
+      // v3.392: 엔진 Sound 는 정리(=정지)하지 않는다 — 같은 플레이어에서 곡만 바꾼다
+      if (playerStore.sound && !isEngineSound(playerStore.sound)) {
         playerStore.sound.unloadAsync().catch(() => {});
       }
       loadAndPlay(target);
@@ -1042,6 +1066,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     if (routeTrack.id === storeTrackId) return;
     (async () => {
       try {
+        if (NATIVE_QUEUE_ENGINE) { await engineLoad(routeTrack); return; } // v3.392
         if (soundRef.current) {
           await soundRef.current.unloadAsync().catch(() => {});
           soundRef.current = null;
@@ -1104,6 +1129,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     discardPreloaded('manual-skip'); // v3.197: 수동 스킵 — 핀된 프리로드 폐기(잘못된 곡 재생 방지)
     clearAutoAdvance(); // v3.225: 직접 스킵 — 실패해도 자동 건너뛰기 없음(현행 정지·1탭 복구)
     store.playTrackAtIndex(idx);
+    if (NATIVE_QUEUE_ENGINE) { await engineLoad(target); return; } // v3.392
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync().catch(() => {});

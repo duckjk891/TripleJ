@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <application>
+    <!-- v3.392 [NativePlayer] 음악 재생 서비스: 포그라운드(화면 꺼져도 유지)·잠금화면·블루투스·차(안드로이드 오토) 컨트롤 -->
+    <service
+      android:name="expo.modules.maidolplayer.MaidolPlaybackService"
+      android:exported="true"
+      android:foregroundServiceType="mediaPlayback">
+      <intent-filter>
+        <action android:name="androidx.media3.session.MediaLibraryService" />
+        <action android:name="android.media.browse.MediaBrowserService" />
+      </intent-filter>
+    </service>
+    <!-- 안드로이드 오토 미디어 앱 선언 -->
+    <meta-data
+      android:name="com.google.android.gms.car.application"
+      android:resource="@xml/maidol_automotive_app_desc" />
+  </application>
+</manifest>

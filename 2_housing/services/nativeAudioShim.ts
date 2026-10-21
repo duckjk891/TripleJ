@@ -55,6 +55,20 @@ export function toAvStatus(st: {
 
 /** 잠금화면 메타 소유자 — 마지막으로 play 된 심(동시 1개 전제: 엔진이 단일 재생 보장) */
 let activeShim: NativeShimSound | null = null;
+
+// v3.392 [NativePlayer] 단일 재생 안전장치(아이폰·옛 안드로이드 경로): 살아 있는 심 전부를 기억해
+// ① 하나가 재생을 시작하면 나머지는 멈추고 ② 미니플레이어 닫기 때 전부 정리한다.
+// 원인(대표 10-21 실측 '다음 누르면 겹침·닫아도 계속 재생'): 재생 화면·미니가 각자 사운드를 만들어
+// 연타·전환 경합 때 store 가 모르는 사운드가 남았다(그 소리는 닫기로도 안 꺼짐).
+const liveShims = new Set<NativeShimSound>();
+
+/** 살아 있는 심 전부 정지·해제(미니플레이어 닫기) — 반환: 정리한 개수 */
+export function stopAllNativeShims(reason: string): number {
+  const all = Array.from(liveShims);
+  all.forEach((sh) => { sh.unloadAsync().catch(() => {}); });
+  if (all.length) console.warn('[NativePlayer] 심 전부 정리', { reason, count: all.length });
+  return all.length;
+}
 let lockScreenTrack: { title?: string; artist?: string; artUrl?: string | null } | null = null;
 
 function applyLockScreen(shim: NativeShimSound | null): void {
@@ -95,6 +109,7 @@ export class NativeShimSound {
 
   private constructor(player: AudioPlayer) {
     this.player = player;
+    liveShims.add(this);
     this.sub = player.addListener('playbackStatusUpdate', (st: AudioStatus) => {
       const av = toAvStatus(st as any);
       this.lastStatus = av;
@@ -131,6 +146,16 @@ export class NativeShimSound {
   }
 
   private play(): void {
+    // v3.392: 다른 심이 소리를 내고 있으면 멈춘다(겹침 방지 — 프리로드 스왑·연타 경합 공통)
+    liveShims.forEach((o) => {
+      if (o === this) return;
+      try {
+        if (o.player.playing) {
+          o.player.pause();
+          console.warn('[NativePlayer] 단일 재생 — 겹친 소리 정지');
+        }
+      } catch {}
+    });
     this.player.play();
     activeShim = this;
     applyLockScreen(this);
@@ -159,6 +184,9 @@ export class NativeShimSound {
   async unloadAsync(): Promise<void> {
     if (this.removed) return;
     this.removed = true;
+    liveShims.delete(this);
+    // v3.392: remove 전에 먼저 멈춘다(잠금화면 컨트롤이 붙은 플레이어가 remove 후에도 소리 내던 경우 방어)
+    try { this.player.pause(); } catch {}
     try { this.sub?.remove(); } catch {}
     this.sub = null;
     this.cb = null;

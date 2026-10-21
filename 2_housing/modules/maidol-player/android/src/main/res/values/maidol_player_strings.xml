@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="maidol_player_channel_name">음악 재생</string>
+  <string name="maidol_player_library_root">MAIDOL</string>
+  <string name="maidol_player_now_playing">지금 재생 목록</string>
+</resources>

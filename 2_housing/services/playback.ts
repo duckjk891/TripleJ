@@ -8,7 +8,27 @@
 //   반드시 console.warn 레벨 고정(민감정보 금지 — trackId·상태만).
 // v3.205: 프리로드를 원격 스트림 → 로컬 파일 풀 다운로드로 교체(다운로드·수명 관리는
 //   아래 "프리로드 로컬 파일화" 블록 참조). 실패 시 원격 스트림 폴백 경로는 불변.
-import { NativeShimSound, syncNativeLockScreen } from './nativeAudioShim';
+import { NativeShimSound, stopAllNativeShims, syncNativeLockScreen } from './nativeAudioShim';
+// v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진(포그라운드 서비스·플레이어 1개·차/잠금화면 다음·이전) — 아이폰·웹 미사용
+import {
+  NATIVE_QUEUE_ENGINE,
+  engineExternalCallback,
+  engineGetState,
+  engineLastState,
+  enginePlayNow,
+  engineServiceAlive,
+  engineSetRepeatOne,
+  engineSetUpcoming,
+  engineShowsPlaying,
+  engineSound,
+  engineStop,
+  engineToAvStatus,
+  initNativeEngine,
+  isBackwardKey,
+  isEngineSound,
+  keyTrack,
+  trackIdOfKey,
+} from './nativePlayer';
 import { AppState, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 // v3.205: 다음 곡 로컬 프리다운로드 — expo-file-system v19+는 신 API에서
@@ -183,7 +203,8 @@ function prebufferNextWeb(): void {
 let preQueueFor: string | null = null;
 let preQueueTimer: any = null;
 function preQueueRelatedIfLast(attempt = 0): void {
-  if (Platform.OS !== 'web') return;
+  // v3.392 [NativePlayer]: 안드로이드 엔진도 같은 선적재 — 곡 시작 때 추천곡을 붙여 두면 네이티브가 곡 끝에서 바로 잇는다
+  if (Platform.OS !== 'web' && !NATIVE_QUEUE_ENGINE) return;
   const s = usePlayerStore.getState();
   const cur = s.track;
   if (!cur?.id || s.repeat === 'one') return;
@@ -242,6 +263,8 @@ usePlayerStore.subscribe((s: any) => {
   if (tid && tid !== rpLastTrackId) {
     rpLastTrackId = tid;
     s.noteRecentlyPlayed?.(tid);
+    // v3.392 [NativePlayer]: 네이티브도 '이전 = 실제로 들은 순서'(v3.360) — 종전엔 웹 구독에서만 기록돼 앱의 이전이 목록 순서였다
+    if (Platform.OS !== 'web') notePlayedForPrev(s.track);
   }
 });
 
@@ -259,8 +282,8 @@ usePlayerStore.subscribe((s: any) => {
   notePlayProgress(tid, pos, dur, src);
 });
 
-if (Platform.OS !== 'web') {
-  // v1.3.1 [BGAudio]: 잠금화면 Now Playing sync — 웹 mediaSession 구독과 동형(단일 지점)
+if (Platform.OS !== 'web' && !NATIVE_QUEUE_ENGINE) {
+  // v1.3.1 [BGAudio]: 잠금화면 Now Playing sync (v3.392: 네이티브 엔진은 곡 정보를 항목에 실어 보내므로 불필요) — 웹 mediaSession 구독과 동형(단일 지점)
   let nsTrackId: string | null = null;
   usePlayerStore.subscribe((s: any) => {
     const t = s.track;
@@ -368,6 +391,9 @@ if (Platform.OS === 'web') {
 /** 진행 중인 로드를 무효화(닫기·정지 시 호출) — 이후 완료되는 로드는 재생되지 않고 폐기됨 */
 export function invalidatePlayback(): void {
   loadGen++;
+  // v3.392 [NativePlayer]: 미니플레이어 닫기 = 재생 정지·목록 비움·알림 정리(store.sound 유무와 무관하게 — 증상 ③)
+  if (NATIVE_QUEUE_ENGINE) void engineStop('invalidate');
+  else if (Platform.OS !== 'web') stopAllNativeShims('invalidate'); // 아이폰: store 가 모르는 사운드까지 정리(증상 ③)
   discardPreloaded('invalidate'); // v3.197: 미니 닫기 등 — 핀된 프리로드도 함께 폐기
   releaseActiveLocalFile(); // v3.205: 재생 종료 — 소비된 프리로드 로컬 파일도 삭제
   clearAutoAdvance(); // v3.225: 닫기 — 진행 중 자동 건너뛰기 표식 폐기
@@ -524,6 +550,7 @@ export function maybePreloadNext(
   opts?: { eager?: boolean },
 ): void {
   if (Platform.OS === 'web') return; // 웹은 presigned 경로 유지 — 네이티브 한정
+  if (NATIVE_QUEUE_ENGINE) return; // v3.392: 네이티브 엔진은 다음 곡을 목록에 미리 넣어 두고 ExoPlayer 가 미리 받는다
   if (!currentTrack?.id) return;
   // v3.205: 소비된 로컬 파일 회수 — 스토어의 현재 곡이 active 파일의 곡과 다르면 그 파일은
   // 이미 끝난 곡의 잔존물이다. PlayerScreen은 무수정 제약으로 해제 훅을 부를 수 없으므로,
@@ -958,6 +985,10 @@ export async function loadAndPlayTrack(newTrack: any, opts?: { auto?: boolean })
   if (opts?.auto) markAutoAdvance(newTrack);
   else clearAutoAdvance();
   discardPreloaded('new-load'); // v3.197: 수동 스킵/새 재생 — 이전 곡 기준 핀 프리로드 폐기
+  if (NATIVE_QUEUE_ENGINE) {
+    await engineLoadAndPlay(newTrack, gen, opts);
+    return;
+  }
   const store = usePlayerStore.getState();
   if (store.sound) {
     const old = store.sound;
@@ -1078,6 +1109,229 @@ export async function playTrackNow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진 정책 구역.
+// 네이티브는 [들은 곡…, 현재 곡, 다음 곡] 목록을 들고 곡 끝·차/잠금화면 다음·이전을 스스로 처리한다.
+// JS 는 ① 다음 곡을 정해(재생목록·셔플·Inst 건너뛰기·누른 곡 다음 추천 — getNextAutoIndex) 미리 붙여 두고
+// ② 네이티브가 곡을 옮기면 store(현재 곡·인덱스)를 맞추며 ③ 재생 기록(70%)·EXP·추천 이어붙이기를 종전 규칙대로 한다.
+// 플레이어가 하나뿐이고 곡 교체가 그 안에서 일어나므로 '겹침'이 구조적으로 없다(증상 ①).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 지금 붙여 둔 다음 곡(어느 큐 인덱스에서 골랐는지) — 네이티브가 그 곡으로 넘어가면 같은 자리로 맞춘다 */
+let enginePin: { trackId: string; index: number } | null = null;
+
+/** store 기준 '자동으로 넘어갈 다음 곡' — 한 곡 반복이면 네이티브가 반복하므로 없음 */
+function computeEngineUpcoming(): any[] {
+  const s = usePlayerStore.getState();
+  enginePin = null;
+  if (!s.track?.id || s.repeat === 'one') return [];
+  const idx = s.getNextAutoIndex(); // v3.271 [InstSkip]·v3.360 [TapRadio]·[ShuffleBag] 규칙 그대로(셔플은 곡당 1회 확정)
+  const next = idx >= 0 ? s.queue[idx] : null;
+  if (!next?.id) return [];
+  enginePin = { trackId: String(next.id), index: idx };
+  return [next];
+}
+
+async function engineLoadAndPlay(newTrack: any, gen: number, opts?: { auto?: boolean }): Promise<void> {
+  const s0 = usePlayerStore.getState();
+  // 호출부가 playTrackAtIndex/setTrack 을 먼저 한다 — store 현재 곡이 이 곡일 때만 다음 곡을 같이 넘긴다
+  const ups = String(s0.track?.id ?? '') === String(newTrack?.id ?? '') ? computeEngineUpcoming() : [];
+  try {
+    await enginePlayNow(newTrack, ups, s0.repeat === 'one');
+    if (gen !== loadGen) {
+      console.warn('[NativePlayer] load superseded', { trackId: newTrack?.id }); // 뒤에 온 재생이 같은 플레이어에서 곡을 바꿨다
+      return;
+    }
+    const st = usePlayerStore.getState();
+    st.setSound(engineSound as unknown as Audio.Sound);
+    st.setIsPlaying(true);
+    setTimeout(() => preQueueRelatedIfLast(), 1500); // 이 곡이 마지막이면 추천곡 선적재
+  } catch (err: any) {
+    console.warn('[NativePlayer] load fail', { trackId: newTrack?.id, message: err?.message, appState: AppState.currentState });
+    if (gen !== loadGen) return;
+    const st = usePlayerStore.getState();
+    st.setSound(null);
+    st.setIsPlaying(false);
+    if (opts?.auto) void skipUnplayableOnAutoAdvance(newTrack, loadAndPlayTrackAuto);
+  }
+}
+
+let engineSyncTimer: any = null;
+function scheduleEngineSync(reason: string, delay = 400): void {
+  clearTimeout(engineSyncTimer);
+  engineSyncTimer = setTimeout(() => { void syncEngineUpcoming(reason); }, delay);
+}
+
+/** 다음 곡·한 곡 반복을 네이티브 목록에 맞춘다 — 이미 같으면 건드리지 않는다(미리 받아 둔 다음 곡 보존) */
+async function syncEngineUpcoming(reason: string): Promise<void> {
+  const s = usePlayerStore.getState();
+  if (!isEngineSound(s.sound) || !s.track?.id) return;
+  const st = engineLastState();
+  if (!st || !st.count) return;
+  if (trackIdOfKey(st.key) !== String(s.track.id)) return; // 곡 전환 중 — 전환 이벤트 뒤에 다시 맞춘다
+  try {
+    const wantRepeatOne = s.repeat === 'one';
+    if (!!st.repeatOne !== wantRepeatOne) await engineSetRepeatOne(wantRepeatOne);
+    const ups = computeEngineUpcoming();
+    const want = ups[0]?.id != null ? String(ups[0].id) : '';
+    if (want === trackIdOfKey(st.nextKey)) return;
+    await engineSetUpcoming(ups);
+    console.warn('[NativePlayer] upcoming sync', { reason, current: s.track.id, next: want || null });
+  } catch (err: any) {
+    console.warn('[NativePlayer] upcoming sync 실패', { reason, message: err?.message });
+  }
+}
+
+function onEngineTrackChange(key: string, reason: string, prevKey: string | null): void {
+  const tid = trackIdOfKey(key);
+  if (!tid) return;
+  const s = usePlayerStore.getState();
+  if (reason === 'repeat') {
+    // 한 곡 반복 한 바퀴 — 재생 세션을 닫아 다음 바퀴도 기록 대상(종전 didJustFinish 와 동일)
+    endPlaySession(tid, 'native-engine');
+    try { useArtistStore.getState().addExp(1, 'play'); } catch {}
+    return;
+  }
+  if (String(s.track?.id ?? '') === tid) return; // JS 가 먼저 옮겨 둔 곡(앱 안 재생·다음·이전)
+  if (!isEngineSound(s.sound)) return;
+  const prevTid = trackIdOfKey(prevKey);
+  // 네이티브가 스스로 옮김: 곡 끝(auto) 또는 차·잠금화면·이어폰의 다음/이전(seek)
+  if (prevTid) endPlaySession(prevTid, 'native-engine');
+  const track = keyTrack(key) || s.queue.find((t: any) => String(t?.id) === tid) || null;
+  const back = reason !== 'auto' && isBackwardKey(prevKey, key);
+  let idx = -1;
+  if (back) {
+    const pi = s.getPrevIndex(); // 들은 순서 기록 한 칸 뒤로(듣고 지나가 빠진 추천곡은 현재 곡 앞에 다시 넣는다)
+    if (pi >= 0 && String(usePlayerStore.getState().queue[pi]?.id) === tid) idx = pi;
+  } else if (enginePin && enginePin.trackId === tid && String(s.queue[enginePin.index]?.id) === tid) {
+    idx = enginePin.index;
+  }
+  if (idx < 0) {
+    const cur = usePlayerStore.getState();
+    idx = cur.queue.findIndex((t: any, i: number) => i > cur.currentIndex && String(t?.id) === tid);
+    if (idx < 0) idx = cur.queue.findIndex((t: any) => String(t?.id) === tid);
+    if (idx < 0 && track) idx = cur.placeNextAfterCurrent(track); // 목록에서 빠진 곡 — 현재 곡 뒤에 다시 넣는다
+  }
+  if (idx < 0) {
+    console.warn('[NativePlayer] track sync — 큐에서 곡을 못 찾음', { to: tid, reason });
+    return;
+  }
+  const target = usePlayerStore.getState().queue[idx] || track;
+  if (reason === 'auto') {
+    try { useArtistStore.getState().addExp(1, 'play'); } catch {} // 재생 완료 EXP(재생 화면 경로와 동일)
+    markAutoAdvance(target); // v3.225: 자동 진행 곡 — 재생 불가면 건너뛰기 대상
+  } else {
+    clearAutoAdvance();
+  }
+  usePlayerStore.getState().playTrackAtIndex(idx);
+  console.warn('[NativePlayer] track sync', { from: prevTid || null, to: tid, reason, back, idx, appState: AppState.currentState });
+  scheduleEngineSync('track-change', 50);
+  setTimeout(() => preQueueRelatedIfLast(), 1500);
+}
+
+function onEngineState(st: any): void {
+  const s = usePlayerStore.getState();
+  if (!isEngineSound(s.sound)) return;
+  const tid = trackIdOfKey(st?.key);
+  if (!tid) return;
+  const track = keyTrack(st.key) || (String(s.track?.id ?? '') === tid ? s.track : null);
+  const playing = engineShowsPlaying(st);
+  const pos = Math.max(0, Math.round(st.positionMs || 0));
+  // v3.192 duration 보정 동일 — 엔진값·현재 위치·API duration_sec 중 최대
+  const eff = Math.max(Math.round(st.durationMs || 0), pos, (track?.duration_sec ?? 0) * 1000);
+  prEngineTrackId = tid; // v3.229 [PlayRecord]: 이 쓰기의 곡 귀속 = 네이티브가 재생 중인 곡
+  if (s.isPlaying !== playing) s.setIsPlaying(playing);
+  s.setPosition(pos);
+  if (eff > 0) s.setDuration(eff);
+  prEngineTrackId = null;
+  if (pos > 0) noteAutoAdvanceProgress({ positionMillis: pos });
+  const cb = engineExternalCallback(); // 재생 화면(PlayerScreen) 진행바
+  if (cb && String(usePlayerStore.getState().track?.id ?? '') === tid) {
+    try { cb(engineToAvStatus(st, eff || undefined)); } catch {}
+  }
+}
+
+function onEngineEnded(key: string): void {
+  const s = usePlayerStore.getState();
+  if (!isEngineSound(s.sound)) return;
+  const tid = trackIdOfKey(key);
+  // 다음 곡이 목록에 없던 채로 끝남(추천 선적재 실패 등) — 종전 규칙으로 잇는다
+  endPlaySession(tid, 'native-engine');
+  try { useArtistStore.getState().addExp(1, 'play'); } catch {}
+  const idx = s.getNextAutoIndex();
+  console.warn('[NativePlayer] ended without queued next', { trackId: tid, nextIdx: idx, appState: AppState.currentState });
+  if (idx >= 0 && s.queue[idx]) {
+    s.playTrackAtIndex(idx);
+    void loadAndPlayTrack(s.queue[idx], { auto: true });
+  } else {
+    void autoContinueWithRelated();
+  }
+}
+
+function onEngineError(e: { key: string; code: string; message: string; http: number; willRetry: boolean }): void {
+  console.warn('[NativePlayer] error', { trackId: trackIdOfKey(e.key), code: e.code, http: e.http || null, willRetry: e.willRetry, appState: AppState.currentState });
+  const s = usePlayerStore.getState();
+  if (!isEngineSound(s.sound) || e.willRetry) return; // 순간 단절은 네이티브가 다시 시도 중
+  s.setIsPlaying(false);
+  // v3.225: 자동 진행 곡이 사라졌으면(4xx) 건너뛰기, 직접 재생은 정지(재생 버튼 1탭 복구)
+  void skipUnplayableOnAutoAdvance(keyTrack(e.key) || s.track, loadAndPlayTrackAuto);
+}
+
+function onEngineNeedNext(from: string): void {
+  const s = usePlayerStore.getState();
+  if (!isEngineSound(s.sound) || !s.track) return;
+  // 차·잠금화면 '다음'인데 붙여 둔 다음 곡이 없음 — 미니플레이어 '다음'과 같은 규칙(끝이면 추천곡)
+  const idx = s.getNextManualIndex();
+  console.warn('[NativePlayer] remote next without queued item', { from, idx });
+  if (idx >= 0 && s.queue[idx]) {
+    s.playTrackAtIndex(idx);
+    void loadAndPlayTrack(s.queue[idx]);
+  } else {
+    void autoContinueWithRelated();
+  }
+}
+
+let engineGlueInited = false;
+function initNativeEngineGlue(): void {
+  if (!NATIVE_QUEUE_ENGINE || engineGlueInited) return;
+  engineGlueInited = true;
+  initNativeEngine({
+    onTrackChange: onEngineTrackChange,
+    onState: onEngineState,
+    onEnded: onEngineEnded,
+    onError: onEngineError,
+    onNeedNext: onEngineNeedNext,
+  });
+  // 재생목록·셔플·반복·추천 흐름이 바뀌면 다음 곡을 다시 맞춘다
+  let prev: any[] = [];
+  usePlayerStore.subscribe((s: any) => {
+    const cur = [s.queue, s.currentIndex, s.shuffle, s.repeat, s.radioSeedId, s.recoNextId, s.track?.id];
+    if (cur.every((v, i) => v === prev[i])) return;
+    prev = cur;
+    scheduleEngineSync('store');
+  });
+  // JS 만 다시 뜨고 서비스는 살아 있던 경우 — 같은 곡이면 이어받고, 모르는 곡이면 정리(유령 재생 방지)
+  if (engineServiceAlive()) {
+    (async () => {
+      try {
+        const st = await engineGetState();
+        if (!st || !st.count) return;
+        const s = usePlayerStore.getState();
+        const tid = trackIdOfKey(st.key);
+        if (tid && String(s.track?.id ?? '') === tid) {
+          s.setSound(engineSound as unknown as Audio.Sound);
+          s.setIsPlaying(engineShowsPlaying(st));
+          console.warn('[NativePlayer] adopted running playback', { trackId: tid });
+          scheduleEngineSync('adopt');
+        } else {
+          console.warn('[NativePlayer] orphan playback on start → stop', { nativeTrack: tid || null, storeTrack: s.track?.id ?? null });
+          await engineStop('orphan-on-start');
+        }
+      } catch {}
+    })();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // v3.197(T4): AppState 'active' 복귀 리컨사일 — 백그라운드에서 사운드가 죽었는데
 // UI가 "재생중"으로 남는 불일치를 정리한다. 자동 재재생은 하지 않는다(운전 중 돌발
 // 재생 방지 — 계획서 명시). 복구는 사용자의 재생버튼 1탭(견고화 토글)이 받아준다.
@@ -1087,6 +1341,7 @@ let reconcilerSubscription: { remove: () => void } | null = null;
 export function initPlaybackReconciler(): void {
   if (reconcilerInited) return;
   reconcilerInited = true;
+  initNativeEngineGlue(); // v3.392 [NativePlayer]: 안드로이드 엔진 이벤트 연결(1회)
   purgePreloadDir(); // v3.205: 앱 기동 시 preload/ 고아 파일 일괄 purge(프로세스당 1회)
   reconcilerSubscription = AppState.addEventListener('change', async (state) => {
     if (state !== 'active') return;
