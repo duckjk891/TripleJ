@@ -4893,3 +4893,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - **네이티브 앱**: 다음 스토어 빌드에 포함.
 - 합본 시험 APK(10-21): EAS 917e64c8, 1.3.3 (빌드 16), runtime 1f64c7e0…, 채널 preview — https://expo.dev/artifacts/eas/UqWwqySySS6Hxcn_1hqyp_fWBIn0Yw-3ssm04ECr34s.apk (cd6d1f0 깨끗한 worktree). Kotlin 로컬 모듈(maidol-media-save·maidol-player) EAS 컴파일 통과.
 - 첫 OTA(대표 승인 "시험 앱에 OTA 한 번 보내 봐"): 채널 preview·android, origin/frontend f448a96(재생 화면 키보드 0d6fec2·일기장 v3.389·별 제작소 포함), update group bfe6b04f. iOS 는 맞는 빌드 없음 → 스크립트가 자동 건너뜀. production OTA 는 1.3.3 스토어 출시 후. 시험 순서 `claude_skills_outputs/integrations/APP_TEST_v3391_v3392.md`.
+
+## v3.394 — 2026-10-21 — 공지 고정(작성자 그대로)·주간 미션 '커버에 내 아티스트 넣어 3개'·일기 임시저장·별 안내 보강 + 캡틴큐→캪틴큐 (서버 + 웹, 대표 요청)
+- 정정(대표): v3.389 에서 lovvepearl 홍보 글 2건을 공식 계정 글로 옮긴 것은 잘못 → 작성자 lovvepearl 로 되돌리고 `notice_pinned: true`(moved_to_notice 제거). 서버 `feeds.py`: /notices = 공식 계정 글 OR notice_pinned 공개 글, /timeline exclude_official 시 notice_pinned 제외. 앱 FeedCard '공지' 배지.
+- 주간 미션(대표): `artist_covers`(곡에 커버 3개) 폐지 → `artist_in_cover` "커버 이미지에 내 아티스트 넣어 3개 만들기" ⭐5 — `upload.py` generate-cover 성공 후 커버 착장 스냅샷 state saved/outfit_changed(본인 상시 아티스트 시트 + 인물 구도)일 때 object_name 1건 기록. 옛 키는 MISSIONS 에서 빠져 tracks.py 훅은 no-op. 새 키라 이번 주 진행 0부터.
+- 앱: 일기 쓰기 [임시저장](새 일기·기기 계정별 1개·이어 쓰기/새로 쓰기·저장 시 삭제), 별 안내 '일기 쓰기 +3' NEW·'남의 곡 듣기' 곡마다 하루 1번·하루 최대 5곡(charts.py daily_cap=5), 별 내역 라벨. 커밋 bee827e.
+- 데이터(대표): 곡 6ad49d07 '캡틴큐'→'캪틴큐' — tracks(title·lyrics 2곳·prompt·source_meta·search_keywords·age_rating_basis), lyrics_assets(title·content·story), generations 2건(title·lyrics·요청/응답 원문), ES 재색인 OK. 원본 백업 EC2 logs/rename_captainq_v3389_backup.json.
+- 검증: 격리 테스트 19/19(server_staging_v3394notice/_tests) — 공지 포함·비공개 제외·[전체] 제외, 미션 2개·중복 무시·3개 시 ⭐5 1회·옛 키 no-op, 훅 위치. 대표 실행 deploy_v3394.sh: 호스트=컨테이너 md5 가드·`.bak_pre_v3394`×3·`maidol-app:pre-v3394notice-live`·TOTAL 0·health·oauth 302×3·공지 6·전체 0·Traceback 0. 웹은 공유 폴더에 다른 세션 미완성 수정(VideoDirectorScreen)이 있어 커밋본만 깨끗한 복사본(scratchpad, node_modules APFS 클론)으로 빌드·배포. 실측: 새 미션 팝업·별 안내(미션·일기 쓰기 NEW) 스크린샷 diary_v3389/5~7.
+- 남은 결정: 크루 생성 보상(금액·1회) · '일기로 곡 만들기' 착수 여부 · 재화 표기 '별'/'스타' 통일.
