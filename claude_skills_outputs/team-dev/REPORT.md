@@ -4824,3 +4824,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 광고주 포털 세션 요청(대표 10-21 광고주 사이트 수정사항3): 광고주 대시보드 '내 옷이 나온 곡 · 채널별'에서 곡을 누르면 `https://app.maidol.ai.kr/?track={곡ID}&view=outfit` 를 새 탭으로 연다(서버 v3.385 가 이 url 제공) — 기존 앱은 view 를 무시하고 곡만 재생.
 - utils/trackLink.ts: `view`(허용값 outfit만) 캡처 → pending 보관 → 소비 시 Player 파라미터 `openOutfit: true`, 주소창 정리 때 `view` 도 제거. screens/PlayerScreen.tsx: `openOutfit` 이면 상세를 착장(스타일링) 탭으로 열기(댓글 알림 진입 openComments 와 같은 방식).
 - 검증: tsc 0, 미리보기(mvtest) 실측 — `?track=…&view=outfit` 진입 시 곡 재생 + 상세 '스타일링' 탭 열림(착장 3개 표시). 운영 웹 배포.
+
+## v3.387 — 2026-10-21 — 광고주 대시보드 채널별 '입힌 옷 펼치기' + 옷마다 나온 곡 → 새 탭 재생·착장 (서버 + 웹, 대표 PDF '수정사항3')
+대표: "입힌 옷을 펼치기로 해서 어떤 옷들인지 펼쳐 나오게, 그 옷이 사용된 곡들을 옷 오른쪽에 나열, 곡 누르면 새 탭에서 재생되면서 스타일링 페이지 열려 입혔던 옷 확인".
+- 서버(routes/business.py, 스테이징 server_staging_v3385biz — 버전 번호는 메인 세션 v3.385·v3.386 과 겹치지 않게 v3.387 로 기록): `_worn_tracks_by_item`(공개곡 전수 스캔 — 아이템별 업로더별 곡 id 목록, 노출 판정 동일) 추가, 기존 `_worn_counts_by_item` 은 그 곡 수를 세는 래퍼(동작 동일). /business/insights stars[] 에 `worn_items`(옷 id·이름·부위·사진·곡 수·곡 최대 20개 {id, 제목, url=https://app.maidol.ai.kr/?track={id}&view=outfit}) 가산.
+- 웹: 채널 이름 아래 '입힌 옷 N벌 펼치기 ▾' → 옷(사진·이름·부위·곡 n개) 오른쪽에 곡 칩(♪ 제목 ↗, 새 탭). 구 서버면 종전처럼 옷 이름만. 표 읽는 법에 펼치기 설명. 예시 화면 데이터도 같은 구조(옷별 곡 수 합 = 채널 '내 옷이 나온 곡'), 예시 곡은 안내 창.
+- 웹앱 `?view=outfit`(착장 탭으로 열기)은 메인 세션에 요청 → v3.386 으로 반영됨.
+- 검증: 서버 격리 테스트 15/15(8개 광고주 — 래퍼 카운트 = 곡 목록 길이, 채널 곡 수 합 = worn_count, 곡 존재·공개, url 형식, 소유 상품만, 부위 필터), 웹 예시 화면(펼치기·합 35=35·예시 곡 안내), 운영 실제 곡 링크(무신사 옷을 입힌 곡) → 새 탭에서 재생 + 스타일링 탭에 무신사 옷 표시 확인. 처음 방문하는 브라우저는 앱 소개 화면이 먼저 뜨고 '나중에 할게요' 뒤에 곡이 열림(메인 세션 영역 — 곡 링크면 소개 생략 검토 필요).
+- 배포(대표 승인): 웹 a6f044e(워크트리 push), 서버 md5 가드·.bak_pre_v3385·이미지 pre-v3385-live·진행 작업 0건 → 재기동 6초, health·oauth 3종 302·Traceback 0. 옛 컨테이너 maidol-app-old-v3387(멈춤, restart=no) — maidol-app-old-v3384·v3385 와 함께 대표가 정리.
