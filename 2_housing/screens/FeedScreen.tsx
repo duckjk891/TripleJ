@@ -448,7 +448,7 @@ export default function FeedScreen() {
       )}
       {loading && posts.length === 0 && !(tab === 'mine' && monthData) ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
-      ) : posts.length > 0 || (tab === 'mine' && monthData) ? (
+      ) : posts.length > 0 || (tab === 'mine' && monthData) || (tab === 'all' && showReward) ? (
         <FlatList
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
@@ -458,6 +458,13 @@ export default function FeedScreen() {
           ListHeaderComponent={listHeader}
           ListEmptyComponent={tab === 'mine' && loading ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: spacing.xl }} />
+          ) : tab === 'all' ? (
+            // v3.389 [Diary]: [전체]가 비어도 오늘 보상 안내 띠는 보이도록(목록 머리) — 빈 안내는 아래로
+            <EmptyState
+              icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
+              title="아직 일기가 없어요"
+              hint="오늘의 첫 일기를 써 보세요. 팔로우한 사람의 일기도 여기 떠요."
+            />
           ) : tab === 'mine' ? (
             // v3.389 [Diary]: 고른 날/이번 달에 일기가 없을 때 — 최근 7일이면 그 날짜로 바로 쓰기
             <View style={styles.dayEmpty}>
