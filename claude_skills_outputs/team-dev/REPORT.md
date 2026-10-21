@@ -4876,3 +4876,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - 검증: 서버 격리 테스트 77/77(시험 Mongo 버리는 DB·가짜 PG) — 라우트 매핑, 하루 1번·삭제 후 재작성·사용자별, 팔로워/비팔로워/비로그인/블라인드, 구버전 앱 수정 시 범위 유지, 날짜 범위, 수정 보상, 달력·연속·별 합계. 앱 tsc 0, diary 헬퍼 tsx 검사.
 - 배포: 자동 안전장치가 운영 배포를 막아 대표가 `server_staging_diary/deploy_v3389.sh` 직접 실행 — md5 가드(3388a284→978d28d3)·`feeds.py.bak_pre_v3389`·`maidol-app:pre-v3389diary-live`·진행 작업 TOTAL 0·로그 저장·정식 run 명령, health·oauth 3종 302·diary 401(비로그인)·timeline 200·Traceback 0, 공개 주소 확인. 옛 컨테이너 maidol-app-old-v3389(멈춤) — 대표가 정리. 웹 app.maidol.ai.kr 배포(fetch+rebase 후) 실측: 전체·내 일기 달력·공지·일기 쓰기 스크린샷 `claude_skills_outputs/team-dev/diary_v3389/`.
 - 데이터(대표 요청): lovvepearl 홍보 글 2건(6ad0964e '대머리 김부장' MV, 6aafacb2 펄킴 신곡)을 공식 계정 글로 이동(author_id→maidol_official, `moved_to_notice` 에 원작성자 기록, 좋아요·댓글 유지) → [공지]에 표시. 원본 백업 EC2 `/home/ubuntu/maidol/logs/feeds_move_to_notice_v3389_backup.json`. 그 결과 [전체]는 현재 0건 → 빈 화면에도 +3⭐ 띠가 보이도록 81d9158.
+
+## v3.388 — 2026-10-21 — '별 제작소'(구 명칭 별 충전소): 2시간마다 ⭐5, 서버 시각·원자 지급 + 별 안내 카드·다 만들어졌을 때 팝업 (서버 + 웹, 대표 승인)
+
+- **기능**: 별이 2시간에 걸쳐 만들어지고, 다 되면 ⭐5 받기. 받으면 그 시각부터 0에서 다시 시작, 안 받으면 다 된 상태로 멈춤(쌓이지 않음). 처음 쓰는 사람은 첫 조회 시점부터 시작. 어린이·보호자 동의 제한 없음(출석과 동일).
+- **서버**(EC2 backend_9004, 운영 배포 2회 — 기능 + 이름 변경):
+  - 새 파일 `services/star_station_service.py`(상수 `STAR_STATION_CYCLE_SECONDS=7200`·`STAR_STATION_REWARD=5` 한 곳), `routes/star_station.py` — `GET /api/star-station/status`, `POST /api/star-station/claim`(응답 `claimed·code(claimed|not_ready|already_claimed)·message·balance` + 진행 필드).
+  - 중복 지급 2중 차단: `star_station` 문서 `started_at <= now-주기` 조건부 find_one_and_update(원자) + `point_events` 유니크(action `star_station`, track_id `cycle_<주기 시작 ms>`). 지급 실패 시 타이머 되돌림.
+  - `main.py` 라우터 2줄, CS 봇 내역 이름·관리자 기능 통계에 '별 제작소' 줄.
+  - 격리 테스트 34/34(2시간 전 거절·다 찬 뒤 1회·10시간 방치해도 1칸·동시 20건/HTTP 연타 10건 → 1회·받은 직후 0부터·지급 실패 복구·비로그인 401·시험 데이터 0건). 배포 후 health 200·OAuth 3종 302·Traceback 0·route 매핑 확인. 백업 `.bak_pre_v3388`/`.bak_pre_v3388b`, 이미지 `pre-v3388-live`/`pre-v3388b-live`. 스테이징 `server_staging_v3388station/`.
+- **앱**(커밋 3b40b58·f448a96·ec0c6a0·55b7d22): `services/starStationService.ts`, `components/StarStationCard.tsx`(별 안내 창 카드 — 별똥별 선 아이콘·진행 바·남은 시간·다 되면 '5⭐ 받기', 문구는 서버 cycle_seconds·reward), `App.tsx`(다 됐을 때만 출석 다음 차례 팝업 — 우선순위 출석 1 > 제작소 0.5 > 새 소식 0, 같은 주기는 앱 실행 중 1번·앱 복귀 때도 확인), 별 내역 라벨 `star_station: '별 제작소'`.
+- **대표 지시**: 이름 '별 충전소' → '별 제작소', 아이콘은 원래 별똥별 선 아이콘 유지(⭐ 이모지 아님).
+- **운영 웹 배포**: 공용 폴더의 다른 세션 미커밋 작업이 섞이지 않게 origin/frontend(55b7d22)를 별도 깨끗한 작업본에서 빌드·배포.
+- **실측**(운영 app.maidol.ai.kr, 대표 계정 — 그 계정만 시작 시각 2시간 앞당김, 표시 필드는 확인 후 제거): 만드는 중 카드(1시간 50분 남음) → 새로고침 시 '별이 다 만들어졌어요' 팝업 → 카드 다 됨 상태 → 받기 → ⭐363→368, 카드 2시간부터 재시작, `point_events` star_station 1건. 출석 팝업 다음 순서는 실제 modalTurn 코드로 순서 시험(출석 > 제작소 > 새 소식) — 이 계정은 오늘 이미 출석해 화면에선 출석 팝업 없음.
+  - 스크린샷: `star_workshop_v3388/1_making.jpg`·`2_ready_popup.jpg`·`3_ready_card.jpg`·`4_claiming.jpg`·`5_claimed.jpg`
+- **네이티브 앱**: 다음 스토어 빌드에 포함.
