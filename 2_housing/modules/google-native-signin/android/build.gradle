@@ -19,6 +19,7 @@ android {
 dependencies {
   implementation "androidx.credentials:credentials:1.6.0"
   implementation "androidx.credentials:credentials-play-services-auth:1.6.0"
-  implementation "com.google.android.libraries.identity.googleid:googleid:1.2.1"
+  // 1.2.1 은 Kotlin 2.4 로 빌드돼 SDK 54(Kotlin 2.1) 컴파일러가 못 읽음 — 1.2.0(메타데이터 2.1) 고정
+  implementation "com.google.android.libraries.identity.googleid:googleid:1.2.0"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
 }
