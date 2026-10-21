@@ -156,7 +156,7 @@ export const SORTS = [
   { key: 'recent', label: '최근 등록순' },
   { key: 'clicks', label: '클릭 많은 순' },
   { key: 'impressions', label: '착장 선택 많은 순' },
-  { key: 'wishes', label: '담김 많은 순' },
+  { key: 'wishes', label: '위시리스트 많은 순' },
   { key: 'ctr', label: '클릭률 높은 순' },
   { key: 'name', label: '이름순' },
 ];

@@ -270,7 +270,7 @@ export default function Items() {
                 <th className="num">착장 선택</th>
                 <th className="num">클릭</th>
                 <th className="num">클릭률</th>
-                <th className="num">담김</th>
+                <th className="num" title="위시리스트(하트)에 담긴 수">위시리스트</th>
                 <th>노출</th>
               </tr>
             </thead>
@@ -324,7 +324,7 @@ export default function Items() {
                 <div className="item__body">
                   <b title={it.name}>{it.name || '이름 없음'}</b>
                   <span>{[it.sub_category || it.category, it.gender, it.color].filter(Boolean).join(' · ')}</span>
-                  <span className="item__stats">착장 {fmt(st.impressions)} · 클릭 {fmt(st.clicks)} · 담김 {fmt(st.wishes)}</span>
+                  <span className="item__stats">착장 {fmt(st.impressions)} · 클릭 {fmt(st.clicks)} · 위시리스트 {fmt(st.wishes)}</span>
                 </div>
                 <div className="item__foot">
                   <Link to={`/items/${it.id}`} className="linkbtn small">성과 보기</Link>

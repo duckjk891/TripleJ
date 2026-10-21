@@ -108,7 +108,17 @@ function dashboard(period) {
     const clk = Math.round(imp * (0.07 + rnd(i * 7) * 0.025));
     return { label: `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`, impressions: imp, clicks: clk, ctr: +((clk / imp) * 100).toFixed(2), users: Math.round(imp * 0.7) };
   });
-  const span = period === 'daily' ? days.slice(-1) : days;
+  // 오늘: 0시~지금 시간대별(실제 서버 v3.384 와 같은 형식) + 어제 같은 시각까지 합계
+  const hourNow = new Date(Date.now() + 9 * 3600000).getUTCHours();
+  const HOUR_W = [0.3, 0.2, 0.12, 0.08, 0.06, 0.08, 0.2, 0.45, 0.7, 0.75, 0.8, 0.95, 1.2, 1.05, 0.95, 1, 1.15, 1.35, 1.6, 1.85, 2.1, 2.3, 1.9, 1.1];
+  const hourly = (scale, seed) => Array.from({ length: hourNow + 1 }, (_, h) => {
+    const imp = Math.round((base / 24) * HOUR_W[h] * scale * (0.8 + rnd(h + seed) * 0.4));
+    const clk = Math.round(imp * (0.07 + rnd(h * 5 + seed) * 0.03));
+    return { label: `${h}시`, impressions: imp, clicks: clk, ctr: imp ? +((clk / imp) * 100).toFixed(2) : 0, users: Math.round(imp * 0.7) };
+  });
+  const todayH = period === 'daily' ? hourly(1.05, 3) : null;
+  const yestH = period === 'daily' ? hourly(1, 17) : null;
+  const span = period === 'daily' ? todayH : days;
   const ti = span.reduce((s, d) => s + d.impressions, 0);
   const tc = span.reduce((s, d) => s + d.clicks, 0);
   const rows = ITEMS.map((it) => {
@@ -121,8 +131,10 @@ function dashboard(period) {
   }).sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
   return {
     category: null, verified_only: false, total_impressions: ti, total_clicks: tc, ctr: ti ? +((tc / ti) * 100).toFixed(2) : 0,
-    items: rows, total_users: 0, chart_data: days, total_wishes: rows.reduce((s, r) => s + r.wish_count, 0),
+    items: rows, total_users: 0, chart_data: period === 'daily' ? todayH : days, total_wishes: rows.reduce((s, r) => s + r.wish_count, 0),
     total_worn: rows.reduce((s, r) => s + r.worn_count, 0), item_total: rows.length,
+    chart_unit: period === 'daily' ? 'hour' : 'day',
+    compare: period === 'daily' ? { label: '어제 같은 시각까지', impressions: yestH.reduce((s, d) => s + d.impressions, 0), clicks: yestH.reduce((s, d) => s + d.clicks, 0), until_hour: hourNow } : null,
   };
 }
 
@@ -140,7 +152,6 @@ function insights(period, cat) {
   const reacted = Math.round(list.length * 52 * mul + 40);
   const f = Math.round(reacted * 0.58);
   const m = Math.round(reacted * 0.37);
-  const top = [...list].sort((a, b) => b.pop - a.pop);
   return {
     period, category: cat || null, reacted_users: reacted, min_bucket: 5,
     genders: [{ key: '여성', count: f }, { key: '남성', count: m }, { key: '기타·미입력', count: reacted - f - m }],
@@ -150,18 +161,19 @@ function insights(period, cat) {
       { key: '미입력', count: Math.round(reacted * 0.06) },
     ],
     subs: Object.values(subs).sort((a, b) => b.clicks - a.clicks),
-    // 부위·기간에 따라 달라지게(실제 서버처럼 고른 부위 상품만, 입힌 곡은 기간과 무관한 누적)
+    // 실제 서버처럼 상품 단위로 센 값을 더한다 → '전체' = 상의+하의+신발+모자+가방 합계, 입힌 곡은 기간과 무관한 누적
     stars: ARTISTS.map((nickname, i) => {
-      const mine = top.filter((t, k) => rnd(k * 13 + i * 7 + 1) < 0.28);
+      const mine = list.filter((t) => rnd(ITEMS.indexOf(t) * 13 + i * 7 + 1) < 0.3);
       if (!mine.length) return null;
-      const share = mine.reduce((sum, t) => sum + t.pop, 0) * (1.15 - i * 0.06);
+      const sum = (f) => mine.reduce((acc, t) => acc + f(t, ITEMS.indexOf(t)), 0);
+      const boost = 1.2 - i * 0.07;
       return {
         nickname,
-        worn_count: Math.max(1, Math.round(share * 3.2 + rnd(i + (cat || '').length) * 2)),
-        click_count: Math.round(share * 26 * mul + rnd(i * 3) * 2),
-        wish_count: Math.round(share * 20 * mul + rnd(i * 5) * 2),
+        worn_count: sum((t, k) => Math.max(1, Math.round(t.pop * 3 * boost + rnd(k + i) * 1.5))),
+        click_count: sum((t, k) => Math.round((t.pop * 9 * boost + rnd(k * 3 + i) * 2) * mul)),
+        wish_count: sum((t, k) => Math.round((t.pop * 7 * boost + rnd(k * 5 + i) * 2) * mul)),
         follower_count: Math.round(2400 / (i + 1) + rnd(i * 5) * 80),
-        items: mine.slice(0, 2).map((t) => t.name),
+        items: [...mine].sort((a, b) => b.pop - a.pop).slice(0, 3).map((t) => t.name),
       };
     }).filter(Boolean).sort((a, b) => b.worn_count - a.worn_count || b.click_count - a.click_count),
   };

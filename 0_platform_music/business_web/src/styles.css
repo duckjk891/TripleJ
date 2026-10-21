@@ -393,7 +393,6 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 @media (max-width: 860px) { .demo-bar { top: 56px; } }
 
 /* ---------- 10-20 피드백: 오늘 강조·부위 필터·종류별 성과 설명 ---------- */
-.trend__axis span.is-today { color: var(--gold); font-weight: 700; }
 .chips--filter { margin: 2px 0 12px; }
 .chip__n { opacity: .65; font-size: 11px; margin-left: 2px; }
 .panel__desc { color: var(--ink-soft); font-size: 13px; margin: -2px 0 10px; line-height: 1.6; }
@@ -405,3 +404,14 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .method-tabs button b { font-size: 14px; }
 .method-tabs button small { color: var(--ink-mute); font-size: 12px; }
 .method-tabs button.is-on { border-color: var(--violet); background: rgba(139, 92, 246, .16); box-shadow: 0 0 0 1px var(--violet) inset; }
+
+/* ---------- 10-21 피드백: 성별·연령대 한 줄, 채널별 표 읽는 법 ---------- */
+.demo-cols { display: grid; grid-template-columns: 1fr 1.3fr; gap: 14px 28px; align-items: start; }
+@media (max-width: 760px) { .demo-cols { grid-template-columns: 1fr; } }
+.howto { background: rgba(139, 92, 246, .08); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; line-height: 1.65; }
+.howto > b { color: var(--violet-soft); font-size: 12px; letter-spacing: .02em; }
+.howto p { margin-top: 2px; }
+.howto details { margin-top: 6px; }
+.howto summary { cursor: pointer; color: var(--violet-soft); font-size: 12px; }
+.howto ul { margin: 6px 0 0 18px; display: flex; flex-direction: column; gap: 4px; color: var(--ink-soft); }
+.howto li b { color: var(--ink); }

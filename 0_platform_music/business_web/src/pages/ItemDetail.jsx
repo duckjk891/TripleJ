@@ -78,14 +78,14 @@ export default function ItemDetail() {
       {error && <div className="notice notice--err">{error}</div>}
 
       <div className={`kpis ${loading ? 'is-loading' : ''}`}>
-        <div className="kpi" title="기간 안에 사용자가 이 상품을 '담기' 한 횟수"><span>담기</span><b>{fmt(w2c?.wishes)}</b></div>
-        <div className="kpi" title="기간 안에 상품 페이지로 이동한 횟수"><span>상품 페이지 클릭</span><b>{fmt(w2c?.clicks)}</b></div>
-        <div className="kpi" title="클릭 ÷ 담기"><span>담기 대비 클릭</span><b>{w2c?.rate == null ? '–' : `${Math.round(w2c.rate * 100)}%`}</b></div>
-        <div className="kpi" title="이 상품을 입은 아티스트가 나온 공개 곡 수(누적)"><span>착용 곡</span><b>{fmt(wornSongs)}</b></div>
+        <div className="kpi" title="기간 안에 사용자가 이 상품을 위시리스트(하트)에 담은 횟수"><span>위시리스트 추가</span><b>{fmt(w2c?.wishes)}</b></div>
+        <div className="kpi" title="기간 안에 앱에서 '자세히 보기'를 눌러 상품 페이지로 간 횟수"><span>자세히 보기 클릭</span><b>{fmt(w2c?.clicks)}</b></div>
+        <div className="kpi" title="자세히 보기 클릭 ÷ 위시리스트 추가"><span>위시리스트 대비 클릭</span><b>{w2c?.rate == null ? '–' : `${Math.round(w2c.rate * 100)}%`}</b></div>
+        <div className="kpi" title="공개 곡에 이 상품이 나온 수(누적)"><span>내 옷이 나온 곡</span><b>{fmt(wornSongs)}</b></div>
       </div>
 
       {!loading && !hasEvents && (
-        <div className="notice">이 기간에는 아직 담기·클릭 기록이 없어요. 기간을 늘려 보거나, 상품이 노출되고 있는지 확인해 주세요.</div>
+        <div className="notice">이 기간에는 아직 위시리스트·자세히 보기 클릭 기록이 없어요. 기간을 늘려 보거나, 상품이 노출되고 있는지 확인해 주세요.</div>
       )}
 
       <div className="grid2 grid2--panels">
@@ -116,13 +116,13 @@ export default function ItemDetail() {
           <p className="footnote">{demo?.min_bucket || 5}명 미만인 묶음은 개인을 알아볼 수 없게 '기타(소수)'로 합칩니다. 만 14세 미만 사용자는 넣지 않습니다.</p>
         </section>
         <section className="panel">
-          <h2>이 상품을 입힌 아티스트</h2>
+          <h2>이 상품이 나온 곡 · 채널별</h2>
           {starRows.length === 0 ? (
             <div className="empty">아직 이 상품을 입은 공개 곡이 없어요.</div>
           ) : (
             <div className="table-wrap">
               <table className="tbl">
-                <thead><tr><th>아티스트(채널)</th><th className="num">착용 곡</th><th className="num">담기</th><th className="num">클릭</th><th className="num">팔로워</th></tr></thead>
+                <thead><tr><th>채널</th><th className="num" title="공개 곡에 이 상품이 나온 수(누적)">내 옷이 나온 곡</th><th className="num">위시리스트</th><th className="num">클릭</th><th className="num">팔로워</th></tr></thead>
                 <tbody>
                   {starRows.slice(0, 30).map((s) => (
                     <tr key={s.user_id}>
@@ -137,7 +137,7 @@ export default function ItemDetail() {
               </table>
             </div>
           )}
-          <p className="footnote">공개된 채널 이름만 보여 드려요. 담기·클릭은 그 채널의 곡에서 일어난 수{stars?.untracked_clicks ? ` · 곡 밖 클릭 ${fmt(stars.untracked_clicks)}회` : ''}.</p>
+          <p className="footnote">공개된 채널 이름만 보여 드려요. 위시리스트·클릭은 그 채널의 곡 화면에서 일어난 수{stars?.untracked_clicks ? ` · 곡 밖 클릭 ${fmt(stars.untracked_clicks)}회` : ''}.</p>
         </section>
       </div>
 
