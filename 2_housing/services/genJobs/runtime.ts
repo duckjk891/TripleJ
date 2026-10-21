@@ -23,6 +23,7 @@ import {
   type GenJobSnapshot,
 } from './index';
 import { listGenRecoverable, getGenJobByRequest, ackGenJobOnServer } from '../genJobsService';
+import { maybeAskNativePush } from '../pushService'; // v3.383 첫 생성 시작 때 알림 받기 안내
 
 // ── v3.228 D4 [GenTracker] 비아티스트 kind 런타임 ──────────────────────────────────
 // 전역 추적기(services/generationTracker.ts) 본체에서 분리한 비아티스트 부분:
@@ -401,6 +402,10 @@ export function registerGenJob(input: RegisterGenJobInput): string {
     _liveRequests.set(key, Date.now());
   }
   _hooks.schedulePoll();
+  // v3.383 [NativePush]: 이 기기에서 처음 생성을 시작했을 때 '완성되면 알려드릴까요?' 1회 안내(네이티브 앱만)
+  if ((input.source ?? 'local') === 'local') {
+    setTimeout(() => { void maybeAskNativePush(`gen_start:${input.kind}`); }, 1200);
+  }
   return key;
 }
 

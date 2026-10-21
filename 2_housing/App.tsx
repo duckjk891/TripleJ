@@ -67,7 +67,7 @@ import {
 } from './utils/tutorialGate';
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import { waitModalTurn } from './utils/modalTurn'; // v3.384 [ModalTurn]
-import { initNativePush, onNativePushOpened, syncNativePushOnLogin } from './services/pushService';
+import { initNativePush, onNativePushOpened, syncNativePushOnLogin, setNativePushAsker } from './services/pushService';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
@@ -961,17 +961,21 @@ export default function App() {
     if (authUserId) syncTutorialSeenFromServer();
     else clearServerTutorialSeen();
   }, [authUserId]);
-  // [FCM] 앱 푸시 — 로그인 계정 확정 시 토큰 (재)등록, 처음이면 앱 내 안내 후 권한 요청(1회). web·구버전 앱은 no-op
+  // [FCM] 앱 푸시 — 로그인 계정 확정 시 권한이 있으면 토큰 (재)등록만. web·구버전 앱은 no-op
+  // v3.383: 처음 '알림 받기' 안내는 로그인 직후가 아니라 첫 생성 시작 때(genJobs registerGenJob → maybeAskNativePush)
+  useEffect(() => {
+    setNativePushAsker(() => new Promise<boolean>((resolve) => {
+      if (!useAuthStore.getState().user) { resolve(false); return; }
+      showAlert('완성되면 알려드릴까요?', '만드는 데 몇 분 걸려요. 앱을 닫아 두어도 완성 소식과 댓글·좋아요·팔로우 소식을 알림으로 보내드려요.', [
+        { text: '나중에', style: 'cancel', onPress: () => resolve(false) },
+        { text: '알림 받기', onPress: () => resolve(true) },
+      ]);
+    }));
+    return () => setNativePushAsker(null);
+  }, []);
   useEffect(() => {
     if (!authUserId) return;
-    const t = setTimeout(() => {
-      void syncNativePushOnLogin(() => new Promise<boolean>((resolve) => {
-        showAlert('알림 받기', '댓글·좋아요·팔로우·스타 소식을 앱이 꺼져 있어도 알려드릴까요?', [
-          { text: '나중에', style: 'cancel', onPress: () => resolve(false) },
-          { text: '알림 받기', onPress: () => resolve(true) },
-        ]);
-      }));
-    }, 2500);
+    const t = setTimeout(() => { void syncNativePushOnLogin(); }, 2500);
     return () => clearTimeout(t);
   }, [authUserId]);
   // [FCM] 알림 채널·포그라운드 표시 1회 + 알림 탭 → 알림함(스플래시가 끝난 뒤 이동)

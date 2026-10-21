@@ -109,7 +109,8 @@ if (Platform.OS !== 'web') {
 }
 
 const NATIVE_OFF_KEY = 'maidol-native-push-off-v1'; // 사용자가 설정에서 끔 → 자동 등록 안 함
-const NATIVE_ASKED_KEY = 'maidol-native-push-asked-v1'; // 로그인 후 '알림 받기' 안내 1회
+const NATIVE_ASKED_KEY = 'maidol-native-push-asked-v1'; // '알림 받기' 안내 1회(v3.383: 첫 생성 시작 때)
+const HANDLED_OPEN_KEY = 'maidol-native-push-handled-open-v1'; // v3.383 마지막으로 처리한 '알림 눌러 열기' id
 const ANDROID_CHANNEL_ID = 'default'; // 서버 expo_push.ANDROID_CHANNEL_ID 와 동일
 let nativeToken: string | null = null;
 let handlerReady = false;
@@ -153,13 +154,36 @@ export async function initNativePush(): Promise<void> {
 }
 
 /** 알림을 눌러 앱을 열었을 때 콜백(앱 실행 중 + 콜드 스타트 마지막 응답). 반환값 = 구독 해제 */
+// v3.383 [NativePush]: 마지막 '알림 눌러 열기' 응답은 OS가 계속 들고 있어(getLastNotificationResponseAsync),
+// 처리 후 지우지 않으면 앱을 새로 열 때마다 알림함으로 이동했다(대표 10-21 "첫 페이지에 왜 알림 창이 떠 있어?").
+// → 처리한 알림 id 를 저장해 같은 응답은 한 번만 처리하고, 처리 즉시 OS 쪽 마지막 응답도 지운다.
+function clearLastOpen(): void {
+  try {
+    if (typeof Notifications.clearLastNotificationResponse === 'function') Notifications.clearLastNotificationResponse();
+    else void Notifications.clearLastNotificationResponseAsync?.().catch(() => {});
+  } catch {}
+}
+
+async function handleOpenOnce(r: any, cb: () => void, via: 'listener' | 'cold'): Promise<void> {
+  const id = String(r?.notification?.request?.identifier || '');
+  if (id && (await storageGet(HANDLED_OPEN_KEY)) === id) {
+    if (__DEV__) console.info('[NativePush] 이미 처리한 알림 열기 — 건너뜀', { via });
+    clearLastOpen();
+    return;
+  }
+  if (id) await storageSet(HANDLED_OPEN_KEY, id);
+  clearLastOpen();
+  console.info('[NativePush] 알림 눌러 열기 → 알림함', { via });
+  cb();
+}
+
 export function onNativePushOpened(cb: () => void): () => void {
   if (!nativePushSupported()) return () => {};
   let sub: any = null;
   try {
-    sub = Notifications.addNotificationResponseReceivedListener(() => cb());
+    sub = Notifications.addNotificationResponseReceivedListener((r: any) => { void handleOpenOnce(r, cb, 'listener'); });
     Notifications.getLastNotificationResponseAsync?.()
-      .then((r: any) => { if (r) cb(); })
+      .then((r: any) => { if (r) void handleOpenOnce(r, cb, 'cold'); })
       .catch(() => {});
   } catch (err: any) {
     console.error('[NativePush] 응답 리스너 실패', { msg: err?.message });
@@ -234,21 +258,44 @@ export async function disableNativePush(): Promise<void> {
 }
 
 /**
- * 로그인 계정 확정 시 — 권한이 이미 있으면 조용히 (재)등록, 처음이면 앱 내 안내 후 권한 요청(1회).
- * askFirstTime: 사용자에게 '알림 받기'를 물어볼 콜백(showAlert 기반, true=켜기 선택).
+ * 로그인 계정 확정 시 — 권한이 이미 있으면 조용히 (재)등록만 한다.
+ * v3.383 (대표 10-21 "첫 페이지 들어가자마자 왜 알림 받을 거냐는 팝업이 떠?"): 로그인 직후 묻지 않는다 —
+ * 처음 안내는 첫 생성(작사·작곡·커버 등)을 시작할 때 maybeAskNativePush 가 한다.
  */
-export async function syncNativePushOnLogin(askFirstTime: () => Promise<boolean>): Promise<void> {
+export async function syncNativePushOnLogin(): Promise<void> {
   if (!nativePushSupported()) return;
   try {
     if ((await storageGet(NATIVE_OFF_KEY)) === '1') return;
     const perm = await Notifications.getPermissionsAsync();
-    if (perm?.granted) { await enableNativePush(false); return; }
-    if (perm?.canAskAgain === false) return; // 사용자가 OS에서 거부 — 설정 화면 토글로만 안내
-    if ((await storageGet(NATIVE_ASKED_KEY)) === '1') return;
-    await storageSet(NATIVE_ASKED_KEY, '1');
-    if (await askFirstTime()) await enableNativePush(true);
+    if (perm?.granted) await enableNativePush(false);
   } catch (err: any) {
     console.error('[NativePush] 로그인 동기화 실패', { msg: err?.message });
+  }
+}
+
+// v3.383: '알림 받기' 안내 창(앱 내 다이얼로그) — App.tsx 가 등록. 서비스 계층이 UI 를 직접 부르지 않게 분리.
+let pushAsker: ((reason: string) => Promise<boolean>) | null = null;
+export function setNativePushAsker(fn: ((reason: string) => Promise<boolean>) | null): void {
+  pushAsker = fn;
+}
+
+/**
+ * v3.383 첫 생성 시작 때 1회 — "완성되면 알려드릴까요?" 앱 내 안내 → 켜기 선택 시 OS 권한 요청.
+ * 이미 허용·거부(다시 묻기 불가)·안내함·사용자가 끔·로그아웃 상태면 아무것도 안 한다. web·구버전 앱은 no-op.
+ */
+export async function maybeAskNativePush(reason: string): Promise<void> {
+  if (!nativePushSupported() || !pushAsker) return;
+  try {
+    if ((await storageGet(NATIVE_OFF_KEY)) === '1') return;
+    if ((await storageGet(NATIVE_ASKED_KEY)) === '1') return;
+    const perm = await Notifications.getPermissionsAsync();
+    if (perm?.granted) { await enableNativePush(false); return; }
+    if (perm?.canAskAgain === false) return; // OS에서 거부 — 설정 화면 토글로만 안내
+    await storageSet(NATIVE_ASKED_KEY, '1');
+    console.info('[NativePush] 알림 받기 안내', { reason });
+    if (await pushAsker(reason)) await enableNativePush(true);
+  } catch (err: any) {
+    console.error('[NativePush] 알림 받기 안내 실패', { reason, msg: err?.message });
   }
 }
 
