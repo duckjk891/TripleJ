@@ -2,7 +2,6 @@
 // 주기·금액 문구는 서버 응답값(cycle_seconds·reward). 비로그인·조회 실패는 렌더하지 않는다(다른 UI 무영향).
 import { useCallback, useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -59,8 +58,7 @@ export default function StarStationCard() {
     <View style={[styles.card, ready && styles.cardReady]}>
       <View style={styles.head}>
         <View style={styles.title}>
-          <MaterialCommunityIcons name="star-shooting-outline" size={18} color={colors.accent.primary} />
-          <AppText variant="footnote" style={{ fontWeight: '700' }}>별 제작소</AppText>
+          <AppText variant="footnote" style={{ fontWeight: '700' }}>{CURRENCY_ICON} 별 제작소</AppText>
         </View>
         <AppText variant="caption" tone="muted">
           {durationLabel(status.cycleSeconds)}마다 {CURRENCY_ICON}{status.reward}
