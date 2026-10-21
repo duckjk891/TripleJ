@@ -12,6 +12,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
 import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 import WeeklyMissionCard from './WeeklyMissionCard';
+import StarStationCard from './StarStationCard'; // v3.388 별 충전소
 import StarHistoryPanel from './StarHistoryPanel';
 import { useEarnGuideStore, unseenEarnNewsIds } from '../stores/earnGuideStore';
 import { useRootModalOpen } from '../utils/modalTurn';
@@ -118,6 +119,9 @@ export default function StarGuideModal() {
             <AppText variant="footnote" tone="secondary">내역 보기</AppText>
             <Feather name="chevron-right" size={14} color={colors.text.muted} />
           </TouchableOpacity>
+
+          {/* v3.388 [StarStation] 별 충전소(로그인 시) — 진행 바·남은 시간·다 차면 받기 */}
+          <StarStationCard />
 
           {newIds.includes('weekly_mission') ? <NewChip style={{ alignSelf: 'flex-start', marginBottom: 4 }} /> : null}
           {/* v3.293 [WeeklyMission] 이번 주 미션(로그인 시) */}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Text, TouchableOpacity, View, Platform, LogBox } from 'react-native';
+import { Text, TouchableOpacity, View, Platform, LogBox, AppState } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 
 // 모바일 화면 하단에 뜨는 노란/빨간 LogBox 알림을 모두 숨김.
@@ -67,6 +67,7 @@ import {
 } from './utils/tutorialGate';
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import { waitModalTurn } from './utils/modalTurn'; // v3.384 [ModalTurn]
+import { getStarStationStatus, claimStarStationWithNotice, durationLabel } from './services/starStationService'; // v3.388
 import { initNativePush, onNativePushOpened, syncNativePushOnLogin, setNativePushAsker } from './services/pushService';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
@@ -630,6 +631,31 @@ function MainTabs() {
   );
 }
 
+// v3.388 [StarStation] 별 충전소가 다 찼을 때만 1번 안내 — 출석 팝업 다음 차례(출석 1 > 충전소 0.5 > 새 소식 0).
+// 같은 주기(started_at)는 앱 실행 중 한 번만 띄운다(나중에 → 앱 복귀 때마다 다시 뜨지 않게).
+let starStationPromptedCycle = '';
+let starStationPromptBusy = false;
+async function promptStarStationIfFull(reason: string) {
+  if (starStationPromptBusy || !useAuthStore.getState().user) return;
+  starStationPromptBusy = true;
+  try {
+    const s = await getStarStationStatus();
+    if (!s.ready || !s.reward || s.startedAt === starStationPromptedCycle) return;
+    starStationPromptedCycle = s.startedAt;
+    console.info('[StarStation] 다 참 → 팝업 차례 대기', { reason });
+    await waitModalTurn('star-station', 0.5).promise;
+    if (!useAuthStore.getState().user) return;
+    showAlert('별이 다 만들어졌어요', `지금 받으면 다시 ${durationLabel(s.cycleSeconds)} 동안 별이 차올라요.`, [
+      { text: '나중에', style: 'cancel' },
+      { text: `${s.reward}⭐ 받기`, onPress: () => { void claimStarStationWithNotice(); } },
+    ]);
+  } catch {
+    // 조회 실패는 조용히 — 별 안내 창 카드에서 다시 볼 수 있다
+  } finally {
+    starStationPromptBusy = false;
+  }
+}
+
 // 전역 모달(출석/초대) + 최초 로그인 시 출석 팝업 자동 오픈
 function GlobalModals() {
   const user = useAuthStore((s) => s.user);
@@ -680,14 +706,27 @@ function GlobalModals() {
         if (data?.checked_today === false) {
           if (__DEV__) console.info('[GlobalModals] 오늘 미출석 → 출석 팝업 자동 오픈');
           // v3.384 [ModalTurn]: 로그인 창 닫힘·가입 마무리·재동의·ATT 뒤에 차례로(iOS 는 창 두 개를 겹쳐 띄우지 못함)
-          await waitModalTurn('attendance', 1).promise;
+          const attendanceTurn = waitModalTurn('attendance', 1);
+          void promptStarStationIfFull('login'); // v3.388: 출석 차례를 먼저 잡은 뒤 → 출석 다음에 뜬다
+          await attendanceTurn.promise;
           if (useAuthStore.getState().user) useUiStore.setState({ attendanceOpen: true });
+        } else {
+          void promptStarStationIfFull('login');
         }
       } catch (err: any) {
         console.error('[GlobalModals] 자동 출석 상태 확인 실패', { status: err?.response?.status });
+        void promptStarStationIfFull('login');
       }
     })();
   }, [user, fetchBalance]);
+  // v3.388 [StarStation]: 앱으로 돌아왔을 때도 다 찼으면 1번(같은 주기는 다시 안 띄움)
+  useEffect(() => {
+    if (!user) return undefined;
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') void promptStarStationIfFull('foreground');
+    });
+    return () => sub.remove();
+  }, [user]);
   return (
     <>
       <AttendanceModal />
