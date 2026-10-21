@@ -31,6 +31,22 @@ export interface PendingTrackLink {
   src: TrackLinkSrc;
   /** v3.237: 공유 ID(`?s=`, 8자 base36) — 형식 통과분만 */
   shareId?: string;
+  /** v3.386: 열 상세 탭(`?view=outfit` — 광고주 사이트 '내 옷이 나온 곡'에서 진입). 허용값만 */
+  view?: TrackLinkView;
+}
+
+/** v3.386: `view` 허용값 — 지금은 착장(outfit)만 */
+export type TrackLinkView = 'outfit';
+
+/** search 문자열에서 `view`(허용값만, 순수). 없거나 다른 값 = '' */
+export function parseViewFromSearch(search: string | null | undefined): TrackLinkView | '' {
+  if (!search) return '';
+  try {
+    const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+    return (params.get('view') || '').trim().toLowerCase() === 'outfit' ? 'outfit' : '';
+  } catch {
+    return '';
+  }
 }
 
 /** v3.237: 공유 ID — 서버 랜딩 정규식(^[0-9a-z]{8}$)과 동일. 대문자·길이 불일치는 무효(서버도 전달 안 함) */
@@ -120,6 +136,7 @@ export function stripTrackParam(href: string): string | null {
     if (!u.searchParams.has('track')) return null;
     u.searchParams.delete('track');
     u.searchParams.delete('s');
+    u.searchParams.delete('view'); // v3.386
     const qs = u.searchParams.toString();
     return `${u.pathname}${qs ? `?${qs}` : ''}${u.hash}`;
   } catch {
@@ -138,7 +155,7 @@ export function peekPendingTrackLink(): PendingTrackLink | null {
   return pending;
 }
 
-function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: number = Date.now()): boolean {
+function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: number = Date.now(), view: TrackLinkView | '' = ''): boolean {
   if (!id) return false;
   if (lastCaptured && lastCaptured.id === id && now - lastCaptured.at < TRACK_LINK_DEDUPE_MS) {
     // v3.237: 중복 수신 중 뒤늦게 공유 ID 가 온 경우(같은 곡·아직 미소비)만 보강
@@ -148,7 +165,8 @@ function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: nu
   }
   lastCaptured = { id, at: now };
   pending = shareId ? { id, src, shareId } : { id, src };
-  console.info('[TrackLink] captured', { id, src, s: shareId || null });
+  if (view) pending.view = view;
+  console.info('[TrackLink] captured', { id, src, s: shareId || null, view: view || null });
   return true;
 }
 
@@ -158,7 +176,7 @@ export function captureWebTrackLink(): string {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
     const search = window.location.search;
     const id = parseTrackIdFromSearch(search);
-    if (id) setPending(id, 'web', parseShareIdFromSearch(search));
+    if (id) setPending(id, 'web', parseShareIdFromSearch(search), Date.now(), parseViewFromSearch(search));
     return id;
   } catch (err: any) {
     console.error('[TrackLink] web capture 실패', { message: err?.message });
@@ -253,8 +271,10 @@ export async function consumePendingTrackLink(deps: ConsumeDeps): Promise<Consum
     const q = usePlayerStore.getState().queue;
     const idx = q.findIndex((t: any) => String(t?.id) === String(qt.id));
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : q.length - 1);
-    deps.navigate('Player', link.shareId ? { track: qt, via: 'share', shareId: link.shareId } : { track: qt, via: 'share' });
-    console.info('[TrackLink] consumed', { id: link.id, src: link.src, s: link.shareId || null, from: route, queueLen: q.length });
+    const params: any = link.shareId ? { track: qt, via: 'share', shareId: link.shareId } : { track: qt, via: 'share' };
+    if (link.view === 'outfit') params.openOutfit = true; // v3.386 착장 탭으로 상세 열기
+    deps.navigate('Player', params);
+    console.info('[TrackLink] consumed', { id: link.id, src: link.src, s: link.shareId || null, view: link.view || null, from: route, queueLen: q.length });
     emitShareLinkOpen(link);
     return 'consumed';
   } catch (err: any) {

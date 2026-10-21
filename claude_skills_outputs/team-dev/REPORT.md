@@ -4819,3 +4819,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 3. '상품별 성과' 부위 필터 — v3.383 에 이미 반영(표 위 전체·상의·하의·신발·모자·가방 칩, 개수 표시). PDF 캡처는 반영 전 화면.
 - 검증: 서버 격리 테스트 15/15(브랜드샵·무신사·크림 — 시간대별 점 0시~현재 시, 시간대 합 = 오늘 합계, 어제 같은 시각 비교 = 직접 집계, 7일·30일 무변화), 웹 로컬(예시 화면 시간대별 17점·비교·부위 합계 일치). 
 - 배포(대표 승인): 웹 deploy_business.sh(워크트리 4ca8b6c push), 서버 md5 가드·.bak_pre_v3384·이미지 pre-v3384-live·진행 작업 0건 → 재기동 9초, health ok·oauth 3종 302·Traceback 0, 공개 /ads/active·catalog 200. 이번부터 옛 컨테이너는 지우지 않고 maidol-app-old-v3384 로 이름만 바꿔 멈춰 둠(restart=no, 문제 없으면 대표가 `sudo docker rm maidol-app-old-v3384` 로 정리) — 안전 검사가 원격 `docker rm` 을 막아서.
+
+## v3.386 — 2026-10-21 — 곡 링크 `?view=outfit` → 착장 탭으로 열기 (웹)
+광고주 포털 세션 요청(대표 10-21 광고주 사이트 수정사항3): 광고주 대시보드 '내 옷이 나온 곡 · 채널별'에서 곡을 누르면 `https://app.maidol.ai.kr/?track={곡ID}&view=outfit` 를 새 탭으로 연다(서버 v3.385 가 이 url 제공) — 기존 앱은 view 를 무시하고 곡만 재생.
+- utils/trackLink.ts: `view`(허용값 outfit만) 캡처 → pending 보관 → 소비 시 Player 파라미터 `openOutfit: true`, 주소창 정리 때 `view` 도 제거. screens/PlayerScreen.tsx: `openOutfit` 이면 상세를 착장(스타일링) 탭으로 열기(댓글 알림 진입 openComments 와 같은 방식).
+- 검증: tsc 0, 미리보기(mvtest) 실측 — `?track=…&view=outfit` 진입 시 곡 재생 + 상세 '스타일링' 탭 열림(착장 3개 표시). 운영 웹 배포.

@@ -410,6 +410,15 @@ export default function PlayerScreen({ route, navigation }: any) {
     }
   }, [openCommentsParam, trackIdForComments, commentsHidden]);
 
+  // v3.386: 광고주 사이트 '내 옷이 나온 곡' 링크(`?track=…&view=outfit`) → 상세를 착장 탭으로 연다
+  const openOutfitParam = route.params?.openOutfit;
+  useEffect(() => {
+    if (!openOutfitParam) return;
+    if (__DEV__) console.info('[PlayerScreen] openOutfit(링크 진입)', { trackId: trackIdForComments });
+    setDetailTab('outfit');
+    setShowDetails(true);
+  }, [openOutfitParam, trackIdForComments]);
+
   // v3.178(대표): 댓글 액션 → 하단 상세토글을 댓글 탭으로 연다(미니플레이어 축소 형태)
   const openComments = () => {
     if (__DEV__) console.info('[PlayerScreen] openComments', { trackId: trackIdForComments });
