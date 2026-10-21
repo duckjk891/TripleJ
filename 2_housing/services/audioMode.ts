@@ -6,6 +6,33 @@
 import { Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 
+/**
+ * v3.392 [NativePlayer]: 녹음을 끝낸 뒤 재생용 오디오 모드로 되돌린다(녹음 화면 2곳 공용).
+ * 종전엔 `setAudioModeAsync({ allowsRecordingIOS: false })` 만 넣어, 빠진 항목이 expo-av 기본값(무음 모드에서 소리 안 남·
+ * 백그라운드 재생 꺼짐)으로 돌아가 녹음 뒤 전역 재생이 무음 스위치·화면 꺼짐에 끊길 수 있었다. 웹은 종전 그대로.
+ */
+export async function restorePlaybackAudioModeAfterRecording(): Promise<void> {
+  if (Platform.OS === 'web') {
+    try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
+    return;
+  }
+  try {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      shouldDuckAndroid: false,
+      playThroughEarpieceAndroid: false,
+    });
+  } catch (err: any) {
+    console.warn('[NativePlayer] 녹음 후 expo-av 모드 복원 실패', { message: err?.message });
+  }
+  await applyPlaybackAudioMode(); // 재생 세션(expo-audio)도 백그라운드·무음 모드 재생으로
+  console.warn('[NativePlayer] 녹음 끝 — 재생 오디오 모드 복원');
+}
+
 /** 재생 직전에 호출 — 타 앱 소리를 끊고 우리 재생이 전면에 서는 오디오 모드 */
 export async function applyPlaybackAudioMode(): Promise<void> {
   try {

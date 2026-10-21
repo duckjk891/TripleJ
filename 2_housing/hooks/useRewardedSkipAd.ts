@@ -20,6 +20,8 @@ import { useAuthStore } from '../stores/authStore';
 import { ADMOB_REWARDED_AD_UNIT_ANDROID, ADMOB_REWARDED_AD_UNIT_IOS, ADMOB_TEST_DEVICE_IDS } from '../constants/ads';
 import { isKidsRestrictedUser } from '../utils/kidsRestricted';
 import { isTrackingAsked, markTrackingNotNeeded, requestTrackingOnce, whenTrackingSettled } from '../utils/trackingConsent';
+// v3.392 [NativePlayer]: 광고 동안 듣던 노래 일시정지 → 끝나면(닫힘·보상·오류) 원래 재생 중이었을 때만 이어 재생
+import { pauseGlobalPlaybackFor, type GlobalPlaybackHold } from '../services/playback';
 
 // try-require 게이트 — web 은 metro 에서 빈 모듈, Expo Go 는 require 실패
 // v3.215: 실기기(1.1.4)에서 광고 버튼 미노출 진단 — 실패 사유를 warn 으로 승격(릴리즈 원격 로그 수집 대상).
@@ -240,6 +242,8 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
     let earned = false;
     let settled = false;
     const unsubs: Array<() => void> = [];
+    // v3.392 [NativePlayer]: 광고 소리와 겹치지 않게 먼저 멈춘다(오디오 포커스에 맡기면 사용자가 멈춰 둔 곡도 광고 뒤 다시 켜질 수 있음)
+    const holdReady: Promise<GlobalPlaybackHold | null> = pauseGlobalPlaybackFor('rewarded-ad').catch(() => null);
     const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -249,6 +253,8 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
         } catch {}
       });
       preloadRewardedSkipAd(); // 다음 시청 대비 재로드
+      const why = earned ? 'ad-earned' : 'ad-closed-or-error';
+      void holdReady.then((h) => h?.resume(why));
       fn();
     };
     try {
@@ -275,7 +281,15 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
           settle(() => reject(err instanceof Error ? err : new Error(String(err?.message ?? err))));
         })
       );
-      ad.show();
+      void holdReady.then(() => {
+        if (settled) return;
+        try {
+          ad.show();
+        } catch (err) {
+          console.error('[AdReward] show 실패:', err);
+          settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+        }
+      });
     } catch (err) {
       console.error('[AdReward] show 실패:', err);
       settle(() => reject(err instanceof Error ? err : new Error(String(err))));

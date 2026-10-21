@@ -41,6 +41,7 @@ type NativeModuleShape = {
   pause(): Promise<NativePlayerState>;
   seekTo(positionMs: number): Promise<NativePlayerState>;
   setRepeatOne(repeatOne: boolean): Promise<void>;
+  setProgressInterval(ms: number): Promise<void>;
   getState(): Promise<NativePlayerState>;
   stop(): Promise<void>;
   addListener<K extends keyof NativePlayerEvents>(event: K, listener: NativePlayerEvents[K]): { remove: () => void };

@@ -35,6 +35,9 @@ import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
 import { listArtists, getArtist, artistSheetUrl, parseVoicePreset, artistHasVoice, type ServerArtist } from '../services/characterService';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
+// v3.392 [NativePlayer]: 녹음 전 전역 재생 멈춤, 녹음 뒤 재생 오디오 모드 복원
+import { pauseGlobalPlaybackFor } from '../services/playback';
+import { restorePlaybackAudioModeAfterRecording } from '../services/audioMode';
 import { colors } from '../theme/colors';
 import { getFatigueStatus, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
@@ -1640,6 +1643,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         showAlert('권한 필요', '녹음을 위해 마이크 권한이 필요합니다.');
         return;
       }
+      await pauseGlobalPlaybackFor('reference-record'); // v3.392: 노래가 녹음에 섞이지 않게
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -1664,7 +1668,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       if (timerRef.current) clearInterval(timerRef.current);
       setIsRecording(false);
       await recordingRef.current.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await restorePlaybackAudioModeAfterRecording(); // v3.392: 백그라운드·무음 모드 재생 설정까지 복원(웹은 종전 그대로)
       const uri = recordingRef.current.getURI();
       recordingRef.current = null;
       if (uri) {

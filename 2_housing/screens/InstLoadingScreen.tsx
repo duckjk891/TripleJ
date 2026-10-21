@@ -18,6 +18,7 @@ import AppScreenLayout from '../components/AppScreenLayout';
 import ComposerLoadingView, { ComposerLoadingStep } from '../components/ComposerLoadingView';
 import { getInstrumentalStatus } from '../services/trackService';
 import { applyPlaybackAudioMode } from '../services/audioMode';
+import { pauseGlobalPlaybackFor } from '../services/playback'; // v3.392 [NativePlayer]: 미리듣기 전 전역 재생 멈춤
 import { savedTrackStreamUrl } from '../services/musicService';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -239,6 +240,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
         await sound.pauseAsync();
         setIsPlaying(false);
       } else {
+        await pauseGlobalPlaybackFor('inst-preview'); // v3.392: 미니플레이어 곡과 겹침 방지
         await sound.playAsync();
         setIsPlaying(true);
       }

@@ -93,11 +93,37 @@ function buildItem(track: any): NativeTrackItem {
 
 // ── 엔진 상태(마지막으로 받은 값) ───────────────────────────────────────────
 let lastState: NativePlayerState | null = null;
+let lastStateAt = 0; // 받은 시각 — 곡 시계 보정 기준
 export function engineLastState(): NativePlayerState | null {
   return lastState;
 }
 function noteState(st: NativePlayerState | null | undefined): void {
-  if (st && typeof st === 'object') lastState = st;
+  if (st && typeof st === 'object') {
+    lastState = st;
+    lastStateAt = Date.now();
+  }
+}
+
+/**
+ * 곡 시계(MV·가사 싱크용) — 네이티브가 보낸 마지막 위치 + 받은 뒤 지난 시간(실제로 소리가 날 때만, 최대 2초).
+ * 버퍼링 중이면 시계를 멈춘다(종전 추정은 버퍼링 중에도 흘러 영상·자막이 앞서 나갔다). 다른 곡이면 null.
+ */
+export function engineClockMs(trackId: string | null | undefined): number | null {
+  const st = lastState;
+  if (!st || !st.count || !trackId || trackIdOfKey(st.key) !== String(trackId)) return null;
+  const base = Math.max(0, st.positionMs || 0);
+  return st.isPlaying ? base + Math.min(2000, Date.now() - lastStateAt) : base;
+}
+
+/** 재생하려는데 소리가 안 나는 중(버퍼링) — MV 영상도 기다리게 한다 */
+export function engineSongStalled(): boolean {
+  const st = lastState;
+  return !!st && !st.isPlaying && !!st.playWhenReady && st.state === 'buffering';
+}
+
+/** 재생 중 위치 이벤트 간격(ms) — MV·가사 화면에서만 짧게 */
+export async function engineSetProgressInterval(ms: number): Promise<void> {
+  try { await MaidolPlayer?.setProgressInterval(ms); } catch {}
 }
 
 // 재생 화면(PlayerScreen)이 붙이는 상태 콜백 — expo-av setOnPlaybackStatusUpdate 호환(하나만)

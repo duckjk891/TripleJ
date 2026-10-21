@@ -1109,6 +1109,52 @@ export async function playTrackNow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// v3.392 [NativePlayer]: 앱 안의 다른 소리(보상형 광고·녹음·짧은 미리듣기)와 전역 재생 정합.
+// 오디오 포커스에 맡기지 않고 명시적으로 멈춘다 — 포커스 '잠깐 상실'이면 ExoPlayer 가 광고가 끝날 때 스스로 다시
+// 틀어(사용자가 멈춰 둔 곡이어도) 버리거나, 포커스를 안 잡는 녹음·미리듣기와는 그대로 겹친다.
+// resume 은 '원래 재생 중이었고, 그 사이 같은 곡·같은 재생기 그대로이며, 지금 멈춰 있을 때'만 다시 튼다.
+// 웹은 종전 그대로(no-op).
+// ─────────────────────────────────────────────────────────────────────────────
+export type GlobalPlaybackHold = { wasPlaying: boolean; resume: (why: string) => Promise<void> };
+
+export async function pauseGlobalPlaybackFor(reason: string): Promise<GlobalPlaybackHold> {
+  const noop: GlobalPlaybackHold = { wasPlaying: false, resume: async () => {} };
+  if (Platform.OS === 'web') return noop;
+  const s = usePlayerStore.getState();
+  const snd: any = s.sound;
+  if (!snd || !s.track?.id) return noop;
+  const trackId = String(s.track.id);
+  const wasPlaying = !!s.isPlaying; // 엔진은 버퍼링 중(재생 의도 있음)도 재생 중으로 본다
+  if (wasPlaying) {
+    try {
+      await snd.pauseAsync();
+      usePlayerStore.getState().setIsPlaying(false);
+    } catch (err: any) {
+      console.warn('[NativePlayer] 일시정지 실패', { reason, message: err?.message });
+    }
+  }
+  console.warn('[NativePlayer] 다른 소리 때문에 전역 재생 일시정지', { reason, wasPlaying, trackId });
+  return {
+    wasPlaying,
+    resume: async (why: string) => {
+      const cur = usePlayerStore.getState();
+      const same = cur.sound === snd && String(cur.track?.id ?? '') === trackId;
+      if (!wasPlaying || !same || cur.isPlaying) {
+        console.warn('[NativePlayer] 이어 재생 안 함', { reason, why, wasPlaying, same, nowPlaying: !!cur.isPlaying });
+        return;
+      }
+      try {
+        await snd.playAsync();
+        usePlayerStore.getState().setIsPlaying(true);
+        console.warn('[NativePlayer] 원래 듣던 곡 이어 재생', { reason, why, trackId });
+      } catch (err: any) {
+        console.warn('[NativePlayer] 이어 재생 실패', { reason, why, message: err?.message });
+      }
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진 정책 구역.
 // 네이티브는 [들은 곡…, 현재 곡, 다음 곡] 목록을 들고 곡 끝·차/잠금화면 다음·이전을 스스로 처리한다.
 // JS 는 ① 다음 곡을 정해(재생목록·셔플·Inst 건너뛰기·누른 곡 다음 추천 — getNextAutoIndex) 미리 붙여 두고

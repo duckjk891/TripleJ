@@ -13,6 +13,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHideMiniPlayerOnFocus } from '../hooks/useHideMiniPlayerOnFocus';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
+// v3.392 [NativePlayer]: 녹음·미리듣기 전 전역 재생 멈춤, 녹음 뒤 재생 오디오 모드 복원
+import { pauseGlobalPlaybackFor } from '../services/playback';
+import { restorePlaybackAudioModeAfterRecording } from '../services/audioMode';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
@@ -381,6 +384,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       return;
     }
     try {
+      await pauseGlobalPlaybackFor('voiceclone-preview'); // v3.392: 미니플레이어 곡과 겹침 방지
       const { sound } = await Audio.Sound.createAsync({ uri: src.uri }, { shouldPlay: true });
       soundRef.current = sound;
       setPreviewing(true);
@@ -447,6 +451,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         showAlert('권한 필요', '녹음을 위해 마이크 권한이 필요합니다.');
         return;
       }
+      await pauseGlobalPlaybackFor('voiceclone-record'); // v3.392: 노래가 녹음에 섞이지 않게
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -496,7 +501,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       if (timerRef.current) clearInterval(timerRef.current);
       setIsRecording(false);
       await recordingRef.current.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await restorePlaybackAudioModeAfterRecording(); // v3.392: 백그라운드·무음 모드 재생 설정까지 복원(웹은 종전 그대로)
       const uri = recordingRef.current.getURI();
       recordingRef.current = null;
       if (uri) {

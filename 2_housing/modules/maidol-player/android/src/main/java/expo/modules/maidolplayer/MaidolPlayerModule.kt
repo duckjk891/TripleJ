@@ -48,13 +48,15 @@ class MaidolPlayerModule : Module() {
   private val waiters = mutableListOf<Pair<(MediaController) -> Unit, (Throwable) -> Unit>>()
   private val main = Handler(Looper.getMainLooper())
   private var ticking = false
+  /** 재생 중 위치 이벤트 간격 — MV·가사 화면은 JS 가 250ms 로 당긴다(setProgressInterval) */
+  private var tickMs = TICK_MS
 
   private val tick = object : Runnable {
     override fun run() {
       val c = controller
       if (c != null && c.isPlaying) {
         emitState(c)
-        main.postDelayed(this, TICK_MS)
+        main.postDelayed(this, tickMs)
       } else {
         ticking = false
       }
@@ -80,7 +82,7 @@ class MaidolPlayerModule : Module() {
       emitState(c)
       if (isPlaying && !ticking) {
         ticking = true
-        main.postDelayed(tick, TICK_MS)
+        main.postDelayed(tick, tickMs)
       }
     }
 
@@ -181,6 +183,10 @@ class MaidolPlayerModule : Module() {
         c.repeatMode = if (repeatOne) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         promise.resolve(null)
       }
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("setProgressInterval") { ms: Int ->
+      tickMs = ms.coerceIn(100, 2000).toLong()
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("getState") { promise: Promise ->

@@ -47,7 +47,7 @@ import { useArtistStore } from '../stores/artistStore';
 import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture, webAudioEl } from '../services/webAudioElement';
 import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance, loadAndPlayTrack } from '../services/playback';
 // v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진이면 이 화면의 자체 로더 대신 공용 엔진(플레이어 1개)으로 재생
-import { NATIVE_QUEUE_ENGINE, isEngineSound } from '../services/nativePlayer';
+import { NATIVE_QUEUE_ENGINE, isEngineSound, engineClockMs, engineSongStalled, engineSetProgressInterval } from '../services/nativePlayer';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -264,6 +264,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const mvRef = useRef<any>(null);
   const songClockRef = useRef<{ ms: number; at: number }>({ ms: 0, at: 0 }); // 마지막 곡 위치와 그 시각
   const mvSeekingRef = useRef(false);
+  const mvRateRef = useRef(1); // v3.392: 네이티브 MV 영상 속도(미세 따라잡기)
+  const mvStalledRef = useRef(false); // v3.392: 곡 버퍼링으로 영상을 멈춰 둔 상태
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
@@ -822,6 +824,11 @@ export default function PlayerScreen({ route, navigation }: any) {
   const songNowMs = () => {
     const el = webSongEl();
     if (el) return el.currentTime * 1000;
+    // v3.392 [NativePlayer]: 안드로이드 엔진 — 네이티브가 보낸 위치 + 받은 뒤 경과(소리가 날 때만, 버퍼링 중엔 멈춤)
+    if (NATIVE_QUEUE_ENGINE) {
+      const ms = engineClockMs(String(usePlayerStore.getState().track?.id ?? ''));
+      if (ms != null) return ms;
+    }
     const c = songClockRef.current;
     return isPlaying ? c.ms + Math.min(2000, Date.now() - c.at) : c.ms;
   };
@@ -916,13 +923,63 @@ export default function PlayerScreen({ route, navigation }: any) {
     if (isPlaying) void syncMvToSong('resume');
   }, [isPlaying, mediaTab]);
 
-  // 영상 위치가 곡과 0.4초 넘게 벌어지면(탭 진입·재생바 이동·버퍼링) 곡 위치로 맞춘다
+  // v3.392 [NativePlayer]: MV·가사 화면에서는 엔진 위치를 250ms 마다 받는다(평소 1초) — 곡 시계 오차 축소
+  useEffect(() => {
+    if (!NATIVE_QUEUE_ENGINE) return;
+    const fast = mediaTab === 'mv' || mediaTab === 'video';
+    void engineSetProgressInterval(fast ? 250 : 1000);
+    return () => { void engineSetProgressInterval(1000); };
+  }, [mediaTab]);
+
+  const setMvRate = (rate: number) => {
+    const v = mvRef.current;
+    if (!v || Math.abs(mvRateRef.current - rate) < 0.01) return;
+    mvRateRef.current = rate;
+    v.setRateAsync(rate, false).catch(() => {});
+  };
+
+  // v3.392 [NativePlayer]: 네이티브 MV 따라가기 — 웹(v3.374) 수준으로: 곡이 버퍼링이면 영상도 기다렸다 같이 출발,
+  // 0.3초 넘게 벌어지면 곡 위치(+0.12초)로 이동, 0.04~0.3초는 영상 속도 0.9~1.1배로 미세 조정(점프 없이 입모양 맞춤).
+  // 종전: 500ms 마다 0.4초 넘으면 이동만, 버퍼링 무시(곡이 멈춰도 영상만 달려 나감).
+  const followSongNative = (st: any) => {
+    const v = mvRef.current;
+    if (!v || mvSeekingRef.current) return;
+    if (NATIVE_QUEUE_ENGINE && engineSongStalled()) {
+      if (st.isPlaying) {
+        mvStalledRef.current = true;
+        v.pauseAsync().catch(() => {});
+        console.warn('[NativePlayer] MV 대기 — 곡 버퍼링');
+      }
+      return;
+    }
+    if (mvStalledRef.current) {
+      mvStalledRef.current = false;
+      if (isPlaying) {
+        v.playAsync().catch(() => {});
+        void syncMvToSong('stall-resume');
+      }
+      return;
+    }
+    if (!st.isPlaying) return;
+    const drift = (st.positionMillis ?? 0) - songNowMs(); // + = 영상이 앞섬
+    if (Math.abs(drift) > 300) {
+      setMvRate(1);
+      void syncMvToSong('drift');
+    } else if (Math.abs(drift) > 40) {
+      setMvRate(Math.max(0.9, Math.min(1.1, 1 - (drift / 1000) * 0.5)));
+    } else {
+      setMvRate(1);
+    }
+  };
+
+  // 영상 위치가 곡과 벌어지면(탭 진입·재생바 이동·버퍼링) 곡 위치로 맞춘다
   const syncMvToSong = async (reason: string) => {
     const v = mvRef.current;
     if (!v || mvSeekingRef.current) return;
     mvSeekingRef.current = true;
     try {
-      const target = songNowMs();
+      // v3.392: 재생 중이면 이동 지연만큼 살짝 앞에(웹과 같은 0.12초) — 남는 차이는 속도 조절이 마무리
+      const target = songNowMs() + (Platform.OS !== 'web' && isPlaying ? 120 : 0);
       await v.setPositionAsync(target, { toleranceMillisBefore: 100, toleranceMillisAfter: 100 });
       if (__DEV__) console.info('[PlayerScreen] MV 위치 맞춤', { reason, positionMs: target });
     } catch (err: any) {
@@ -1315,7 +1372,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               resizeMode={ResizeMode.CONTAIN}
               isMuted
               shouldPlay={isPlaying}
-              progressUpdateIntervalMillis={500}
+              progressUpdateIntervalMillis={Platform.OS === 'web' ? 500 : 250}
               onLoad={() => { if (Platform.OS !== 'web') void syncMvToSong('load'); }}
               onReadyForDisplay={(e: any) => {
                 const ns = e?.naturalSize;
@@ -1324,7 +1381,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               onPlaybackStatusUpdate={(st: any) => {
                 if (!st?.isLoaded || mvSeekingRef.current) return;
                 if (!isPlaying && st.isPlaying) { mvRef.current?.pauseAsync().catch(() => {}); return; }
-                if (Platform.OS !== 'web' && Math.abs((st.positionMillis ?? 0) - songNowMs()) > 400) void syncMvToSong('drift');
+                if (Platform.OS !== 'web') followSongNative(st); // v3.392: 버퍼링 대기·속도 미세 조정·0.3초 이동
               }}
               onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
             />
