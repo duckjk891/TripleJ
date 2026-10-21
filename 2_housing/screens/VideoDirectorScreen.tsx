@@ -14,6 +14,7 @@
 //   기본 구간(sns/wide 곡 전체·카톡 자동 15초)은 구간 미전송. 결과 화면 [구간 다시 자르기] — 같은 영상의
 //   구간만 바꾸는 편집은 서버 판정 무과금(quote recut_free → "편집은 무료예요" 확인, 피로 게이트 생략).
 import { useCallback, useEffect, useRef, useState } from 'react';
+import * as Font from 'expo-font'; // v3.393 MV 자막 미리보기
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
@@ -103,7 +104,9 @@ const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; len
 // 형식 질문 문구(선곡 직후·프리셋 진입 공용) — 길이 차이 선제 안내
 const FORMAT_QUESTION = '좋아요! 어떤 형태의 영상으로 만들까요?\nSNS 세로·와이드 가로는 기본이 곡 전체 길이, 카톡 프로필 배경은 최대 15초예요. 다음 단계에서 원하는 구간만 잘라낼 수도 있어요.';
 
+// v3.393 [MVSub]: 'mv' = MV 자막 디자인(에스코어 드림 + 기울임·좁은 자간·그림자 — 서버 share_video.mv_sub_params). 새 영상 기본값.
 const FONTS: { key: string; label: string }[] = [
+  { key: 'mv', label: 'MV 자막' },
   { key: 'basic', label: '기본 고딕' },
   { key: 'round', label: '둥근 고딕' },
   { key: 'serif', label: '명조체' },
@@ -302,7 +305,16 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const [pickedBgBlur, setPickedBgBlur] = useState<'light' | 'mid' | 'strong'>(stylePrefs?.pickedBgBlur ?? 'mid');
   const [pickedBgColor, setPickedBgColor] = useState<string>(stylePrefs?.pickedBgColor ?? '1B1035');
   const [pickedBgAlpha, setPickedBgAlpha] = useState<string>(stylePrefs?.pickedBgAlpha ?? '45');
-  const [pickedFont, setPickedFont] = useState<string>(stylePrefs?.pickedFont ?? 'basic');
+  const [pickedFont, setPickedFont] = useState<string>(stylePrefs?.pickedFont ?? 'mv'); // v3.393: 기본 = MV 자막
+  // v3.393 [MVSub]: 'MV 자막' 카드 미리보기용 에스코어 드림(PlayerScreen MV 자막과 같은 원본 OTF) — 실패 시 기본 글꼴
+  const [mvFontReady, setMvFontReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Font.loadAsync({ SCDream5: require('../assets/fonts/SCDream5.otf') })
+      .then(() => { if (alive) setMvFontReady(true); })
+      .catch((err: any) => console.error('[VideoDirector] MV 자막 폰트 로드 실패(기본 글꼴로 미리보기)', { message: err?.message }));
+    return () => { alive = false; };
+  }, []);
   const [pickedBold, setPickedBold] = useState(stylePrefs?.pickedBold ?? false);
   const [pickedItalic, setPickedItalic] = useState(stylePrefs?.pickedItalic ?? false);
   const [pickedColor, setPickedColor] = useState<string>(stylePrefs?.pickedColor ?? 'FFFFFF');
@@ -863,6 +875,14 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const handlePickFont = (font: string) => {
     setPickedFont(font);
     pushUser(FONTS.find((f) => f.key === font)!.label, 'font');
+    if (font === 'mv') {
+      // v3.393 [MVSub]: MV 자막은 기울임·자간·그림자가 디자인에 포함 — 굵게/기울임 단계는 건너뛴다
+      if (__DEV__) console.info('[VideoDirector] MV 자막 선택 — 굵게/기울임 단계 생략');
+      setPickedBold(false); setPickedItalic(true);
+      pushDirector('MV 자막은 기울임과 그림자가 들어간 디자인이에요.\n가사 글자 색은요? 팔레트에서 골라주세요.');
+      setStep('fontColor');
+      return;
+    }
     pushDirector('굵게/기울임 효과도 넣을까요?');
     setStep('fontStyle');
   };
@@ -1870,7 +1890,16 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           <View style={styles.paletteWrap}>
             {FONTS.map((f) => (
               <TouchableOpacity key={f.key} style={styles.fontCard} onPress={() => handlePickFont(f.key)} activeOpacity={0.8}>
-                <AppText style={{ fontSize: 20, color: colors.text.primary }}>가나다</AppText>
+                <AppText
+                  style={[
+                    { fontSize: 20, color: colors.text.primary },
+                    f.key === 'mv' && mvFontReady
+                      ? { fontFamily: 'SCDream5', letterSpacing: -1.4, transform: [{ skewX: '-11.9deg' }], textShadowColor: '#000', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 0 }
+                      : null,
+                  ]}
+                >
+                  가나다
+                </AppText>
                 <AppText style={styles.formatLabel}>{f.label}</AppText>
               </TouchableOpacity>
             ))}

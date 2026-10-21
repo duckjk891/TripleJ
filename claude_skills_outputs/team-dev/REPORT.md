@@ -4901,3 +4901,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - 데이터(대표): 곡 6ad49d07 '캡틴큐'→'캪틴큐' — tracks(title·lyrics 2곳·prompt·source_meta·search_keywords·age_rating_basis), lyrics_assets(title·content·story), generations 2건(title·lyrics·요청/응답 원문), ES 재색인 OK. 원본 백업 EC2 logs/rename_captainq_v3389_backup.json.
 - 검증: 격리 테스트 19/19(server_staging_v3394notice/_tests) — 공지 포함·비공개 제외·[전체] 제외, 미션 2개·중복 무시·3개 시 ⭐5 1회·옛 키 no-op, 훅 위치. 대표 실행 deploy_v3394.sh: 호스트=컨테이너 md5 가드·`.bak_pre_v3394`×3·`maidol-app:pre-v3394notice-live`·TOTAL 0·health·oauth 302×3·공지 6·전체 0·Traceback 0. 웹은 공유 폴더에 다른 세션 미완성 수정(VideoDirectorScreen)이 있어 커밋본만 깨끗한 복사본(scratchpad, node_modules APFS 클론)으로 빌드·배포. 실측: 새 미션 팝업·별 안내(미션·일기 쓰기 NEW) 스크린샷 diary_v3389/5~7.
 - 남은 결정: 크루 생성 보상(금액·1회) · '일기로 곡 만들기' 착수 여부 · 재화 표기 '별'/'스타' 통일.
+
+## v3.393 — 2026-10-21 — 영상 디렉터 자막 'MV 자막' 디자인 (서버 + 웹)
+대표: "지금 MV에 자막 디자인처럼 영상 디렉터가 이 폰트 디자인으로 만들어지면 좋겠는데" → 승인("영상 자막 승인").
+- 서버(services/share_video.py + assets/fonts/SCDream5.otf·SCDream_LICENSE.png): 폰트 키 `mv` 추가 — ASS Fontname 'S-Core Dream 5 Medium'(원본 OTF, 수정 금지 라이선스·안내 동봉), mv_sub_params: 합성 기울임 + 자간 −0.069em(sns 64px → −4.4) + 그림자 높이의 0.19%(1920 → 4px). _build_ass/_build_ass_scroll 에 spacing·shadow 인자(기본 0 → 기존 폰트 출력 비트 동일, 캐시 재사용). 연주곡 제목 drawtext 도 SCDream5 파일 사용.
+- 앱(screens/VideoDirectorScreen.tsx): 폰트 맨 앞 'MV 자막'(새 영상 기본값, 저장된 스타일이 있으면 그대로), 고르면 굵게/기울임 단계 생략(디자인 포함) → 글자색으로. 카드 미리보기도 에스코어 드림·기울임·그림자.
+- 검증: 격리 테스트 12/12(기존 5개 폰트 sns·wide·kakao × 줄/스크롤 ASS 출력 원본과 동일, 파라미터, 실제 ffmpeg 렌더 — 에스코어 드림 기울임·그림자 확인), 배포(md5 가드·백업 pre-v3393·진행 0건): health·oauth 3종 302·별 제작소/일기 경로 정상·Traceback 0. tsc 0.
