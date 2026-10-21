@@ -1,5 +1,6 @@
-// [FeedScreen] 피드 타임라인 — /api/feeds/timeline (인스타형 혼합: is_public 최신 + 팔로잉 작성자 최상단).
-// 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
+// [FeedScreen] 일기장(v3.389 — 피드 탭을 싸이월드식 일기장으로, 대표 확정 10-21).
+// [전체] /api/feeds/timeline · [내 일기] /api/feeds/diary/month 달력 · [공지] /api/feeds/notices(그대로).
+// 비로그인은 [전체]·[공지] 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet, Linking } from 'react-native';
@@ -22,10 +23,13 @@ import { useLikesStore } from '../stores/likesStore';
 // v3.207 ①: 코치마크 anchor — 글쓰기 Fab 스포트라이트(비로그인·Fab 숨김 시 미등록 → 카드 fallback)
 import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
+import DiaryCalendar from '../components/diary/DiaryCalendar'; // v3.389 [Diary]
+import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, backdateOptions } from '../utils/diary';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
+// v3.389 [Diary]: 일기장 문구
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '피드 작성', desc: '클릭하여 피드를 작성하거나 다른 사용자의 피드 및 공지사항을 확인할 수 있어요.', anchorKey: 'feed-compose' },
+  { title: '일기 쓰기', desc: '눌러서 오늘의 일기를 써 보세요. 50자 이상 쓰면 하루 한 번 별을 받아요. 다른 사람들의 일기와 공지도 볼 수 있어요.', anchorKey: 'feed-compose' },
 ];
 
 // Fab(components/Fab.tsx)의 고정 지름 — anchor rect를 아이콘 중심에서 버튼 크기로 확장할 때 사용
@@ -61,6 +65,18 @@ interface FeedPost {
   created_at?: string;
   is_public?: boolean; // v3.210 ①: 비공개 칩·공개 전환(내 글 탭은 비공개 포함 응답)
   kind?: string;       // 'feed' | 'community'
+  diary_date?: string; // v3.389 [Diary] 'YYYY-MM-DD'
+  mood?: string | null;
+  visibility?: string;
+}
+
+// v3.389 [Diary] GET /feeds/diary/month 응답
+interface DiaryMonth {
+  month: string;
+  today: string;
+  days: Record<string, { count: number; mood?: string | null }>;
+  streak: number;
+  stars_this_month: number;
 }
 
 // v3.210 ①: 상단 세그먼트 탭 → v3.307(대표 10-08) [전체]·[내 글]·[공지]
@@ -68,9 +84,10 @@ interface FeedPost {
 //  [내 글] = 내 피드+내 공지(/feeds/user/{me}?kind=all — 비공개 포함)
 //  [공지] = maidol_official 공식 계정 글(/feeds/notices) — 비로그인도 열람
 type FeedTab = 'all' | 'mine' | 'notice';
+// v3.389 [Diary]: [내 글] → [내 일기](달력). 채널 공지(kind=community)는 마이페이지에서 그대로(대표 결정 ③A)
 const FEED_TABS: { key: FeedTab; label: string; guest: boolean }[] = [
   { key: 'all', label: '전체', guest: true },
-  { key: 'mine', label: '내 글', guest: false },
+  { key: 'mine', label: '내 일기', guest: false },
   { key: 'notice', label: '공지', guest: true },
 ];
 
@@ -110,6 +127,11 @@ export default function FeedScreen() {
   const isOfficial = !!user && !!officialId && String(user.id) === officialId;
   // 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님)
   const [ctaVisible, setCtaVisible] = useState(false);
+  // v3.389 [Diary]: 오늘 보상 상태(null = 모름/구서버 → 안내 띠 숨김) · [내 일기] 달력
+  const [rewardedToday, setRewardedToday] = useState<boolean | null>(null);
+  const [month, setMonth] = useState<string>(() => kstToday().slice(0, 7));
+  const [monthData, setMonthData] = useState<DiaryMonth | null>(null);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   // v3.69: 트랙 스탯(재생수·좋아요) 병합 캐시 + ⋮ 액션시트 대상
   const [trackStats, setTrackStats] = useState<Record<string, { play_count?: number; like_count?: number }>>({});
   const [actionTrack, setActionTrack] = useState<RowTrack | null>(null);
@@ -153,15 +175,38 @@ export default function FeedScreen() {
     try {
       setLoading(true);
       const uid = useAuthStore.getState().user?.id;
-      const res = tab === 'mine' && uid
-        ? await api.get(`/feeds/user/${uid}`, { params: { kind: 'all', limit: 50 } })
-        : tab === 'notice'
-        ? await api.get('/feeds/notices', { params: { limit: 50 } })
-        : await api.get('/feeds/timeline', { params: { exclude_official: true } });
-      if (tab === 'notice' && res.data?.official_id) setOfficialId(String(res.data.official_id));
-      const data: FeedPost[] = Array.isArray(res.data)
-        ? res.data
-        : (res.data?.feeds || res.data?.items || res.data?.posts || []);
+      // v3.389 [Diary]: 오늘 보상 상태 — 실패(구서버 404 등)면 안내 띠 숨김
+      if (uid && tab !== 'notice') {
+        api.get('/feeds/diary/status')
+          .then((r) => setRewardedToday(!!r.data?.rewarded_today))
+          .catch(() => setRewardedToday(null));
+      }
+      let data: FeedPost[] | null = null;
+      if (tab === 'mine' && uid) {
+        // v3.389 [Diary]: [내 일기] = 한 달 달력. 구서버(엔드포인트 없음)는 예전 내 글 목록으로 폴백
+        try {
+          const mres = await api.get('/feeds/diary/month', { params: { month } });
+          const md = mres.data as DiaryMonth & { feeds?: FeedPost[] };
+          setMonthData(md);
+          data = md.feeds || [];
+          if (__DEV__) console.info('[Diary] 달력 응답', { month, feeds: data.length, streak: md.streak });
+        } catch (err: any) {
+          console.error('[Diary] 달력 조회 실패 → 목록 폴백', { month, status: err?.response?.status });
+          setMonthData(null);
+        }
+      }
+      if (data === null) {
+        const res = tab === 'mine' && uid
+          ? await api.get(`/feeds/user/${uid}`, { params: { kind: 'feed', limit: 50 } })
+          : tab === 'notice'
+          ? await api.get('/feeds/notices', { params: { limit: 50 } })
+          : await api.get('/feeds/timeline', { params: { exclude_official: true, limit: 30 } });
+        if (tab === 'notice' && res.data?.official_id) setOfficialId(String(res.data.official_id));
+        data = Array.isArray(res.data)
+          ? res.data
+          : (res.data?.feeds || res.data?.items || res.data?.posts || []);
+      }
+      if (!data) data = [];
       if (__DEV__) console.info('[Feed] fetchFeed 응답', { tab, count: data.length });
       setPosts(data);
       // v3.69: timeline엔 재생수·좋아요가 없어 고유 트랙(최대 20곡)의 상세를 병합
@@ -183,9 +228,19 @@ export default function FeedScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [tab]);
+  }, [tab, month]);
 
   useFocusEffect(useCallback(() => { fetchFeed(); }, [fetchFeed]));
+
+  // v3.389 [Diary]: [내 일기] 선택한 날의 일기만(선택 없으면 그 달 전체)
+  const visiblePosts = tab === 'mine' && monthData && selectedDay
+    ? posts.filter((p) => p.diary_date === selectedDay)
+    : posts;
+  const canWriteOn = (ymd: string | null) => !!ymd && backdateOptions().some((o) => o.ymd === ymd);
+  const openCompose = (diaryDate?: string) => {
+    if (__DEV__) console.info('[Diary] 쓰기 진입', { diaryDate });
+    navigation.navigate('FeedCompose', diaryDate && diaryDate !== kstToday() ? { diaryDate } : undefined);
+  };
 
   // 피드 전체의 트랙을 큐로 모아두고, 탭한 트랙부터 재생
   const allTracks = useCallback((): FeedTrack[] => {
@@ -220,12 +275,14 @@ export default function FeedScreen() {
   const goLogin = () => navigation.navigate('Settings');
 
   // v3.69: 트랙 블록 = 차트와 동일한 공용 TrackRow(커버·재생수·좋아요·⋮) + 재생 상태 표시
-  const renderTrackBlock = (track: FeedTrack, key: string) => {
+  const renderTrackBlock = (track: FeedTrack, key: string, bgmLabel = false) => {
     const stats = trackStats[String(track.id)] || {};
     const rowTrack: RowTrack = { ...track, ...stats } as RowTrack;
     const isCurrent = String(nowId) === String(track.id);
     return (
       <View key={key} style={styles.trackBlockWrap}>
+        {/* v3.389 [Diary]: 일기에 붙인 곡 = 오늘의 BGM */}
+        {bgmLabel ? <AppText variant="caption" style={styles.bgmLabel}>오늘의 BGM</AppText> : null}
         {/* v3.72: 재생 상태 표시는 커버 배지 하나로 통일(왼쪽 중복 아이콘 제거) */}
         <TrackRow
           track={rowTrack}
@@ -283,9 +340,12 @@ export default function FeedScreen() {
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열
     const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
+    // v3.389 [Diary]: 일기(kind='feed', 서버가 diary_date 내려줄 때) — 글은 공책 종이, 곡은 '오늘의 BGM'
+    const isDiary = tab !== 'notice' && (item.kind || 'feed') === 'feed' && !!item.diary_date;
     return (
       <FeedCard
         feed={item}
+        hideDiaryHead={tab === 'notice'}
         requireLogin={requireLogin}
         onPressAuthor={() => {
           if (!user) { setCtaVisible(true); return; }
@@ -296,20 +356,73 @@ export default function FeedScreen() {
         onUpdated={() => fetchFeed()}
         renderBlocks={() => (
           <View>
-            {textBlocks.map((b, i) => (
+            {isDiary && textBlocks.length ? (
+              <View style={styles.paper}>
+                {textBlocks.map((b, i) => (
+                  <AppText key={`t${i}`} variant="body" style={styles.paperText}>{b.text}</AppText>
+                ))}
+              </View>
+            ) : textBlocks.map((b, i) => (
               <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
             ))}
             {imageBlocks.map((b, i) => {
               const uri = feedImageUri(b);
               return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
             })}
-            {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
+            {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`, isDiary && i === 0))}
             {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
           </View>
         )}
       />
     );
   };
+
+  // v3.389 [Diary]: 목록 머리 — 오늘 보상 안내 띠([전체]·[내 일기]) + [내 일기] 달력·날짜 제목
+  const showReward = !!user && !feedWriteBlocked && tab !== 'notice' && rewardedToday !== null;
+  const mineCount = visiblePosts.length;
+  const listHeader = showReward || (tab === 'mine' && monthData) ? (
+    <View style={styles.listHeader}>
+      {showReward ? (
+        rewardedToday ? (
+          <View style={[styles.reward, styles.rewardDone]}>
+            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>오늘 일기 별 ⭐{DIARY_REWARD}을 받았어요. 내일 또 써 주세요!</AppText>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.reward} activeOpacity={0.8} onPress={() => openCompose()} accessibilityLabel="오늘 일기 쓰기">
+            <View style={{ flex: 1 }}>
+              <AppText variant="footnote" tone="secondary">오늘 일기 쓰면 <AppText variant="footnote" style={styles.rewardStar}>+{DIARY_REWARD}⭐</AppText></AppText>
+              <AppText variant="caption" tone="muted">{DIARY_MIN_CHARS}자 이상이면 받아요</AppText>
+            </View>
+            <View style={styles.rewardBtn}><AppText variant="caption" style={{ color: '#fff', fontWeight: '700' }}>쓰러 가기</AppText></View>
+          </TouchableOpacity>
+        )
+      ) : null}
+      {tab === 'mine' && monthData ? (
+        <>
+          <DiaryCalendar
+            month={month}
+            today={monthData.today || kstToday()}
+            days={monthData.days || {}}
+            selected={selectedDay}
+            streak={monthData.streak || 0}
+            stars={monthData.stars_this_month || 0}
+            nickname={user?.nickname}
+            avatarUri={user?.profile_image ? `${BACKEND_BASE_URL}/api/auth/profile-image/${user.profile_image}` : null}
+            onSelect={(ymd) => setSelectedDay((prev) => (prev === ymd ? null : ymd))}
+            onMonthChange={(delta) => { setSelectedDay(null); setPosts([]); setMonth((m) => shiftMonth(m, delta)); }}
+          />
+          <View style={styles.dayHead}>
+            <AppText variant="bodyStrong">{selectedDay ? `${fmtDiaryDateLong(selectedDay)} 일기` : `이번 달 일기 ${mineCount}편`}</AppText>
+            {selectedDay ? (
+              <TouchableOpacity onPress={() => setSelectedDay(null)} accessibilityLabel="이번 달 전체 보기">
+                <AppText variant="footnote" tone="accent">이번 달 전체</AppText>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </>
+      ) : null}
+    </View>
+  ) : null;
 
   return (
     <ScreenLayout>
@@ -326,22 +439,38 @@ export default function FeedScreen() {
                 setPosts([]);
                 setTab(t.key);
               }}
-              accessibilityLabel={`피드 탭 ${t.label}`}
+              accessibilityLabel={`일기장 탭 ${t.label}`}
             >
               <AppText style={[styles.tabText, tab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
             </TouchableOpacity>
           ))}
         </View>
       )}
-      {loading && posts.length === 0 ? (
+      {loading && posts.length === 0 && !(tab === 'mine' && monthData) ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
-      ) : posts.length > 0 ? (
+      ) : posts.length > 0 || (tab === 'mine' && monthData) ? (
         <FlatList
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
-          data={posts}
+          data={visiblePosts}
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={tab === 'mine' && loading ? (
+            <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: spacing.xl }} />
+          ) : tab === 'mine' ? (
+            // v3.389 [Diary]: 고른 날/이번 달에 일기가 없을 때 — 최근 7일이면 그 날짜로 바로 쓰기
+            <View style={styles.dayEmpty}>
+              <AppText tone="muted" center>{selectedDay ? '이 날은 일기가 없어요.' : '이번 달 일기가 아직 없어요.'}</AppText>
+              {!feedWriteBlocked && (selectedDay ? canWriteOn(selectedDay) : true) ? (
+                <Button
+                  label={selectedDay && selectedDay !== kstToday() ? '이 날 일기 쓰기' : '오늘 일기 쓰기'}
+                  variant="tonal"
+                  onPress={() => openCompose(selectedDay || undefined)}
+                />
+              ) : null}
+            </View>
+          ) : null}
           // 비로그인: 글이 적어도 스크롤이 가능하도록 최소 높이 확보(스크롤 시 CTA 트리거)
           contentContainerStyle={[styles.list, !user && { minHeight: Dimensions.get('window').height + 140 }]}
           scrollEventThrottle={16}
@@ -364,11 +493,11 @@ export default function FeedScreen() {
       ) : !user && tab !== 'notice' ? (
         <View style={{ flex: 1 }} />
       ) : tab === 'mine' ? (
-        // v3.210 ①: 내 글 탭 빈 상태 — MyMusicScreen 피드/커뮤니티 탭 문구 관행
+        // v3.210 ①: 내 글 탭 빈 상태 → v3.389 [Diary]: 내 일기(달력 조회 실패 폴백일 때만 여기로)
         <EmptyState
-          icon={<Feather name="edit-3" size={44} color={colors.text.muted} />}
-          title="아직 작성한 글이 없어요"
-          hint="오른쪽 아래 버튼으로 내 곡과 소식을 알려보세요!"
+          icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
+          title="아직 쓴 일기가 없어요"
+          hint="오른쪽 아래 버튼으로 오늘의 일기를 써 보세요."
         />
       ) : tab === 'notice' ? (
         <EmptyState
@@ -378,9 +507,9 @@ export default function FeedScreen() {
         />
       ) : (
         <EmptyState
-          icon={<Feather name="users" size={44} color={colors.text.muted} />}
-          title="아직 소식이 없어요"
-          hint="마음에 드는 아티스트를 팔로우하면 소식이 여기 가장 먼저 떠요."
+          icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
+          title="아직 일기가 없어요"
+          hint="오늘의 첫 일기를 써 보세요. 팔로우한 사람의 일기도 여기 떠요."
           action={<Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />}
         />
       )}
@@ -403,11 +532,15 @@ export default function FeedScreen() {
       {user && !feedWriteBlocked && (tab !== 'notice' || isOfficial) ? (
         <Fab
           onPress={() => {
-            const kind = tab === 'notice' ? 'community' : 'feed';
-            if (__DEV__) console.info('[Feed] 작성 진입', { kind });
-            navigation.navigate('FeedCompose', kind === 'community' ? { kind } : undefined);
+            if (tab === 'notice') {
+              if (__DEV__) console.info('[Feed] 작성 진입', { kind: 'community' });
+              navigation.navigate('FeedCompose', { kind: 'community' });
+              return;
+            }
+            // v3.389 [Diary]: [내 일기]에서 최근 7일 날짜를 골라 두었으면 그 날짜로
+            openCompose(tab === 'mine' && canWriteOn(selectedDay) ? selectedDay! : undefined);
           }}
-          accessibilityLabel={tab === 'notice' ? '공지 작성' : '피드 작성'}
+          accessibilityLabel={tab === 'notice' ? '공지 작성' : '일기 쓰기'}
         >
           {/* v3.207 ①: 튜토리얼 anchor 측정용 래퍼 — collapsable={false}로 네이티브 뷰 보존 */}
           <View ref={fabIconRef} collapsable={false} onLayout={registerFabAnchor}>
@@ -424,7 +557,7 @@ export default function FeedScreen() {
           onPress={() => setCtaVisible(false)}
         >
           <LoginPrompt
-            desc={'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
+            desc={'로그인하면 다른 사람들의 일기와\n팔로우한 아티스트 소식을 볼 수 있어요'}
             onPress={goLogin}
           />
         </TouchableOpacity>
@@ -468,6 +601,24 @@ const styles = StyleSheet.create({
   headText: { marginLeft: spacing.md, flex: 1 },
   title: { marginTop: spacing.md },
   body: { marginTop: spacing.sm },
+  // v3.389 [Diary] 목록 머리·보상 띠·공책 종이·달력 아래 날짜 제목
+  listHeader: { gap: spacing.md, marginBottom: spacing.md },
+  reward: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.lg,
+    backgroundColor: 'rgba(251,191,36,0.10)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.35)',
+  },
+  rewardDone: { backgroundColor: colors.bg.surface1, borderColor: colors.border.subtle },
+  rewardStar: { color: colors.accent.secondary, fontWeight: '700' },
+  rewardBtn: { backgroundColor: colors.accent.primary, borderRadius: 999, paddingVertical: 6, paddingHorizontal: spacing.md },
+  dayHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.xs },
+  dayEmpty: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
+  paper: {
+    marginTop: spacing.sm, backgroundColor: '#f6f1ff', borderRadius: radius.md,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, gap: spacing.xs,
+  },
+  paperText: { color: colors.bg.surface2, lineHeight: 24 },
+  bgmLabel: { color: colors.accent.secondary, fontWeight: '700', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
   // v3.69: 트랙 블록 래퍼 — 카드 안 인셋 배경 위에 공용 TrackRow를 얹는다
   trackBlockWrap: {
     marginTop: spacing.md, backgroundColor: feedTheme.field,

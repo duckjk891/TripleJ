@@ -20,6 +20,7 @@ import { useNavigation } from '@react-navigation/native';
 import { blockUser } from '../../services/blockService';
 import { isBenefitActive } from '../../utils/shareMessage';
 import { SHARE_BENEFIT_FALLBACK } from '../../constants/shareMessages';
+import { fmtDiaryDate, moodOf, visibilityOf, DiaryVisibility } from '../../utils/diary'; // v3.389 [Diary]
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -55,6 +56,8 @@ interface Props {
   canModerate?: boolean;
   /** v3.294 [Block]: 작성자 차단 후(목록에서 그 사람 글 제거). 미지정 시 onDeleted 로 갱신 */
   onBlocked?: () => void;
+  /** v3.389 [Diary]: 일기 날짜·기분 줄 숨김 — [공지] 탭처럼 일기가 아닌 맥락 */
+  hideDiaryHead?: boolean;
 }
 
 // 서버 created_at은 타임존 표기 없는 UTC — 'Z'를 붙여 파싱(KST 9시간 오차 방지)
@@ -71,7 +74,7 @@ const fmtTime = (iso?: string): string => {
   return d.toLocaleDateString('ko-KR');
 };
 
-export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin, hideClubBadge, canModerate, onBlocked }: Props) {
+export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, renderBlocks, requireLogin, hideClubBadge, canModerate, onBlocked, hideDiaryHead }: Props) {
   const user = useAuthStore((s) => s.user);
   const navigation = useNavigation<any>();
   const isMine = !!user && String(feed.author_id) === String(user.id);
@@ -84,7 +87,12 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
       : null;
 
   // v3.210 ①-C: 공개 상태 — 응답 is_public(내 글 탭은 비공개 포함). 미포함 구응답은 공개 취급.
-  const [isPublic, setIsPublic] = useState(feed.is_public !== false);
+  // v3.389 [Diary]: 일기(kind='feed')는 공개 범위 3가지 — 서버 visibility 우선(구응답은 is_public 파생)
+  const isDiaryKind = (feed.kind || 'feed') === 'feed';
+  const [vis, setVis] = useState<DiaryVisibility>(visibilityOf(feed));
+  const isPublic = vis === 'public';
+  const diaryMood = moodOf(feed.mood);
+  const showDiaryHead = isDiaryKind && !hideDiaryHead && !!feed.diary_date;
   const [visBusy, setVisBusy] = useState(false);
   const [liked, setLiked] = useState(!!feed.is_liked);
   const [likeCount, setLikeCount] = useState(feed.like_count ?? 0);
@@ -214,8 +222,10 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   const toggleVisibility = async () => {
     if (visBusy) return;
     const next = !isPublic;
+    // v3.389 [Diary]: 일기는 전체 ↔ 나만 보기(팔로워만은 수정 화면에서) — visibility 명시 전송
+    const nextVis: DiaryVisibility = next ? 'public' : 'private';
     setVisBusy(true);
-    if (__DEV__) console.info('[Feed] 공개 전환', { feedId: feed.id, next });
+    if (__DEV__) console.info('[Feed] 공개 전환', { feedId: feed.id, next, nextVis });
     try {
       // 서버 블록 화이트리스트(text|track|image)의 원형 필드만 재구성해 재전송
       const blocks = (feed.blocks || [])
@@ -236,8 +246,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
         // v3.247: 클럽 글은 club_scope 도 직렬화에 실려온다 — PUT 전체 body 계약이라
         // 누락 재전송 시 scope 가 기본값으로 되돌 수 있어(BGM 소실과 같은 결) 저장값을 보존 재전송.
         ...(feed.club_scope ? { club_scope: feed.club_scope } : {}),
+        ...(isDiaryKind ? { visibility: nextVis } : {}),
       });
-      setIsPublic(next);
+      setVis(nextVis);
       onUpdated?.();
     } catch (err: any) {
       console.error('[Feed] 공개 전환 실패', { feedId: feed.id, status: err?.response?.status });
@@ -295,7 +306,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   };
 
   const deleteFeed = () => {
-    showAlert('피드 삭제', '이 피드를 삭제할까요?', [
+    showAlert(isDiaryKind ? '일기 삭제' : '피드 삭제', isDiaryKind ? '이 일기를 삭제할까요?' : '이 피드를 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: async () => {
         try {
@@ -343,7 +354,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
     try {
       // v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 혜택 줄
       const benefit = isBenefitActive(Date.now()) ? `\n🎁 가입 이벤트 기간 가입 시 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : '';
-      await Share.share({ message: `MAIDOL 피드 "${feed.title || '게시물'}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
+      await Share.share({ message: `MAIDOL ${isDiaryKind ? '일기' : '피드'} "${feed.title || (isDiaryKind ? fmtDiaryDate(feed.diary_date) || '일기' : '게시물')}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
     } catch (err: any) {
       console.error('[FeedCard] 공유 실패', { message: err?.message });
     }
@@ -405,11 +416,18 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
                   <AppText variant="caption" style={styles.clubBadgeText} numberOfLines={1}>{clubBadgeName}</AppText>
                 </View>
               ) : null}
-              {/* v3.210 ①-C: 내 글 한정 비공개 칩(자물쇠 아이콘) — 공지 배지와 별개 */}
-              {isMine && !isPublic ? (
+              {/* v3.210 ①-C: 내 글 한정 비공개 칩(자물쇠 아이콘) — 공지 배지와 별개
+                  v3.389 [Diary]: 일기는 '나만 보기'(내 글) · '팔로워'(팔로워 공개 — 보는 사람 모두에게) */}
+              {isMine && vis === 'private' ? (
                 <View style={styles.privateBadge}>
                   <Feather name="lock" size={10} color={feedTheme.muted} />
-                  <AppText variant="caption" style={styles.privateBadgeText}>비공개</AppText>
+                  <AppText variant="caption" style={styles.privateBadgeText}>{isDiaryKind ? '나만 보기' : '비공개'}</AppText>
+                </View>
+              ) : null}
+              {vis === 'followers' ? (
+                <View style={styles.privateBadge}>
+                  <Feather name="users" size={10} color={feedTheme.muted} />
+                  <AppText variant="caption" style={styles.privateBadgeText}>팔로워</AppText>
                 </View>
               ) : null}
             </View>
@@ -439,7 +457,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
               <TouchableOpacity style={styles.menuItem} disabled={visBusy} onPress={() => { setMenuOpen(false); toggleVisibility(); }}>
                 <Feather name={isPublic ? 'lock' : 'globe'} size={16} color={feedTheme.sub} />
                 <AppText variant="footnote" style={{ color: feedTheme.sub }}>
-                  {visBusy ? '변경 중...' : isPublic ? '비공개로 전환' : '공개로 전환'}
+                  {visBusy ? '변경 중...'
+                    : isDiaryKind ? (isPublic ? '나만 보기로 바꾸기' : '전체 공개로 바꾸기')
+                    : isPublic ? '비공개로 전환' : '공개로 전환'}
                 </AppText>
               </TouchableOpacity>
               )}
@@ -477,6 +497,16 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
               ) : null}
             </>
           )}
+        </View>
+      ) : null}
+
+      {/* v3.389 [Diary] 일기 날짜 · 오늘 기분 */}
+      {showDiaryHead ? (
+        <View style={styles.diaryHead}>
+          <AppText variant="footnote" style={styles.diaryDate}>{fmtDiaryDate(feed.diary_date)}</AppText>
+          {diaryMood ? (
+            <AppText variant="footnote" style={{ color: feedTheme.sub }}>{diaryMood.emoji} {diaryMood.label}</AppText>
+          ) : null}
         </View>
       ) : null}
 
@@ -635,6 +665,13 @@ const styles = StyleSheet.create({
   },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 4 },
   title: { marginTop: spacing.md },
+  // v3.389 [Diary] 일기 날짜 줄 — 공책 칸처럼 점선 아래줄
+  diaryHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: spacing.md, paddingBottom: spacing.xs,
+    borderBottomWidth: 1, borderBottomColor: colors.border.default, borderStyle: 'dashed',
+  },
+  diaryDate: { color: colors.accent.primaryGlow, fontWeight: '700', letterSpacing: 0.3 },
   actionBar: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.xl,
     marginTop: spacing.md, paddingTop: spacing.md,

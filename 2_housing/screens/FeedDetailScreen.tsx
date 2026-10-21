@@ -180,9 +180,18 @@ export default function FeedDetailScreen() {
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열 (FeedScreen과 동일 규칙)
     const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
+    // v3.389 [Diary]: 일기(서버 diary_date 동반)는 공책 종이 위에 — FeedScreen 과 같은 모양
+    // ('이 일기로 노래 만들기' 버튼은 대표 결정 ④A — 기능이 나오면 이 아래에 켠다)
+    const isDiary = (feed?.kind || 'feed') === 'feed' && !!feed?.diary_date;
     return (
       <View>
-        {textBlocks.map((b, i) => (
+        {isDiary && textBlocks.length ? (
+          <View style={styles.paper}>
+            {textBlocks.map((b, i) => (
+              <AppText key={`t${i}`} variant="body" style={styles.paperText}>{b.text}</AppText>
+            ))}
+          </View>
+        ) : textBlocks.map((b, i) => (
           <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
         ))}
         {imageBlocks.map((b, i) => {
@@ -200,7 +209,7 @@ export default function FeedDetailScreen() {
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
       ) : notFound || !feed ? (
-        <EmptyState title="피드를 찾을 수 없습니다" hint="삭제되었거나 비공개 처리된 글일 수 있어요" />
+        <EmptyState title="글을 찾을 수 없어요" hint="삭제되었거나 공개 범위가 바뀐 글일 수 있어요" />
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
           <FeedCard
@@ -237,6 +246,12 @@ const styles = StyleSheet.create({
   spinner: { marginTop: spacing.huge },
   list: { paddingVertical: spacing.lg, paddingHorizontal: spacing.md, paddingBottom: 120 },
   body: { marginTop: spacing.sm },
+  // v3.389 [Diary] 공책 종이 — FeedScreen paper 와 같은 값
+  paper: {
+    marginTop: spacing.sm, backgroundColor: '#f6f1ff', borderRadius: radius.md,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, gap: spacing.xs,
+  },
+  paperText: { color: colors.bg.surface2, lineHeight: 24 },
   trackBlockWrap: {
     marginTop: spacing.md, backgroundColor: feedTheme.field,
     borderRadius: radius.lg, overflow: 'hidden',

@@ -7,13 +7,15 @@ import { usePasteImages, type PastedAsset } from '../utils/usePasteImages'; // v
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
-  ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, Switch,
+  ActivityIndicator, StyleSheet, Platform, Switch,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'; // 앱 키보드 처리 통일(앱 전용 버그 세션 요청)
+import { pickImages } from '../utils/pickImage'; // 앱=사진첩(HEIC→JPEG), 웹=DocumentPicker 그대로
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Button, Tag } from '../components/ui';
@@ -23,6 +25,13 @@ import { spacing, radius } from '../theme/spacing';
 import { useIsChild, useKidsPermission, KIDS_TEXT } from '../utils/kidsMode';
 import { isChildRestrictedError, getWordFilteredMessage } from '../utils/kidsMode'; // v3.233: 403·금칙어 안내
 import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 — 크루 문구 단일화
+import { usePlayerStore } from '../stores/playerStore';
+import { usePointsStore } from '../stores/pointsStore';
+// v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
+import {
+  DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
+  backdateOptions, kstToday, visibilityOf, diaryCharCount, diaryRewardEligible, fmtDiaryDate,
+} from '../utils/diary';
 
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -63,6 +72,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     : 'feed';
   const isCommunity = kind === 'community';
   const isClub = kind === 'club';
+  // v3.389 [Diary]: kind='feed' = 일기
+  const isDiary = kind === 'feed';
   const clubId: string | undefined = isEdit
     ? (editFeed.club_id ? String(editFeed.club_id) : undefined)
     : route?.params?.clubId ? String(route.params.clubId) : undefined;
@@ -85,6 +96,26 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const [posting, setPosting] = useState(false);
   // v3.210 ①-B: 공개/비공개 — 기본 ON(공개). 피드·공지(kind 불문) 공통, TrackUploadScreen 스위치 관행
   const [isPublic, setIsPublic] = useState<boolean>(isEdit ? editFeed.is_public !== false : true);
+  // v3.389 [Diary]: 날짜(최근 7일 칩) · 기분 · 공개 범위 3가지 · 오늘 보상 받았는지(null=모름)
+  const [diaryDate, setDiaryDate] = useState<string>(() => (isEdit
+    ? (editFeed.diary_date || kstToday())
+    : (route?.params?.diaryDate || kstToday())));
+  const [mood, setMood] = useState<string | null>(isEdit ? (editFeed.mood || null) : null);
+  const [visibility, setVisibility] = useState<DiaryVisibility>(isEdit ? visibilityOf(editFeed) : 'public');
+  const [rewardedToday, setRewardedToday] = useState<boolean | null>(null);
+  // 수정 보상은 오늘 쓴 글만(서버 규칙과 짝) — 지난 글 수정은 안내 숨김
+  const editIsToday = isEdit && (editFeed.diary_date === kstToday() || !editFeed.created_at
+    || new Date(new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(editFeed.created_at) ? editFeed.created_at : editFeed.created_at + 'Z').getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10) === kstToday());
+  const showRewardHint = isDiary && (!isEdit || editIsToday);
+  useEffect(() => {
+    if (!isDiary || !user) return;
+    api.get('/feeds/diary/status')
+      .then((r) => setRewardedToday(!!r.data?.rewarded_today))
+      .catch(() => setRewardedToday(null)); // 구서버 — 안내 숨김
+  }, [isDiary, user]);
+  // v3.389 [Diary]: 곡 고르기 — [최근 들은 곡](재생 이력) · [내 곡]
+  const [pickerSource, setPickerSource] = useState<'recent' | 'mine'>('recent');
+  const [recentTracks, setRecentTracks] = useState<RowTrack[] | null>(null);
   // v3.247: 클럽 글 공개 범위 — 계약 POST /feeds kind='club' 에 club_scope:'club'|'public'(기본 'club').
   // 구서버(필드 미지원)는 club_scope 를 무시 → 오늘과 동일(클럽 게시판에만) 동작. 어린이 게이트·이미지 규칙 불변.
   const [clubScope, setClubScope] = useState<'club' | 'public'>(isEdit && editFeed.club_scope === 'public' ? 'public' : 'club');
@@ -182,6 +213,25 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     return () => { alive = false; };
   }, [pickerOpen, myTracks.length]);
 
+  // v3.389 [Diary]: 최근 들은 곡 — 기기 재생 이력(최대 80) 앞 20곡 상세 병렬 조회. 남의 비공개 곡은 서버가 막으니 제외
+  useEffect(() => {
+    if (!pickerOpen || pickerMode !== 'attach' || !isDiary || recentTracks) return;
+    let alive = true;
+    (async () => {
+      const ids = (usePlayerStore.getState().recentlyPlayedIds || []).slice(0, 20);
+      if (__DEV__) console.info('[Diary] 최근 들은 곡 조회', { count: ids.length });
+      const results = await Promise.allSettled(ids.map((id) => api.get(`/tracks/${id}`)));
+      if (!alive) return;
+      const me = String(user?.id || '');
+      const list = results
+        .map((r) => (r.status === 'fulfilled' ? r.value.data : null))
+        .filter((t: any) => t?.id && (t.is_public !== false || String(t.uploader_id) === me)) as RowTrack[];
+      setRecentTracks(list);
+      if (!list.length) setPickerSource('mine');
+    })();
+    return () => { alive = false; };
+  }, [pickerOpen, pickerMode, isDiary, recentTracks]);
+
   // v3.71: 아이템 모드 — 착장 아이템이 있는 곡만 보이도록 곡 상세를 병렬 조회해 필터(1회 캐시)
   useEffect(() => {
     if (!pickerOpen || pickerMode !== 'item' || itemTrackMap || !myTracks.length) return;
@@ -238,9 +288,9 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       showAlert('안내', `사진은 최대 ${MAX_FEED_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
-    // expo-image-picker 미설치 — 기존 이미지 선택 관행(SettingsScreen DocumentPicker image/*) 재사용
+    // 공용 pickImages — 앱은 사진첩(아이폰 HEIC 자동 JPEG), 웹은 DocumentPicker image/* 그대로
     // v3.273: multiple — OS 피커에서 한 번에 여러 장(남은 슬롯만큼 수용, 초과분은 안내 후 버림)
-    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true });
+    const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await pickImages({ multiple: true, limit: MAX_FEED_IMAGES - images.length });
     if (res.canceled || !res.assets?.length) return;
     const room = MAX_FEED_IMAGES - images.length;
     const skipped: string[] = [];
@@ -274,6 +324,19 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[FeedCompose] 사진 업로드 재시도', { name: entry.name });
     setImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'uploading' } : i)));
     uploadImage({ ...entry, status: 'uploading' });
+  };
+
+  // v3.389 [Diary]: 저장 후 — 오늘 별을 받았으면 앱 내 다이얼로그로 알리고 닫기
+  const finishWithReward = (reward?: { awarded?: number } | null) => {
+    if (reward?.awarded && reward.awarded > 0) {
+      console.info('[Diary] 보상 지급', { awarded: reward.awarded });
+      usePointsStore.getState().fetchBalance?.().catch?.(() => {});
+      showAlert(`+${reward.awarded}⭐`, '오늘의 일기 보상을 받았어요.\n내일 또 써 주세요!', [
+        { text: '확인', onPress: () => navigation.goBack() },
+      ]);
+      return;
+    }
+    navigation.goBack();
   };
 
   const submit = async () => {
@@ -317,29 +380,32 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       if (isEdit) {
         // v3.294 [FeedEdit]: 수정 — kind 는 서버가 저장값 고정, BGM·크루 공개 범위는 보존 재전송
         if (__DEV__) console.info('[FeedEdit] 저장', { feedId: editFeed.id, blocks: blocks.length });
-        await api.put(`/feeds/${editFeed.id}`, {
+        const res = await api.put(`/feeds/${editFeed.id}`, {
           title: isCommunity ? null : (title.trim() || null),
           blocks,
-          is_public: isClub ? true : isPublic,
+          is_public: isClub ? true : isDiary ? visibility === 'public' : isPublic,
           bgm_track_id: editFeed.bgm_track_id ?? null,
           ...(isClub ? { club_scope: clubScope } : {}),
+          ...(isDiary ? { visibility, mood: mood || '', diary_date: diaryDate } : {}),
         });
-        navigation.goBack();
+        finishWithReward(res.data?.diary_reward);
         return;
       }
-      await api.post('/feeds/', {
+      const res = await api.post('/feeds/', {
         // v3.115: community는 서버가 title 무시(null 저장) — 입력 UI도 숨겼으니 null 고정
         title: isCommunity ? null : (title.trim() || null),
         blocks,
         // v3.210 ①-B: 하드코딩 true 제거 — 공개 스위치 실값 전달(서버 계약 feeds.py:63 기본 True)
         // v3.245: 클럽 글은 스위치 숨김·항상 공개(게시판 = 공개 읽기 계약)
-        is_public: isClub ? true : isPublic,
+        // v3.389 [Diary]: 일기는 공개 범위 3가지(팔로워만은 서버가 is_public=False 로 저장)
+        is_public: isClub ? true : isDiary ? visibility === 'public' : isPublic,
+        ...(isDiary ? { visibility, ...(mood ? { mood } : {}), diary_date: diaryDate } : {}),
         kind,
         // v3.245: 클럽 게시판 — club_id 동반(다른 kind에는 필드 자체를 보내지 않아 기존 계약 무회귀)
         // v3.247: club_scope 동반(기본 'club') — 클럽 글에만 전송, 다른 kind 페이로드 불변
         ...(isClub ? { club_id: clubId, club_scope: clubScope } : {}),
       });
-      navigation.goBack();
+      finishWithReward(res.data?.diary_reward);
     } catch (err: any) {
       console.error('[FeedCompose] 등록 실패', { kind, isEdit, status: err?.response?.status });
       if (isEdit && err?.response?.status === 400 && err?.response?.data?.error) {
@@ -356,7 +422,12 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         showAlert('알림', `${CLUB_LABEL} 멤버만 글을 쓸 수 있어요. ${CLUB_LABEL}에 가입한 뒤 다시 시도해주세요.`); // v3.252 리네이밍
         return;
       }
-      showAlert('오류', `${isCommunity ? '공지' : isClub ? `${CLUB_LABEL} 글` : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`); // v3.252 리네이밍
+      // v3.389 [Diary]: 날짜 범위·기분 등 서버 안내(400) 그대로
+      if (isDiary && err?.response?.status === 400 && err?.response?.data?.error) {
+        showAlert('알림', err.response.data.error);
+        return;
+      }
+      showAlert('오류', `${isCommunity ? '공지' : isClub ? `${CLUB_LABEL} 글` : '일기'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`); // v3.252 리네이밍
     } finally {
       setPosting(false);
     }
@@ -376,18 +447,18 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (feedWriteBlocked) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
       headerRight: () => (
-        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '피드 수정 저장' : '피드 등록'} style={{ marginRight: 12 }}>
-          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit ? '저장 중…' : '등록 중…') : (isEdit ? '저장' : '등록')}</AppText>
+        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '수정 저장' : isDiary ? '일기 저장' : '등록'} style={{ marginRight: 12 }}>
+          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit || isDiary ? '저장 중…' : '등록 중…') : (isEdit || isDiary ? '저장' : '등록')}</AppText>
         </TouchableOpacity>
       ),
-      ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">글 수정</AppText> } : {}),
+      ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">{isDiary ? '일기 수정' : '글 수정'}</AppText> } : {}),
     });
   });
 
   if (!user) {
     return (
       <View style={styles.container}>
-        <AppText tone="secondary" center style={{ marginTop: 80 }}>로그인 후 피드를 작성할 수 있어요.</AppText>
+        <AppText tone="secondary" center style={{ marginTop: 80 }}>로그인 후 일기를 쓸 수 있어요.</AppText>
       </View>
     );
   }
@@ -402,10 +473,41 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={styles.container} behavior="padding">
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-        {/* v3.115: community는 서버가 제목을 무시(null 저장)하므로 입력 자체를 숨김 */}
-        {!isCommunity ? (
+        {/* v3.389 [Diary]: 날짜(오늘~6일 전) · 오늘 기분 */}
+        {isDiary ? (
+          <View style={styles.diaryBox}>
+            <AppText variant="caption" tone="muted">날짜</AppText>
+            {isEdit && !backdateOptions().some((o) => o.ymd === diaryDate) ? (
+              // 7일 지난 일기 수정 — 날짜는 그대로(서버도 저장값과 같으면 허용)
+              <View style={styles.dateFixed}><AppText variant="bodyStrong">{fmtDiaryDate(diaryDate)}</AppText></View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                {backdateOptions().map((o) => (
+                  <Tag key={o.ymd} label={o.label} selected={diaryDate === o.ymd} onPress={() => setDiaryDate(o.ymd)} />
+                ))}
+              </ScrollView>
+            )}
+            <AppText variant="caption" tone="muted" style={{ marginTop: spacing.sm }}>오늘 기분</AppText>
+            <View style={styles.moodRow}>
+              {DIARY_MOODS.map((m) => (
+                <TouchableOpacity
+                  key={m.key}
+                  style={[styles.moodItem, mood === m.key && styles.moodItemOn]}
+                  onPress={() => setMood((prev) => (prev === m.key ? null : m.key))}
+                  accessibilityLabel={`기분 ${m.label}`}
+                >
+                  <AppText style={styles.moodEmoji}>{m.emoji}</AppText>
+                  <AppText variant="caption" style={{ fontSize: 10, color: mood === m.key ? colors.text.primary : colors.text.muted }}>{m.label}</AppText>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
+        {/* v3.115: community는 서버가 제목을 무시(null 저장)하므로 입력 자체를 숨김
+            v3.389 [Diary]: 일기는 제목 없이(예전 글에 제목이 있으면 수정 때만 보임) */}
+        {!isCommunity && (!isDiary || (isEdit && !!editFeed.title)) ? (
           <TextInput
             style={styles.titleInput}
             placeholder="제목 (선택)"
@@ -420,7 +522,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           placeholder={
             isCommunity ? '구독자에게 알릴 소식을 적어주세요.'
             : isClub ? `${CLUB_LABEL} 멤버들과 나누고 싶은 이야기를 적어주세요.` // v3.252 리네이밍
-            : '지금 어떤 음악 이야기를 나누고 싶나요?'}
+            : '오늘 하루는 어땠나요? 들은 노래, 만든 곡, 있었던 일을 적어 보세요.'}
           placeholderTextColor={colors.text.muted}
           value={body}
           onChangeText={setBody}
@@ -428,12 +530,26 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           multiline
           textAlignVertical="top"
         />
+        {/* v3.389 [Diary]: 글자 수(공백 제외 — 서버 보상 기준과 같음) + 오늘 보상 안내 */}
+        {isDiary ? (
+          <View style={styles.countRow}>
+            <AppText variant="caption" style={{ flex: 1, color: !showRewardHint || rewardedToday === null ? colors.text.muted
+              : rewardedToday ? colors.text.muted : diaryRewardEligible(body) ? colors.status.success : colors.accent.secondary }}>
+              {!showRewardHint || rewardedToday === null ? ''
+                : rewardedToday ? '오늘 일기 별은 이미 받았어요'
+                : diaryRewardEligible(body) ? `✓ 저장하면 +${DIARY_REWARD}⭐ 받아요`
+                : diaryCharCount(body) >= DIARY_MIN_CHARS ? '같은 글자만 반복하면 별을 받을 수 없어요'
+                : `${DIARY_MIN_CHARS}자 이상 쓰면 +${DIARY_REWARD}⭐`}
+            </AppText>
+            <AppText variant="caption" tone="muted">{diaryCharCount(body)}자</AppText>
+          </View>
+        ) : null}
 
         {/* 첨부된 곡 — 차트와 동일한 TrackRow. v3.115: community는 track 블록 400 → 첨부 UI 숨김 */}
         {isCommunity ? null : attached ? (
           <View style={styles.attachedBox}>
             <View style={styles.attachedHead}>
-              <AppText variant="footnote" tone="secondary">첨부된 음악</AppText>
+              <AppText variant="footnote" tone="secondary">{isDiary ? '오늘의 BGM' : '첨부된 음악'}</AppText>
               <TouchableOpacity onPress={() => setAttached(null)} accessibilityLabel="첨부 제거">
                 <Feather name="x" size={16} color={colors.text.muted} />
               </TouchableOpacity>
@@ -443,7 +559,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         ) : (
           <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('attach'); setPickerOpen(true); }} accessibilityLabel="음악 첨부">
             <Feather name="music" size={18} color={colors.accent.primary} />
-            <AppText variant="body" tone="accent">음악 첨부</AppText>
+            <AppText variant="body" tone="accent">{isDiary ? '오늘의 BGM 붙이기' : '음악 첨부'}</AppText>
           </TouchableOpacity>
         )}
 
@@ -537,7 +653,19 @@ export default function FeedComposeScreen({ navigation, route }: any) {
 
         {/* v3.210 ①-B: 공개 여부 — TrackUploadScreen '차트에 공개' 스위치 관행 재사용(피드·공지 공통)
             v3.245: 클럽 글은 항상 공개(게시판 계약) — 스위치 숨김 */}
-        {isClub ? null : (
+        {/* v3.389 [Diary]: 일기 공개 범위 3가지(전체·팔로워만·나만 보기) */}
+        {isDiary ? (
+          <View style={styles.scopeBox}>
+            <AppText variant="callout">누가 볼 수 있나요</AppText>
+            <View style={styles.scopeChips}>
+              {VISIBILITY_OPTIONS.map((o) => (
+                <Tag key={o.key} label={o.label} selected={visibility === o.key} onPress={() => setVisibility(o.key)} />
+              ))}
+            </View>
+            <AppText variant="footnote" tone="muted">{VISIBILITY_OPTIONS.find((o) => o.key === visibility)?.hint}</AppText>
+          </View>
+        ) : null}
+        {isClub || isDiary ? null : (
         <View style={styles.switchRow}>
           <View style={{ flex: 1 }}>
             <AppText variant="callout">공개</AppText>
@@ -569,11 +697,43 @@ export default function FeedComposeScreen({ navigation, route }: any) {
               {itemChoices ? '아이템 선택'
                 : pickerMode === 'lyrics' ? '가사 복사할 곡 선택'
                 : pickerMode === 'item' ? '착장이 있는 곡 선택'
+                : isDiary ? '오늘의 BGM 고르기'
                 : '내 곡에서 선택'}
             </AppText>
             <View style={{ width: 30 }}>{lyricsLoading ? <ActivityIndicator size="small" color={colors.accent.primary} /> : null}</View>
           </View>
-          {itemChoices ? (
+          {/* v3.389 [Diary]: BGM 고르기 — [최근 들은 곡] · [내 곡] */}
+          {isDiary && pickerMode === 'attach' && !itemChoices ? (
+            <View style={styles.sourceRow}>
+              <Tag label="최근 들은 곡" selected={pickerSource === 'recent'} onPress={() => setPickerSource('recent')} />
+              <Tag label="내 곡" selected={pickerSource === 'mine'} onPress={() => setPickerSource('mine')} />
+            </View>
+          ) : null}
+          {isDiary && pickerMode === 'attach' && !itemChoices && pickerSource === 'recent' ? (
+            recentTracks === null ? (
+              <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
+            ) : recentTracks.length === 0 ? (
+              <View style={{ marginTop: 60, alignItems: 'center' }}>
+                <AppText tone="secondary">아직 들은 곡이 없어요</AppText>
+              </View>
+            ) : (
+              <FlatList
+                data={recentTracks}
+                keyExtractor={(t) => String(t.id)}
+                renderItem={({ item }) => (
+                  <TrackRow
+                    track={item}
+                    onPress={() => {
+                      if (__DEV__) console.info('[Diary] 최근 곡 첨부', { id: item.id });
+                      setAttached(item);
+                      setPickerOpen(false);
+                    }}
+                  />
+                )}
+                contentContainerStyle={{ paddingBottom: 40 }}
+              />
+            )
+          ) : itemChoices ? (
             // v3.70: 2단계 — 선택 곡의 착장 아이템 목록
             <FlatList
               data={itemChoices}
@@ -680,6 +840,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   pickerContainer: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.389 [Diary] 날짜·기분·글자 수·곡 출처
+  diaryBox: { gap: spacing.xs, paddingBottom: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+  chipRow: { gap: spacing.sm, paddingVertical: spacing.xs },
+  dateFixed: { paddingVertical: spacing.sm },
+  moodRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  moodItem: { alignItems: 'center', paddingVertical: spacing.xs, paddingHorizontal: 2, borderRadius: radius.md, flex: 1 },
+  moodItemOn: { backgroundColor: colors.bg.surface2, borderWidth: 1.5, borderColor: colors.accent.primary },
+  moodEmoji: { fontSize: 22, lineHeight: 28 },
+  countRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  sourceRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   // v3.70: 착장 아이템 행(선택 목록·첨부 미리보기 공용)
   itemPreview: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,

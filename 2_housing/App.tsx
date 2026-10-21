@@ -236,7 +236,7 @@ export type RootStackParamList = {
   UserChannel: { authorId: string; name?: string; initialTab?: 'music' | 'artists' | 'feed' | 'community' };
   // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
   // v3.245: kind='club' + clubId — 클럽 게시판 글쓰기(ClubHome 진입, payload kind='club'+club_id)
-  FeedCompose: { kind?: 'feed' | 'community' | 'club'; clubId?: string } | undefined;
+  FeedCompose: { kind?: 'feed' | 'community' | 'club'; clubId?: string; diaryDate?: string; editFeed?: any } | undefined;
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
   FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };
@@ -460,11 +460,12 @@ function MainTabs() {
         name="Feed"
         component={GatedFeedScreen}
         options={({ navigation }) => ({
-          tabBarLabel: '피드',
+          // v3.389 [Diary]: 피드 탭 → 일기장(대표 결정 ⑤A — 이름 '일기장' · 펼친 책 아이콘)
+          tabBarLabel: '일기장',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="edit-3" size={size - 2} color={color} />
+            <Feather name="book-open" size={size - 2} color={color} />
           ),
-          ...titleHeader(navigation, '피드'),
+          ...titleHeader(navigation, '일기장'),
         })}
       />
       {/* v3.243 Phase1a: 검색 탭 자리 → 커뮤니티 탭. 검색은 숨김 탭(아래)으로 이동 — 차트 상단 검색바에서 진입 */}
@@ -1113,7 +1114,7 @@ export default function App() {
                 <AppText variant="subtitle">
                   {route.params?.kind === 'community' ? '공지 작성'
                     : route.params?.kind === 'club' ? '크루 글쓰기' // v3.252 리네이밍
-                    : '피드 작성'}
+                    : '일기 쓰기'}
                 </AppText>
               ),
               headerStyle: { backgroundColor: colors.bg.deepest },
@@ -1126,7 +1127,7 @@ export default function App() {
               ),
             })} />
             {/* v3.95(A-21): 피드 단건 착지 — 공유/딥링크(aidol://feed/{id}) 목적지 */}
-            <RootStack.Screen name="FeedDetail" component={GatedFeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '피드')} />
+            <RootStack.Screen name="FeedDetail" component={GatedFeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '일기')} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             {/* v3.96(A-2)→v3.220 ①: 앨범 상세/관리는 MainTabs 숨김 탭으로 이동(하단 탭바 유지) — MainTabs 정의 참조 */}
             {/* v3.120: 앨범 AI 커버 — 이미지 디렉터 대화(작업실 CoverGeneration과 동일 화면·헤더 없음, 앨범 모드).
