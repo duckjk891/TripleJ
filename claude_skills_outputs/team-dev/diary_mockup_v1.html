@@ -1,0 +1,442 @@
+<title>MAIDOL 일기장 시안</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Gowun+Batang:wght@400;700&display=swap">
+<style>
+/* Layout: 앱 톤(밤 보라) 그대로의 단일 다크 페이지 — 상단 요약 → 휴대폰 화면 5장(가로 나열, 좁으면 한 줄씩) → 바뀌는 범위 → 결정할 것 */
+:root {
+  color-scheme: dark;
+  --bg: #0d0820;
+  --s1: #1e1340;
+  --s2: #2a1758;
+  --s3: #3a2569;
+  --fg: #ffffff;
+  --sub: #c9b8f5;
+  --muted: #8a78b3;
+  --accent: #a855f7;
+  --accent-hi: #c084fc;
+  --gold: #fbbf24;
+  --ok: #34d399;
+  --paper: #f6f1ff;
+  --ink: #2a1758;
+  --f-ui: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --f-diary: "Gowun Batang", "Noto Serif KR", serif;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--f-ui); font-size: 15px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 44px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(26px, 4vw, 36px); font-weight: 900; letter-spacing: -0.02em; }
+h2 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: 16px; font-weight: 700; }
+p { margin: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.12em; color: var(--accent-hi); font-weight: 700; }
+.lead { color: var(--sub); max-width: 64ch; }
+.intro { display: grid; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.chip { font-size: 13px; padding: 4px 12px; border-radius: 999px; background: var(--s1); color: var(--sub); border: 1px solid var(--s3); }
+.chip b { color: var(--gold); font-weight: 700; }
+
+/* ---------- 휴대폰 화면 ---------- */
+.phones { display: flex; flex-wrap: wrap; gap: 28px 24px; justify-content: center; }
+.shot { display: grid; gap: 10px; width: 300px; max-width: 100%; }
+.shot-cap { font-size: 13px; color: var(--sub); }
+.shot-cap b { color: var(--fg); display: block; font-size: 15px; }
+.phone {
+  width: 100%; height: 620px; border-radius: 34px; background: var(--bg);
+  border: 7px solid #251a44; box-shadow: 0 18px 40px rgba(0,0,0,.45), 0 0 0 1px #3a2569;
+  display: flex; flex-direction: column; overflow: hidden; position: relative; font-size: 13px;
+}
+.status { height: 26px; display: flex; justify-content: space-between; align-items: center; padding: 0 18px; font-size: 11px; color: var(--sub); flex: none; }
+.appbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px 8px; flex: none; }
+.appbar .t { font-size: 19px; font-weight: 800; }
+.appbar .r { display: flex; gap: 10px; align-items: center; }
+.star-pill { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.35); padding: 2px 8px; border-radius: 999px; }
+.seg { display: flex; border-bottom: 1px solid var(--s1); flex: none; }
+.seg span { flex: 1; text-align: center; padding: 9px 0; color: var(--muted); font-weight: 600; font-size: 13.5px; }
+.seg span.on { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.body { flex: 1; overflow: hidden; padding: 10px 10px 0; display: flex; flex-direction: column; gap: 10px; }
+.tabbar { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid var(--s1); padding: 6px 0 10px; background: #110a28; }
+.tabbar div { display: grid; justify-items: center; gap: 2px; font-size: 9.5px; color: var(--muted); }
+.tabbar div.on { color: var(--accent); }
+.tabbar svg { width: 18px; height: 18px; }
+.ico { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 오늘 보상 띠 */
+.reward { display: flex; align-items: center; gap: 8px; background: linear-gradient(90deg, rgba(251,191,36,.14), rgba(168,85,247,.14)); border: 1px solid rgba(251,191,36,.3); border-radius: 12px; padding: 8px 10px; font-size: 12px; color: var(--sub); }
+.reward b { color: var(--gold); }
+.reward .go { margin-left: auto; color: var(--fg); background: var(--accent); border-radius: 999px; padding: 3px 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+/* 일기 카드 (종이 느낌 + 날짜 도장) */
+.dcard { background: var(--s1); border-radius: 14px; overflow: hidden; border: 1px solid var(--s2); flex: none; }
+.dhead { display: flex; align-items: center; gap: 8px; padding: 9px 10px 6px; }
+.av { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #7c3aed, #e879f9); flex: none; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.av.b { background: linear-gradient(135deg, #0ea5e9, #a855f7); }
+.av.c { background: linear-gradient(135deg, #f59e0b, #ec4899); }
+.av.m { background: linear-gradient(135deg, #a855f7, #fbbf24); }
+.dname { font-weight: 700; font-size: 12.5px; line-height: 1.2; }
+.dmeta { font-size: 10.5px; color: var(--muted); }
+.vis { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--s3); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+.paper { margin: 0 8px; background: var(--paper); color: var(--ink); border-radius: 10px; padding: 9px 11px 10px; position: relative; background-image: repeating-linear-gradient(transparent 0 21px, rgba(124,58,237,.13) 21px 22px); }
+.pdate { display: flex; align-items: baseline; gap: 6px; font-family: var(--f-diary); font-weight: 700; font-size: 13px; color: #4c1d95; border-bottom: 1px dashed rgba(76,29,149,.3); padding-bottom: 3px; margin-bottom: 4px; }
+.pdate .mood { margin-left: auto; font-family: var(--f-ui); font-weight: 500; font-size: 11px; color: #6b4fa8; }
+.ptext { font-family: var(--f-diary); font-size: 13px; line-height: 22px; }
+.bgm { display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; background: var(--s2); border-radius: 10px; padding: 6px 8px; }
+.cover { width: 34px; height: 34px; border-radius: 7px; background: linear-gradient(135deg, #4c1d95, #c026d3); flex: none; display: grid; place-items: center; }
+.cover.g { background: linear-gradient(135deg, #1d4ed8, #22d3ee); }
+.cover svg { width: 14px; height: 14px; fill: #fff; }
+.bgm .lbl { font-size: 9.5px; color: var(--gold); font-weight: 700; letter-spacing: .04em; }
+.bgm .tt { font-size: 12px; font-weight: 600; line-height: 1.25; }
+.bgm .ar { font-size: 10.5px; color: var(--muted); }
+.photo { margin: 8px 8px 0; height: 92px; border-radius: 10px; background: linear-gradient(160deg, #312e81 0%, #7c3aed 45%, #f472b6 100%); position: relative; overflow: hidden; }
+.photo::after { content: ""; position: absolute; inset: auto -10% -40% -10%; height: 70%; background: radial-gradient(ellipse at 50% 0, rgba(251,191,36,.55), transparent 70%); }
+.dfoot { display: flex; gap: 14px; padding: 8px 12px 9px; font-size: 11px; color: var(--muted); }
+.dfoot span { display: flex; align-items: center; gap: 4px; }
+.dfoot svg { width: 13px; height: 13px; }
+.dfoot .liked { color: #f472b6; }
+
+/* 내 일기 — 달력 */
+.mini { background: var(--s1); border: 1px solid var(--s2); border-radius: 14px; padding: 10px; flex: none; }
+.minitop { display: flex; align-items: center; gap: 10px; }
+.minitop .av { width: 40px; height: 40px; font-size: 16px; }
+.today { font-size: 11px; color: var(--muted); }
+.today b { color: var(--fg); }
+.streak { margin-left: auto; text-align: right; font-size: 10.5px; color: var(--muted); }
+.streak b { display: block; color: var(--gold); font-size: 15px; }
+.cal-h { display: flex; justify-content: space-between; align-items: center; margin: 10px 2px 6px; font-weight: 700; font-size: 13px; }
+.cal-h span { color: var(--muted); font-weight: 500; font-size: 14px; }
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; font-variant-numeric: tabular-nums; }
+.cal .w { font-size: 9.5px; color: var(--muted); padding-bottom: 2px; }
+.cal .w.sun { color: #f87171; }
+.cal .d { height: 30px; border-radius: 7px; font-size: 9.5px; color: var(--muted); display: grid; align-content: start; justify-items: center; padding-top: 2px; line-height: 1.1; }
+.cal .d i { font-style: normal; font-size: 13px; line-height: 1; margin-top: 1px; }
+.cal .d.has { background: var(--s2); color: var(--sub); }
+.cal .d.sel { outline: 1.5px solid var(--accent); color: var(--fg); }
+.cal .d.now { color: var(--gold); font-weight: 700; }
+.cal .d.now::after { content: "+"; font-size: 13px; color: var(--gold); }
+.cal .d.off { opacity: .35; }
+.legend { display: flex; gap: 10px; font-size: 10px; color: var(--muted); margin-top: 6px; }
+
+/* 공지 카드 */
+.ncard { background: var(--s1); border: 1px solid var(--s2); border-radius: 14px; padding: 10px; display: grid; gap: 7px; flex: none; }
+.offi { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--accent-hi); }
+.ntext { font-size: 12.5px; color: var(--sub); line-height: 1.55; }
+.ntitle { font-size: 13.5px; font-weight: 700; }
+.same { font-size: 11px; text-align: center; color: var(--muted); padding: 4px 0; border: 1px dashed var(--s3); border-radius: 10px; flex: none; }
+
+/* 쓰기 화면 */
+.navbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px 10px; border-bottom: 1px solid var(--s1); flex: none; }
+.navbar .t { font-weight: 800; font-size: 16px; }
+.navbar .x { color: var(--sub); font-size: 13px; }
+.navbar .save { color: var(--fg); background: var(--accent); border-radius: 999px; padding: 4px 12px; font-weight: 700; font-size: 12px; }
+.form { flex: 1; overflow: hidden; padding: 10px 12px; display: grid; gap: 11px; align-content: start; }
+.flabel { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 5px; }
+.daterow { display: flex; align-items: center; gap: 8px; background: var(--s1); border-radius: 10px; padding: 7px 10px; font-weight: 700; font-family: var(--f-diary); }
+.daterow small { font-family: var(--f-ui); font-weight: 500; font-size: 10.5px; color: var(--muted); margin-left: auto; }
+.moods { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.moods span { display: grid; justify-items: center; font-size: 17px; padding: 4px 0 2px; border-radius: 9px; line-height: 1.1; }
+.moods span em { font-style: normal; font-size: 8.5px; color: var(--muted); margin-top: 2px; }
+.moods span.on { background: var(--s2); outline: 1.5px solid var(--accent); }
+.moods span.on em { color: var(--fg); }
+.ta { background: var(--paper); color: var(--ink); border-radius: 10px; padding: 8px 10px; font-family: var(--f-diary); font-size: 12.5px; line-height: 21px; min-height: 112px; background-image: repeating-linear-gradient(transparent 0 20px, rgba(124,58,237,.13) 20px 21px); background-position: 0 7px; }
+.ta .cur { display: inline-block; width: 1px; height: 13px; background: var(--ink); vertical-align: -2px; }
+.count { display: flex; justify-content: space-between; font-size: 10.5px; margin-top: 4px; }
+.count .ok { color: var(--ok); font-weight: 700; }
+.count .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.attach { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.attach div { display: flex; align-items: center; gap: 6px; justify-content: center; background: var(--s1); border: 1px dashed var(--s3); border-radius: 10px; padding: 8px 4px; font-size: 11.5px; color: var(--sub); }
+.attach svg { width: 14px; height: 14px; }
+.picked { display: flex; align-items: center; gap: 8px; background: var(--s2); border-radius: 10px; padding: 6px 8px; }
+.picked .x2 { margin-left: auto; color: var(--muted); font-size: 14px; }
+.vis3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.vis3 span { text-align: center; font-size: 11.5px; padding: 6px 0; border-radius: 999px; border: 1px solid var(--s3); color: var(--sub); }
+.vis3 span.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.hint { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+
+/* 상세 */
+.dbody { flex: 1; overflow: hidden; padding: 10px; display: grid; gap: 8px; align-content: start; }
+.big .paper { margin: 0; }
+.big .ptext { font-size: 13.5px; line-height: 23px; }
+.big .pdate { font-size: 15px; }
+.cmts { display: grid; gap: 7px; padding: 2px 2px 0; }
+.cmt { display: flex; gap: 7px; font-size: 11.5px; }
+.cmt .av { width: 22px; height: 22px; font-size: 10px; }
+.cmt b { font-size: 11px; margin-right: 4px; }
+.cmt p { color: var(--sub); line-height: 1.45; }
+.songbtn { border: 1.5px dashed var(--gold); border-radius: 12px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; color: var(--gold); font-size: 12px; font-weight: 700; background: rgba(251,191,36,.06); }
+.songbtn small { display: block; color: var(--muted); font-weight: 500; font-size: 10px; }
+.songbtn .tag { margin-left: auto; font-size: 9.5px; border: 1px solid var(--gold); border-radius: 6px; padding: 1px 5px; }
+.fab { position: absolute; right: 16px; bottom: 70px; width: 46px; height: 46px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; box-shadow: 0 6px 16px rgba(168,85,247,.5); }
+.fab svg { width: 20px; height: 20px; stroke: #fff; }
+.toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: 82px; width: 84%; background: #160d33; border: 1px solid rgba(251,191,36,.45); border-radius: 16px; padding: 12px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+.toast b { color: var(--gold); font-size: 20px; display: block; }
+.toast p { font-size: 11.5px; color: var(--sub); }
+.toast .btn { margin-top: 8px; background: var(--accent); border-radius: 999px; padding: 5px 0; font-weight: 700; font-size: 12px; }
+
+/* ---------- 설명 영역 ---------- */
+.section { display: grid; gap: 16px; }
+.scope { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.box { background: var(--s1); border: 1px solid var(--s2); border-radius: 16px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.box h3 { display: flex; align-items: center; gap: 8px; }
+.box .k { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--bg); background: var(--accent-hi); border-radius: 6px; padding: 1px 7px; }
+.box ul { margin: 0; padding-left: 18px; color: var(--sub); display: grid; gap: 5px; font-size: 14px; }
+.box ul b { color: var(--fg); font-weight: 600; }
+.safe { border-color: rgba(52,211,153,.35); }
+.safe .k { background: var(--ok); }
+
+.decisions { display: grid; gap: 14px; }
+.dec { background: var(--s1); border: 1px solid var(--s2); border-radius: 16px; padding: 16px 18px; display: grid; gap: 10px; min-width: 0; }
+.dec-h { display: flex; gap: 10px; align-items: baseline; }
+.dec-h .no { color: var(--accent-hi); font-weight: 900; font-size: 18px; font-variant-numeric: tabular-nums; }
+.dec-h p { color: var(--muted); font-size: 13px; }
+.opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.opt { border: 1px solid var(--s3); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; color: var(--sub); display: grid; gap: 3px; align-content: start; min-width: 0; }
+.opt b { color: var(--fg); font-size: 14px; }
+.opt.rec { border-color: var(--accent); background: rgba(168,85,247,.1); }
+.opt .rtag { justify-self: start; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 6px; padding: 1px 7px; }
+.answer { background: var(--s2); border-radius: 14px; padding: 14px 16px; color: var(--sub); font-size: 14px; }
+.answer b { color: var(--fg); }
+.answer code { font-family: ui-monospace, Menlo, monospace; background: var(--bg); color: var(--accent-hi); padding: 1px 6px; border-radius: 6px; }
+@media (prefers-reduced-motion: no-preference) { .phone { transition: transform .2s; } .phone:hover { transform: translateY(-3px); } }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="eyebrow">MAIDOL · 화면 시안 · 2026-10-21</div>
+    <h1>피드가 일기장이 돼요</h1>
+    <p class="lead">하단 '피드' 탭 자리가 싸이월드 미니홈피 같은 '일기장'으로 바뀝니다. 오늘 기분과 함께 그날 들은 곡(오늘의 BGM)을 붙여 쓰고, 내 일기는 달력으로 모아 봅니다. 공지는 지금처럼 이 탭 안 [공지]에 그대로 있어요.</p>
+    <div class="chips">
+      <span class="chip">상단: 전체 · 내 일기 · 공지</span>
+      <span class="chip">공개 범위 3가지</span>
+      <span class="chip">하루 1번 <b>+3⭐</b> (50자 이상)</span>
+      <span class="chip">기존 피드 글·좋아요·댓글 그대로</span>
+    </div>
+  </header>
+
+  <section class="phones" aria-label="화면 시안">
+    <!-- 1. 전체 -->
+    <figure class="shot" style="margin:0">
+      <figcaption class="shot-cap"><b>① 일기장 · [전체]</b>사람들의 공개 일기. 맨 위에 오늘 보상 안내.</figcaption>
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="appbar"><span class="t">일기장</span><span class="r"><span class="star-pill">⭐ 128</span></span></div>
+        <div class="seg"><span class="on">전체</span><span>내 일기</span><span>공지</span></div>
+        <div class="body">
+          <div class="reward"><span>오늘 일기 쓰면 <b>+3⭐</b><br>50자 이상이면 받아요</span><span class="go">쓰러 가기</span></div>
+          <article class="dcard">
+            <div class="dhead"><div class="av">하</div><div><div class="dname">하늘별</div><div class="dmeta">12분 전</div></div><span class="vis">전체 공개</span></div>
+            <div class="paper"><div class="pdate">2026.10.21 화 <span class="mood">🥰 설렘</span></div>
+              <div class="ptext">첫 곡이 차트 87위에 올랐다! 작업실에서 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시…</div></div>
+            <div class="bgm"><div class="cover"><svg viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg></div><div><div class="lbl">오늘의 BGM</div><div class="tt">새벽 세 시의 후렴</div><div class="ar">하늘별</div></div></div>
+            <div class="dfoot"><span class="liked"><svg viewBox="0 0 24 24" class="ico"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/></svg>24</span><span><svg viewBox="0 0 24 24" class="ico"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>5</span></div>
+          </article>
+          <article class="dcard">
+            <div class="dhead"><div class="av b">민</div><div><div class="dname">민트초코</div><div class="dmeta">1시간 전</div></div><span class="vis">팔로워</span></div>
+            <div class="paper"><div class="pdate">2026.10.21 화 <span class="mood">😌 평온</span></div>
+              <div class="ptext">비 오는 날엔 역시 잔잔한 곡.</div></div>
+            <div class="photo"></div>
+          </article>
+        </div>
+        <div class="fab"><svg viewBox="0 0 24 24" class="ico"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        <nav class="tabbar">
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>차트</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4z"/></svg>플레이리스트</div>
+          <div class="on"><svg viewBox="0 0 24 24" class="ico"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>일기장</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>커뮤니티</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>작업실</div>
+        </nav>
+      </div>
+    </figure>
+
+    <!-- 2. 내 일기 달력 -->
+    <figure class="shot" style="margin:0">
+      <figcaption class="shot-cap"><b>② 일기장 · [내 일기]</b>미니홈피처럼 한 달을 달력으로. 날짜를 누르면 그날 일기.</figcaption>
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="appbar"><span class="t">일기장</span><span class="r"><span class="star-pill">⭐ 128</span></span></div>
+        <div class="seg"><span>전체</span><span class="on">내 일기</span><span>공지</span></div>
+        <div class="body">
+          <div class="mini">
+            <div class="minitop"><div class="av m">별</div><div><div class="dname">별빛기획사</div><div class="today">이번 달 일기 <b>9편</b> · 받은 별 <b>⭐27</b></div></div><div class="streak">연속<b>4일</b></div></div>
+            <div class="cal-h"><span>‹</span>2026년 10월<span>›</span></div>
+            <div class="cal">
+              <div class="w sun">일</div><div class="w">월</div><div class="w">화</div><div class="w">수</div><div class="w">목</div><div class="w">금</div><div class="w">토</div>
+              <div class="d off">27</div><div class="d off">28</div><div class="d off">29</div><div class="d off">30</div><div class="d">1</div><div class="d has">2<i>😊</i></div><div class="d">3</div>
+              <div class="d">4</div><div class="d has">5<i>🎵</i></div><div class="d">6</div><div class="d has">7<i>😢</i></div><div class="d">8</div><div class="d">9</div><div class="d has">10<i>😊</i></div>
+              <div class="d">11</div><div class="d">12</div><div class="d has">13<i>😴</i></div><div class="d">14</div><div class="d has">15<i>🥰</i></div><div class="d">16</div><div class="d">17</div>
+              <div class="d has sel">18<i>🎵</i></div><div class="d has">19<i>😌</i></div><div class="d has">20<i>😊</i></div><div class="d now">21</div><div class="d">22</div><div class="d">23</div><div class="d">24</div>
+              <div class="d">25</div><div class="d">26</div><div class="d">27</div><div class="d">28</div><div class="d">29</div><div class="d">30</div><div class="d">31</div>
+            </div>
+            <div class="legend"><span>이모지 = 그날 기분</span><span style="color:var(--gold)">+ 오늘 쓰기</span></div>
+          </div>
+          <article class="dcard">
+            <div class="dhead"><div><div class="dname">10월 18일 토요일</div><div class="dmeta">🎵 신남 · 나만 보기</div></div><span class="vis">🔒 나만</span></div>
+            <div class="paper"><div class="ptext">아이돌 디렉터한테 새 콘셉트 맡겼다. 이번엔 시티팝으로 가 보자고…</div></div>
+            <div class="dfoot"><span>❤ 0</span><span>💬 0</span></div>
+          </article>
+        </div>
+        <div class="fab"><svg viewBox="0 0 24 24" class="ico"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        <nav class="tabbar">
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>차트</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4z"/></svg>플레이리스트</div>
+          <div class="on"><svg viewBox="0 0 24 24" class="ico"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>일기장</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>커뮤니티</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>작업실</div>
+        </nav>
+      </div>
+    </figure>
+
+    <!-- 3. 공지 -->
+    <figure class="shot" style="margin:0">
+      <figcaption class="shot-cap"><b>③ 일기장 · [공지]</b>지금과 똑같아요. MAIDOL 공식 계정 글과 곡·MV 홍보.</figcaption>
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="appbar"><span class="t">일기장</span><span class="r"><span class="star-pill">⭐ 128</span></span></div>
+        <div class="seg"><span>전체</span><span>내 일기</span><span class="on">공지</span></div>
+        <div class="body">
+          <article class="ncard">
+            <div class="dhead" style="padding:0"><div class="av m">M</div><div><div class="dname">MAIDOL 공식</div><div class="offi">✔ 공식 계정 · 오늘</div></div></div>
+            <div class="ntitle">새 기능: 일기장이 열렸어요</div>
+            <div class="ntext">하루 한 번, 50자 이상 일기를 쓰면 ⭐3을 드려요. 오늘 들은 곡을 붙여서 나만의 BGM 일기를 남겨 보세요.</div>
+          </article>
+          <article class="ncard">
+            <div class="dhead" style="padding:0"><div class="av m">M</div><div><div class="dname">MAIDOL 공식</div><div class="offi">✔ 공식 계정 · 3일 전</div></div></div>
+            <div class="ntitle">이번 주 추천 곡</div>
+            <div class="bgm" style="margin:0"><div class="cover g"><svg viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg></div><div><div class="tt">Neon Runway</div><div class="ar">LUNA·X</div></div></div>
+          </article>
+          <div class="same">공지 탭은 바뀌는 것 없음</div>
+        </div>
+        <nav class="tabbar">
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>차트</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4z"/></svg>플레이리스트</div>
+          <div class="on"><svg viewBox="0 0 24 24" class="ico"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>일기장</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>커뮤니티</div>
+          <div><svg viewBox="0 0 24 24" class="ico"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>작업실</div>
+        </nav>
+      </div>
+    </figure>
+
+    <!-- 4. 일기 쓰기 -->
+    <figure class="shot" style="margin:0">
+      <figcaption class="shot-cap"><b>④ 일기 쓰기</b>날짜·기분·글·사진·오늘의 BGM·공개 범위. 50자를 넘으면 초록 표시.</figcaption>
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="navbar"><span class="x">취소</span><span class="t">오늘의 일기</span><span class="save">저장</span></div>
+        <div class="form">
+          <div><div class="flabel">날짜</div><div class="daterow">2026.10.21 화요일 <small>바꾸기 ▾</small></div></div>
+          <div><div class="flabel">오늘 기분</div>
+            <div class="moods"><span>😊<em>좋음</em></span><span class="on">🥰<em>설렘</em></span><span>🎵<em>신남</em></span><span>😌<em>평온</em></span><span>😐<em>그냥</em></span><span>😢<em>슬픔</em></span><span>😡<em>화남</em></span><span>😴<em>피곤</em></span></div></div>
+          <div><div class="ta">첫 곡이 차트 87위에 올랐다! 작업실에서 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시 만들어 볼까<span class="cur"></span></div>
+            <div class="count"><span class="ok">✓ 오늘 +3⭐ 받을 수 있어요</span><span class="n">61자</span></div></div>
+          <div class="attach"><div><svg viewBox="0 0 24 24" class="ico"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>사진 (최대 5장)</div><div><svg viewBox="0 0 24 24" class="ico"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>오늘의 BGM</div></div>
+          <div class="picked"><div class="cover"><svg viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg></div><div><div class="lbl" style="font-size:9.5px;color:var(--gold);font-weight:700">오늘 들은 곡</div><div class="tt" style="font-size:12px;font-weight:600">새벽 세 시의 후렴</div></div><span class="x2">✕</span></div>
+          <div><div class="flabel">누가 볼 수 있나요</div><div class="vis3"><span class="on">전체</span><span>팔로워만</span><span>나만 보기</span></div><div class="hint">전체 공개는 [전체]에 올라가고 팔로워에게 알림이 가요.</div></div>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 5. 상세 + 보상 -->
+    <figure class="shot" style="margin:0">
+      <figcaption class="shot-cap"><b>⑤ 일기 상세 · 저장 직후</b>저장하면 별 받은 안내가 한 번 떠요. 아래 점선은 '노래 만들기' 자리.</figcaption>
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="navbar"><span class="x">‹ 일기장</span><span class="t">일기</span><span class="x">⋯</span></div>
+        <div class="dbody">
+          <div class="dhead" style="padding:0"><div class="av m">별</div><div><div class="dname">별빛기획사</div><div class="dmeta">방금 · 전체 공개</div></div></div>
+          <div class="big"><div class="paper"><div class="pdate">2026.10.21 화 <span class="mood">🥰 설렘</span></div>
+            <div class="ptext">첫 곡이 차트 87위에 올랐다! 작업실에서 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시 만들어 볼까</div></div></div>
+          <div class="bgm" style="margin:0"><div class="cover"><svg viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg></div><div><div class="lbl">오늘의 BGM</div><div class="tt">새벽 세 시의 후렴</div><div class="ar">별빛기획사</div></div></div>
+          <div class="songbtn">🎼<div>이 일기로 노래 만들기<small>나중에 열릴 기능 자리</small></div><span class="tag">결정 ④</span></div>
+          <div class="cmts">
+            <div class="cmt"><div class="av b">민</div><p><b>민트초코</b>축하해요!! 후렴 진짜 좋아요</p></div>
+          </div>
+        </div>
+        <div class="toast"><b>+3⭐</b><p>오늘의 일기 보상을 받았어요.<br>내일 또 써 주세요!</p><div class="btn">확인</div></div>
+      </div>
+    </figure>
+  </section>
+
+  <section class="section">
+    <h2>무엇이 바뀌나요</h2>
+    <div class="scope">
+      <div class="box"><h3><span class="k">앱</span>화면</h3>
+        <ul>
+          <li>하단 탭 이름 <b>피드 → 일기장</b>, 아이콘 교체</li>
+          <li>[내 글] → <b>[내 일기] 달력</b> (기분 이모지로 한 달 보기)</li>
+          <li>쓰기 화면에 <b>날짜·기분·공개 범위 3가지</b>, 곡 고르기에 '오늘 들은 곡' 추가</li>
+          <li>일기 카드 모양(날짜·기분·오늘의 BGM), 저장 후 <b>+3⭐ 안내</b></li>
+          <li>[공지] 탭과 공식 계정 글쓰기는 그대로</li>
+        </ul></div>
+      <div class="box"><h3><span class="k">서버</span>규칙</h3>
+        <ul>
+          <li>글에 <b>날짜·기분·공개 범위</b> 칸 추가</li>
+          <li><b>팔로워만</b>: 나를 팔로우한 사람만 봄 (지금은 공개/비공개 두 가지뿐이라 새로 만듦)</li>
+          <li><b>하루 1번 +3⭐</b>: 서버가 한국 날짜로 판정, 50자 이상. 지우고 다시 써도 그날은 1번만</li>
+          <li>별 기록 이름은 <code style="font-family:ui-monospace,Menlo,monospace;color:var(--accent-hi)">diary_daily</code> (별 충전소와 겹치지 않음)</li>
+          <li>새 일기 알림: 전체·팔로워 공개만 팔로워에게, 나만 보기는 알림 없음</li>
+        </ul></div>
+      <div class="box safe"><h3><span class="k">데이터</span>옮기지 않아요</h3>
+        <ul>
+          <li>기존 피드 글은 <b>쓴 날짜의 일기로 그대로</b> 보임. 좋아요·댓글 유지</li>
+          <li>기존 '비공개' 글은 <b>나만 보기</b>로 보임</li>
+          <li>글을 고치거나 옮기는 작업 없음 (새 칸만 추가, 없으면 쓴 날짜로 계산)</li>
+          <li>아직 업데이트 안 한 휴대폰 앱에서도 일기가 평소 글처럼 보이고, 팔로워만 글은 새지 않음</li>
+        </ul></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>정해 주실 것</h2>
+    <div class="decisions">
+      <div class="dec">
+        <div class="dec-h"><span class="no">①</span><div><h3>'나만 보기' 일기의 검사·신고</h3><p>공개 일기는 지금 피드와 똑같이 금칙어·연령 기준·신고를 씁니다.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 금칙어 검사만, 신고 없음</b>남이 못 보니 신고 버튼은 없앰. 어린이 보호용 금칙어 검사는 그대로.</div>
+          <div class="opt"><b>B. 아무 검사 없음</b>완전한 개인 공간. 나중에 공개로 바꿀 때 검사.</div>
+          <div class="opt"><b>C. 공개 일기와 똑같이</b>가장 안전하지만 개인 일기 느낌이 약함.</div>
+        </div>
+      </div>
+      <div class="dec">
+        <div class="dec-h"><span class="no">②</span><div><h3>'나만 보기' 일기도 별을 줄까요</h3><p>50자 이상 하루 1번은 같고, 받는 범위만 다릅니다.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 공개 범위 상관없이 줌</b>일기 쓰는 습관 자체를 보상. 같은 글자만 반복한 글은 제외.</div>
+          <div class="opt"><b>B. 전체·팔로워 공개만 줌</b>커뮤니티에 글이 더 많이 쌓임. 개인 일기 쓰는 사람은 별 없음.</div>
+        </div>
+      </div>
+      <div class="dec">
+        <div class="dec-h"><span class="no">③</span><div><h3>마이페이지 '커뮤니티 탭 새 공지 작성'</h3><p>내 채널 팬들에게 쓰는 공지(곡 홍보 등)입니다. 일기와 성격이 달라요.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 지금 그대로 둠</b>마이페이지·내 채널에서만 쓰고 봄. [내 일기] 달력에는 안 들어감.</div>
+          <div class="opt"><b>B. 없애고 일기로 합침</b>메뉴가 줄지만 기존 채널 공지 쓰던 분들이 헷갈릴 수 있음.</div>
+        </div>
+      </div>
+      <div class="dec">
+        <div class="dec-h"><span class="no">④</span><div><h3>'이 일기로 노래 만들기' 자리</h3><p>일기 글을 가사로 바꿔 작곡까지 잇는 나중 기능입니다.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 내 일기 상세 아래에 자리만</b>지금은 숨겨 두고, 기능이 나오면 시안 ⑤의 점선 자리에 켬.</div>
+          <div class="opt"><b>B. 지금부터 '곧 열려요'로 보여줌</b>기대감은 주지만 누르면 아무것도 안 됨.</div>
+        </div>
+      </div>
+      <div class="dec">
+        <div class="dec-h"><span class="no">⑤</span><div><h3>탭 이름과 아이콘</h3><p>하단 탭 다섯 칸 중 가운데 자리입니다.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 일기장 · 펼친 책</b>시안에 쓴 모양. 뜻이 바로 보임.</div>
+          <div class="opt"><b>B. 다이어리 · 연필</b>지금 피드 아이콘(연필)을 그대로 씀.</div>
+          <div class="opt"><b>C. 미니홈 · 집</b>싸이월드 느낌이 강하지만 일기라는 뜻은 약함.</div>
+        </div>
+      </div>
+      <div class="dec">
+        <div class="dec-h"><span class="no">⑥</span><div><h3>지난 날짜 일기</h3><p>날짜를 바꿔서 지난 날 일기를 쓸 수 있게 할지 정합니다. 별은 어느 쪽이든 '쓴 날' 기준으로 하루 1번입니다.</p></div></div>
+        <div class="opts">
+          <div class="opt rec"><span class="rtag">추천</span><b>A. 최근 7일까지</b>어제 못 쓴 일기를 채울 수 있음. 달력이 덜 비어 보임.</div>
+          <div class="opt"><b>B. 오늘만</b>가장 단순. 날짜 고르기 칸이 없어짐.</div>
+          <div class="opt"><b>C. 날짜 제한 없음</b>예전 추억 일기도 가능.</div>
+        </div>
+      </div>
+    </div>
+    <div class="answer">답은 번호와 글자로 주시면 됩니다. 예: <code>①A ②A ③A ④A ⑤A ⑥A</code> 또는 "전부 추천대로". 확인해 주시면 서버 → 앱 순서로 만들고, 서버 배포 전에 한 번 더 여쭤봅니다.</div>
+  </section>
+</div>
