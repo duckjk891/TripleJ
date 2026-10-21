@@ -5,6 +5,9 @@
 //   네이티브 → expo-web-browser openAuthSessionAsync + `aidol://oauth/callback#token=` 딥링크 복귀.
 //   백엔드가 client=app 리다이렉트를 지원하기 전에는 콜백이 안 와도 취소/닫힘으로 조용히 복귀(크래시·무한 busy 없음).
 //   백엔드 요청 문서: 2_housing/백엔드_요청_소셜로그인_앱복귀.md
+// v3.385 [GoogleNative]: 안드로이드 구글만 시스템 계정창(Credential Manager) → 서버 POST /auth/google/native.
+//   브라우저 계정 선택 화면에서 이메일 글씨를 누르면 갤럭시가 Gmail 새 메일 창을 여는 문제(10-21) 대응.
+//   계정창 실패(설정 오류·Play 서비스 없음·모듈 없는 옛 빌드 등)는 기존 브라우저 방식으로 자동 폴백. iOS·웹은 그대로.
 import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -16,6 +19,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { savePendingReferral } from '../../utils/pendingReferral';
 import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, isAccountSuspendedError, notifyAccountSuspended } from '../../utils/kidsRestricted';
 import { AppText } from '../ui';
+import { googleNativeSignIn, isGoogleNativeAvailable, isUserCancel } from '../../modules/google-native-signin';
 import {
   chromeIntentUrl,
   googleBlockedInAppKind,
@@ -165,6 +169,52 @@ export default function SocialLoginButtons({
     }
   };
 
+  // v3.385 [GoogleNative] 안드로이드 구글 — 시스템 계정창 → 서버 id_token 검증 → JWT.
+  // 반환 true = 여기서 끝(성공·사용자 취소·서버가 거절해 안내함), false = 브라우저 방식으로 폴백.
+  const tryGoogleNative = async (ref: string): Promise<boolean> => {
+    let cred: { idToken: string; nonce: string };
+    try {
+      cred = await googleNativeSignIn();
+    } catch (err: any) {
+      if (isUserCancel(err)) {
+        console.info('[GoogleNative] 사용자 취소');
+        return true;
+      }
+      // 토큰 값 없음 — 오류 코드·메시지만(원격 로그로 어떤 기기·설정에서 폴백되는지 추적)
+      console.warn('[GoogleNative] 계정창 실패 → 브라우저 방식', { code: err?.code, message: String(err?.message || '').slice(0, 160) });
+      return false;
+    }
+    try {
+      const res = await api.post('/auth/google/native', {
+        id_token: cred.idToken,
+        nonce: cred.nonce,
+        ref: /^[A-Z0-9]{4,12}$/.test(ref) ? ref : null,
+      });
+      const ok = await useAuthStore.getState().loginWithToken(String(res.data?.token || ''));
+      if (!ok) {
+        console.error('[GoogleNative] 세션 열기 실패');
+        if (useAuthStore.getState().error !== KIDS_TEXT.accountSuspended) showAlert('알림', GENERIC_FAIL_MSG);
+        return true;
+      }
+      console.info('[GoogleNative] 로그인 성공', { action: res.data?.action });
+      resetToChartTab();
+      return true;
+    } catch (err: any) {
+      // 이용 중지 계정은 api 인터셉터가 이미 안내 — 이중 팝업 방지
+      if (isAccountSuspendedError(err)) return true;
+      const status = err?.response?.status;
+      // 401 토큰 확인 실패(콘솔 클라이언트 설정 문제일 수 있음)·404/405 서버 미배포·503 미설정 → 브라우저 방식
+      if (status === 401 || status === 404 || status === 405 || status === 503) {
+        console.warn('[GoogleNative] 서버 확인 실패 → 브라우저 방식', { status, code: err?.response?.data?.code });
+        return false;
+      }
+      const serverCode = err?.response?.data?.code;
+      console.error('[GoogleNative] 서버 로그인 실패', { status, code: serverCode || err?.code, message: err?.message });
+      showAlert('알림', sanitizeServerMessage(serverCode === 'account_merge_error' ? serverCode : err?.response?.data?.error));
+      return true;
+    }
+  };
+
   // v3.240: 인앱 브라우저(카톡·인스타 등으로 연 공유 링크)에서 구글은 로그인 자체를 막는다(차단 페이지).
   // 구글로 보내지 말고 외부 브라우저 열기 / 카카오로 계속하기를 안내한다. 카카오 로그인은 인앱에서도 정상.
   const guardGoogleInApp = (provider: string): boolean => {
@@ -234,6 +284,11 @@ export default function SocialLoginButtons({
           showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
         }
         return;
+      }
+
+      // v3.385 안드로이드 구글 — 시스템 계정창 우선, 실패 시 아래 브라우저 방식으로 이어진다.
+      if (provider === 'google' && Platform.OS === 'android' && isGoogleNativeAvailable()) {
+        if (await tryGoogleNative(ref)) return;
       }
 
       // 네이티브 — 인증 세션 브라우저를 열고 aidol://oauth/callback 복귀를 기다린다.
