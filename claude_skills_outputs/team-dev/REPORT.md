@@ -4891,3 +4891,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - **실측**(운영 app.maidol.ai.kr, 대표 계정 — 그 계정만 시작 시각 2시간 앞당김, 표시 필드는 확인 후 제거): 만드는 중 카드(1시간 50분 남음) → 새로고침 시 '별이 다 만들어졌어요' 팝업 → 카드 다 됨 상태 → 받기 → ⭐363→368, 카드 2시간부터 재시작, `point_events` star_station 1건. 출석 팝업 다음 순서는 실제 modalTurn 코드로 순서 시험(출석 > 제작소 > 새 소식) — 이 계정은 오늘 이미 출석해 화면에선 출석 팝업 없음.
   - 스크린샷: `star_workshop_v3388/1_making.jpg`·`2_ready_popup.jpg`·`3_ready_card.jpg`·`4_claiming.jpg`·`5_claimed.jpg`
 - **네이티브 앱**: 다음 스토어 빌드에 포함.
+- 합본 시험 APK(10-21): EAS 917e64c8, 1.3.3 (빌드 16), runtime 1f64c7e0…, 채널 preview — https://expo.dev/artifacts/eas/UqWwqySySS6Hxcn_1hqyp_fWBIn0Yw-3ssm04ECr34s.apk (cd6d1f0 깨끗한 worktree). Kotlin 로컬 모듈(maidol-media-save·maidol-player) EAS 컴파일 통과.
+- 첫 OTA(대표 승인 "시험 앱에 OTA 한 번 보내 봐"): 채널 preview·android, origin/frontend f448a96(재생 화면 키보드 0d6fec2·일기장 v3.389·별 제작소 포함), update group bfe6b04f. iOS 는 맞는 빌드 없음 → 스크립트가 자동 건너뜀. production OTA 는 1.3.3 스토어 출시 후. 시험 순서 `claude_skills_outputs/integrations/APP_TEST_v3391_v3392.md`.
