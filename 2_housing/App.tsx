@@ -633,7 +633,7 @@ function MainTabs() {
   );
 }
 
-// v3.388 [StarStation] 별 충전소가 다 찼을 때만 1번 안내 — 출석 팝업 다음 차례(출석 1 > 충전소 0.5 > 새 소식 0).
+// v3.388 [StarStation] 별 제작소에서 별이 다 만들어졌을 때만 1번 안내 — 출석 팝업 다음 차례(출석 1 > 제작소 0.5 > 새 소식 0).
 // 같은 주기(started_at)는 앱 실행 중 한 번만 띄운다(나중에 → 앱 복귀 때마다 다시 뜨지 않게).
 let starStationPromptedCycle = '';
 let starStationPromptBusy = false;
@@ -647,7 +647,7 @@ async function promptStarStationIfFull(reason: string) {
     console.info('[StarStation] 다 참 → 팝업 차례 대기', { reason });
     await waitModalTurn('star-station', 0.5).promise;
     if (!useAuthStore.getState().user) return;
-    showAlert('별이 다 만들어졌어요', `지금 받으면 다시 ${durationLabel(s.cycleSeconds)} 동안 별이 차올라요.`, [
+    showAlert('별이 다 만들어졌어요', `별 제작소에 별 ${s.reward}개가 준비됐어요. 받으면 다음 별을 바로 만들기 시작해요(${durationLabel(s.cycleSeconds)}).`, [
       { text: '나중에', style: 'cancel' },
       { text: `${s.reward}⭐ 받기`, onPress: () => { void claimStarStationWithNotice(); } },
     ]);

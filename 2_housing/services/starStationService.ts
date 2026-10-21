@@ -2,7 +2,7 @@ import api from './api';
 import { usePointsStore } from '../stores/pointsStore';
 import { showAlert } from '../utils/appAlert';
 
-// v3.388 [StarStation] 별 충전소 — 서버 GET /api/star-station/status · POST /api/star-station/claim
+// v3.388 [StarStation] 별 제작소 — 서버 GET /api/star-station/status · POST /api/star-station/claim
 // 시간 계산·지급은 서버가 한다(폰 시계 무관). 주기·금액은 응답의 cycle_seconds·reward 를 쓴다(앱 하드코딩 금지).
 // 앱은 응답의 remaining_seconds 를 받은 순간의 내 시계 기준으로 줄여 가며 보여 주기만 한다.
 
