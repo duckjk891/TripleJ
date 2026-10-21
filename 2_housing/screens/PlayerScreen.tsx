@@ -15,7 +15,6 @@ import {
   Platform,
   Share,
   useWindowDimensions,
-  KeyboardAvoidingView,
   AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,6 +47,7 @@ import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFro
 import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance, loadAndPlayTrack } from '../services/playback';
 // v3.392 [NativePlayer]: 안드로이드 네이티브 큐 엔진이면 이 화면의 자체 로더 대신 공용 엔진(플레이어 1개)으로 재생
 import { NATIVE_QUEUE_ENGINE, isEngineSound, engineClockMs, engineSongStalled, engineSetProgressInterval } from '../services/nativePlayer';
+import KeyboardAvoid from '../components/KeyboardAvoid'; // v3.392 [KeyboardCtl] 상세 패널 키보드 피하기(v3.391 공용)
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -1653,10 +1653,8 @@ export default function PlayerScreen({ route, navigation }: any) {
           핸들/미니바 탭 = 큰 플레이어로 복귀("토글 내리기"). */}
       {showDetails && (
         // v3.182(대표): 키보드가 입력창을 가리지 않도록 — 패널 전체를 KAV로 (iOS padding/Android height)
-        <KeyboardAvoidingView
-          style={styles.detailWrap}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        // v3.392: 갤럭시(edge-to-edge)에서 댓글 입력칸이 키보드에 가리던 문제 — 공용 KeyboardAvoid(keyboard-controller, v3.391 통일)
+        <KeyboardAvoid style={styles.detailWrap} iosOffset={0}>
           {/* v3.180(대표): 축소 미니 플레이어 = 하단 MiniPlayer와 동일 UI —
               2px 프로그레스바 + 커버40 + 제목/아티스트 + ⏮ ▶ ⏭ + 재생목록 + ✕.
               정보 영역 탭 = 큰 플레이어 복귀 */}
@@ -1889,7 +1887,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               )}
               <View style={{ height: 40 }} />
             </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardAvoid>
       )}
 
       {/* v3.180: 모달 3종 — fragment 밖 상시 렌더 (상단 미니바에서도 재생목록 접근) */}
