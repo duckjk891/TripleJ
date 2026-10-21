@@ -415,3 +415,18 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .howto summary { cursor: pointer; color: var(--violet-soft); font-size: 12px; }
 .howto ul { margin: 6px 0 0 18px; display: flex; flex-direction: column; gap: 4px; color: var(--ink-soft); }
 .howto li b { color: var(--ink); }
+
+/* ---------- 10-21 피드백3: 채널별 입힌 옷 펼치기 + 곡 목록 ---------- */
+.expand-btn { display: block; margin-top: 2px; font-size: 12px; text-align: left; }
+.tbl--stars tr.is-open td { border-bottom-color: transparent; background: rgba(139, 92, 246, .06); }
+.worn-row > td { background: rgba(139, 92, 246, .06); padding: 4px 8px 12px; white-space: normal; }
+.worn-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.worn-list li { display: grid; grid-template-columns: minmax(200px, 300px) 1fr; gap: 10px 16px; align-items: center; background: var(--bg-soft); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 10px; }
+@media (max-width: 700px) { .worn-list li { grid-template-columns: 1fr; } }
+.worn-item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.worn-item b { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worn-item small { color: var(--ink-mute); font-size: 12px; }
+.worn-songs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.song-chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(139, 92, 246, .1); color: var(--ink); font-size: 12px; text-decoration: none; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-chip:hover { border-color: var(--violet-soft); background: rgba(139, 92, 246, .22); }
+.song-chip i { font-style: normal; color: var(--violet-soft); font-size: 11px; }

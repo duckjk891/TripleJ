@@ -5,6 +5,7 @@ import PeriodTabs from '../components/PeriodTabs';
 import ItemImage from '../components/ItemImage';
 import { TrendChart, HBars, fmt } from '../components/Charts';
 import Icon from '../components/Icons';
+import { appAlert } from '../components/dialog';
 
 const PERIOD_TEXT = { daily: '오늘', weekly: '최근 7일', monthly: '최근 30일' };
 const SHOW_STEP = 20;
@@ -160,6 +161,13 @@ function Kpi({ label, value, sub, hint }) {
 // v3.381 — 내 상품 전체에 반응한 사용자(성별·연령대), 내 옷을 입힌 아티스트, 세부 종류별 성과
 function BrandInsights({ period }) {
   const [cat, setCat] = useState('');
+  // v3.385 — 채널별 '입힌 옷' 펼치기(옷마다 나온 곡 목록, 곡 → 새 탭에서 재생 + 착장)
+  const [openRows, setOpenRows] = useState(() => new Set());
+  const toggleRow = (key) => setOpenRows((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   const [ins, setIns] = useState(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -168,6 +176,7 @@ function BrandInsights({ period }) {
     let alive = true;
     setLoading(true);
     setFailed(false);
+    setOpenRows(new Set());
     getBrandInsights(period, cat)
       .then((r) => { if (alive) setIns(r.data); })
       .catch(() => { if (alive) setFailed(true); })
@@ -245,6 +254,7 @@ function BrandInsights({ period }) {
               <details>
                 <summary>숫자를 어떻게 세나요?</summary>
                 <ul>
+                  <li><b>입힌 옷 펼치기</b> — 채널 이름 아래를 누르면 그 채널이 입힌 내 옷과, 옷마다 나온 곡이 오른쪽에 보여요. 곡을 누르면 새 탭에서 곡이 재생되고 착장 화면에서 입힌 옷을 확인할 수 있어요.</li>
                   <li><b>채널</b> — 곡을 만들어 올린 MAIDOL 사용자예요. 곡 속 AI 아티스트가 아니라 그 아티스트를 키우는 사용자(채널 이름)예요.</li>
                   <li><b>내 옷이 나온 곡</b> — 공개된 곡의 커버·뮤직비디오에서 아티스트가 내 옷을 입은 수예요. 기간과 관계없이 지금까지 모두 세요. 한 곡에서 내 옷 2벌(예: 상의+하의)을 입었으면 2로 세요.</li>
                   <li><b>자세히 보기 클릭 · 위시리스트 추가</b> — 고른 기간 동안 그 채널의 곡 화면에서 내 옷을 보고 누른 수예요.</li>
@@ -265,17 +275,53 @@ function BrandInsights({ period }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {stars.slice(0, 10).map((s, i) => (
-                    <tr key={`${s.nickname}-${i}`}>
-                      <td>
-                        <span className="cell-star"><b>{s.nickname}</b>{s.items?.length > 0 && <small title={s.items.join(', ')}>입힌 옷: {s.items.join(' · ')}</small>}</span>
-                      </td>
-                      <td className="num">{fmt(s.worn_count)}</td>
-                      <td className="num">{fmt(s.click_count)}</td>
-                      <td className="num">{fmt(s.wish_count)}</td>
-                      <td className="num hide-sm">{fmt(s.follower_count)}</td>
-                    </tr>
-                  ))}
+                  {stars.slice(0, 10).map((s, i) => {
+                    const key = `${s.nickname}-${i}`;
+                    const worn = s.worn_items || [];
+                    const isOpen = openRows.has(key);
+                    return [
+                      <tr key={key} className={isOpen ? 'is-open' : ''}>
+                        <td>
+                          <span className="cell-star">
+                            <b>{s.nickname}</b>
+                            {worn.length > 0 ? (
+                              <button type="button" className="linkbtn small expand-btn" aria-expanded={isOpen} onClick={() => toggleRow(key)}>
+                                입힌 옷 {worn.length}벌 {isOpen ? '접기 ▴' : '펼치기 ▾'}
+                              </button>
+                            ) : s.items?.length > 0 && <small title={s.items.join(', ')}>입힌 옷: {s.items.join(' · ')}</small>}
+                          </span>
+                        </td>
+                        <td className="num">{fmt(s.worn_count)}</td>
+                        <td className="num">{fmt(s.click_count)}</td>
+                        <td className="num">{fmt(s.wish_count)}</td>
+                        <td className="num hide-sm">{fmt(s.follower_count)}</td>
+                      </tr>,
+                      isOpen && (
+                        <tr key={`${key}-x`} className="worn-row">
+                          <td colSpan={5}>
+                            <ul className="worn-list">
+                              {worn.map((w) => (
+                                <li key={w.item_id}>
+                                  <div className="worn-item">
+                                    <ItemImage obj={w.image_object_name} className="thumb" />
+                                    <span><b>{w.name || '이름 없음'}</b><small>{w.category} · 곡 {fmt(w.song_count)}개</small></span>
+                                  </div>
+                                  <div className="worn-songs">
+                                    {(w.songs || []).map((g) => (g.url ? (
+                                      <a key={g.id} className="song-chip" href={g.url} target="_blank" rel="noopener noreferrer" title="새 탭에서 곡을 재생하고 착장을 확인해요">♪ {g.title}<i aria-hidden="true">↗</i></a>
+                                    ) : (
+                                      <button key={g.id} type="button" className="song-chip" onClick={() => appAlert('예시 화면이라 실제 곡은 열리지 않아요. 실제 광고주 화면에서는 곡을 누르면 새 탭에서 곡이 재생되고 착장(스타일링) 화면이 열려요.')}>♪ {g.title}</button>
+                                    )))}
+                                    {w.song_count > (w.songs || []).length && <span className="muted small">외 {fmt(w.song_count - (w.songs || []).length)}곡</span>}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      ),
+                    ];
+                  })}
                 </tbody>
               </table>
               {stars.length > 10 && <p className="footnote">내 옷이 많이 나온 순서로 위 10개 채널만 보여 드려요.</p>}

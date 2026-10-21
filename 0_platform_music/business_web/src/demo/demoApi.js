@@ -138,6 +138,7 @@ function dashboard(period) {
   };
 }
 
+const DEMO_SONGS = ['새벽 네온', '여름의 끝에서', '파란 신호', 'Midnight Drive', '첫눈 고백', '별을 세는 밤', 'Lavender Mood', '한강 산책', '너의 계절', 'Runaway', '오렌지 하늘', '비 오는 정류장'].map((t) => `${t}(예시)`);
 const ARTISTS = ['루나벨', '하늘연', '별빛소녀', 'NOVA', '체리밤', '도하', '시엘', '유랑', 'MINT', '한결'].map((n) => `${n}(예시)`);
 function insights(period, cat) {
   const mul = PERIOD_MUL[period] || 1;
@@ -165,15 +166,33 @@ function insights(period, cat) {
     stars: ARTISTS.map((nickname, i) => {
       const mine = list.filter((t) => rnd(ITEMS.indexOf(t) * 13 + i * 7 + 1) < 0.3);
       if (!mine.length) return null;
-      const sum = (f) => mine.reduce((acc, t) => acc + f(t, ITEMS.indexOf(t)), 0);
       const boost = 1.2 - i * 0.07;
+      // 옷마다 '나온 곡' 수를 먼저 정하고 그 합을 채널 값으로(실제 서버와 같은 구조 — 부위 합계 = 전체)
+      const per = mine.map((t) => {
+        const k = ITEMS.indexOf(t);
+        const songs = Math.max(1, Math.round(t.pop * 3 * boost + rnd(k + i) * 1.5));
+        return {
+          t, k, songs,
+          clicks: Math.round((t.pop * 9 * boost + rnd(k * 3 + i) * 2) * mul),
+          wishes: Math.round((t.pop * 7 * boost + rnd(k * 5 + i) * 2) * mul),
+        };
+      });
+      const sum = (f) => per.reduce((acc, x) => acc + x[f], 0);
       return {
         nickname,
-        worn_count: sum((t, k) => Math.max(1, Math.round(t.pop * 3 * boost + rnd(k + i) * 1.5))),
-        click_count: sum((t, k) => Math.round((t.pop * 9 * boost + rnd(k * 3 + i) * 2) * mul)),
-        wish_count: sum((t, k) => Math.round((t.pop * 7 * boost + rnd(k * 5 + i) * 2) * mul)),
+        worn_count: sum('songs'),
+        click_count: sum('clicks'),
+        wish_count: sum('wishes'),
         follower_count: Math.round(2400 / (i + 1) + rnd(i * 5) * 80),
-        items: [...mine].sort((a, b) => b.pop - a.pop).slice(0, 3).map((t) => t.name),
+        items: [...per].sort((a, b) => b.songs - a.songs).slice(0, 3).map((x) => x.t.name),
+        worn_items: [...per].sort((a, b) => b.songs - a.songs).map((x) => ({
+          item_id: x.t.id, name: x.t.name, category: x.t.category, image_object_name: x.t.image_object_name, song_count: x.songs,
+          songs: Array.from({ length: Math.min(x.songs, 20) }, (_, j) => ({
+            id: `demo-${i}-${x.k}-${j}`,
+            title: DEMO_SONGS[(i * 7 + x.k * 3 + j) % DEMO_SONGS.length],
+            url: null, // 예시 화면 — 실제 곡이 없어 안내만
+          })),
+        })),
       };
     }).filter(Boolean).sort((a, b) => b.worn_count - a.worn_count || b.click_count - a.click_count),
   };
