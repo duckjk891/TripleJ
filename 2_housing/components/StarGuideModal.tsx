@@ -20,7 +20,7 @@ import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(i
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 // v3.194: 행 아이콘 이모지 → 벡터(Feather/MCI). ⭐ 재화 표기(CURRENCY_ICON·금액)는 유지.
-type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio' | 'community';
+type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio' | 'community' | 'diary';
 const ROW_ICON_SIZE = 18;
 const ROW_ICON_COLOR = colors.text.secondary;
 const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string; action?: EarnAction; newsId?: string }[] = [
@@ -28,7 +28,9 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
   { icon: <Feather name="shield" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '보호자 동의 완료', amount: '+30', sub: '만 14세 미만 · 한 번만' }, // v3.230 A8: 본인인증 유도 제거(추후 적용)
   { icon: <Feather name="users" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '친구 초대', amount: '+50', sub: '눌러서 공유하기', action: 'invite' },
   { icon: <Feather name="calendar" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '매일 출석체크', amount: '+10', sub: '5일차 +30 · 10일차 +100', action: 'attendance' },
-  { icon: <Feather name="headphones" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '남의 곡 듣기', amount: '+1', sub: '눌러서 차트로 이동', action: 'chart' },
+  { icon: <Feather name="headphones" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '남의 곡 듣기', amount: '+1', sub: '곡마다 하루 1번 · 하루 최대 5곡 · 눌러서 차트로', action: 'chart' }, // v3.394 서버 규칙(charts.py play daily_cap=5) 명시
+  // v3.394 [Diary] 일기 쓰기 — 하루 1번 ⭐3(공백 뺀 50자 이상, 서버 diary_daily)
+  { icon: <Feather name="book-open" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '일기 쓰기', amount: '+3', sub: '하루 1번 · 50자 이상 · 눌러서 일기장으로', action: 'diary', newsId: 'diary' },
   { icon: <MaterialCommunityIcons name="rocket-launch-outline" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '내 곡 발매', amount: '+5', sub: '눌러서 작업실로 이동', action: 'studio' },
   // v3.305 [ClubAlbum] 크루 앨범 참여 미션 — 앨범당 1회, 주 최대 ⭐15
   { icon: <Feather name="disc" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 앨범에 곡 내기', amount: '+5', sub: '크루장이 수록하면 · 눌러서 커뮤니티로', action: 'community', newsId: 'club_album' },
@@ -68,6 +70,7 @@ export default function StarGuideModal() {
       case 'chart': navigateGlobal('Chart'); break;
       case 'studio': navigateGlobal('Studio'); break;
       case 'community': navigateGlobal('Community'); break;
+      case 'diary': navigateGlobal('Feed'); break; // v3.394 일기장 탭
     }
   };
 

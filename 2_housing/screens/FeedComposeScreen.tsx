@@ -26,6 +26,7 @@ import { useIsChild, useKidsPermission, KIDS_TEXT } from '../utils/kidsMode';
 import { isChildRestrictedError, getWordFilteredMessage } from '../utils/kidsMode'; // v3.233: 403·금칙어 안내
 import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 — 크루 문구 단일화
 import { usePlayerStore } from '../stores/playerStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
@@ -116,6 +117,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.389 [Diary]: 곡 고르기 — [최근 들은 곡](재생 이력) · [내 곡]
   const [pickerSource, setPickerSource] = useState<'recent' | 'mine'>('recent');
   const [recentTracks, setRecentTracks] = useState<RowTrack[] | null>(null);
+  // v3.394 [DiaryDraft] 임시저장(대표 요청) — 새 일기만, 기기에 계정별 1개. 저장 성공 시 지움.
+  // 사진은 업로드 끝난 것만(서버 오브젝트명) 보관 — 기기 사진 경로는 다시 열 때 없을 수 있음.
+  const draftKey = user?.id ? `maidol-diary-draft-${user.id}` : null;
+  const useDraft = isDiary && !isEdit && !!draftKey;
   // v3.247: 클럽 글 공개 범위 — 계약 POST /feeds kind='club' 에 club_scope:'club'|'public'(기본 'club').
   // 구서버(필드 미지원)는 club_scope 를 무시 → 오늘과 동일(클럽 게시판에만) 동작. 어린이 게이트·이미지 규칙 불변.
   const [clubScope, setClubScope] = useState<'club' | 'public'>(isEdit && editFeed.club_scope === 'public' ? 'public' : 'club');
@@ -326,8 +331,64 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     uploadImage({ ...entry, status: 'uploading' });
   };
 
+  // v3.394 [DiaryDraft] 임시저장 / 불러오기 / 지우기
+  const saveDraft = async () => {
+    if (!useDraft || !draftKey) return;
+    const draft = {
+      v: 1, saved_at: Date.now(), body, mood, diaryDate, visibility,
+      attached: attached ? { id: String(attached.id), title: attached.title, artist_name: (attached as any).artist_name, cover_image: (attached as any).cover_image } : null,
+      images: images.filter((i) => i.status === 'done' && i.objectName).map((i) => ({ objectName: i.objectName, localUri: i.localUri, name: i.name })),
+      items: attachedItems,
+    };
+    try {
+      await AsyncStorage.setItem(draftKey, JSON.stringify(draft));
+      console.info('[DiaryDraft] 임시저장', { len: body.length, images: draft.images.length, track: !!draft.attached });
+      showAlert('임시저장', '임시저장했어요.\n다음에 일기 쓰기를 열면 이어서 쓸 수 있어요.');
+    } catch (err: any) {
+      console.error('[DiaryDraft] 임시저장 실패', { message: err?.message });
+      showAlert('오류', '임시저장하지 못했어요. 잠시 후 다시 시도해주세요.');
+    }
+  };
+  const clearDraft = () => {
+    if (!draftKey) return;
+    AsyncStorage.removeItem(draftKey).catch(() => {});
+  };
+  useEffect(() => {
+    if (!useDraft || !draftKey) return;
+    let alive = true;
+    AsyncStorage.getItem(draftKey).then((raw) => {
+      if (!alive || !raw) return;
+      let d: any = null;
+      try { d = JSON.parse(raw); } catch { return; }
+      if (!d || (!d.body && !d.attached && !(d.images || []).length)) return;
+      const applyDraft = () => {
+        setBody(d.body || '');
+        if (d.mood) setMood(d.mood);
+        // 날짜는 최근 7일 안일 때만 이어받음(지났으면 오늘)
+        if (d.diaryDate && backdateOptions().some((o) => o.ymd === d.diaryDate)) setDiaryDate(d.diaryDate);
+        if (d.visibility) setVisibility(d.visibility);
+        if (d.attached?.id) setAttached(d.attached as RowTrack);
+        if (Array.isArray(d.images)) {
+          setImages(d.images.slice(0, MAX_FEED_IMAGES).map((im: any, i: number) => ({
+            key: `draft_${i}_${im.objectName}`, localUri: im.localUri || '', name: im.name || `image_${i}`,
+            mime: 'image/jpeg', status: 'done' as const, objectName: im.objectName,
+          })));
+        }
+        if (Array.isArray(d.items)) setAttachedItems(d.items);
+        console.info('[DiaryDraft] 불러오기', { len: (d.body || '').length });
+      };
+      showAlert('임시저장한 일기', '임시저장한 일기가 있어요. 이어서 쓸까요?', [
+        { text: '새로 쓰기', style: 'cancel', onPress: () => clearDraft() },
+        { text: '이어 쓰기', onPress: applyDraft },
+      ]);
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useDraft, draftKey]);
+
   // v3.389 [Diary]: 저장 후 — 오늘 별을 받았으면 앱 내 다이얼로그로 알리고 닫기
   const finishWithReward = (reward?: { awarded?: number } | null) => {
+    if (useDraft) clearDraft(); // v3.394 저장 성공 → 임시저장 지움
     if (reward?.awarded && reward.awarded > 0) {
       console.info('[Diary] 보상 지급', { awarded: reward.awarded });
       usePointsStore.getState().fetchBalance?.().catch?.(() => {});
@@ -447,9 +508,17 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (feedWriteBlocked) { navigation.setOptions({ headerRight: () => null }); return; }
     navigation.setOptions({
       headerRight: () => (
-        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '수정 저장' : isDiary ? '일기 저장' : '등록'} style={{ marginRight: 12 }}>
-          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit || isDiary ? '저장 중…' : '등록 중…') : (isEdit || isDiary ? '저장' : '등록')}</AppText>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.lg, marginRight: 12 }}>
+          {/* v3.394 [DiaryDraft] 저장 옆 임시저장(새 일기만) */}
+          {useDraft ? (
+            <TouchableOpacity onPress={saveDraft} disabled={posting} accessibilityLabel="일기 임시저장">
+              <AppText variant="body" tone="secondary">임시저장</AppText>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '수정 저장' : isDiary ? '일기 저장' : '등록'}>
+            <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit || isDiary ? '저장 중…' : '등록 중…') : (isEdit || isDiary ? '저장' : '등록')}</AppText>
+          </TouchableOpacity>
+        </View>
       ),
       ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">{isDiary ? '일기 수정' : '글 수정'}</AppText> } : {}),
     });

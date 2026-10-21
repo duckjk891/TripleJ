@@ -23,6 +23,7 @@ const CREDIT_LABELS: Record<string, string> = {
   // v3.293 [WeeklyMission]
   weekly_mission_artist_songs: '주간 미션 · 아티스트 곡 발매',
   weekly_mission_artist_covers: '주간 미션 · 커버 이미지',
+  weekly_mission_artist_in_cover: '주간 미션 · 커버에 내 아티스트', // v3.394
   star_station: '별 제작소', // v3.388
 };
 

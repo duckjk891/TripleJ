@@ -115,7 +115,8 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
       alive = false;
     };
   }, [officialId, feed.kind]);
-  const isOfficialNotice = feed.kind === 'community' && !!officialId && String(feed.author_id) === officialId;
+  // v3.394 [NoticePin]: 공지에 올린 사용자 글(notice_pinned)도 '공지' 배지 — 작성자는 그대로
+  const isOfficialNotice = (feed.kind === 'community' && !!officialId && String(feed.author_id) === officialId) || !!feed.notice_pinned;
 
   // 댓글
   const [commentsOpen, setCommentsOpen] = useState(false);
