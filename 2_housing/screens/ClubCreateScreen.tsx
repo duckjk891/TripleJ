@@ -6,6 +6,7 @@
 // 팝업은 전부 앱 내 다이얼로그(showAlert).
 // v3.252: 리네이밍 — 사용자 노출 명칭 '크루'(CLUB_LABEL 경유, 내부 식별자는 Club 유지).
 import { useState } from 'react';
+import { usePointsStore } from '../stores/pointsStore'; // v3.395
 import { View, ScrollView, TextInput, StyleSheet, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
@@ -41,6 +42,15 @@ export default function ClubCreateScreen() {
     try {
       const club = await createClub(trimmedName, desc.trim(), genres);
       console.info('[Club] 개설 성공', { clubId: club.id });
+      // v3.395 [ClubCreateReward] 크루 만들기 ⭐10(계정당 1번) — 받았으면 앱 내 다이얼로그 후 이동
+      const reward = Number((club as any).star_reward) || 0;
+      if (reward > 0) {
+        usePointsStore.getState().fetchBalance?.().catch?.(() => {});
+        showAlert(`+${reward}⭐`, `${CLUB_LABEL}를 만들어서 스타 ${reward}개를 받았어요!`, [
+          { text: '확인', onPress: () => navigation.navigate('ClubHome', { clubId: club.id, name: club.name }) },
+        ]);
+        return;
+      }
       navigation.navigate('ClubHome', { clubId: club.id, name: club.name });
     } catch (err: any) {
       const code = getClubErrorCode(err);

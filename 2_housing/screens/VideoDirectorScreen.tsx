@@ -802,7 +802,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[VideoDirector] 구간 다시 자르기', { trackId: selected.id, fmt: pickedFormat });
     setVideoUrl(null);
     recutModeRef.current = !!lastSubposRef.current;
-    enterClipStep(pickedFormat, '어디를 다시 자를까요? 같은 영상의 구간만 바꾸는 편집은 별(⭐)이 들지 않아요.');
+    enterClipStep(pickedFormat, '어디를 다시 자를까요? 같은 영상의 구간만 바꾸는 편집은 스타(⭐)가 들지 않아요.');
   };
 
   const handlePickLayout = (layout: 'full' | 'center') => {
@@ -1139,7 +1139,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const confirmFreeRecut = () => new Promise<boolean>((resolve) => {
     let settled = false;
     const done = (v: boolean) => { if (!settled) { settled = true; resolve(v); } };
-    showAlert('편집은 무료예요', '이미 만든 영상의 구간만 바꾸는 거라 별(⭐)이 들지 않아요.\n이 구간으로 만들까요?', [
+    showAlert('편집은 무료예요', '이미 만든 영상의 구간만 바꾸는 거라 스타(⭐)가 들지 않아요.\n이 구간으로 만들까요?', [
       { text: '취소', style: 'cancel', onPress: () => done(false) },
       { text: '무료로 만들기', onPress: () => done(true) },
     ], { lockMs: 300 });
@@ -1227,7 +1227,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           },
         }, { sig, fallbackFormat: params.format, hasTrack: true });
         if (res.data?.recut_free === true && mountedRef.current) {
-          pushDirector('구간만 바꾼 편집이라 별(⭐)은 쓰지 않았어요.');
+          pushDirector('구간만 바꾼 편집이라 스타(⭐)는 쓰지 않았어요.');
         } else if (opts?.recutFree && res.data?.charged === true) {
           console.warn('[VideoDirector] 무과금 예상이었으나 서버가 과금함(판정 경합)', { trackId: track.id });
         }

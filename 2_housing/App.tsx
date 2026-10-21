@@ -647,7 +647,7 @@ async function promptStarStationIfFull(reason: string) {
     console.info('[StarStation] 다 참 → 팝업 차례 대기', { reason });
     await waitModalTurn('star-station', 0.5).promise;
     if (!useAuthStore.getState().user) return;
-    showAlert('별이 다 만들어졌어요', `별 제작소에 별 ${s.reward}개가 준비됐어요. 받으면 다음 별을 바로 만들기 시작해요(${durationLabel(s.cycleSeconds)}).`, [
+    showAlert('스타가 다 만들어졌어요', `스타 제작소에 스타 ${s.reward}개가 준비됐어요. 받으면 다음 스타를 바로 만들기 시작해요(${durationLabel(s.cycleSeconds)}).`, [
       { text: '나중에', style: 'cancel' },
       { text: `${s.reward}⭐ 받기`, onPress: () => { void claimStarStationWithNotice(); } },
     ]);

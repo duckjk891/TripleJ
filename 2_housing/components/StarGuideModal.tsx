@@ -32,6 +32,8 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
   // v3.394 [Diary] 일기 쓰기 — 하루 1번 ⭐3(공백 뺀 50자 이상, 서버 diary_daily)
   { icon: <Feather name="book-open" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '일기 쓰기', amount: '+3', sub: '하루 1번 · 50자 이상 · 눌러서 일기장으로', action: 'diary', newsId: 'diary' },
   { icon: <MaterialCommunityIcons name="rocket-launch-outline" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '내 곡 발매', amount: '+5', sub: '눌러서 작업실로 이동', action: 'studio' },
+  // v3.395 [ClubCreateReward] 크루 만들기 — 계정당 1번 ⭐10
+  { icon: <Feather name="flag" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 만들기', amount: '+10', sub: '한 번만 · 눌러서 커뮤니티로', action: 'community', newsId: 'club_create' },
   // v3.305 [ClubAlbum] 크루 앨범 참여 미션 — 앨범당 1회, 주 최대 ⭐15
   { icon: <Feather name="disc" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 앨범에 곡 내기', amount: '+5', sub: '크루장이 수록하면 · 눌러서 커뮤니티로', action: 'community', newsId: 'club_album' },
 ];

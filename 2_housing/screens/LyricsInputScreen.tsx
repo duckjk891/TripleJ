@@ -17,6 +17,7 @@ import AnswerEditModal from '../components/AnswerEditModal';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { consumeDiaryTopic } from '../utils/makeLike'; // v3.395 [DiarySong]
 import { useMusicStore } from '../stores/musicStore';
 // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
@@ -206,6 +207,17 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
     setShowResumeNotice(resumable);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [makeLike?.nonce]);
+
+  // v3.395 [DiarySong] '이 일기로 노래 만들기' — 주제(3번) 질문이 오면 일기 글을 입력칸에 미리 넣어 둔다(1회)
+  useEffect(() => {
+    if (step !== 3 || customInput) return;
+    const topic = consumeDiaryTopic();
+    if (topic) {
+      if (__DEV__) console.info('[DiarySong] 주제 입력칸에 일기 넣기', { len: topic.length });
+      setCustomInput(topic);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
   // v3.219 [LyricsDraft]: draft 복원 진입에서는 스킵(진행 중 대화의 store 상태 훼손 금지)

@@ -346,7 +346,7 @@ export default function MyArtistsScreen({ navigation, route }: any) {
       costKey: 'extra_slot',
       cost: extraSlotCost,
       action: '아티스트 슬롯 확장',
-      message: `슬롯이 가득 찼어요 (${slots.used}/${slots.max}). 슬롯을 1개 영구 확장해요.\n아티스트를 만들 때 별 사용은 옷을 고른 뒤 한 번 더 확인해요.`,
+      message: `슬롯이 가득 찼어요 (${slots.used}/${slots.max}). 슬롯을 1개 영구 확장해요.\n아티스트를 만들 때 스타 사용은 옷을 고른 뒤 한 번 더 확인해요.`,
     });
     if (!ok) {
       console.info('[MyArtists] 슬롯 확장 ⭐ 확인 취소 — 요청 없음');
@@ -579,7 +579,7 @@ export default function MyArtistsScreen({ navigation, route }: any) {
       <ConfirmDialog
         visible={addConfirm !== null}
         title="새 아티스트 추가"
-        message={'새 아티스트를 추가하시겠어요?\n별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
+        message={'새 아티스트를 추가하시겠어요?\n스타 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
         confirmText="추가하기"
         onConfirm={performAddEntry}
         onCancel={() => setAddConfirm(null)}

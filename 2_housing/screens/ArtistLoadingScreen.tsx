@@ -313,7 +313,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           const photoIntent = taskStore.photoIntent ?? taskStore.draft?.photoIntent ?? null;
           if (!isVirtual && photoIntent === 'photo' && !hasPhoto && !reuseOriginal) {
             console.warn('[ArtistLoading] 사진 누락 차단', { intent: photoIntent, kind: taskStore.characterKind });
-            const blockedMsg = '얼굴 사진이 확인되지 않아 만들지 않았어요. 사진을 다시 올려주세요. (별은 사용되지 않았어요)';
+            const blockedMsg = '얼굴 사진이 확인되지 않아 만들지 않았어요. 사진을 다시 올려주세요. (스타는 사용되지 않았어요)';
             taskStore.failApi(blockedMsg);
             // 사진 단계로 — draft가 있으면 그 키(재생성 cid·kind)로 진입해야 복원(사진 재요구)이 적용된다
             const d = taskStore.draft;
@@ -685,7 +685,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           console.warn('[ArtistLoading] 409 original_owner_mismatch — 대상 아티스트 원본 불일치(무과금)', { mode });
           msg = err.response?.data?.message || '이 아티스트의 사진이 아니에요. 아티스트 화면에서 다시 시도해주세요.';
         } else if (status === 402) {
-          msg = `별이 부족해요. 캐릭터 시트 생성에는 ⭐${getPointCostSync('character')}개가 필요합니다.`;
+          msg = `스타가 부족해요. 캐릭터 시트 생성에는 ⭐${getPointCostSync('character')}개가 필요합니다.`;
         } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
           msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
         } else {

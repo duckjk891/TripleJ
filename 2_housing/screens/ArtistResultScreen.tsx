@@ -1297,7 +1297,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       <ConfirmDialog
         visible={regenConfirmVisible}
         title="다시 만들기"
-        message={'이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)\n별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
+        message={'이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)\n스타 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요.'}
         confirmText="다시 만들기"
         onConfirm={performRegenerateServerArtist}
         onCancel={() => setRegenConfirmVisible(false)}
@@ -1311,7 +1311,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           (bothSlots
             ? '서버 제약으로 현재는 모든 아티스트가 함께 삭제됩니다(개별 삭제는 준비 중이에요). 모든 코디 기록도 함께 삭제돼요.'
             : '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요.'
-          ) + '\n새로 만들 때 별 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요. 진행할까요?'
+          ) + '\n새로 만들 때 스타 사용은 옷을 고른 뒤 만들기 직전에 한 번 확인해요. 진행할까요?'
         }
         confirmText="삭제하고 다시 만들기"
         destructive

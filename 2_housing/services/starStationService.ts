@@ -70,14 +70,14 @@ export async function claimStarStationWithNotice(): Promise<StarStationClaimResu
     if (r.balance !== null) usePointsStore.getState().setBalance(r.balance);
     void usePointsStore.getState().fetchBalance();
     if (r.claimed) {
-      showAlert(`⭐ +${r.awarded}`, r.message || '별을 받았어요!');
+      showAlert(`⭐ +${r.awarded}`, r.message || '스타를 받았어요!');
     } else {
-      showAlert(r.code === 'already_claimed' ? '이미 받은 별이에요' : '아직 만들어지는 중이에요', r.message);
+      showAlert(r.code === 'already_claimed' ? '이미 받은 스타예요' : '아직 만들어지는 중이에요', r.message);
     }
     return r;
   } catch (err: any) {
     console.error('[StarStation] 받기 실패', { status: err?.response?.status });
-    showAlert('별을 받지 못했어요', err?.response?.data?.error || '잠시 후 다시 시도해 주세요.');
+    showAlert('스타를 받지 못했어요', err?.response?.data?.error || '잠시 후 다시 시도해 주세요.');
     return null;
   }
 }

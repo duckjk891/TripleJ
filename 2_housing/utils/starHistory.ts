@@ -24,7 +24,9 @@ const CREDIT_LABELS: Record<string, string> = {
   weekly_mission_artist_songs: '주간 미션 · 아티스트 곡 발매',
   weekly_mission_artist_covers: '주간 미션 · 커버 이미지',
   weekly_mission_artist_in_cover: '주간 미션 · 커버에 내 아티스트', // v3.394
-  star_station: '별 제작소', // v3.388
+  star_station: '스타 제작소', // v3.388
+  diary_daily: '일기 쓰기', // v3.389
+  club_create: '크루 만들기', // v3.395
 };
 
 // 사용·환불 대상(명사) — 표시 = '{명사} 사용' / '{명사} 환불'

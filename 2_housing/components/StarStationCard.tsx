@@ -60,7 +60,7 @@ export default function StarStationCard() {
       <View style={styles.head}>
         <View style={styles.title}>
           <MaterialCommunityIcons name="star-shooting-outline" size={18} color={colors.accent.primary} />
-          <AppText variant="footnote" style={{ fontWeight: '700' }}>별 제작소</AppText>
+          <AppText variant="footnote" style={{ fontWeight: '700' }}>스타 제작소</AppText>
         </View>
         <AppText variant="caption" tone="muted">
           {durationLabel(status.cycleSeconds)}마다 {CURRENCY_ICON}{status.reward}
@@ -71,14 +71,14 @@ export default function StarStationCard() {
       </View>
       {ready ? (
         <>
-          <AppText variant="caption" tone="accent">별이 다 만들어졌어요!</AppText>
+          <AppText variant="caption" tone="accent">스타가 다 만들어졌어요!</AppText>
           <Button
             label={claiming ? '받는 중…' : `${status.reward}${CURRENCY_ICON} 받기`}
             size="sm"
             fullWidth
             disabled={claiming}
             onPress={handleClaim}
-            accessibilityLabel={`별 ${status.reward}개 받기`}
+            accessibilityLabel={`스타 ${status.reward}개 받기`}
           />
         </>
       ) : (

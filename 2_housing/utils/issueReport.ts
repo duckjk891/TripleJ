@@ -11,7 +11,7 @@ export type IssueReasonCode = 'playback' | 'payment' | 'account' | 'auth' | 'oth
 
 export const ISSUE_REASONS: ReadonlyArray<{ code: IssueReasonCode; label: string }> = [
   { code: 'playback', label: '재생 오류' },
-  { code: 'payment', label: '결제·별 오류' },
+  { code: 'payment', label: '결제·스타 오류' }, // v3.395 스타 통일(서버 _DM_REASON_MAP 신·구 둘 다 수용)
   { code: 'account', label: '계정 문제' },
   { code: 'auth', label: '로그인·계정 인증 문제' },
   { code: 'other', label: '기타' },

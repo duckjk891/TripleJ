@@ -2470,7 +2470,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             '미세조정 실패',
             (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
               '\n기존 버전은 그대로 유지돼요.' +
-              '\n별이 이미 사용됐다면 버전 기록에 잠시 후 나타날 수 있어요.'
+              '\n스타가 이미 사용됐다면 버전 기록에 잠시 후 나타날 수 있어요.'
           );
           return;
         }

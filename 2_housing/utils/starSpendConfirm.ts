@@ -90,7 +90,7 @@ export async function confirmStarSpend(opts: StarSpendConfirmOptions): Promise<b
       // 부족 — [사용하기] 대신 부족 안내(요청 0). 서버 402와 같은 안내 톤.
       console.info(`[StarConfirm] ${logBase} result=insufficient`);
       _pending = null;
-      showAlert('별이 부족해요', `${opts.action}에는 ⭐${cost}이 필요해요.\n현재 보유: ⭐${balance}\n출석체크·앱 추천으로 스타를 모아보세요.`);
+      showAlert('스타가 부족해요', `${opts.action}에는 ⭐${cost}이 필요해요.\n현재 보유: ⭐${balance}\n출석체크·앱 추천으로 스타를 모아보세요.`);
       return false;
     }
 

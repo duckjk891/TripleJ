@@ -29,7 +29,7 @@ import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
 // v3.389 [Diary]: 일기장 문구
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '일기 쓰기', desc: '눌러서 오늘의 일기를 써 보세요. 50자 이상 쓰면 하루 한 번 별을 받아요. 다른 사람들의 일기와 공지도 볼 수 있어요.', anchorKey: 'feed-compose' },
+  { title: '일기 쓰기', desc: '눌러서 오늘의 일기를 써 보세요. 50자 이상 쓰면 하루 한 번 스타를 받아요. 다른 사람들의 일기와 공지도 볼 수 있어요.', anchorKey: 'feed-compose' },
 ];
 
 // Fab(components/Fab.tsx)의 고정 지름 — anchor rect를 아이콘 중심에서 버튼 크기로 확장할 때 사용
@@ -385,7 +385,7 @@ export default function FeedScreen() {
       {showReward ? (
         rewardedToday ? (
           <View style={[styles.reward, styles.rewardDone]}>
-            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>오늘 일기 별 ⭐{DIARY_REWARD}을 받았어요. 내일 또 써 주세요!</AppText>
+            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>오늘 일기 스타 ⭐{DIARY_REWARD}을 받았어요. 내일 또 써 주세요!</AppText>
           </View>
         ) : (
           <TouchableOpacity style={styles.reward} activeOpacity={0.8} onPress={() => openCompose()} accessibilityLabel="오늘 일기 쓰기">

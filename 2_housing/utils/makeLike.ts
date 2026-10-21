@@ -130,17 +130,20 @@ export function navigateToLyricsDirector(
 
 /** '이어서 하기' — 기존 보존본으로 이동(맵 바로 가기와 같은 directorResume 판정 재사용).
  *  작곡 draft가 있으면 작곡(더 진행된 단계) 우선, 없으면 작사 보존본, 그마저 없으면 Map. */
-function resumeExistingWork(navigation: any): void {
+function resumeExistingWork(navigation: any, fromRootModal = false): void {
   const target =
     (getResumableComposeDraft() ? getDirectorResumeTarget('composer') : null) ||
     getDirectorResumeTarget('lyricist');
   if (__DEV__) console.info('[MakeLike] 이어서 하기 →', target?.route || 'Map');
-  navigation.navigate('MainTabs', {
+  const params = {
     screen: 'Studio',
     params: target
       ? { screen: target.route, initial: false, params: target.params }
       : { screen: 'Map' },
-  });
+  };
+  // v3.395 [DiarySong]: 루트 모달(일기 쓰기)에서는 모달을 닫으며 이동(RN7 navigate 는 기존 MainTabs 로 pop 하지 않음)
+  if (fromRootModal) navigation.popTo('MainTabs', params);
+  else navigation.navigate('MainTabs', params);
 }
 
 /**
@@ -169,6 +172,42 @@ export function startMakeLikeFlow(navigation: any, track: MakeLikeTrackLike): vo
     showAlert('진행 중인 작곡이 있어요', '새로 시작할까요?', [
       { text: '이어서 하기', style: 'cancel', onPress: () => resumeExistingWork(navigation) },
       { text: '새로 시작', onPress: go },
+    ]);
+    return;
+  }
+  go();
+}
+
+// v3.395 [DiarySong] '이 일기로 노래 만들기'(대표 10-21) — 같은 작사 디렉터 직행 배선을 쓰고,
+// 일기 글은 주제(3번) 질문 입력칸에 미리 넣어 둔다(LyricsInputScreen 이 step 3 에서 1회 꺼내 씀 — 보내기 전 고칠 수 있음).
+// 앱 재시작 시 사라지는 1회용 값(일기 본문은 일기 임시저장이 따로 보관).
+const DIARY_TOPIC_MAX = 300;
+let pendingDiaryTopic: string | null = null;
+export function consumeDiaryTopic(): string | null {
+  const t = pendingDiaryTopic;
+  pendingDiaryTopic = null;
+  return t;
+}
+
+/** 일기 쓰기(RootStack 모달)에서 호출 — 모달을 닫고 작업실 작사 디렉터로(popTo, Map 하부 적재). */
+export function startDiarySongFlow(navigation: any, diaryText: string): void {
+  const topic = (diaryText || '').replace(/\s+/g, ' ').trim().slice(0, DIARY_TOPIC_MAX);
+  if (!topic) return;
+  const target = (nonce: string) => ({
+    screen: 'Studio',
+    params: { screen: 'LyricsInput', initial: false, params: { makeLike: { title: '', nonce } } },
+  });
+  const go = () => {
+    applyMakeLikePreset({ genre: '', mood: '' }); // 이전 작사 작업본 비움(호출 전 확인)
+    pendingDiaryTopic = topic;
+    const nonce = `diary-${Date.now()}`;
+    console.info('[DiarySong] 작사 디렉터로', { len: topic.length });
+    navigation.popTo('MainTabs', target(nonce));
+  };
+  if (hasCreationWorkInProgress()) {
+    showAlert('진행 중인 작곡이 있어요', '이 일기로 새로 시작하면 만들던 작사 내용은 지워져요.', [
+      { text: '이어서 하기', style: 'cancel', onPress: () => resumeExistingWork(navigation, true) },
+      { text: '일기로 새로 시작', onPress: go },
     ]);
     return;
   }

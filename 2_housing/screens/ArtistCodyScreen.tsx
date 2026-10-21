@@ -626,7 +626,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     const bal = usePointsStore.getState().balance;
     if (bal != null && bal < characterCost) {
       if (__DEV__) console.info('[ArtistCody] 별 부족 사전 차단', { bal, cost: characterCost });
-      showAlert('별이 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
+      showAlert('스타가 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
       return;
     }
     // v3.230 A5-2(D6): 아티스트 ⭐ 차감 확인은 여기 1회로 일원화 — 신규·첫 아티스트·이어서 만들기·

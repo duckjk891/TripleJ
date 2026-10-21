@@ -81,7 +81,7 @@ export default function AccountMergeHost() {
       if (r.status === 'merged') {
         await swapTo(r.token);
         finish('merged');
-        showAlert('계정을 하나로 합쳤어요', `「${keep.nickname}」 계정으로 합쳤어요. 아티스트·곡·피드·별을 모두 옮겼어요.\n다른 계정으로 로그인해도 이 계정으로 들어와요.`);
+        showAlert('계정을 하나로 합쳤어요', `「${keep.nickname}」 계정으로 합쳤어요. 아티스트·곡·피드·스타를 모두 옮겼어요.\n다른 계정으로 로그인해도 이 계정으로 들어와요.`);
       } else if (r.status === 'running') {
         finish('closed');
         showAlert('알림', '계정을 합치는 중이에요. 잠시 후 앱을 다시 열어 주세요.');
@@ -103,7 +103,7 @@ export default function AccountMergeHost() {
   const askKeep = (keep: MergeAccount) => {
     showAlert(
       '이 계정으로 합칠까요?',
-      `「${keep.nickname}」 계정을 남겨요.\n남기지 않는 계정의 아티스트·곡·피드·별은 모두 옮겨지고, 그 계정의 로그인은 남기는 계정으로 연결됩니다.\n되돌릴 수 없어요.`,
+      `「${keep.nickname}」 계정을 남겨요.\n남기지 않는 계정의 아티스트·곡·피드·스타는 모두 옮겨지고, 그 계정의 로그인은 남기는 계정으로 연결됩니다.\n되돌릴 수 없어요.`,
       [{ text: '취소', style: 'cancel' }, { text: '합치기', onPress: () => { void doMerge(keep); } }],
     );
   };
@@ -141,7 +141,7 @@ export default function AccountMergeHost() {
         <AppText variant="title2">같은 분의 계정이 있어요</AppText>
         <AppText variant="footnote" tone="secondary" style={{ marginTop: spacing.sm, lineHeight: 20 }}>
           초기에는 1인 1계정 정책이 없어 혼선을 드려 죄송합니다. 같은 분 명의의 계정이 있어 하나로 합쳐 드려요.{'\n'}
-          남길 계정을 골라 주세요. 다른 계정의 아티스트·곡·피드·별은 모두 남길 계정으로 옮겨져요.
+          남길 계정을 골라 주세요. 다른 계정의 아티스트·곡·피드·스타는 모두 남길 계정으로 옮겨져요.
         </AppText>
 
         {loading || !preview ? (

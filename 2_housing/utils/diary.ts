@@ -25,7 +25,7 @@ export const moodOf = (key?: string | null) => DIARY_MOODS.find((m) => m.key ===
 export const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string; hint: string }[] = [
   { key: 'public', label: '전체', hint: '[전체]에 올라가고 팔로워에게 알림이 가요.' },
   { key: 'followers', label: '팔로워만', hint: '나를 팔로우한 사람만 볼 수 있어요.' },
-  { key: 'private', label: '나만 보기', hint: '나만 볼 수 있어요. 별은 똑같이 받아요.' },
+  { key: 'private', label: '나만 보기', hint: '나만 볼 수 있어요. 스타는 똑같이 받아요.' },
 ];
 
 // 글의 공개 범위 — 서버 visibility 우선, 구서버 응답은 is_public 으로

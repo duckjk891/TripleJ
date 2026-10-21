@@ -28,6 +28,7 @@ import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 —
 import { usePlayerStore } from '../stores/playerStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
+import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
   DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
@@ -332,7 +333,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   };
 
   // v3.394 [DiaryDraft] 임시저장 / 불러오기 / 지우기
-  const saveDraft = async () => {
+  const saveDraft = async (silent = false) => {
     if (!useDraft || !draftKey) return;
     const draft = {
       v: 1, saved_at: Date.now(), body, mood, diaryDate, visibility,
@@ -343,7 +344,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     try {
       await AsyncStorage.setItem(draftKey, JSON.stringify(draft));
       console.info('[DiaryDraft] 임시저장', { len: body.length, images: draft.images.length, track: !!draft.attached });
-      showAlert('임시저장', '임시저장했어요.\n다음에 일기 쓰기를 열면 이어서 쓸 수 있어요.');
+      if (!silent) showAlert('임시저장', '임시저장했어요.\n다음에 일기 쓰기를 열면 이어서 쓸 수 있어요.');
     } catch (err: any) {
       console.error('[DiaryDraft] 임시저장 실패', { message: err?.message });
       showAlert('오류', '임시저장하지 못했어요. 잠시 후 다시 시도해주세요.');
@@ -385,6 +386,21 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useDraft, draftKey]);
+
+  // v3.395 [DiarySong] 이 일기로 노래 만들기 — 새 일기는 임시저장해 두고(돌아와 이어 쓰기) 작사 디렉터로
+  const goDiarySong = () => {
+    const text = body.trim();
+    if (!text) { showAlert('알림', '먼저 일기를 써 주세요. 쓴 내용이 노래의 주제가 돼요.'); return; }
+    showAlert('이 일기로 노래 만들기', useDraft
+      ? '쓰던 일기는 임시저장해 둘게요. 작사 디렉터의 주제 질문에 일기 내용이 미리 들어가 있어요.'
+      : '작사 디렉터의 주제 질문에 일기 내용이 미리 들어가 있어요.', [
+      { text: '취소', style: 'cancel' },
+      { text: '노래 만들러 가기', onPress: async () => {
+        if (useDraft) await saveDraft(true);
+        startDiarySongFlow(navigation, text);
+      } },
+    ]);
+  };
 
   // v3.389 [Diary]: 저장 후 — 오늘 별을 받았으면 앱 내 다이얼로그로 알리고 닫기
   const finishWithReward = (reward?: { awarded?: number } | null) => {
@@ -511,7 +527,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.lg, marginRight: 12 }}>
           {/* v3.394 [DiaryDraft] 저장 옆 임시저장(새 일기만) */}
           {useDraft ? (
-            <TouchableOpacity onPress={saveDraft} disabled={posting} accessibilityLabel="일기 임시저장">
+            <TouchableOpacity onPress={() => saveDraft()} disabled={posting} accessibilityLabel="일기 임시저장">
               <AppText variant="body" tone="secondary">임시저장</AppText>
             </TouchableOpacity>
           ) : null}
@@ -605,13 +621,24 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             <AppText variant="caption" style={{ flex: 1, color: !showRewardHint || rewardedToday === null ? colors.text.muted
               : rewardedToday ? colors.text.muted : diaryRewardEligible(body) ? colors.status.success : colors.accent.secondary }}>
               {!showRewardHint || rewardedToday === null ? ''
-                : rewardedToday ? '오늘 일기 별은 이미 받았어요'
+                : rewardedToday ? '오늘 일기 스타는 이미 받았어요'
                 : diaryRewardEligible(body) ? `✓ 저장하면 +${DIARY_REWARD}⭐ 받아요`
-                : diaryCharCount(body) >= DIARY_MIN_CHARS ? '같은 글자만 반복하면 별을 받을 수 없어요'
+                : diaryCharCount(body) >= DIARY_MIN_CHARS ? '같은 글자만 반복하면 스타를 받을 수 없어요'
                 : `${DIARY_MIN_CHARS}자 이상 쓰면 +${DIARY_REWARD}⭐`}
             </AppText>
             <AppText variant="caption" tone="muted">{diaryCharCount(body)}자</AppText>
           </View>
+        ) : null}
+        {/* v3.395 [DiarySong](대표): 쓴 일기로 노래를 만들 수 있다는 안내 + 작사 디렉터 직행(주제 칸에 일기 글) */}
+        {isDiary ? (
+          <TouchableOpacity style={styles.songCard} onPress={goDiarySong} activeOpacity={0.8} accessibilityLabel="이 일기로 노래 만들기">
+            <Feather name="music" size={16} color={colors.accent.secondary} />
+            <View style={{ flex: 1 }}>
+              <AppText variant="footnote" style={{ color: colors.accent.secondary, fontWeight: '700' }}>이 일기로 노래 만들기</AppText>
+              <AppText variant="caption" tone="muted">쓴 일기가 노래 가사의 주제가 돼요. 작사 디렉터가 이어서 도와줘요.</AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.text.muted} />
+          </TouchableOpacity>
         ) : null}
 
         {/* 첨부된 곡 — 차트와 동일한 TrackRow. v3.115: community는 track 블록 400 → 첨부 UI 숨김 */}
@@ -627,8 +654,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ) : (
           <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('attach'); setPickerOpen(true); }} accessibilityLabel="음악 첨부">
-            <Feather name="music" size={18} color={colors.accent.primary} />
-            <AppText variant="body" tone="accent">{isDiary ? '오늘의 BGM 붙이기' : '음악 첨부'}</AppText>
+            <Feather name="music" size={15} color={colors.accent.primary} />
+            <AppText variant="footnote" tone="accent">{isDiary ? '오늘의 BGM 붙이기' : '음악 첨부'}</AppText>
           </TouchableOpacity>
         )}
 
@@ -637,8 +664,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
         {!isCommunity && !isChild ? (
           <TouchableOpacity style={styles.attachBtn} onPress={() => { void pickImage(); }} accessibilityLabel="사진 첨부">
-            <Feather name="image" size={18} color={colors.accent.primary} />
-            <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
+            <Feather name="image" size={15} color={colors.accent.primary} />
+            <AppText variant="footnote" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
           </TouchableOpacity>
         ) : null}
 
@@ -678,16 +705,16 @@ export default function FeedComposeScreen({ navigation, route }: any) {
 
         {/* v3.70: 내가 만든 곡의 가사를 클립보드로 복사 */}
         <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('lyrics'); setPickerOpen(true); }} accessibilityLabel="내 가사 복사">
-          <Feather name="copy" size={18} color={colors.accent.primary} />
-          <AppText variant="body" tone="accent">내 가사 복사</AppText>
+          <Feather name="copy" size={15} color={colors.accent.primary} />
+          <AppText variant="footnote" tone="accent">내 가사 복사</AppText>
         </TouchableOpacity>
 
         {/* v3.70: 아티스트 착장 아이템 첨부(공구/광고) — 내 곡 선택 → 그 곡의 착장에서 선택
             v3.232 K9(D2): 어린이는 아이템(구매 링크) 첨부 없음 */}
         {!isChild && (
         <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('item'); setItemChoices(null); setPickerOpen(true); }} accessibilityLabel="아이템 첨부">
-          <Feather name="shopping-bag" size={18} color={colors.accent.primary} />
-          <AppText variant="body" tone="accent">착장 아이템 첨부</AppText>
+          <Feather name="shopping-bag" size={15} color={colors.accent.primary} />
+          <AppText variant="footnote" tone="accent">착장 아이템 첨부</AppText>
         </TouchableOpacity>
         )}
 
@@ -725,7 +752,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         {/* v3.389 [Diary]: 일기 공개 범위 3가지(전체·팔로워만·나만 보기) */}
         {isDiary ? (
           <View style={styles.scopeBox}>
-            <AppText variant="callout">누가 볼 수 있나요</AppText>
+            <AppText variant="bodyStrong">누가 볼 수 있나요</AppText>
             <View style={styles.scopeChips}>
               {VISIBILITY_OPTIONS.map((o) => (
                 <Tag key={o.key} label={o.label} selected={visibility === o.key} onPress={() => setVisibility(o.key)} />
@@ -885,10 +912,11 @@ const styles = StyleSheet.create({
     color: colors.text.primary, fontSize: 15, lineHeight: 22,
     minHeight: 140, paddingVertical: spacing.md,
   },
+  // v3.395(대표): 첨부 버튼이 앱 다른 화면보다 커 보여 글자 12·아이콘 15·높이 축소
   attachBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
     borderWidth: 1, borderColor: colors.accent.primary, borderRadius: radius.lg,
-    paddingVertical: spacing.md, marginTop: spacing.md,
+    paddingVertical: spacing.sm, marginTop: spacing.sm,
   },
   attachedBox: {
     marginTop: spacing.md, backgroundColor: colors.bg.surface1, borderRadius: radius.lg,
@@ -918,6 +946,11 @@ const styles = StyleSheet.create({
   moodItemOn: { backgroundColor: colors.bg.surface2, borderWidth: 1.5, borderColor: colors.accent.primary },
   moodEmoji: { fontSize: 22, lineHeight: 28 },
   countRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  songCard: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md,
+    padding: spacing.md, borderRadius: radius.lg, backgroundColor: 'rgba(251,191,36,0.08)',
+    borderWidth: 1, borderColor: 'rgba(251,191,36,0.3)',
+  },
   sourceRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   // v3.70: 착장 아이템 행(선택 목록·첨부 미리보기 공용)
   itemPreview: {

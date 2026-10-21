@@ -117,8 +117,8 @@ export const CHARGE_UNCONFIRMED_BODY = '잠시 후 다시 확인하거나 스타
 
 /** 실패 확정 시 과금 안내 한 줄 — refunded===true / notCharged===true일 때만 단정 */
 export function chargeNotice(refunded?: boolean | null, notCharged?: boolean | null): string {
-  if (refunded === true) return '사용된 별은 자동으로 환불됐어요.';
-  if (notCharged === true) return '별은 차감되지 않았어요.';
+  if (refunded === true) return '사용된 스타는 자동으로 환불됐어요.';
+  if (notCharged === true) return '스타는 차감되지 않았어요.';
   return '스타 내역을 확인해 주세요.';
 }
 
