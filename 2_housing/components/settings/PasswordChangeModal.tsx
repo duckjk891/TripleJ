@@ -1,7 +1,8 @@
 // v3.334 [PasswordChange] 비밀번호 변경 — 설정 '비밀번호 변경' 행(이메일 가입 계정만). 현재 비밀번호 확인 → 새 비밀번호.
 // 서버 POST /auth/me/password(메일 발송 없이 동작). 디자인 = NicknameEditModal 계열. 비밀번호 값·길이 로그 금지.
 import { useEffect, useRef, useState } from 'react';
-import { Modal, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { showAlert } from '../../utils/appAlert';
@@ -55,7 +56,7 @@ export default function PasswordChangeModal({ visible, onClose }: Props) {
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => !busy && onClose()}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={() => !busy && onClose()}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.overlay}>
           <View style={styles.box}>
@@ -82,7 +83,7 @@ export default function PasswordChangeModal({ visible, onClose }: Props) {
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

@@ -1,7 +1,8 @@
 // [ReleaseTitleConfirmModal] v3.309 발매 전 마지막 제목 확인(대표 10-09) — 저장=발매(차트 공개)라 발매 후에는 제목을 바꿀 수 없다.
 // "발매하면 제목 수정이 불가합니다" 안내 + 현재 제목 표시 + 이 팝업에서 한 번 편집할 기회. [취소][이 제목으로 발매].
 import { useEffect, useState } from 'react';
-import { Modal, View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from './ui';
@@ -30,7 +31,7 @@ export default function ReleaseTitleConfirmModal({ visible, initialTitle, confir
   const changed = normalized !== normalizeReleaseTitle(initialTitle);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.overlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onCancel} accessibilityLabel="닫기" />
@@ -67,7 +68,7 @@ export default function ReleaseTitleConfirmModal({ visible, initialTitle, confir
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

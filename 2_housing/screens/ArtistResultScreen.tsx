@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Modal,
   Dimensions,
   StatusBar,
   Animated,
@@ -18,6 +17,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1342,7 +1342,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       />
 
       {/* v3.103(B-3): ready 클론 선택 팝업 — voiceStore.clones 재사용 (앱 내 다이얼로그) */}
-      <Modal
+      <AppModal
         visible={voicePickerVisible}
         transparent
         animationType="fade"
@@ -1522,10 +1522,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      </AppModal>
 
       {/* v3.103: 프로필(이름·성별) 편집 — PATCH /character/{cid} (앱 내 다이얼로그) */}
-      <Modal
+      <AppModal
         visible={editVisible}
         transparent
         animationType="fade"
@@ -1599,7 +1599,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </View>
         </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* 에러 알림 (단일 확인 버튼) */}
       <ConfirmDialog
@@ -1717,7 +1717,7 @@ function ZoomModal({
   }, [visible]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <StatusBar hidden />
       <View style={styles.zoomOverlay}>
         {/* 이미지 레이어: 탭 → 위치 잡기 + 확대 / 드래그 → 이동 */}
@@ -1768,7 +1768,7 @@ function ZoomModal({
           </AppText>
         </View>
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

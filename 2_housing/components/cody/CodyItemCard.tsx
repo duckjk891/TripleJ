@@ -2,7 +2,8 @@
 // 유지: v3.124 선택됨(강조 테두리+체크 배지), 위시 하트(샘플 숨김, v3.176 채움 보라), v3.109 판매처 보기.
 // 변경(PLAN D): 배지 = 실제 브랜드(brand, advertiser_nickname은 폴백), 색상 잔재 숨김(매퍼가 정리), 가격 표시.
 import { useState } from 'react';
-import { View, TouchableOpacity, Image, Modal, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
@@ -114,7 +115,7 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
       ) : null}
     </TouchableOpacity>
     {zoom && url ? (
-      <Modal visible transparent animationType="fade" onRequestClose={() => setZoom(false)}>
+      <AppModal visible transparent animationType="fade" onRequestClose={() => setZoom(false)}>
         <TouchableOpacity style={zoomStyles.overlay} activeOpacity={1} onPress={() => setZoom(false)} accessibilityLabel="크게 보기 닫기">
           <Image source={{ uri: url }} style={zoomStyles.big} resizeMode="contain" />
           <AppText style={zoomStyles.name} numberOfLines={2}>{brand ? `${brand} · ` : ''}{item.product_name || item.name}</AppText>
@@ -127,7 +128,7 @@ export default function CodyItemCard({ item, isPicked, wished, wishBusy, onPick,
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
     ) : null}
     </>
   );

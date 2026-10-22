@@ -22,8 +22,8 @@ import {
   RefreshControl,
   ScrollView,
   Linking,
-  Modal,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1198,7 +1198,7 @@ export default function MyMusicScreen({ navigation }: any) {
       />
 
       {/* v3.269 [30]: 아티스트 재지정 시트 */}
-      <Modal visible={!!retagTrack} transparent animationType="slide" onRequestClose={() => setRetagTrack(null)}>
+      <AppModal visible={!!retagTrack} transparent animationType="slide" onRequestClose={() => setRetagTrack(null)}>
         <TouchableOpacity style={styles.retagBackdrop} activeOpacity={1} onPress={() => setRetagTrack(null)}>
           <TouchableOpacity style={styles.retagSheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: 4 }}>아티스트 지정</AppText>
@@ -1222,10 +1222,10 @@ export default function MyMusicScreen({ navigation }: any) {
             <Button label="닫기" variant="tonal" fullWidth disabled={retagBusy} onPress={() => setRetagTrack(null)} />
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* v3.269 [33]: 통계 상세 시트 — 팔로워/팔로잉 목록 · 재생 성적표 */}
-      <Modal visible={!!statSheet} transparent animationType="slide" onRequestClose={() => setStatSheet(null)}>
+      <AppModal visible={!!statSheet} transparent animationType="slide" onRequestClose={() => setStatSheet(null)}>
         <TouchableOpacity style={styles.retagBackdrop} activeOpacity={1} onPress={() => setStatSheet(null)}>
           <TouchableOpacity style={styles.retagSheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: 12 }}>
@@ -1275,7 +1275,7 @@ export default function MyMusicScreen({ navigation }: any) {
             <Button label="닫기" variant="tonal" fullWidth onPress={() => setStatSheet(null)} />
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
     </View>
   );
 }

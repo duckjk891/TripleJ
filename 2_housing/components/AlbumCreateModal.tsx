@@ -3,7 +3,8 @@
 //   cover_source=auto면 첫 곡 커버 자동 차용. 커버 업로드/AI 생성은 생성 후 앨범 상세 '관리 > 커버 변경'에서.
 // 순서는 선택 순서 + 위/아래 버튼(드래그 라이브러리 신규 도입 금지 — dnd-kit 대체).
 import { useState, useEffect } from 'react';
-import { View, Modal, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
@@ -90,7 +91,7 @@ export default function AlbumCreateModal({ visible, onClose, onCreated }: Props)
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <View style={styles.backdrop}>
@@ -188,7 +189,7 @@ export default function AlbumCreateModal({ visible, onClose, onCreated }: Props)
         </View>
       </View>
     
-      </KeyboardAvoidingView></Modal>
+      </KeyboardAvoidingView></AppModal>
   );
 }
 

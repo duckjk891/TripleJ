@@ -3,7 +3,8 @@
 // 다운로드: 일반 화질(16:9) / SNS용(9:16) / 카톡 프로필(15초) / 음원(mp3, 로그인 필요)
 // 영상은 서버가 ffmpeg로 만들며 최초 1~2분 걸린다(캐시되면 즉시).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import * as FileSystem from 'expo-file-system/legacy';
 import { saveFileToMaidolFolder } from '../utils/nativeSave';
@@ -224,7 +225,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
   );
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => !busy && onClose()}>
         {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
         <TouchableOpacity style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xxl }]} activeOpacity={1} onPress={() => {}}>
@@ -257,7 +258,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
           )}
         </TouchableOpacity>
       </TouchableOpacity>
-    </Modal>
+    </AppModal>
   );
 }
 

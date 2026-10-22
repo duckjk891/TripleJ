@@ -3,7 +3,8 @@
 // 계약: 백엔드 image 블록 { type:'image', object_name, image_url } — image_url 은
 // proxy 모드면 상대경로(/api/upload/cover-preview/..), presign 모드면 절대 URL.
 import { useEffect, useState } from 'react';
-import { View, Image, Modal, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from '../ui';
 import { BACKEND_BASE_URL } from '../../services/api';
 import { colors } from '../../theme/colors';
@@ -47,14 +48,14 @@ export default function FeedImageBlock({ uri }: Props) {
       </TouchableOpacity>
 
       {/* 크게 보기 — 앱 내 전체 화면 모달 (CoverLibraryScreen 뷰어와 동일 관행) */}
-      <Modal visible={viewerOpen} transparent animationType="fade" onRequestClose={() => setViewerOpen(false)}>
+      <AppModal visible={viewerOpen} transparent animationType="fade" onRequestClose={() => setViewerOpen(false)}>
         <TouchableOpacity style={styles.viewerBackdrop} activeOpacity={1} onPress={() => setViewerOpen(false)}>
           <Image source={{ uri }} style={styles.viewerImage} resizeMode="contain" />
           <TouchableOpacity style={styles.viewerCloseBtn} onPress={() => setViewerOpen(false)} accessibilityLabel="닫기">
             <AppText variant="footnote" style={styles.viewerCloseText}>닫기</AppText>
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
     </View>
   );
 }

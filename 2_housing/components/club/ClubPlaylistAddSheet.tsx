@@ -2,7 +2,8 @@
 // 탭 [내 곡](GET /tracks/my) · [곡 검색](GET /tracks/search) → [담기] = POST /playlists/{id}/tracks {track_id}.
 // 이미 담긴 곡은 '담김'. 서버 권한(멤버만·남의 비공개 곡 거부)은 그대로 — 거부 사유는 서버 문구로 안내.
 import { useEffect, useRef, useState } from 'react';
-import { View, Modal, TextInput, TouchableOpacity, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import api from '../../services/api';
@@ -89,7 +90,7 @@ export default function ClubPlaylistAddSheet({ visible, playlistId, playlistTitl
   const data = tab === 'mine' ? (mine || []) : results;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} accessibilityLabel="뒤로" style={{ padding: 4, marginRight: spacing.sm }}>
@@ -162,7 +163,7 @@ export default function ClubPlaylistAddSheet({ visible, playlistId, playlistTitl
           />
         )}
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

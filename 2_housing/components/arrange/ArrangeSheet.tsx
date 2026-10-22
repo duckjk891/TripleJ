@@ -3,7 +3,8 @@
 // "원곡 멜로디 유지" 3단(조금/보통/많이 → audioWeight). 하나 이상 골라야 [⭐N 편곡하기] 활성.
 // 요청·⭐ 확인·오류 처리는 호출 화면(MusicResult)이 담당 — 이 시트는 입력만 모은다.
 import { useEffect, useState } from 'react';
-import { Modal, View, ScrollView, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText, Button, Tag } from '../ui';
@@ -58,7 +59,7 @@ export default function ArrangeSheet({ visible, currentGenre, sourceLabel, cost,
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior="padding"
@@ -153,7 +154,7 @@ export default function ArrangeSheet({ visible, currentGenre, sourceLabel, cost,
           </TouchableOpacity>
         </TouchableOpacity>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

@@ -7,9 +7,19 @@
 //   owner 전용 '크루 홍보하기' 시트(장르·분위기 칩 합계 1~5 + 한 줄 메시지 → POST /clubs/{id}/promote).
 import { useCallback, useEffect, useState, useRef } from 'react';
 import {
-  View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl,
-  StyleSheet, Modal, TextInput, KeyboardAvoidingView, ScrollView, Switch, Image,
+  View,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  KeyboardAvoidingView,
+  ScrollView,
+  Switch,
+  Image,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -1488,7 +1498,7 @@ export default function ClubHomeScreen() {
       />
 
       {/* 클럽 플레이리스트 만들기 — PlaylistScreen 이름 변경 모달 관행(KAV padding) */}
-      <Modal visible={showPlCreate} transparent animationType="fade" onRequestClose={() => setShowPlCreate(false)}>
+      <AppModal visible={showPlCreate} transparent animationType="fade" onRequestClose={() => setShowPlCreate(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
           {/* v3.274 [49]: 카드 내부 탭 닫힘 결함 — 백드롭을 형제 absoluteFill 로 분리(AnswerEditModal 패턴) */}
           <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
@@ -1515,10 +1525,10 @@ export default function ClubHomeScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* v3.343 플리 이름 편집 */}
-      <Modal visible={plRenameOpen} transparent animationType="fade" onRequestClose={() => setPlRenameOpen(false)}>
+      <AppModal visible={plRenameOpen} transparent animationType="fade" onRequestClose={() => setPlRenameOpen(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
           <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
             <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setPlRenameOpen(false)} accessibilityLabel="이름 편집 닫기" />
@@ -1545,10 +1555,10 @@ export default function ClubHomeScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* v3.296 [ClubGenre] 크루 정보 수정 팝업 — 장르(최대 3)·소개(300자) */}
-      <Modal visible={editInfoOpen} transparent animationType="fade" onRequestClose={() => setEditInfoOpen(false)}>
+      <AppModal visible={editInfoOpen} transparent animationType="fade" onRequestClose={() => setEditInfoOpen(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
           <View style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]}>
             <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setEditInfoOpen(false)} accessibilityLabel="정보 수정 닫기" />
@@ -1578,10 +1588,10 @@ export default function ClubHomeScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* v3.247 운영자 위임 — 후보 목록 바텀시트(닉네임·활동 요약, 자격 미달은 흐리게+사유) */}
-      <Modal visible={transferOpen} transparent animationType="slide" onRequestClose={() => setTransferOpen(false)}>
+      <AppModal visible={transferOpen} transparent animationType="slide" onRequestClose={() => setTransferOpen(false)}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setTransferOpen(false)}>
           <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: spacing.xs }}>운영자 위임</AppText>
@@ -1635,10 +1645,10 @@ export default function ClubHomeScreen() {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* v3.252 가입 신청 목록 — owner 전용 바텀시트(닉네임·신청일·was_kicked 표시, [승인]/[거절]) */}
-      <Modal visible={joinReqOpen} transparent animationType="slide" onRequestClose={() => setJoinReqOpen(false)}>
+      <AppModal visible={joinReqOpen} transparent animationType="slide" onRequestClose={() => setJoinReqOpen(false)}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setJoinReqOpen(false)}>
           <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: spacing.xs }}>가입 신청</AppText>
@@ -1689,10 +1699,10 @@ export default function ClubHomeScreen() {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* v3.261 크루 홍보 — owner 전용 바텀시트(키워드 칩 합계 1~5 + 한 줄 메시지 100자) */}
-      <Modal visible={promoOpen} transparent animationType="slide" onRequestClose={() => setPromoOpen(false)}>
+      <AppModal visible={promoOpen} transparent animationType="slide" onRequestClose={() => setPromoOpen(false)}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setPromoOpen(false)}>
           <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
             <AppText variant="title3" style={{ marginBottom: spacing.xs }}>{`${CLUB_LABEL} 홍보하기`}</AppText>
@@ -1737,7 +1747,7 @@ export default function ClubHomeScreen() {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* v3.249 멤버 신고 — 기존 ReportModal 재사용(targetType 'club_member' + 크루 컨텍스트) */}
       <ReportModal

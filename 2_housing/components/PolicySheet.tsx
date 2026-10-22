@@ -4,7 +4,8 @@
 //   'sheet'(바텀시트: 헤더 하단까지만 — DialogueScreen 창작 과정 기록 안내가 상단바를 덮던 침범 봉합).
 //   시트 관행(TrackActionSheet 등) 준수: transparent Modal + backdrop 0.6 + flex-end +
 //   maxHeight = winH − topLimit − spacing.md + paddingBottom insets.bottom+spacing.xl.
-import { Modal, View, TouchableOpacity, ScrollView, StyleSheet, Linking, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ScrollView, StyleSheet, Linking, useWindowDimensions } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from './ui';
@@ -33,7 +34,7 @@ export default function PolicySheet({ visible, title, body, onClose, variant = '
     // 규칙: 시트 상단 ≥ 헤더 하단 — maxHeight 로 강제(내용이 짧으면 더 낮게 붙는다)
     const maxHeight = Math.max(0, winH - topLimit - spacing.md);
     return (
-      <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
+      <AppModal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} accessibilityLabel="닫기 배경">
           <TouchableOpacity
             style={[styles.sheet, { maxHeight, paddingBottom: insets.bottom + spacing.xl }]}
@@ -53,12 +54,12 @@ export default function PolicySheet({ visible, title, body, onClose, variant = '
             </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
     );
   }
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
           <AppText variant="title3">{title}</AppText>
@@ -70,7 +71,7 @@ export default function PolicySheet({ visible, title, body, onClose, variant = '
           <AppText variant="footnote" tone="secondary" style={styles.text}>{body}</AppText>
         </ScrollView>
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

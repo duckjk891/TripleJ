@@ -6,9 +6,19 @@ import { usePasteImages, type PastedAsset } from '../utils/usePasteImages'; // v
 // v3.273: 다중 선택(한 번에 최대 5장, 총 5장 — 서버 MAX_IMAGE_BLOCKS=5와 짝) — 각 파일 개별 검증·병렬 업로드.
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
-  View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
-  ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, Switch,
+  View,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  Image,
+  ActivityIndicator,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  Switch,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -559,7 +569,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       </ScrollView>
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
-      <Modal visible={pickerOpen} animationType="slide" onRequestClose={() => setPickerOpen(false)}>
+      <AppModal visible={pickerOpen} animationType="slide" onRequestClose={() => setPickerOpen(false)}>
         <View style={[styles.pickerContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => setPickerOpen(false)} accessibilityLabel="곡 선택 닫기" style={{ padding: 4 }}>
@@ -634,7 +644,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             />
           )}
         </View>
-      </Modal>
+      </AppModal>
     </KeyboardAvoidingView>
   );
 }

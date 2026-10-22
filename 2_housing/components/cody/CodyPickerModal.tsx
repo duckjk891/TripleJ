@@ -4,7 +4,8 @@
 // 피커 state(카테고리·탭·보기/필터·성별 토글·아이템·로딩)와 open/pick/close/jump 핸들러는 화면이 소유하고
 // props로 받는다(피커를 닫아도 카테고리별 보기·필터 유지 — PLAN D). 여기서는 파생 계산만 한다.
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
-import { View, TouchableOpacity, Image, Modal, FlatList, ActivityIndicator, ScrollView } from 'react-native';
+import { View, TouchableOpacity, Image, FlatList, ActivityIndicator, ScrollView } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../ui';
@@ -198,7 +199,7 @@ export default function CodyPickerModal({
 
   // 카테고리별 아이템 선택 모달
   return (
-    <Modal
+    <AppModal
       visible={pickerCat !== null}
       transparent
       animationType="slide"
@@ -385,6 +386,6 @@ export default function CodyPickerModal({
           )}
         </View>
       </View>
-    </Modal>
+    </AppModal>
   );
 }

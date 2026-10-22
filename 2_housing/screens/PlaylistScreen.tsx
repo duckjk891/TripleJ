@@ -9,10 +9,10 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
-  Modal,
   TextInput,
   KeyboardAvoidingView,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -282,7 +282,7 @@ export default function PlaylistScreen({ navigation }: any) {
         <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="담은 곡이 없습니다" hint="차트에서 곡을 담아보세요!" />
       )}
       {/* 이름 변경 모달 */}
-      <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
+      <AppModal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
         {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         {/* v3.274 [49]: 카드 내부(제목·여백·웹 입력칸) 탭이 닫기로 흡수되던 결함 — 백드롭을 형제 absoluteFill 로 분리(AnswerEditModal 패턴) */}
@@ -309,7 +309,7 @@ export default function PlaylistScreen({ navigation }: any) {
           </View>
         </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* 곡 더보기(⋮) — 차트·검색과 동일한 공용 시트 + 이 화면 고유의 '플레이리스트에서 제거' */}
       <TrackActionSheet

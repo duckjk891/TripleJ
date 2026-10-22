@@ -7,11 +7,11 @@ import {
   Image,
   ScrollView,
   useWindowDimensions,
-  Modal,
   TouchableOpacity,
   Animated,
   Easing,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1196,7 +1196,7 @@ export default function MapScreen({ navigation }: Props) {
       {/* v3.107: 대기열 단계 팝업·광고 보상 팝업 제거 — 결과는 각 로딩 화면이 즉시 보여줌 */}
 
       {/* 디렉터 선택 모달 (작사 2명 이상 영입 시) */}
-      <Modal
+      <AppModal
         visible={directorPickerFor !== null}
         transparent
         animationType="fade"
@@ -1277,7 +1277,7 @@ export default function MapScreen({ navigation }: Props) {
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      </AppModal>
 
       {/* v3.213: 작업실 튜토리얼 6스텝 — 로그인 시에만(게스트는 guestTouchOverlay 잠금과 정합).
           onStepChange: 화면 밖 디렉터(이미지·영상) 스텝에서 자동 스크롤 후 anchor 재계산.
