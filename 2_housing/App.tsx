@@ -127,6 +127,7 @@ import SignupCompleteGate from './components/auth/SignupCompleteGate'; // v3.333
 import AccountMergeHost from './components/auth/AccountMergeHost'; // v3.352 1인 1계정 통합 화면
 import IdentityNudgeHost from './components/auth/IdentityNudgeHost'; // v3.352 ⭐ 본인인증 유도
 import TrackingPromptHost from './components/TrackingPromptHost'; // v3.384 [ATT] 로그인 직후 추적 허용 1회
+import { withScreenDialogHost } from './components/ScreenDialogHost'; // v3.397 모달 화면 안 다이얼로그(iOS)
 import { captureWebIdentityReturn } from './utils/identityReturn'; // v3.349
 import PolicyReconsentGate from './components/consent/PolicyReconsentGate'; // v3.340 처리방침 재동의
 import PolicyConsentHost from './components/consent/PolicyConsentHost'; // v3.341 디렉터 진입 동의 게이트
@@ -169,6 +170,12 @@ import { initCrewPreviewWatcher } from './utils/crewPreview';
 const GatedCommunityScreen = withSocialAgeGate(CommunityScreen, 'Community');
 const GatedClubHomeScreen = withSocialAgeGate(ClubHomeScreen, 'ClubHome');
 const GatedFeedDetailScreen = withSocialAgeGate(FeedDetailScreen, 'FeedDetail');
+// v3.397 [ModalTurn]: 네이티브 모달 화면은 화면 안에서 다이얼로그를 띄운다(iOS — 루트 다이얼로그는 모달 화면 위에 못 뜸)
+const PlayerScreenD = withScreenDialogHost(PlayerScreen, 'Player');
+const SettingsScreenD = withScreenDialogHost(SettingsScreen, 'Settings');
+const FeedComposeScreenD = withScreenDialogHost(FeedComposeScreen, 'FeedCompose');
+const ShareComposeScreenD = withScreenDialogHost(ShareComposeScreen, 'ShareCompose');
+const DialogueScreenD = withScreenDialogHost(DialogueScreen, 'Dialogue');
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -282,7 +289,7 @@ function StudioNavigator() {
       <StudioStack.Screen name="Map" component={MapScreen} />
       <StudioStack.Screen
         name="Dialogue"
-        component={DialogueScreen}
+        component={DialogueScreenD}
         options={{
           presentation: 'transparentModal',
           animation: 'fade',
@@ -1096,17 +1103,17 @@ export default function App() {
             <RootStack.Screen name="ClubChat" component={ClubChatScreen} />
             <RootStack.Screen
               name="Player"
-              component={PlayerScreen}
+              component={PlayerScreenD}
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen
               name="Settings"
-              component={SettingsScreen}
+              component={SettingsScreenD}
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen name="UserChannel" component={UserChannelScreen} options={{ headerShown: true, headerTitle: '채널', headerStyle: { backgroundColor: colors.bg.deepest }, headerTintColor: colors.text.primary, headerShadowVisible: false }} />
             {/* v3.73: 피드작성도 다른 페이지처럼 상단바에 타이틀 — X(취소)는 좌측, 등록은 화면에서 headerRight로 주입 */}
-            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={({ navigation, route }) => ({
+            <RootStack.Screen name="FeedCompose" component={FeedComposeScreenD} options={({ navigation, route }) => ({
               presentation: 'modal', animation: 'slide_from_bottom',
               headerShown: true,
               // v3.115: 커뮤니티(공지) 모드면 타이틀도 구분 · v3.245: 클럽 글쓰기 타이틀
@@ -1143,7 +1150,7 @@ export default function App() {
             {/* v3.237 A조: 곡 공유 문구 화면 — 모달 + 네이티브 헤더 '공유하기'(stackHeader 규격, 뒤로 = goBack·수정 시 확인) */}
             <RootStack.Screen
               name="ShareCompose"
-              component={ShareComposeScreen}
+              component={ShareComposeScreenD}
               options={({ navigation }) => ({
                 presentation: 'modal',
                 animation: 'slide_from_bottom',
