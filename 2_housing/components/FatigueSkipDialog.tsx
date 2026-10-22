@@ -16,7 +16,7 @@ import {
   FATIGUE_SKIP_MAX_UNITS,
   type FatigueSkipErrorKind,
 } from '../utils/fatigueSkipPlan';
-import { isRewardedAdSupported, isRewardedSkipAdReady, preloadRewardedSkipAd } from '../hooks/useRewardedSkipAd';
+import { isRewardedAdNoFill, isRewardedAdSupported, isRewardedSkipAdReady, preloadRewardedSkipAd } from '../hooks/useRewardedSkipAd';
 import type { FatigueDirector, FatigueStatus, FatigueSkipResult } from '../types';
 
 /**
@@ -142,6 +142,7 @@ export default function FatigueSkipDialog(props: FatigueSkipDialogProps) {
   const adSkips = Math.max(0, Number(status?.skip_wait_count) || 0);
   const adSupported = isRewardedAdSupported();
   const adReady = adSupported && isRewardedSkipAdReady();
+  const adNoFill = adSupported && !adReady && isRewardedAdNoFill(); // v3.403
   const locked = lockUntil > Date.now();
 
   const changeSelection = (next: number) => {
@@ -486,7 +487,7 @@ export default function FatigueSkipDialog(props: FatigueSkipDialogProps) {
             disabled={busy}
             activeOpacity={0.7}
           >
-            <Text style={styles.secondaryText}>{adReady ? `광고 보고 ${labelMinutes(unitMinutes)} 줄이기` : '광고 준비 중…'}</Text>
+            <Text style={styles.secondaryText}>{adReady ? `광고 보고 ${labelMinutes(unitMinutes)} 줄이기` : adNoFill ? '지금은 볼 수 있는 광고가 없어요' : '광고 준비 중…'}</Text>
           </TouchableOpacity>
         )}
         {adSkips > 0 && (

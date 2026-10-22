@@ -70,6 +70,11 @@ function clearPreload(): void {
 /** 표시 가능한 광고가 준비되어 있는가 */
 export const isRewardedSkipAdReady = (): boolean => !!preloadedAd && preloadedReady;
 
+// v3.403: 마지막 로드가 '보여 줄 광고 없음(no-fill)'으로 끝났는가 — 팝업이 '광고 준비 중…'으로 무한 대기하지 않게
+// (대표 아이폰 10-22 — iOS 광고 단위 no-fill). 새 로드 시작·로드 성공 시 해제.
+let lastNoFill = false;
+export const isRewardedAdNoFill = (): boolean => lastNoFill && !isRewardedSkipAdReady();
+
 // ── v3.232 K5(D1): 어린이 계정 광고 설정 ─────────────────────────────────────
 // 어린이(서버 kids_restricted) 로 광고를 로드할 때만, 로드 전에 전역 RequestConfiguration 을
 // 아동 설정으로 1회 적용한다(tagForChildDirectedTreatment·tagForUnderAgeOfConsent·maxAdContentRating G,
@@ -171,6 +176,7 @@ export function preloadRewardedSkipAd(): void {
         : { serverSideVerificationOptions: { userId, customData: userId } }
       : undefined;
     const ad = admob.RewardedAd.createForAdRequest(adUnitId, requestOptions);
+    lastNoFill = false;
     preloadedAd = ad;
     preloadedForUserId = preloadKey;
     preloadUnsubs.push(
@@ -182,6 +188,7 @@ export function preloadRewardedSkipAd(): void {
     preloadUnsubs.push(
       ad.addAdEventListener(admob.AdEventType.ERROR, (err: any) => {
         console.error('[AdReward] 보상형 광고 로드 실패:', err);
+        if (preloadedAd === ad && /no-fill/i.test(String(err?.code || err?.message || ''))) lastNoFill = true;
         if (preloadedAd === ad) clearPreload();
       })
     );

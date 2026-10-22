@@ -44,7 +44,8 @@
         "image": "./assets/splash-blank-ios.png",
         "resizeMode": "contain",
         "backgroundColor": "#0d0820"
-      }
+      },
+      "backgroundColor": "#0d0820"
     },
     "android": {
       "adaptiveIcon": {

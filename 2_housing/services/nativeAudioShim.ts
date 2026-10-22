@@ -159,6 +159,10 @@ export class NativeShimSound {
   async unloadAsync(): Promise<void> {
     if (this.removed) return;
     this.removed = true;
+    // v3.403: 재생 중인 플레이어를 remove() 만 하면 iOS 에서 소리가 계속 났다(네이티브 플레이어가 잠금화면 등으로
+    //  유지됨) — 다음 곡에서 두 곡 겹침·미니 닫기 무효(대표 아이폰 실기기 10-22). 먼저 멈추고 소리를 끈 뒤 해제한다.
+    try { this.player.pause(); } catch {}
+    try { this.player.volume = 0; } catch {}
     try { this.sub?.remove(); } catch {}
     this.sub = null;
     this.cb = null;
