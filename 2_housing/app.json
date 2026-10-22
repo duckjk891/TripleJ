@@ -39,6 +39,11 @@
       "usesAppleSignIn": true,
       "entitlements": {
         "com.apple.developer.declared-age-range": true
+      },
+      "splash": {
+        "image": "./assets/splash-blank-ios.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#0d0820"
       }
     },
     "android": {
