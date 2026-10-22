@@ -115,12 +115,18 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       .then((r) => setRewardedToday(!!r.data?.rewarded_today))
       .catch(() => setRewardedToday(null)); // 구서버 — 안내 숨김
   }, [isDiary, user]);
-  // v3.396 [DiaryAttachTrack] 곡을 미리 붙여 낙서하기 열기 — route.params.attachTrackId(필수)·attachTrack(선택, 즉시 표시용).
-  // 예: navigation.navigate('FeedCompose', { attachTrackId: '<트랙 id>' }) — ⋮ '낙서장에 공유'(별도 세션) 진입용.
-  // 새 낙서에서만 · 상세(/tracks/{id})로 확인해 남의 비공개 곡은 붙이지 않음(서버도 400). 임시저장 불러오기와 겹치면 이 곡이 우선.
-  const attachTrackId: string | undefined = !isEdit && route?.params?.attachTrackId ? String(route.params.attachTrackId) : undefined;
+  // v3.400 [AttachTrack] 곡을 미리 붙여 글쓰기 열기 — ⋮ '낙서장에 공유'·'크루에 공유'(곡 메뉴 개편 세션) 진입용.
+  //   navigation.navigate('FeedCompose', { attachTrack: { id, title, artist_name, cover_image } })            → 낙서(kind 생략)
+  //   navigation.navigate('FeedCompose', { kind: 'club', clubId, attachTrack: {...} })                        → 크루 게시판 글
+  //   attachTrackId 만 넘겨도 됨. 새 글에서만(수정 무시) · 공지(community)는 곡 불가라 무시.
+  //   곡 객체로 바로 보여 주고 /tracks/{id} 로 다시 확인 — 남의 비공개 곡은 빼고 안내(서버도 400).
+  //   낙서 임시저장 불러오기와 겹치면 공유한 이 곡이 우선(사용자가 방금 고른 곡).
+  const attachTrackId: string | undefined = !isEdit && !isCommunity
+    ? (route?.params?.attachTrackId ? String(route.params.attachTrackId)
+      : route?.params?.attachTrack?.id ? String(route.params.attachTrack.id) : undefined)
+    : undefined;
   useEffect(() => {
-    if (!attachTrackId || !isDiary) return;
+    if (!attachTrackId) return;
     const pre = route?.params?.attachTrack;
     if (pre?.id && String(pre.id) === attachTrackId) setAttached(pre as RowTrack);
     let alive = true;
