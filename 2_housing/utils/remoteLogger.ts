@@ -369,7 +369,24 @@ export function initRemoteLogger(): void {
         g.ErrorUtils.setGlobalHandler((e: any, isFatal?: boolean) => {
           try {
             _enqueue('error', [e?.message || 'global error', { kind: 'ErrorUtils', isFatal: !!isFatal }], e?.stack);
-            void _flush(); // fatal일 수 있으니 즉시 전송 시도(게이트 통과 시)
+            // v3.402: 릴리즈 fatal 은 기본 핸들러가 곧바로 앱을 종료해(RCTFatal) 전송이 늘 유실됐다(대표 아이폰 충돌 10-22,
+            // .ips 에 JS 오류 문장 없음). fatal 이면 전송(진행 중 전송 뒤 한 번 더)을 최대 2.5초 기다린 뒤 기본 핸들러로 넘긴다.
+            if (isFatal && !__DEV__) {
+              let done = false;
+              const finish = () => {
+                if (done) return;
+                done = true;
+                if (typeof prevHandler === 'function') prevHandler(e, isFatal);
+              };
+              Promise.resolve(_inflight)
+                .catch(() => undefined)
+                .then(() => _flush())
+                .catch(() => undefined)
+                .finally(finish);
+              setTimeout(finish, 2500);
+              return;
+            }
+            void _flush(); // 즉시 전송 시도(게이트 통과 시)
           } catch { /* noop */ }
           if (typeof prevHandler === 'function') prevHandler(e, isFatal);
         });

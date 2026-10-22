@@ -45,7 +45,7 @@ import { useArtistStore } from '../stores/artistStore';
 //   mediaSession 트랙 sync는 playback.ts의 store.track 구독 단일 지점으로 이관(개별 호출 제거).
 // v3.235 B6: 공유 링크 진입 웹 자동재생 차단 → '탭해서 듣기' 오버레이(단일 element 동기 play)
 import { isWebAutoplayBlocked, subscribeWebAutoplayBlocked, resumeWebPlaybackFromGesture, webAudioEl } from '../services/webAudioElement';
-import { autoContinueWithRelated, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
+import { autoContinueWithRelated, beginPlaybackLoad, isCurrentPlaybackLoad, consumePreloaded, createTrackSound, discardPreloaded, maybePreloadNext, markAutoAdvance, clearAutoAdvance, noteAutoAdvanceProgress, skipUnplayableOnAutoAdvance } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
@@ -682,6 +682,7 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const loadAndPlay = async (target: TrackData = track) => {
     if (!target?.id) return;
+    const gen = beginPlaybackLoad(); // v3.402: 공용 재생과 같은 세대 — 더 새 재생이 시작되면 이 로드는 폐기
     discardPreloaded('player-load'); // v3.197: 새 재생 — 이전 곡 기준 핀 프리로드 폐기
     clearAutoAdvance(); // v3.225: 직접 재생 — 실패해도 자동 건너뛰기 없음(현행 정지·1탭 복구)
     try {
@@ -703,6 +704,12 @@ export default function PlayerScreen({ route, navigation }: any) {
         { shouldPlay: true },
         onPlaybackStatusUpdate
       );
+      if (!isCurrentPlaybackLoad(gen)) {
+        // v3.402: 로딩 중 미니 '다음'·닫기 등으로 더 새 재생/정지가 왔다 — 이 사운드는 버린다(두 곡 겹침 방지)
+        console.warn('[PlayerScreen] 늦은 로드 폐기', { id: target.id });
+        try { await newSound.unloadAsync(); } catch { /* 무시 */ }
+        return;
+      }
       soundRef.current = newSound;
       setSound(newSound);
       // 전역 playerStore에 저장 (미니 플레이어용)
