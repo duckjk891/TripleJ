@@ -30,7 +30,7 @@ const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string;
   { icon: <Feather name="calendar" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '매일 출석체크', amount: '+10', sub: '5일차 +30 · 10일차 +100', action: 'attendance' },
   { icon: <Feather name="headphones" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '남의 곡 듣기', amount: '+1', sub: '곡마다 하루 1번 · 하루 최대 5곡 · 눌러서 차트로', action: 'chart' }, // v3.394 서버 규칙(charts.py play daily_cap=5) 명시
   // v3.394 [Diary] 일기 쓰기 — 하루 1번 ⭐3(공백 뺀 50자 이상, 서버 diary_daily)
-  { icon: <Feather name="book-open" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '일기 쓰기', amount: '+3', sub: '하루 1번 · 50자 이상 · 눌러서 일기장으로', action: 'diary', newsId: 'diary' },
+  { icon: <Feather name="book-open" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '낙서하기', amount: '+3', sub: '하루 1번 · 50자 이상 · 눌러서 낙서장으로', action: 'diary', newsId: 'diary' },
   { icon: <MaterialCommunityIcons name="rocket-launch-outline" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '내 곡 발매', amount: '+5', sub: '눌러서 작업실로 이동', action: 'studio' },
   // v3.395 [ClubCreateReward] 크루 만들기 — 계정당 1번 ⭐10
   { icon: <Feather name="flag" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '크루 만들기', amount: '+10', sub: '한 번만 · 눌러서 커뮤니티로', action: 'community', newsId: 'club_create' },

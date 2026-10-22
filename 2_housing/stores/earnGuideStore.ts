@@ -16,7 +16,7 @@ export interface EarnNewsItem {
 export const EARN_NEWS_ITEMS: EarnNewsItem[] = [
   { id: 'weekly_mission', title: '주간 미션', short: '내 아티스트로 곡 3곡 발매 ⭐15 · 커버에 내 아티스트 넣어 3개 ⭐5' },
   { id: 'club_album', title: '크루 앨범 참여', short: '크루 테마 앨범에 새 곡을 내서 수록되면 ⭐5' },
-  { id: 'diary', title: '일기 쓰기', short: '하루 1번, 50자 이상 일기를 쓰면 ⭐3' }, // v3.394
+  { id: 'diary', title: '낙서하기', short: '하루 1번, 50자 이상 낙서를 남기면 ⭐3' }, // v3.394
   { id: 'club_create', title: '크루 만들기', short: '크루를 처음 만들면 ⭐10 (한 번만)' }, // v3.395
 ];
 

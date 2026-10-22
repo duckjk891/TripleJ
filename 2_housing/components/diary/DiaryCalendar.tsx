@@ -32,8 +32,8 @@ export default function DiaryCalendar({ month, today, days, selected, streak, st
       <View style={styles.top}>
         <Avatar name={nickname || '나'} uri={avatarUri || null} size={40} />
         <View style={{ flex: 1, marginLeft: spacing.sm }}>
-          <AppText variant="bodyStrong" numberOfLines={1}>{nickname || '내 일기장'}</AppText>
-          <AppText variant="caption" tone="muted">이번 달 일기 {total}편 · 받은 스타 ⭐{stars}</AppText>
+          <AppText variant="bodyStrong" numberOfLines={1}>{nickname || '내 낙서장'}</AppText>
+          <AppText variant="caption" tone="muted">이번 달 낙서 {total}개 · 받은 스타 ⭐{stars}</AppText>
         </View>
         <View style={styles.streak}>
           <AppText variant="caption" tone="muted">연속</AppText>
@@ -71,7 +71,7 @@ export default function DiaryCalendar({ month, today, days, selected, streak, st
               style={[styles.cell, styles.day, has && styles.dayHas, isSel && styles.daySel, future && { opacity: 0.35 }]}
               disabled={future}
               onPress={() => onSelect(ymd)}
-              accessibilityLabel={`${parseInt(ymd.slice(8), 10)}일${has ? ` 일기 ${info.count}편` : ''}`}
+              accessibilityLabel={`${parseInt(ymd.slice(8), 10)}일${has ? ` 낙서 ${info.count}개` : ''}`}
             >
               <AppText variant="caption" style={[styles.dayNum, has && { color: colors.text.secondary }, isToday && styles.todayNum]}>
                 {parseInt(ymd.slice(8), 10)}

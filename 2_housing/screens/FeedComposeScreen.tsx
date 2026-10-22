@@ -32,7 +32,7 @@ import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
   DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
-  backdateOptions, kstToday, visibilityOf, diaryCharCount, diaryRewardEligible, fmtDiaryDate,
+  backdateOptions, kstToday, visibilityOf, diaryCharCount, diaryRewardEligible, fmtDiaryDate, DIARY_SONG_ENABLED,
 } from '../utils/diary';
 
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
@@ -115,6 +115,37 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       .then((r) => setRewardedToday(!!r.data?.rewarded_today))
       .catch(() => setRewardedToday(null)); // 구서버 — 안내 숨김
   }, [isDiary, user]);
+  // v3.396 [DiaryAttachTrack] 곡을 미리 붙여 낙서하기 열기 — route.params.attachTrackId(필수)·attachTrack(선택, 즉시 표시용).
+  // 예: navigation.navigate('FeedCompose', { attachTrackId: '<트랙 id>' }) — ⋮ '낙서장에 공유'(별도 세션) 진입용.
+  // 새 낙서에서만 · 상세(/tracks/{id})로 확인해 남의 비공개 곡은 붙이지 않음(서버도 400). 임시저장 불러오기와 겹치면 이 곡이 우선.
+  const attachTrackId: string | undefined = !isEdit && route?.params?.attachTrackId ? String(route.params.attachTrackId) : undefined;
+  useEffect(() => {
+    if (!attachTrackId || !isDiary) return;
+    const pre = route?.params?.attachTrack;
+    if (pre?.id && String(pre.id) === attachTrackId) setAttached(pre as RowTrack);
+    let alive = true;
+    api.get(`/tracks/${attachTrackId}`)
+      .then((r) => {
+        if (!alive) return;
+        const t = r.data;
+        const mine = String(t?.uploader_id || '') === String(user?.id || '');
+        if (t?.id && (t.is_public !== false || mine)) {
+          setAttached(t as RowTrack);
+          console.info('[DiaryAttachTrack] 곡 미리 첨부', { id: attachTrackId });
+        } else {
+          setAttached(null);
+          showAlert('알림', '이 곡은 비공개라 낙서에 붙일 수 없어요.');
+        }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        console.error('[DiaryAttachTrack] 곡 조회 실패', { id: attachTrackId, status: err?.response?.status });
+        setAttached(null);
+        showAlert('알림', '곡 정보를 불러오지 못했어요. 오늘의 BGM 붙이기로 다시 골라 주세요.');
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachTrackId]);
   // v3.389 [Diary]: 곡 고르기 — [최근 들은 곡](재생 이력) · [내 곡]
   const [pickerSource, setPickerSource] = useState<'recent' | 'mine'>('recent');
   const [recentTracks, setRecentTracks] = useState<RowTrack[] | null>(null);
@@ -344,7 +375,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     try {
       await AsyncStorage.setItem(draftKey, JSON.stringify(draft));
       console.info('[DiaryDraft] 임시저장', { len: body.length, images: draft.images.length, track: !!draft.attached });
-      if (!silent) showAlert('임시저장', '임시저장했어요.\n다음에 일기 쓰기를 열면 이어서 쓸 수 있어요.');
+      if (!silent) showAlert('임시저장', '임시저장했어요.\n다음에 낙서하기를 열면 이어서 쓸 수 있어요.');
     } catch (err: any) {
       console.error('[DiaryDraft] 임시저장 실패', { message: err?.message });
       showAlert('오류', '임시저장하지 못했어요. 잠시 후 다시 시도해주세요.');
@@ -368,7 +399,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         // 날짜는 최근 7일 안일 때만 이어받음(지났으면 오늘)
         if (d.diaryDate && backdateOptions().some((o) => o.ymd === d.diaryDate)) setDiaryDate(d.diaryDate);
         if (d.visibility) setVisibility(d.visibility);
-        if (d.attached?.id) setAttached(d.attached as RowTrack);
+        if (d.attached?.id && !attachTrackId) setAttached(d.attached as RowTrack); // v3.396 공유 진입 곡 우선
         if (Array.isArray(d.images)) {
           setImages(d.images.slice(0, MAX_FEED_IMAGES).map((im: any, i: number) => ({
             key: `draft_${i}_${im.objectName}`, localUri: im.localUri || '', name: im.name || `image_${i}`,
@@ -378,7 +409,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         if (Array.isArray(d.items)) setAttachedItems(d.items);
         console.info('[DiaryDraft] 불러오기', { len: (d.body || '').length });
       };
-      showAlert('임시저장한 일기', '임시저장한 일기가 있어요. 이어서 쓸까요?', [
+      showAlert('임시저장한 낙서', '임시저장한 낙서가 있어요. 이어서 쓸까요?', [
         { text: '새로 쓰기', style: 'cancel', onPress: () => clearDraft() },
         { text: '이어 쓰기', onPress: applyDraft },
       ]);
@@ -390,10 +421,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.395 [DiarySong] 이 일기로 노래 만들기 — 새 일기는 임시저장해 두고(돌아와 이어 쓰기) 작사 디렉터로
   const goDiarySong = () => {
     const text = body.trim();
-    if (!text) { showAlert('알림', '먼저 일기를 써 주세요. 쓴 내용이 노래의 주제가 돼요.'); return; }
-    showAlert('이 일기로 노래 만들기', useDraft
-      ? '쓰던 일기는 임시저장해 둘게요. 작사 디렉터의 주제 질문에 일기 내용이 미리 들어가 있어요.'
-      : '작사 디렉터의 주제 질문에 일기 내용이 미리 들어가 있어요.', [
+    if (!text) { showAlert('알림', '먼저 낙서를 남겨 주세요. 쓴 내용이 노래의 주제가 돼요.'); return; }
+    showAlert('이 낙서로 노래 만들기', useDraft
+      ? '쓰던 낙서는 임시저장해 둘게요. 작사 디렉터의 주제 질문에 낙서 내용이 미리 들어가 있어요.'
+      : '작사 디렉터의 주제 질문에 낙서 내용이 미리 들어가 있어요.', [
       { text: '취소', style: 'cancel' },
       { text: '노래 만들러 가기', onPress: async () => {
         if (useDraft) await saveDraft(true);
@@ -408,7 +439,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (reward?.awarded && reward.awarded > 0) {
       console.info('[Diary] 보상 지급', { awarded: reward.awarded });
       usePointsStore.getState().fetchBalance?.().catch?.(() => {});
-      showAlert(`+${reward.awarded}⭐`, '오늘의 일기 보상을 받았어요.\n내일 또 써 주세요!', [
+      showAlert(`+${reward.awarded}⭐`, '오늘의 낙서 보상을 받았어요.\n내일 또 남겨 주세요!', [
         { text: '확인', onPress: () => navigation.goBack() },
       ]);
       return;
@@ -504,7 +535,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         showAlert('알림', err.response.data.error);
         return;
       }
-      showAlert('오류', `${isCommunity ? '공지' : isClub ? `${CLUB_LABEL} 글` : '일기'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`); // v3.252 리네이밍
+      showAlert('오류', `${isCommunity ? '공지' : isClub ? `${CLUB_LABEL} 글` : '낙서'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`); // v3.252 리네이밍
     } finally {
       setPosting(false);
     }
@@ -527,23 +558,23 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.lg, marginRight: 12 }}>
           {/* v3.394 [DiaryDraft] 저장 옆 임시저장(새 일기만) */}
           {useDraft ? (
-            <TouchableOpacity onPress={() => saveDraft()} disabled={posting} accessibilityLabel="일기 임시저장">
+            <TouchableOpacity onPress={() => saveDraft()} disabled={posting} accessibilityLabel="낙서 임시저장">
               <AppText variant="body" tone="secondary">임시저장</AppText>
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '수정 저장' : isDiary ? '일기 저장' : '등록'}>
+          <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel={isEdit ? '수정 저장' : isDiary ? '낙서 저장' : '등록'}>
             <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? (isEdit || isDiary ? '저장 중…' : '등록 중…') : (isEdit || isDiary ? '저장' : '등록')}</AppText>
           </TouchableOpacity>
         </View>
       ),
-      ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">{isDiary ? '일기 수정' : '글 수정'}</AppText> } : {}),
+      ...(isEdit ? { headerTitle: () => <AppText variant="subtitle">{isDiary ? '낙서 수정' : '글 수정'}</AppText> } : {}),
     });
   });
 
   if (!user) {
     return (
       <View style={styles.container}>
-        <AppText tone="secondary" center style={{ marginTop: 80 }}>로그인 후 일기를 쓸 수 있어요.</AppText>
+        <AppText tone="secondary" center style={{ marginTop: 80 }}>로그인 후 낙서를 남길 수 있어요.</AppText>
       </View>
     );
   }
@@ -607,7 +638,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           placeholder={
             isCommunity ? '구독자에게 알릴 소식을 적어주세요.'
             : isClub ? `${CLUB_LABEL} 멤버들과 나누고 싶은 이야기를 적어주세요.` // v3.252 리네이밍
-            : '오늘 하루는 어땠나요? 들은 노래, 만든 곡, 있었던 일을 적어 보세요.'}
+            : '오늘 하루를 끄적여 보세요. 들은 노래, 만든 곡, 있었던 일 무엇이든요.'}
           placeholderTextColor={colors.text.muted}
           value={body}
           onChangeText={setBody}
@@ -621,7 +652,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             <AppText variant="caption" style={{ flex: 1, color: !showRewardHint || rewardedToday === null ? colors.text.muted
               : rewardedToday ? colors.text.muted : diaryRewardEligible(body) ? colors.status.success : colors.accent.secondary }}>
               {!showRewardHint || rewardedToday === null ? ''
-                : rewardedToday ? '오늘 일기 스타는 이미 받았어요'
+                : rewardedToday ? '오늘 낙서 스타는 이미 받았어요'
                 : diaryRewardEligible(body) ? `✓ 저장하면 +${DIARY_REWARD}⭐ 받아요`
                 : diaryCharCount(body) >= DIARY_MIN_CHARS ? '같은 글자만 반복하면 스타를 받을 수 없어요'
                 : `${DIARY_MIN_CHARS}자 이상 쓰면 +${DIARY_REWARD}⭐`}
@@ -630,12 +661,12 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ) : null}
         {/* v3.395 [DiarySong](대표): 쓴 일기로 노래를 만들 수 있다는 안내 + 작사 디렉터 직행(주제 칸에 일기 글) */}
-        {isDiary ? (
-          <TouchableOpacity style={styles.songCard} onPress={goDiarySong} activeOpacity={0.8} accessibilityLabel="이 일기로 노래 만들기">
+        {isDiary && DIARY_SONG_ENABLED ? (
+          <TouchableOpacity style={styles.songCard} onPress={goDiarySong} activeOpacity={0.8} accessibilityLabel="이 낙서로 노래 만들기">
             <Feather name="music" size={16} color={colors.accent.secondary} />
             <View style={{ flex: 1 }}>
-              <AppText variant="footnote" style={{ color: colors.accent.secondary, fontWeight: '700' }}>이 일기로 노래 만들기</AppText>
-              <AppText variant="caption" tone="muted">쓴 일기가 노래 가사의 주제가 돼요. 작사 디렉터가 이어서 도와줘요.</AppText>
+              <AppText variant="footnote" style={{ color: colors.accent.secondary, fontWeight: '700' }}>이 낙서로 노래 만들기</AppText>
+              <AppText variant="caption" tone="muted">쓴 낙서가 노래 가사의 주제가 돼요. 작사 디렉터가 이어서 도와줘요.</AppText>
             </View>
             <Feather name="chevron-right" size={16} color={colors.text.muted} />
           </TouchableOpacity>

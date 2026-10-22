@@ -205,9 +205,9 @@ export function startDiarySongFlow(navigation: any, diaryText: string): void {
     navigation.popTo('MainTabs', target(nonce));
   };
   if (hasCreationWorkInProgress()) {
-    showAlert('진행 중인 작곡이 있어요', '이 일기로 새로 시작하면 만들던 작사 내용은 지워져요.', [
+    showAlert('진행 중인 작곡이 있어요', '이 낙서로 새로 시작하면 만들던 작사 내용은 지워져요.', [
       { text: '이어서 하기', style: 'cancel', onPress: () => resumeExistingWork(navigation, true) },
-      { text: '일기로 새로 시작', onPress: go },
+      { text: '낙서로 새로 시작', onPress: go },
     ]);
     return;
   }

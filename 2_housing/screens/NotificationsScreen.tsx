@@ -29,7 +29,7 @@ const TYPE_META: Record<string, { icon: any; label: (n: Notification) => string 
   comment: { icon: 'message-circle', label: (n) => `${n.actor_nickname}님이 내 ${n.target_type === 'track' ? '곡' : '글'}에 댓글을 남겼어요` }, // v3.389 [Diary] 피드→글
   reply: { icon: 'corner-down-right', label: (n) => `${n.actor_nickname}님이 내 댓글에 답글을 남겼어요` },
   like: { icon: 'heart', label: (n) => `${n.actor_nickname}님이 내 글을 좋아해요` },
-  feed: { icon: 'book-open', label: (n) => `${n.actor_nickname}님이 새 일기를 썼어요` }, // v3.389 [Diary]
+  feed: { icon: 'book-open', label: (n) => `${n.actor_nickname}님이 새 낙서를 남겼어요` }, // v3.389 [Diary]
   // 관리자 스타 지급/차감 — 관리자 웹 '별 관리'에서 발송. preview = 운영자가 적은 메시지(선택)
   star: {
     icon: 'star',

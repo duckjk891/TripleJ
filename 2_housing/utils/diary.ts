@@ -8,6 +8,9 @@ export const DIARY_REWARD = 3;
 export const DIARY_MIN_CHARS = 50;
 const DIARY_MIN_DISTINCT = 10;
 export const DIARY_BACKDATE_DAYS = 7;
+// v3.396(대표 10-22): '이 낙서로 노래 만들기' 카드는 숨김 — 별도 세션이 '일기·사진으로 노래 만들기' 새 파이프라인을
+// 설계한 뒤 이 자리(시안 v1 ④A)에 연결한다. 켜면 v3.395 makeLike 배선(startDiarySongFlow)이 그대로 동작.
+export const DIARY_SONG_ENABLED = false;
 
 export const DIARY_MOODS: { key: string; emoji: string; label: string }[] = [
   { key: 'good', emoji: '😊', label: '좋음' },

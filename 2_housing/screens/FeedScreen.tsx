@@ -29,7 +29,7 @@ import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
 // v3.389 [Diary]: 일기장 문구
 const TUTORIAL_STEPS: TutorialStep[] = [
-  { title: '일기 쓰기', desc: '눌러서 오늘의 일기를 써 보세요. 50자 이상 쓰면 하루 한 번 스타를 받아요. 다른 사람들의 일기와 공지도 볼 수 있어요.', anchorKey: 'feed-compose' },
+  { title: '낙서하기', desc: '눌러서 오늘의 낙서를 남겨 보세요. 50자 이상 쓰면 하루 한 번 스타를 받아요. 다른 사람들의 낙서와 공지도 볼 수 있어요.', anchorKey: 'feed-compose' },
 ];
 
 // Fab(components/Fab.tsx)의 고정 지름 — anchor rect를 아이콘 중심에서 버튼 크기로 확장할 때 사용
@@ -87,7 +87,7 @@ type FeedTab = 'all' | 'mine' | 'notice';
 // v3.389 [Diary]: [내 글] → [내 일기](달력). 채널 공지(kind=community)는 마이페이지에서 그대로(대표 결정 ③A)
 const FEED_TABS: { key: FeedTab; label: string; guest: boolean }[] = [
   { key: 'all', label: '전체', guest: true },
-  { key: 'mine', label: '내 일기', guest: false },
+  { key: 'mine', label: '내 낙서', guest: false },
   { key: 'notice', label: '공지', guest: true },
 ];
 
@@ -385,12 +385,12 @@ export default function FeedScreen() {
       {showReward ? (
         rewardedToday ? (
           <View style={[styles.reward, styles.rewardDone]}>
-            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>오늘 일기 스타 ⭐{DIARY_REWARD}을 받았어요. 내일 또 써 주세요!</AppText>
+            <AppText variant="footnote" tone="secondary" style={{ flex: 1 }}>오늘 낙서 스타 ⭐{DIARY_REWARD}을 받았어요. 내일 또 남겨 주세요!</AppText>
           </View>
         ) : (
-          <TouchableOpacity style={styles.reward} activeOpacity={0.8} onPress={() => openCompose()} accessibilityLabel="오늘 일기 쓰기">
+          <TouchableOpacity style={styles.reward} activeOpacity={0.8} onPress={() => openCompose()} accessibilityLabel="오늘 낙서하기">
             <View style={{ flex: 1 }}>
-              <AppText variant="footnote" tone="secondary">오늘 일기 쓰면 <AppText variant="footnote" style={styles.rewardStar}>+{DIARY_REWARD}⭐</AppText></AppText>
+              <AppText variant="footnote" tone="secondary">오늘 낙서하면 <AppText variant="footnote" style={styles.rewardStar}>+{DIARY_REWARD}⭐</AppText></AppText>
               <AppText variant="caption" tone="muted">{DIARY_MIN_CHARS}자 이상이면 받아요</AppText>
             </View>
             <View style={styles.rewardBtn}><AppText variant="caption" style={{ color: '#fff', fontWeight: '700' }}>쓰러 가기</AppText></View>
@@ -412,7 +412,7 @@ export default function FeedScreen() {
             onMonthChange={(delta) => { setSelectedDay(null); setPosts([]); setMonth((m) => shiftMonth(m, delta)); }}
           />
           <View style={styles.dayHead}>
-            <AppText variant="bodyStrong">{selectedDay ? `${fmtDiaryDateLong(selectedDay)} 일기` : `이번 달 일기 ${mineCount}편`}</AppText>
+            <AppText variant="bodyStrong">{selectedDay ? `${fmtDiaryDateLong(selectedDay)} 낙서` : `이번 달 낙서 ${mineCount}개`}</AppText>
             {selectedDay ? (
               <TouchableOpacity onPress={() => setSelectedDay(null)} accessibilityLabel="이번 달 전체 보기">
                 <AppText variant="footnote" tone="accent">이번 달 전체</AppText>
@@ -439,7 +439,7 @@ export default function FeedScreen() {
                 setPosts([]);
                 setTab(t.key);
               }}
-              accessibilityLabel={`일기장 탭 ${t.label}`}
+              accessibilityLabel={`낙서장 탭 ${t.label}`}
             >
               <AppText style={[styles.tabText, tab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
             </TouchableOpacity>
@@ -462,16 +462,16 @@ export default function FeedScreen() {
             // v3.389 [Diary]: [전체]가 비어도 오늘 보상 안내 띠는 보이도록(목록 머리) — 빈 안내는 아래로
             <EmptyState
               icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
-              title="아직 일기가 없어요"
-              hint="오늘의 첫 일기를 써 보세요. 팔로우한 사람의 일기도 여기 떠요."
+              title="아직 낙서가 없어요"
+              hint="오늘의 첫 낙서를 남겨 보세요. 팔로우한 사람의 낙서도 여기 떠요."
             />
           ) : tab === 'mine' ? (
             // v3.389 [Diary]: 고른 날/이번 달에 일기가 없을 때 — 최근 7일이면 그 날짜로 바로 쓰기
             <View style={styles.dayEmpty}>
-              <AppText tone="muted" center>{selectedDay ? '이 날은 일기가 없어요.' : '이번 달 일기가 아직 없어요.'}</AppText>
+              <AppText tone="muted" center>{selectedDay ? '이 날은 낙서가 없어요.' : '이번 달 낙서가 아직 없어요.'}</AppText>
               {!feedWriteBlocked && (selectedDay ? canWriteOn(selectedDay) : true) ? (
                 <Button
-                  label={selectedDay && selectedDay !== kstToday() ? '이 날 일기 쓰기' : '오늘 일기 쓰기'}
+                  label={selectedDay && selectedDay !== kstToday() ? '이 날 낙서하기' : '오늘 낙서하기'}
                   variant="tonal"
                   onPress={() => openCompose(selectedDay || undefined)}
                 />
@@ -503,8 +503,8 @@ export default function FeedScreen() {
         // v3.210 ①: 내 글 탭 빈 상태 → v3.389 [Diary]: 내 일기(달력 조회 실패 폴백일 때만 여기로)
         <EmptyState
           icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
-          title="아직 쓴 일기가 없어요"
-          hint="오른쪽 아래 버튼으로 오늘의 일기를 써 보세요."
+          title="아직 남긴 낙서가 없어요"
+          hint="오른쪽 아래 버튼으로 오늘의 낙서를 남겨 보세요."
         />
       ) : tab === 'notice' ? (
         <EmptyState
@@ -515,8 +515,8 @@ export default function FeedScreen() {
       ) : (
         <EmptyState
           icon={<Feather name="book-open" size={44} color={colors.text.muted} />}
-          title="아직 일기가 없어요"
-          hint="오늘의 첫 일기를 써 보세요. 팔로우한 사람의 일기도 여기 떠요."
+          title="아직 낙서가 없어요"
+          hint="오늘의 첫 낙서를 남겨 보세요. 팔로우한 사람의 낙서도 여기 떠요."
           action={<Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />}
         />
       )}
@@ -547,7 +547,7 @@ export default function FeedScreen() {
             // v3.389 [Diary]: [내 일기]에서 최근 7일 날짜를 골라 두었으면 그 날짜로
             openCompose(tab === 'mine' && canWriteOn(selectedDay) ? selectedDay! : undefined);
           }}
-          accessibilityLabel={tab === 'notice' ? '공지 작성' : '일기 쓰기'}
+          accessibilityLabel={tab === 'notice' ? '공지 작성' : '낙서하기'}
         >
           {/* v3.207 ①: 튜토리얼 anchor 측정용 래퍼 — collapsable={false}로 네이티브 뷰 보존 */}
           <View ref={fabIconRef} collapsable={false} onLayout={registerFabAnchor}>
@@ -564,7 +564,7 @@ export default function FeedScreen() {
           onPress={() => setCtaVisible(false)}
         >
           <LoginPrompt
-            desc={'로그인하면 다른 사람들의 일기와\n팔로우한 아티스트 소식을 볼 수 있어요'}
+            desc={'로그인하면 다른 사람들의 낙서와\n팔로우한 아티스트 소식을 볼 수 있어요'}
             onPress={goLogin}
           />
         </TouchableOpacity>

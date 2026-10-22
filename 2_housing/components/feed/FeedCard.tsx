@@ -307,7 +307,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   };
 
   const deleteFeed = () => {
-    showAlert(isDiaryKind ? '일기 삭제' : '피드 삭제', isDiaryKind ? '이 일기를 삭제할까요?' : '이 피드를 삭제할까요?', [
+    showAlert(isDiaryKind ? '낙서 삭제' : '피드 삭제', isDiaryKind ? '이 낙서를 삭제할까요?' : '이 피드를 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: async () => {
         try {
@@ -355,7 +355,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
     try {
       // v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 혜택 줄
       const benefit = isBenefitActive(Date.now()) ? `\n🎁 가입 이벤트 기간 가입 시 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : '';
-      await Share.share({ message: `MAIDOL ${isDiaryKind ? '일기' : '피드'} "${feed.title || (isDiaryKind ? fmtDiaryDate(feed.diary_date) || '일기' : '게시물')}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
+      await Share.share({ message: `MAIDOL ${isDiaryKind ? '낙서' : '피드'} "${feed.title || (isDiaryKind ? fmtDiaryDate(feed.diary_date) || '낙서' : '게시물')}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
     } catch (err: any) {
       console.error('[FeedCard] 공유 실패', { message: err?.message });
     }
