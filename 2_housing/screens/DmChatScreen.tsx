@@ -12,7 +12,8 @@ import { enterToSendHandler } from '../utils/enterToSend';
 //   object_name → 메시지 body image_object_name) + 말풍선 이미지 렌더(서버 직렬화 image_url).
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform, Modal } from 'react-native';
+import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
 import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError, sanitizeServerText } from '../utils/identityGate';
@@ -473,14 +474,14 @@ export default function DmChatScreen() {
       ) : null}
 
       {/* v3.275 [54]: 사진 원본 뷰어 — 배경·X 탭으로 닫기, contain 으로 전체 표시(웹은 브라우저 확대 가능) */}
-      <Modal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => setViewerUri(null)}>
+      <AppModal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => setViewerUri(null)}>
         <TouchableOpacity style={styles.viewerBackdrop} activeOpacity={1} onPress={() => setViewerUri(null)} accessibilityLabel="사진 닫기">
           {viewerUri ? <Image source={{ uri: viewerUri }} style={styles.viewerImage} resizeMode="contain" /> : null}
           <View style={[styles.viewerClose, { top: insets.top + 12 }]}>
             <Feather name="x" size={22} color="#fff" />
           </View>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
       <ReportModal visible={!!reportMsg} targetType="dm_message" targetId={String(reportMsg || '')} onClose={() => setReportMsg(null)} />
       </View>
     </KeyboardAvoidingView>

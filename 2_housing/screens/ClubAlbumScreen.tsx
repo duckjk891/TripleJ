@@ -4,7 +4,8 @@
 //  · 크루장: 곡 ⋯ → 대표곡 지정·앨범에서 빼기, 참여곡 승인/거절, 앨범 삭제.
 //  · 공유: 초대 코드가 붙은 앨범 링크(서버 OG 랜딩 → 앱 이 화면). 팝업은 전부 앱 내 다이얼로그(showAlert).
 import { useCallback, useEffect, useState } from 'react';
-import { View, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Modal, ScrollView, Image } from 'react-native';
+import { View, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, ScrollView, Image } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -340,7 +341,7 @@ export default function ClubAlbumScreen() {
         contentContainerStyle={{ flexGrow: 1, paddingBottom: playerTrack ? 140 : 80 }}
       />
 
-      <Modal visible={pickOpen} transparent animationType="fade" onRequestClose={() => setPickOpen(false)}>
+      <AppModal visible={pickOpen} transparent animationType="fade" onRequestClose={() => setPickOpen(false)}>
         <View style={styles.backdrop}>
           <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={() => setPickOpen(false)} accessibilityLabel="닫기" />
           <View style={styles.sheet}>
@@ -373,7 +374,7 @@ export default function ClubAlbumScreen() {
             <Button label="닫기" variant="text" onPress={() => setPickOpen(false)} />
           </View>
         </View>
-      </Modal>
+      </AppModal>
     </ScreenLayout>
   );
 }

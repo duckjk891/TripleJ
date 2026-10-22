@@ -3,7 +3,8 @@
 // 서버 계약: text 1~2000자, 신고당 1회(중복 409 · 비소유 403 · blind 아님 400 · 성공 201 {appeal_id}).
 // 주의: 소명 텍스트 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import api from '../services/api';
 import { AppText, Button } from './ui';
@@ -95,7 +96,7 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
     || (report.target?.deleted ? '삭제된 콘텐츠' : '');
 
   return (
-    <Modal visible={!!report} transparent animationType="fade" onRequestClose={close}>
+    <AppModal visible={!!report} transparent animationType="fade" onRequestClose={close}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
@@ -169,7 +170,7 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
         </TouchableOpacity>
       </TouchableOpacity>
     
-      </KeyboardAvoidingView></Modal>
+      </KeyboardAvoidingView></AppModal>
   );
 }
 

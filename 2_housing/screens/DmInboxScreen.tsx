@@ -5,7 +5,8 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { View, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -324,7 +325,7 @@ export default function DmInboxScreen() {
           <EmptyState title={KIDS_TEXT.dmFriendsInboxEmpty} hint={KIDS_TEXT.dmFriendsHint} />
         )}
 
-        <Modal visible={composeOpen} transparent statusBarTranslucent animationType="slide" onRequestClose={closeCompose}>
+        <AppModal visible={composeOpen} transparent statusBarTranslucent animationType="slide" onRequestClose={closeCompose}>
           <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeCompose} accessibilityLabel="닫기 배경">
             <TouchableOpacity
               style={[styles.sheet, { height: composeSheetHeight, paddingBottom: insets.bottom }]}
@@ -371,7 +372,7 @@ export default function DmInboxScreen() {
               </View>
             </TouchableOpacity>
           </TouchableOpacity>
-        </Modal>
+        </AppModal>
       </View>
     );
   }
@@ -449,7 +450,7 @@ export default function DmInboxScreen() {
 
       {/* v3.318 (대표 10-09 "새 메시지 누르면 상단바가 내려오며 UI가 이상해지고 이전 아이콘이 없음"):
           헤더 아래 반투명 시트(v3.216) → 전체 화면 + 앱 상단바와 같은 헤더(‹ 뒤로 · 새 메시지). */}
-      <Modal visible={composeOpen} animationType="slide" onRequestClose={closeCompose}>
+      <AppModal visible={composeOpen} animationType="slide" onRequestClose={closeCompose}>
         <View style={[styles.composeScreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             <View style={styles.composeHeader}>
               <TouchableOpacity onPress={closeCompose} accessibilityLabel="뒤로" style={{ padding: 4, marginRight: spacing.sm }}>
@@ -534,7 +535,7 @@ export default function DmInboxScreen() {
               <AppText variant="caption" tone="muted" style={styles.myTag}>내 태그: #{myCode}</AppText>
             ) : null}
         </View>
-      </Modal>
+      </AppModal>
     </View>
   );
 }

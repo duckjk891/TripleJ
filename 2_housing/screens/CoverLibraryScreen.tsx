@@ -13,8 +13,8 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  Modal,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
@@ -224,7 +224,7 @@ export default function CoverLibraryScreen({ navigation, route }: any) {
       )}
 
       {/* 크게 보기 — 앱 내 전체 화면 모달 */}
-      <Modal
+      <AppModal
         visible={!!viewerCover}
         transparent
         animationType="fade"
@@ -256,7 +256,7 @@ export default function CoverLibraryScreen({ navigation, route }: any) {
             </View>
           )}
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
     </View>
   );
 }

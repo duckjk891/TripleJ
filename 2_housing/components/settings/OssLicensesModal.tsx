@@ -1,7 +1,8 @@
 // v3.334 [OssLicenses] 오픈소스 라이선스 고지 — constants/ossLicenses.json(scripts/gen-oss-licenses.js 생성) 표시.
 // 목록 = 이름·버전·라이선스·저작권 표기, 항목을 누르면 그 라이선스 전문을 펼친다.
 import { useState } from 'react';
-import { FlatList, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
@@ -16,7 +17,7 @@ export default function OssLicensesModal({ visible, onClose }: { visible: boolea
   const insets = useSafeAreaInsets();
   const [openKey, setOpenKey] = useState<string | null>(null);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.screen, { paddingTop: insets.top }]}>
         <View style={styles.header}>
           <AppText variant="title3">오픈소스 라이선스</AppText>
@@ -51,7 +52,7 @@ export default function OssLicensesModal({ visible, onClose }: { visible: boolea
           }}
         />
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

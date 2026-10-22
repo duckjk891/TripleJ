@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TRACK_PRICE_KRW, splitRevenue, splitPlatformFee, formatKrw } from '../data/pricing';
@@ -38,7 +38,7 @@ export default function PurchaseModal({ visible, trackTitle, trackArtist, onClos
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={[styles.box, { paddingBottom: 16 + insets.bottom }]}>
           <Text style={styles.title}>💿 다운로드 구매</Text>
@@ -112,7 +112,7 @@ export default function PurchaseModal({ visible, trackTitle, trackArtist, onClos
           </View>
         </View>
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

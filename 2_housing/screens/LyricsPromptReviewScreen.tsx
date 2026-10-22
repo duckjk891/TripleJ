@@ -7,9 +7,9 @@ import {
   TextInput,
   ScrollView,
   Platform,
-  Modal,
   Switch,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -369,7 +369,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
       </ScrollView>
 
       {/* Edit Modal */}
-      <Modal
+      <AppModal
         visible={editingField !== null}
         transparent
         animationType="slide"
@@ -478,7 +478,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             )}
           </View>
         </View>
-      </Modal>
+      </AppModal>
     </KeyboardAvoid>
   );
 }

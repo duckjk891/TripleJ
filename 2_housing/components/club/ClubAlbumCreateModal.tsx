@@ -1,7 +1,8 @@
 // [ClubAlbumCreateModal] v3.305 크루장 — 크루 플레이리스트로 테마 앨범 만들기(제목·테마·대표곡 필수).
 // 플레이리스트 곡이 그대로 앨범 곡이 된다(비공개곡 제외). 대표곡 = 링크로 온 비회원이 들을 수 있는 유일한 곡.
 import { useEffect, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView, KeyboardAvoidingView } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, TextInput, ScrollView, KeyboardAvoidingView } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -57,7 +58,7 @@ export default function ClubAlbumCreateModal({ visible, clubId, playlist, tracks
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.backdrop}>
           <TouchableOpacity style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} activeOpacity={1} onPress={onClose} accessibilityLabel="앨범 만들기 닫기" />
@@ -96,7 +97,7 @@ export default function ClubAlbumCreateModal({ visible, clubId, playlist, tracks
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

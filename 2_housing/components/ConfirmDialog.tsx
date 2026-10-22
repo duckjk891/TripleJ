@@ -1,4 +1,5 @@
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { colors } from '../theme/colors';
 
 interface Props {
@@ -27,7 +28,7 @@ export default function ConfirmDialog({
   const handleClose = onCancel || onConfirm;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.backdrop}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
@@ -58,7 +59,7 @@ export default function ConfirmDialog({
           </View>
         </View>
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

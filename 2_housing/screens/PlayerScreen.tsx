@@ -8,7 +8,6 @@ import {
   Image,
   Dimensions,
   ScrollView,
-  Modal,
   Animated,
   Linking,
   FlatList,
@@ -17,6 +16,7 @@ import {
   useWindowDimensions,
   AppState,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../utils/appAlert';
@@ -1916,7 +1916,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         targetId={String(track?.id ?? '')}
         onClose={() => setShowReport(false)}
       />
-      <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
+      <AppModal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
         <TouchableOpacity style={styles.queueOverlay} activeOpacity={1} onPress={() => setShowQueue(false)}>
           {/* Modal은 루트 인셋 패딩 미상속 → 하단 인셋을 시트에 직접 보강(styles.queueSheet의 paddingBottom 대체) */}
           <TouchableOpacity style={[styles.queueSheet, { paddingBottom: insets.bottom + spacing.xxl }]} activeOpacity={1} onPress={() => {}}>
@@ -1945,7 +1945,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             )}
           </TouchableOpacity>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* v3.235 B6: 공유 링크 진입 — 웹 자동재생 차단 시 탭 1회로 재생 */}
       {showShareTapOverlay ? (

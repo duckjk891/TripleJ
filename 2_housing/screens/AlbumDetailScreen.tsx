@@ -9,9 +9,17 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
-  View, ScrollView, Image, TouchableOpacity, ActivityIndicator,
-  Modal, TextInput, Switch, StyleSheet, KeyboardAvoidingView,
+  View,
+  ScrollView,
+  Image,
+  TouchableOpacity,
+  ActivityIndicator,
+  TextInput,
+  Switch,
+  StyleSheet,
+  KeyboardAvoidingView,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { Feather } from '@expo/vector-icons';
 import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { showAlert } from '../utils/appAlert';
@@ -484,7 +492,7 @@ export default function AlbumDetailScreen() {
       </ScrollView>
 
       {/* 정보 수정 모달 (앱 내 Modal — 시스템 팝업 금지) */}
-      <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
+      <AppModal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
         {/* v3.196: Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding")로 키보드 가림 해소(ReportModal 패턴) */}
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.modalBackdrop}>
@@ -515,10 +523,10 @@ export default function AlbumDetailScreen() {
           </View>
         </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AppModal>
 
       {/* 트랙 추가 모달 — 내 발매 트랙 중 앨범에 없는 곡만 (서버: 본인 트랙만 허용) */}
-      <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => setAddVisible(false)}>
+      <AppModal visible={addVisible} transparent animationType="fade" onRequestClose={() => setAddVisible(false)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { maxHeight: '75%' }]}>
             <AppText variant="subtitle" style={{ marginBottom: spacing.xs }}>트랙 추가</AppText>
@@ -560,7 +568,7 @@ export default function AlbumDetailScreen() {
             </View>
           </View>
         </View>
-      </Modal>
+      </AppModal>
     </View>
   );
 }

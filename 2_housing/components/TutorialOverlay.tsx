@@ -14,7 +14,8 @@
 // - ref.show()는 명령형 재노출용으로 존치(작업실 ⓘ는 v3.207 ⑫로 제거 — 재보기 소멸은 의도).
 // - Modal은 화면 루트의 safe-area 패딩을 상속하지 않으므로(v3.201~202 교훈) 인셋을 직접 보강한다.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Modal, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
@@ -409,7 +410,7 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
     }
 
     return (
-      <Modal
+      <AppModal
         // v3.216b F5: 노출 중 팝업이 열리면(출석체크 자동 오픈 등) 일시 숨김 — visible state는
         // 유지되므로 seen 미소모, 팝업이 닫히면 같은 스텝에서 재표시된다.
         visible={visible && !popupBlocked}
@@ -419,7 +420,7 @@ const TutorialOverlay = forwardRef<TutorialOverlayHandle, TutorialOverlayProps>(
         onRequestClose={() => close('skip')} // Android 백버튼 = 건너뛰기와 동일
       >
         {content}
-      </Modal>
+      </AppModal>
     );
   }
 );

@@ -10,9 +10,9 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
-  Modal,
   KeyboardAvoidingView,
 } from 'react-native';
+import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { pickImage } from '../utils/pickImage'; // v3.391 [PickImage]
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -759,7 +759,7 @@ export default function SettingsScreen({ navigation, route }: any) {
         </TouchableOpacity>
 
         {/* 회원탈퇴 확인 모달 — 확인 문구("회원탈퇴") 일치 시에만 탈퇴 버튼 활성 */}
-        <Modal
+        <AppModal
           visible={showWithdraw}
           transparent
           animationType="fade"
@@ -820,7 +820,7 @@ export default function SettingsScreen({ navigation, route }: any) {
             </View>
           </View>
           </KeyboardAvoidingView>
-        </Modal>
+        </AppModal>
 
         {/* v3.230 A2: 닉네임 변경 모달 */}
         <NicknameEditModal
@@ -837,7 +837,7 @@ export default function SettingsScreen({ navigation, route }: any) {
         <IssueReportModal visible={showIssueReport} onClose={() => setShowIssueReport(false)} />
 
         {/* 프로필 편집 모달 */}
-        <Modal
+        <AppModal
           visible={showProfileEdit}
           transparent
           animationType="fade"
@@ -994,7 +994,7 @@ export default function SettingsScreen({ navigation, route }: any) {
               </View>
             </View>
           </View>
-        </Modal>
+        </AppModal>
 
         {/* 사업자 정보 표기 + 정책 문서 */}
         <View style={{ paddingHorizontal: 20 }}>

@@ -2,7 +2,8 @@
 // 차트·검색 등 곡 목록 화면이 같은 메뉴·동작을 쓰도록 공용화(플레이리스트 담기 시트, 비회원 담기 안내 포함).
 // v3.235 B2(D6): 공용 기본 항목 '공유하기' — 차트·마이페이지·검색·플레이리스트·피드 ⋯ 공통, 비로그인·어린이 포함 노출.
 import { useState } from 'react';
-import { ScrollView, Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
+import { ScrollView, View, TouchableOpacity, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { showAlert } from '../utils/appAlert';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -167,7 +168,7 @@ export default function TrackActionSheet({
   return (
     <>
       {/* 곡 더보기(⋮) 액션 시트 */}
-      <Modal visible={!!track} transparent animationType="slide" onRequestClose={onClose}>
+      <AppModal visible={!!track} transparent animationType="slide" onRequestClose={onClose}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
           {/* v3.196: Modal은 루트 인셋 미상속 → 하단 제스처 바만큼 paddingBottom 보강(v3.191 queueSheet 패턴) */}
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]}>
@@ -226,7 +227,7 @@ export default function TrackActionSheet({
             ) : null}
           </View>
         </TouchableOpacity>
-      </Modal>
+      </AppModal>
 
       {/* 비회원 담기 안내 */}
       <GuestQueueNoticeModal

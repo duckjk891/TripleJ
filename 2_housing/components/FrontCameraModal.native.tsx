@@ -3,7 +3,8 @@
 //  · 바깥 카메라 앱으로 나가지 않으니, 촬영 중 메모리 부족으로 MAIDOL 이 꺼져 결과를 잃는 일도 없다.
 //  · expo-camera 가 없는 빌드면 isInAppCameraAvailable() = false → 호출부가 예전 시스템 카메라(expo-image-picker)로.
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, TouchableOpacity, View } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
@@ -48,7 +49,7 @@ export default function FrontCameraModal({ visible, onCapture, onClose }: FrontC
   const close = () => { setReady(false); setFailed(''); onClose(); };
 
   return (
-    <Modal visible animationType="slide" onRequestClose={close} statusBarTranslucent>
+    <AppModal visible animationType="slide" onRequestClose={close} statusBarTranslucent>
       <View style={styles.root}>
         <CameraView
           ref={ref}
@@ -78,7 +79,7 @@ export default function FrontCameraModal({ visible, onCapture, onClose }: FrontC
           <View style={styles.side} />
         </View>
       </View>
-    </Modal>
+    </AppModal>
   );
 }
 

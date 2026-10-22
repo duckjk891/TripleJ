@@ -5,7 +5,6 @@
 // 닉네임 원문은 로그 금지(길이만).
 import { useEffect, useRef, useState } from 'react';
 import {
-  Modal,
   View,
   TextInput,
   TouchableOpacity,
@@ -13,6 +12,7 @@ import {
   KeyboardAvoidingView,
   StyleSheet,
 } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { showAlert } from '../../utils/appAlert';
@@ -102,7 +102,7 @@ export default function NicknameEditModal({ visible, currentNickname, onClose }:
   const saveDisabled = busy || !normalized || unchanged;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={close}>
       {/* Modal 내부는 adjustResize 미보장 → KAV(양 플랫폼 "padding") — SettingsScreen 관행 */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.overlay}>
@@ -152,7 +152,7 @@ export default function NicknameEditModal({ visible, currentNickname, onClose }:
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

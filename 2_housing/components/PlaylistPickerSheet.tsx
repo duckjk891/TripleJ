@@ -6,7 +6,8 @@
 // RN Modal 별도 window에서도 동작)로 iOS·Android 리프트 일원화. maxHeight 동적 클램프도
 // 불요 — KAV padding으로 backdrop 자체가 줄어 시트 60% 상한이 남은 화면 기준이 된다.
 import { useEffect, useState } from 'react';
-import { Modal, View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -124,7 +125,7 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
   const personalRows = playlists.filter((pl: any) => !clubSectionIds.has(String(pl.id)));
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV(behavior='padding') — iOS·Android 공통.
           keyboardVerticalOffset=-insets.bottom: IME 인셋에 내비바 영역이 포함 → 시트 자체
           paddingBottom(insets.bottom+xl)과의 이중 계상 상쇄(v3.201 kbHeight-insets.bottom 셈법과 동치).
@@ -195,7 +196,7 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
         </TouchableOpacity>
       </TouchableOpacity>
     
-      </KeyboardAvoidingView></Modal>
+      </KeyboardAvoidingView></AppModal>
   );
 }
 

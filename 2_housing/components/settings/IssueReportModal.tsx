@@ -11,7 +11,6 @@ import { usePasteImages, type PastedAsset } from '../../utils/usePasteImages'; /
 //   DM 문구는 '[오류신고' 머리말을 쓰지 않는다(서버 DM→신고 자동 접수와 중복 방지). 사진 전송 실패여도 신고는 접수.
 import { useEffect, useRef, useState } from 'react';
 import {
-  Modal,
   View,
   TextInput,
   TouchableOpacity,
@@ -19,6 +18,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
+import AppModal from '../AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -220,7 +220,7 @@ export default function IssueReportModal({ visible, onClose, initialReason, init
   const submitDisabled = busy || !reason || !normalized;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={close}>
       {/* Modal 내부는 adjustResize 미보장 → keyboard-controller KAV(padding) — ReportModal 관행 */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
         <View style={styles.overlay}>
@@ -332,7 +332,7 @@ export default function IssueReportModal({ visible, onClose, initialReason, init
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

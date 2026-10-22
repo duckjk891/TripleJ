@@ -1,7 +1,8 @@
 // [GuestQueueNoticeModal] 비회원이 '담기'(재생목록에 추가)를 누를 때 뜨는 선택 팝업.
 // 로그인 화면으로 튕기지 않고, 사용자가 [로그인하고 시작하기] / [계속 담기] 중 고를 수 있게 한다.
 // 계속 담기를 고르면 비회원도 재생목록을 쓸 수 있으나, 다음 접속 시 사라지고 별도 받지 못한다는 점을 안내.
-import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { AppText } from './ui';
 import LoginStartButton from './LoginStartButton';
 import { colors } from '../theme/colors';
@@ -16,7 +17,7 @@ interface Props {
 
 export default function GuestQueueNoticeModal({ visible, onLogin, onContinue, onClose }: Props) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" center style={styles.title}>재생목록에 담을까요?</AppText>
@@ -33,7 +34,7 @@ export default function GuestQueueNoticeModal({ visible, onLogin, onContinue, on
           </TouchableOpacity>
         </TouchableOpacity>
       </TouchableOpacity>
-    </Modal>
+    </AppModal>
   );
 }
 

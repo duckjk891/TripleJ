@@ -2,7 +2,8 @@
 // 사유 5종 라디오 선택 + '기타'일 때만 상세 입력(최대 500자) → POST /reports/
 // 주의: reason_text 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -94,7 +95,7 @@ export default function ReportModal({ visible, targetType, targetId, clubId, onC
   const disabled = busy || !reasonCode || (reasonCode === 'other' && !reasonText.trim());
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={close}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV — iOS·Android 공통 padding 리프트 */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
@@ -159,7 +160,7 @@ export default function ReportModal({ visible, targetType, targetId, clubId, onC
         </TouchableOpacity>
       </TouchableOpacity>
     
-      </KeyboardAvoidingView></Modal>
+      </KeyboardAvoidingView></AppModal>
   );
 }
 

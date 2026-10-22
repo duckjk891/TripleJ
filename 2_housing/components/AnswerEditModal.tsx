@@ -5,8 +5,8 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Modal,
 } from 'react-native';
+import AppModal from './AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { AppText } from './ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -78,7 +78,7 @@ export default function AnswerEditModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={cancel}>
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={cancel}>
       {/* [KeyboardCtl] v3.207(⑤): keyboard-controller KAV(behavior='padding') — iOS·Android 공통.
           keyboardVerticalOffset=-insets.bottom: overlay 자체 paddingBottom(insets.bottom+24)과의
           이중 계상 상쇄(컨테이너 하단 = 키보드 상단 + 24). maxHeight 60%는 줄어든 overlay 기준이라
@@ -149,7 +149,7 @@ export default function AnswerEditModal({
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 
