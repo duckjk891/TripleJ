@@ -78,7 +78,9 @@ export default function TrackActionSheet({
   const [page, setPage] = useState<Page>('main');
   useWebBackClose(!!track, onClose); // v3.369: 웹 뒤로 가기 = 시트 닫기(앱 종료 방지)
   // v3.402: 하위 목록에서 웹 뒤로 가기 = 한 단계 위로(크루 고르기 → 공유하기 → 첫 목록)
-  useWebBackClose(!!track && page !== 'main', () => setPage((p) => (p === 'crew' ? 'share' : 'main')));
+  // 단계마다 기록 칸 하나씩(크루 고르기는 공유하기 위에 한 칸 더) — 뒤로 가기 한 번 = 한 단계
+  useWebBackClose(!!track && page !== 'main', () => setPage('main'));
+  useWebBackClose(!!track && page === 'crew', () => setPage('share'));
   const insets = useSafeAreaInsets(); // v3.196: Modal은 별도 window라 루트 안전영역 패딩 미상속 → 시트에 직접 보강
   const user = useAuthStore((s) => s.user);
   const likedMap = useLikesStore((s) => s.liked);
