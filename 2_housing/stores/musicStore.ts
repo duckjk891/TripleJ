@@ -124,6 +124,8 @@ export interface VideoStylePrefs {
   pickedOutline: boolean;
   pickedOutlineColor: string;
   pickedLyricsMode: 'scroll' | 'line';
+  /** v3.396 [SnsV9]: SNS 세로 시작 타이틀·끝 장면(없으면 넣기) */
+  pickedCards?: boolean;
 }
 
 interface MusicState {

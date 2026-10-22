@@ -82,7 +82,8 @@ interface MyTrack {
 type Step =
   | 'pick' | 'format' | 'clipStart' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
   | 'font' | 'fontStyle' | 'fontColor' | 'fontOutline' | 'outlineColor'
-  | 'lyricsMode' | 'subPos' | 'making' | 'done';
+  | 'lyricsMode' | 'subPos' | 'making' | 'done'
+  | 'cards'; // v3.396 [SnsV9]: SNS 세로 — 시작 타이틀·끝 장면 넣기/빼기
 
 // user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
 // v3.281: clipStart — 'clipStart' 단계 답변에 고른 시작점(초, null=가사 시작 기본)을 함께 기록 →
@@ -105,6 +106,10 @@ const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; len
 const FORMAT_QUESTION = '좋아요! 어떤 형태의 영상으로 만들까요?\nSNS 세로·와이드 가로는 기본이 곡 전체 길이, 카톡 프로필 배경은 최대 15초예요. 다음 단계에서 원하는 구간만 잘라낼 수도 있어요.';
 
 // v3.393 [MVSub]: 'mv' = MV 자막 디자인(에스코어 드림 + 기울임·좁은 자간·그림자 — 서버 share_video.mv_sub_params). 새 영상 기본값.
+// v3.396 [SnsV9]: 하이라이트 길이·시작/끝 장면 질문
+const HIGHLIGHT_SECONDS = 30;
+const CARDS_QUESTION = '영상 처음에 곡 제목과 아티스트를, 끝에는 「내 이야기로 노래 만들기」 장면을 넣을까요?\n릴스·쇼츠에서 무슨 노래인지 바로 보여서 추천해요.';
+
 const FONTS: { key: string; label: string }[] = [
   { key: 'mv', label: 'MV 자막' },
   { key: 'basic', label: '기본 고딕' },
@@ -306,6 +311,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const [pickedBgColor, setPickedBgColor] = useState<string>(stylePrefs?.pickedBgColor ?? '1B1035');
   const [pickedBgAlpha, setPickedBgAlpha] = useState<string>(stylePrefs?.pickedBgAlpha ?? '45');
   const [pickedFont, setPickedFont] = useState<string>(stylePrefs?.pickedFont ?? 'mv'); // v3.393: 기본 = MV 자막
+  // v3.396 [SnsV9]: SNS 세로 영상의 시작 타이틀(곡 제목·아티스트)·끝 장면(나도 만들기) — 기본 넣기
+  const [pickedCards, setPickedCards] = useState<boolean>(stylePrefs?.pickedCards ?? true);
   // v3.393 [MVSub]: 'MV 자막' 카드 미리보기용 에스코어 드림(PlayerScreen MV 자막과 같은 원본 OTF) — 실패 시 기본 글꼴
   const [mvFontReady, setMvFontReady] = useState(false);
   useEffect(() => {
@@ -527,12 +534,12 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     useMusicStore.getState().setVideoStylePrefs({
       pickedFormat, pickedLayout, pickedShape, pickedBg, pickedBgBlur, pickedBgColor,
       pickedBgAlpha, pickedFont, pickedBold, pickedItalic, pickedColor,
-      pickedOutline, pickedOutlineColor, pickedLyricsMode,
+      pickedOutline, pickedOutlineColor, pickedLyricsMode, pickedCards,
     });
   }, [
     pickedFormat, pickedLayout, pickedShape, pickedBg, pickedBgBlur, pickedBgColor,
     pickedBgAlpha, pickedFont, pickedBold, pickedItalic, pickedColor,
-    pickedOutline, pickedOutlineColor, pickedLyricsMode,
+    pickedOutline, pickedOutlineColor, pickedLyricsMode, pickedCards,
   ]);
 
   // v3.219 [VideoDraft]: '처음부터' — draft 폐기 후 선곡부터(스타일 sticky는 유지)
@@ -731,10 +738,19 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   };
   const onRangeSlideStart = () => { if (previewing) void stopPreview('slide'); };
 
-  const jumpRange = (why: 'full' | 'lyric' | 'chorus') => {
+  const jumpRange = (why: 'full' | 'lyric' | 'chorus' | 'highlight') => {
     if (previewing) void stopPreview('jump');
     const d = clipDuration ?? 0;
     if (why === 'full') { applyRange(0, d, why); return; }
+    if (why === 'highlight') {
+      // v3.396: 하이라이트 30초 — 후렴(없으면 가사 시작)부터 30초. 숏폼은 짧을수록 끝까지 본다
+      const h0 = clipInfo?.chorusStart ?? clipInfo?.lyricStart ?? 0;
+      const h1 = d > 0 ? Math.min(d, h0 + HIGHLIGHT_SECONDS) : h0 + HIGHLIGHT_SECONDS;
+      const hs = Math.max(0, h1 - HIGHLIGHT_SECONDS);
+      if (__DEV__) console.info('[VideoDirector] 하이라이트 30초', { start: hs, end: h1, chorus: clipInfo?.chorusStart ?? null });
+      applyRange(hs, h1, why);
+      return;
+    }
     const s0 = why === 'lyric' ? (clipInfo?.lyricStart ?? 0) : (clipInfo?.chorusStart ?? 0);
     // 가사 시작부터 15초 · 후렴부터(카톡 15초 / 그 외 곡 끝까지)
     const e0 = why === 'chorus' && curFmt !== 'kakao' ? d : s0 + CLIP_SECONDS;
@@ -769,6 +785,21 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         return;
       }
     }
+    if (curFmt === 'sns') {
+      // v3.396 [SnsV9]: SNS 세로만 — 시작 타이틀·끝 장면 질문
+      pushDirector(CARDS_QUESTION);
+      setStep('cards');
+      return;
+    }
+    pushDirector('커버 이미지를 화면에 어떻게 넣을까요?');
+    setStep('layout');
+  };
+
+  // v3.396 [SnsV9]: 시작 타이틀·끝 장면 넣기/빼기 → 레이아웃 질문으로
+  const handlePickCards = (on: boolean) => {
+    setPickedCards(on);
+    pushUser(on ? '넣기' : '빼기', 'cards');
+    if (__DEV__) console.info('[VideoDirector] 시작·끝 장면', { on });
     pushDirector('커버 이미지를 화면에 어떻게 넣을까요?');
     setStep('layout');
   };
@@ -972,6 +1003,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     // v3.281 [52] → v3.282: 사용자 지정 구간일 때만(전 형식) — 기본 구간은 키 자체를 빼서
     // 기존 요청·캐시·과금 ref·시그니처와 바이트 동일 유지
     ...(pickedClipRef.current ? { clip_start: pickedClipRef.current.start, clip_end: pickedClipRef.current.end } : {}),
+    // v3.396 [SnsV9]: 시작·끝 장면을 뺄 때만 전송(기본 넣기는 키 생략 — 서버 기본값)
+    ...(pickedFormat === 'sns' && !pickedCards ? { cards: '0' } : {}),
   });
 
   // v3.214 ⑤ 부수: 확인 팝업/게이트 취소 시 subPos 답변 버블 잔존 정리 — 마지막 user 버블 1개 제거
@@ -1779,6 +1812,11 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
                       <AppText style={styles.clipChipText}>후렴부터</AppText>
                     </TouchableOpacity>
                   ) : null}
+                  {curFmt !== 'kakao' ? (
+                    <TouchableOpacity style={styles.clipChip} onPress={() => jumpRange('highlight')} activeOpacity={0.75}>
+                      <AppText style={styles.clipChipText}>하이라이트 30초</AppText>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
                 <TouchableOpacity
                   style={[styles.clipChip, styles.clipChipPreview, { alignSelf: 'center' }]}
@@ -1931,6 +1969,16 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           </View>
         )}
         {/* v3.209: 자막 테두리 유무 — textShadow 근사 미리보기 */}
+        {step === 'cards' && (
+          <View style={styles.formatRow}>
+            <Card onPress={() => handlePickCards(true)} label="넣기" desc="추천 · 처음 2.5초 곡 제목, 끝 3초 나도 만들기">
+              <AppText style={styles.outlineDemoOn}>♪ 제목</AppText>
+            </Card>
+            <Card onPress={() => handlePickCards(false)} label="빼기" desc="가사 영상만">
+              <AppText style={styles.outlineDemoOff}>가나다</AppText>
+            </Card>
+          </View>
+        )}
         {step === 'fontOutline' && (
           <View style={styles.formatRow}>
             <Card onPress={() => handlePickFontOutline(true)} label="테두리 있음" desc="기본 추천">

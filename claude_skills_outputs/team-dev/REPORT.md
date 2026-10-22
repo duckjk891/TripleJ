@@ -4907,3 +4907,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - 서버(services/share_video.py + assets/fonts/SCDream5.otf·SCDream_LICENSE.png): 폰트 키 `mv` 추가 — ASS Fontname 'S-Core Dream 5 Medium'(원본 OTF, 수정 금지 라이선스·안내 동봉), mv_sub_params: 합성 기울임 + 자간 −0.069em(sns 64px → −4.4) + 그림자 높이의 0.19%(1920 → 4px). _build_ass/_build_ass_scroll 에 spacing·shadow 인자(기본 0 → 기존 폰트 출력 비트 동일, 캐시 재사용). 연주곡 제목 drawtext 도 SCDream5 파일 사용.
 - 앱(screens/VideoDirectorScreen.tsx): 폰트 맨 앞 'MV 자막'(새 영상 기본값, 저장된 스타일이 있으면 그대로), 고르면 굵게/기울임 단계 생략(디자인 포함) → 글자색으로. 카드 미리보기도 에스코어 드림·기울임·그림자.
 - 검증: 격리 테스트 12/12(기존 5개 폰트 sns·wide·kakao × 줄/스크롤 ASS 출력 원본과 동일, 파라미터, 실제 ffmpeg 렌더 — 에스코어 드림 기울임·그림자 확인), 배포(md5 가드·백업 pre-v3393·진행 0건): health·oauth 3종 302·별 제작소/일기 경로 정상·Traceback 0. tsc 0.
+
+## v3.396 — 2026-10-22 — SNS 공유 영상 새 디자인(시작 타이틀·끝 장면·안전 영역) + 하이라이트 30초 (서버 + 웹)
+대표: "영상을 SNS에 배포할 때 디자인이 모자란 건 없을까?" → 시안(downloads/SNS영상_시안) 수정 3회(AI 생성 위치·MAIDOL 로고 상단바 글꼴·'MAIDOL에서 만든 노래' 삭제·AI 생성도 에스코어 드림) → "확정" → "SNS 영상 승인".
+- 서버(services/share_video_v9.py 신규, share_video.py, routes/tracks.py, assets/fonts/Roboto-VF.ttf·OFL-Roboto.txt):
+  · sns(9:16)만 새 디자인 → 캐시 share/v9(시작·끝 장면 끔 = `_nc`). wide/kakao 이름·출력 불변(시험으로 확인).
+  · 정적 배경: 하단 워터마크 스트립 대신 위쪽 그라데이션 + MAIDOL 로고(Roboto Bold, 앱 상단바 재현, 그림자) 오른쪽 위(y196 — 숏폼 상단 탭·검색 아이콘 아래) + 'AI 생성' 칩(에스코어 드림) 오른쪽 아래(좋아요 버튼 줄 왼쪽, y=0.80H−70) + 가사 뒤 옅은 띠(자막 위치 기준).
+  · 자막: sns 좌우 여백 60/150(오른쪽 버튼 줄 회피), 스크롤 중심 x=495, 위치표 상향(full low 1200·mid 1080·near 960 / center 1230·1200·1170, line margin 480/640/820).
+  · 시간 레이어(ffmpeg overlay enable): ♪ 제목·아티스트(2.5초 이후), 시작 타이틀(0~2.5초, 제목 기울임·아티스트 연보라), 끝 장면(마지막 3초, 10초 미만 영상 생략).
+  · 길이: 구간 지정이면 구간 길이, 아니면 음원 길이·3분 상한(177초부터 3초 페이드아웃 — 쇼츠 3분 제한).
+  · 라우트: `cards`(sns만, 기본 "1") — POST·quote·파일 프록시·재기동 재개·원장 meta·과금 ref. 파일 프록시는 v9 없으면 같은 조합 구 v8로 폴백(예전 공유 링크 유지). 재제작 무료 판정에 구 v8 객체도 포함(디자인 변경으로 재과금 없음). 보관함·삭제·객체 정규식 v9 포함. 시작 타이틀 아티스트 = tracks.artist_name.
+- 앱(screens/VideoDirectorScreen.tsx, stores/musicStore.ts): 구간 칩 '하이라이트 30초'(후렴→없으면 가사 시작부터 30초, 카톡 제외), SNS 세로 선택 시 '시작·끝 장면 넣기/빼기' 단계(기본 넣기, 스타일 기억), 빼기면 cards=0 전송.
+- 검증: 격리 테스트 14/14(이름 규칙·wide/kakao ASS 원본 동일·안전 영역·3분 상한·라우트), 실제 렌더 2건(전체 곡·시작/끝 장면 끔 20초 구간 — 업로드 가로채기, 운영 저장소 무변경), 배포(md5 가드 2파일·백업 pre-v3396·진행 0건): health·oauth 3종 302·clip-info 200·예전 공유 링크 206(v8 폴백)·Traceback 0. tsc 0.
