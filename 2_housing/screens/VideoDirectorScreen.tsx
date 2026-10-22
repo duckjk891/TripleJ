@@ -108,7 +108,8 @@ const FORMAT_QUESTION = '좋아요! 어떤 형태의 영상으로 만들까요?\
 // v3.393 [MVSub]: 'mv' = MV 자막 디자인(에스코어 드림 + 기울임·좁은 자간·그림자 — 서버 share_video.mv_sub_params). 새 영상 기본값.
 // v3.396 [SnsV9]: 하이라이트 길이·시작/끝 장면 질문
 const HIGHLIGHT_SECONDS = 30;
-const CARDS_QUESTION = '영상 처음에 곡 제목과 아티스트를, 끝에는 「내 이야기로 노래 만들기」 장면을 넣을까요?\n릴스·쇼츠에서 무슨 노래인지 바로 보여서 추천해요.';
+// v3.397(대표): 끝 장면(app.maidol.ai.kr — 앱 유입 창구)은 항상 들어간다 — 선택은 시작 타이틀만
+const CARDS_QUESTION = '영상 처음 2.5초에 곡 제목과 아티스트를 크게 보여줄까요?\n릴스·쇼츠에서 무슨 노래인지 바로 보여서 추천해요. (끝에는 「내 이야기로 노래 만들기」 장면이 항상 들어가요)';
 
 const FONTS: { key: string; label: string }[] = [
   { key: 'mv', label: 'MV 자막' },
@@ -311,7 +312,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const [pickedBgColor, setPickedBgColor] = useState<string>(stylePrefs?.pickedBgColor ?? '1B1035');
   const [pickedBgAlpha, setPickedBgAlpha] = useState<string>(stylePrefs?.pickedBgAlpha ?? '45');
   const [pickedFont, setPickedFont] = useState<string>(stylePrefs?.pickedFont ?? 'mv'); // v3.393: 기본 = MV 자막
-  // v3.396 [SnsV9]: SNS 세로 영상의 시작 타이틀(곡 제목·아티스트)·끝 장면(나도 만들기) — 기본 넣기
+  // v3.396 [SnsV9]: SNS 세로 영상의 시작 타이틀(곡 제목·아티스트) — 기본 넣기(v3.397: 끝 장면은 항상)
   const [pickedCards, setPickedCards] = useState<boolean>(stylePrefs?.pickedCards ?? true);
   // v3.393 [MVSub]: 'MV 자막' 카드 미리보기용 에스코어 드림(PlayerScreen MV 자막과 같은 원본 OTF) — 실패 시 기본 글꼴
   const [mvFontReady, setMvFontReady] = useState(false);
@@ -1971,10 +1972,10 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         {/* v3.209: 자막 테두리 유무 — textShadow 근사 미리보기 */}
         {step === 'cards' && (
           <View style={styles.formatRow}>
-            <Card onPress={() => handlePickCards(true)} label="넣기" desc="추천 · 처음 2.5초 곡 제목, 끝 3초 나도 만들기">
+            <Card onPress={() => handlePickCards(true)} label="넣기" desc="추천 · 처음 2.5초 곡 제목·아티스트">
               <AppText style={styles.outlineDemoOn}>♪ 제목</AppText>
             </Card>
-            <Card onPress={() => handlePickCards(false)} label="빼기" desc="가사 영상만">
+            <Card onPress={() => handlePickCards(false)} label="빼기" desc="바로 가사부터">
               <AppText style={styles.outlineDemoOff}>가나다</AppText>
             </Card>
           </View>
