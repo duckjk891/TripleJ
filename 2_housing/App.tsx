@@ -207,7 +207,7 @@ export type StudioStackParamList = {
   // v3.93: 생성 이력 목록 (진행중 이어보기 / 완료 결과 / 실패 확인·삭제)
   GenerationHistory: undefined;
   CoverGeneration: undefined;
-  VideoDirector: { initialTrackId?: string } | undefined; // v3.221: 마이페이지 다운로드(영상) 연결 — 선곡 프리셋
+  VideoDirector: { initialTrackId?: string; initialFormat?: 'sns'; menuNonce?: number } | undefined; // v3.221: 마이페이지 다운로드(영상) 연결 — 선곡 프리셋 · v3.402 곡 ⋮ SNS 공유는 형식까지
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
   // v3.103(B-1): characterId — 서버 다중 아티스트(cid) 진입. slot은 레거시(me 폴백) 전용.
   //   ArtistInput.characterId = 재생성 대상(kind 불일치 400 → forceKind 동반 필수)

@@ -40,7 +40,7 @@ const VIDEO_FORMATS = {
 
 const SNS_NAMES: Record<string, string> = { youtube: 'YouTube 쇼츠', reels: '릴스', tiktok: '틱톡' };
 
-const VIDEO_NAME_SUFFIX = { wide: '가로', sns: '세로', kakao: '카톡 15초' } as const;
+export const VIDEO_NAME_SUFFIX = { wide: '가로', sns: '세로', kakao: '카톡 15초' } as const;
 
 // 공유 대상별 폴백 업로드 페이지(모바일 공유 시트가 안 뜰 때)
 const SNS_UPLOAD_URLS: Record<string, string> = {

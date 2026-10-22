@@ -38,7 +38,6 @@ import { AppText, EmptyState, Button, Tag } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
-import TrackShareDownloadSheet, { SheetMode, downloadTrackMp3 } from '../components/TrackShareDownloadSheet';
 // v3.96(A-2): 내 앨범 관리 — 앨범 탭 + 생성 모달, 상세/관리는 AlbumDetailScreen
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
@@ -126,8 +125,6 @@ export default function MyMusicScreen({ navigation }: any) {
   const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
-  const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
-  const [sdMode, setSdMode] = useState<SheetMode>('share');
   // v3.210 ③: Inst. 생성 진행 중인 트랙 id 집합 — 진행 중엔 ⋮ 메뉴에서 항목 제외(중복 요청 방지)
   const [instBusy, setInstBusy] = useState<Record<string, boolean>>({});
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
@@ -328,27 +325,6 @@ export default function MyMusicScreen({ navigation }: any) {
         },
       ]
     );
-  };
-
-  // v3.221: ⋮ 다운로드 → [영상, 음원] 2택 — 영상은 영상 디렉터로 이동(해당 곡 프리셋),
-  // 음원은 기존 mp3 다운로드 즉시 실행(TrackShareDownloadSheet 모듈 헬퍼 위임).
-  const handleDownloadChoice = (t: Track) => {
-    if (__DEV__) console.info('[MyMusic] 다운로드 선택 다이얼로그', { id: t.id });
-    showAlert('다운로드', '받을 형식을 선택해주세요.', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '영상',
-        onPress: () => {
-          // v3.222 ①: initial:false — Studio 미방문 세션에도 스택 [Map, VideoDirector] 적재.
-          // Map 마운트만으로 엔터명 헤더 셋업(useLayoutEffect) = 정상 진입과 동일 타이틀·뒤로가기.
-          navigation.getParent()?.navigate('MainTabs', {
-            screen: 'Studio',
-            params: { screen: 'VideoDirector', initial: false, params: { initialTrackId: String(t.id) } },
-          });
-        },
-      },
-      { text: '음원', onPress: () => { downloadTrackMp3({ id: String(t.id), title: t.title }, !!user); } },
-    ]);
   };
 
   // v3.269 [30]: 아티스트 재지정 실행 — 서버 PUT(검증·artist_name 동기·ES 재색인)
@@ -1145,15 +1121,7 @@ export default function MyMusicScreen({ navigation }: any) {
         }}
       />
 
-      {/* 공유·다운로드 선택지 (쇼츠/릴스/틱톡·화질별 영상·mp3) */}
-      <TrackShareDownloadSheet
-        visible={!!sdTrack}
-        mode={sdMode}
-        track={sdTrack ? { id: sdTrack.id, title: sdTrack.title } : null}
-        onClose={() => setSdTrack(null)}
-      />
-
-      {/* 곡 더보기(⋮) — 공용 시트(공유하기 포함) + 내 곡 고유 기능(다운로드·Inst.·차트 업로드/숨기기·삭제) */}
+      {/* 곡 더보기(⋮) — 공용 시트(v3.402 묶음: 공유하기·이 곡으로 만들기·파일 받기·곡 관리) */}
       <TrackActionSheet
         track={actionTrack ? { ...actionTrack, id: String(actionTrack.id) } : null}
         onClose={() => setActionTrack(null)}
@@ -1162,18 +1130,20 @@ export default function MyMusicScreen({ navigation }: any) {
           String(t.id) === trackId ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) } : t))}
         shareOwn
         onSharePublished={handleSharePublished}
-        extraItems={actionTrack ? [
-          // v3.235 B3: 공유 = 공용 기본 항목 '공유하기'(시트가 제공) — v3.221 임시 숨김 해제.
-          // 다운로드 = [영상, 음원] 2택 다이얼로그 — 영상은 영상 디렉터로 연결(선곡 프리셋).
-          { icon: 'download', label: '다운로드', onPress: () => handleDownloadChoice(actionTrack) },
-          // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외
-          ...(canMakeInstrumental(actionTrack)
-            ? [{ icon: 'disc' as const, label: 'MR 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
-            : []),
+        // v3.402 [TrackMenu]: 묶음 개편 — 공유·파일 받기(음원·내가 만든 영상)·영상 만들기는 시트가 제공.
+        // 이 곡으로 만들기 › 안: AI 곡 한정 편곡·MR(조건 판단은 여기)
+        makeItems={actionTrack ? [
           // v3.326: 다른 장르로 편곡(AI 곡 — 작곡 결과 화면과 같은 흐름)
           ...(canArrange(actionTrack)
             ? [{ icon: 'shuffle' as const, label: '다른 장르로 편곡', onPress: () => openArrangeFor(actionTrack) }]
             : []),
+          // v3.210 ③: AI 곡(suno) 한정 Inst. 버전 생성 — (Inst.) 곡·진행 중 곡 제외
+          ...(canMakeInstrumental(actionTrack)
+            ? [{ icon: 'disc' as const, label: 'MR 버전 만들기', onPress: () => handleCreateInstrumental(actionTrack) }]
+            : []),
+        ] : undefined}
+        // 곡 관리 › 안
+        manageItems={actionTrack ? [
           // v3.217 ②: 공개↔숨김 양방향 — 공개곡="차트에서 숨기기", 비공개곡="차트에 업로드"(상호 배타)
           ...(actionTrack.is_public
             ? [{ icon: 'eye-off' as const, label: '차트에서 숨기기', onPress: () => handleHideFromChart(String(actionTrack.id), actionTrack.title) }]

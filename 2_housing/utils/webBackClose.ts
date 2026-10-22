@@ -39,6 +39,8 @@ function onPopState(e: PopStateEvent) {
   const top = stack[stack.length - 1];
   if (top && st?.maidolSheet !== top.token) {
     stack.pop();
+    const pi = pushedOrder.lastIndexOf(top.token);
+    if (pi >= 0) pushedOrder.splice(pi, 1);
     e.stopImmediatePropagation();
     console.info('[WebBack] 뒤로 가기 — 시트 닫기', { token: top.token, remaining: stack.length });
     try {
@@ -72,6 +74,8 @@ export function useWebBackClose(visible: boolean, onClose: () => void): void {
     const token = `s${Date.now().toString(36)}${seq}`;
     const entry: Entry = { token, close: () => closeRef.current() };
     stack.push(entry);
+    pushedOrder.push(token);
+    if (pushedOrder.length > 50) pushedOrder.splice(0, pushedOrder.length - 50);
     try {
       window.history.pushState({ ...(window.history.state || {}), maidolSheet: token }, '', window.location.href);
     } catch (err) {
@@ -84,18 +88,38 @@ export function useWebBackClose(visible: boolean, onClose: () => void): void {
       stack.splice(i, 1);
       // 버튼·바깥 누르기로 닫힘: 올려 둔 칸을 정리. 같은 순간 화면 이동이 있으면(칸이 이미 묻힘)
       // 되돌리면 그 이동을 취소하게 되므로, 잠시 뒤 칸이 여전히 맨 위일 때만 내린다.
-      setTimeout(() => {
-        try {
-          if (window.history.state?.maidolSheet === token) {
-            swallowNext += 1;
-            window.history.back();
-          } else {
-            deadTokens.add(token); // 묻힌 칸 — 나중에 뒤로 가다 도착하면 건너뛴다
-          }
-        } catch (err) {
-          console.warn('[WebBack] 칸 정리 실패', { err });
-        }
-      }, 120);
+      // v3.402: 겹친 시트(⋮ 하위 목록 등)가 한꺼번에 닫히면 칸 여러 개를 한 번에 내린다(한 칸만 내리면 아래 칸이 묻혀 뒤로 가기 한 번이 헛돈다).
+      closing.add(token);
+      if (!flushTimer) flushTimer = setTimeout(flushClosing, 120);
     };
   }, [visible]);
+}
+
+const pushedOrder: string[] = []; // 올린 순서(겹친 칸의 위아래 판단용)
+const closing = new Set<string>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushClosing() {
+  flushTimer = null;
+  try {
+    // 지금 맨 위 칸부터 아래로, 이번에 닫힌 칸이 연속된 만큼 내린다
+    const cur = window.history.state?.maidolSheet;
+    const top: string[] = [];
+    for (let i = cur ? pushedOrder.lastIndexOf(cur) : -1; i >= 0 && closing.has(pushedOrder[i]); i--) top.push(pushedOrder[i]);
+    for (const t of closing) {
+      if (!top.includes(t)) deadTokens.add(t); // 묻힌 칸 — 나중에 뒤로 가다 도착하면 건너뛴다
+    }
+    for (const t of closing) {
+      const i = pushedOrder.indexOf(t);
+      if (i >= 0 && top.includes(t)) pushedOrder.splice(i, 1);
+    }
+    closing.clear();
+    if (top.length) {
+      swallowNext += 1; // go(-n) 은 popstate 를 한 번만 낸다
+      window.history.go(-top.length);
+    }
+  } catch (err) {
+    closing.clear();
+    console.warn('[WebBack] 칸 정리 실패', { err });
+  }
 }

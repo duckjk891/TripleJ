@@ -347,6 +347,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   // v3.228 W0-2: 이 화면이 추적 뷰어로 보고 있는 job 키 · 회수 진입 곡(목록 로드 후 보강용)
   const viewerKeyRef = useRef<string | null>(null);
   const recoverTrackIdRef = useRef<string | null>(null);
+  const pendingFormatRef = useRef<'sns' | null>(null); // v3.402: 진입 시 미리 고른 형식
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -488,6 +489,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
               { type: 'director', text: FORMAT_QUESTION }]);
             setStep('format');
+            // v3.402 [TrackMenu] ⋮ 'SNS에 공유' 진입 — 형식 질문을 'SNS용 세로'로 바로 답한다(아래 효과)
+            if (route?.params?.initialFormat === 'sns') pendingFormatRef.current = 'sns';
             setLoadingTracks(false);
             return;
           }
@@ -827,6 +830,42 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         : '영상으로 쓸 구간을 골라주세요. 기본은 곡 전체예요.\n원하는 부분만 쓰려면 시작·끝을 움직이고 [구간 미리 듣기]로 확인해보세요(최소 5초).',
     );
   };
+
+  // v3.402 [TrackMenu]: 이미 열려 있던 영상 디렉터에 곡 ⋮ 로 다시 들어온 경우(마운트 효과는 다시 안 돎) —
+  // menuNonce 가 바뀌면 그 곡으로 새로 시작. 영상을 만드는 중이면 끼어들지 않는다.
+  const menuNonce = route?.params?.menuNonce;
+  const menuNonceSeenRef = useRef(menuNonce);
+  useEffect(() => {
+    if (menuNonce == null || menuNonceSeenRef.current === menuNonce) return;
+    menuNonceSeenRef.current = menuNonce;
+    const presetId = route?.params?.initialTrackId ? String(route.params.initialTrackId) : null;
+    const preset = presetId ? tracks.find((t) => t.id === presetId) : undefined;
+    if (!preset || step === 'making' || busyRef.current) {
+      console.info('[TrackMenu] 영상 디렉터 재진입 프리셋 생략', { presetId, found: !!preset, step });
+      return;
+    }
+    console.info('[TrackMenu] 영상 디렉터 재진입 프리셋', { presetId, initialFormat: route?.params?.initialFormat ?? null });
+    useMusicStore.getState().clearVideoDraft();
+    setShowResumeNotice(false);
+    setPickedClip(null);
+    setVideoUrl(null);
+    setSelected(preset);
+    setChat([INITIAL_VIDEO_GREETING, { type: 'user', text: preset.title, step: 'pick' },
+      { type: 'director', text: FORMAT_QUESTION }]);
+    setStep('format');
+    if (route?.params?.initialFormat === 'sns') pendingFormatRef.current = 'sns';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuNonce]);
+
+  // v3.402 [TrackMenu]: 곡 ⋮ 'SNS에 공유'로 들어오면 선곡 직후 형식 단계에서 'SNS용 세로'를 자동 선택
+  useEffect(() => {
+    if (step !== 'format' || !selected || !pendingFormatRef.current) return;
+    const fmt = pendingFormatRef.current;
+    pendingFormatRef.current = null;
+    console.info('[TrackMenu] 영상 디렉터 형식 자동 선택', { fmt, trackId: selected.id });
+    handlePickFormat(fmt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selected]);
 
   // v3.282: 결과 화면 [구간 다시 자르기] — 같은 영상(곡·형식·스타일)의 구간만 바꾸기(서버 판정 무과금)
   const handleRecut = () => {
