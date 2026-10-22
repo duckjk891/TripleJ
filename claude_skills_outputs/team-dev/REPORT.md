@@ -4930,3 +4930,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - 김수석 DM(10-20) "가사 전체편집할 때 모바일에서 5줄밖에 안 보여요": 작곡 대화 가사 단계 전체 편집 입력칸이 lyricsInput maxHeight 200 에 묶여 있었음 → 화면 높이 40%(200~360px)까지(MusicGenerationScreen rawLyricsMaxHeight). 작사 결과 화면 편집 칸은 높이 제한 없음(무변경).
 - 지유 DM(10-21) "입력은 자동 저장인가요? 처음 옆에 이대로 or 저장이 있으면": 영상 디렉터 복원 안내 문구를 "자동으로 저장돼 있어요. 그대로 이어서 할까요, 처음부터 새로 할까요?"로, '이대로 이어서'(안내 닫기) 버튼을 '처음부터' 옆에 추가.
 - 검증: tsc 0. 웹 배포.
+
+## v3.395 — 2026-10-21~22 — 크루 만들기 ⭐10(계정당 1번)·재화 표기 '스타' 통일·일기 첨부 버튼 크기·(숨김) 일기로 노래 만들기 배선 (서버 배포 대기 + 앱 커밋 de11b0b)
+- 서버(스테이징 server_staging_v3395star, 9파일 files.txt·deploy_v3395.sh — 대표 실행 대기): clubs.py create_club 성공 시 credit_points('club_create', 10, ref='-', day='-') → 응답 star_reward(지우고 다시 만들어도 1번). 사용자 노출 '별'→'스타'(points 부족·슬롯 환불·스타 제작소·gen_jobs 중단 안내·admin_stats 라벨), cs_knowledge 정책에 스타 호칭 강제·받는 법(낙서·스타 제작소·주간 미션·크루 만들기·크루 앨범) 추가, cs_worker 라벨(diary_daily=낙서하기·club_create·club_album_participation), issues.py DM 오류신고 사유 '결제·스타 오류' 신·구 둘 다. 격리 테스트 11/11.
+- 앱: 크루 만들기 +10⭐ 다이얼로그·별 안내/새 소식 '크루 만들기 +10(한 번만)', 앱 전역 재화 '별'→'스타'(스타 제작소·부족 안내·환불·계정 합치기·영상 편집 무료 안내·오류 신고 사유), 낙서 첨부 버튼 12/15·'누가 볼 수 있나요' 13, '이 일기로 노래 만들기'(makeLike startDiarySongFlow → 작사 디렉터 주제 칸 프리필) — v3.400 에서 숨김.
+
+## v3.400 — 2026-10-22 — 일기장 → '낙서장' + 손글씨(나눔손글씨 중학생체) + 카메라 + 곡 미리 첨부 진입 (웹·앱, 서버 문구는 v3.395 묶음 — 실제 배포는 v3.395 실행 뒤)
+- 이름(대표 10-22): 사용자 노출 '일기/일기장' 전수 → '낙서/낙서장'(탭·제목·[내 낙서]·낙서하기·스타 안내·새 소식·알림·빈 화면·삭제/공유·임시저장), 내부 diary_* 유지. 커밋 00f221f(라벨이 v3.396 으로 찍혔으나 v3.396 은 SNS 영상 세션 — 이 작업은 v3.400).
+- 손글씨(대표 시안 3판에서 추천안 확정): 나눔손글씨 중학생(네이버 hangeul.naver.com 공식) → KS X 1001 한글 2,350자 부분 글꼴 0.9MB, 나눔글꼴 라이선스(OFL 1.1) 예약 이름 'Nanum' 회피로 글꼴명 'MAIDOL Nakseo', assets/fonts/MaidolNakseo-Regular.ttf + MaidolNakseo_LICENSE.txt(출처·수정 내역·전문). utils/nakseoFont(낙서장 진입 시 expo-font 로드) → 카드·상세 본문 17/26, 쓰기 입력칸 18/26. 미리보기(mvtest) 실측: 폰트 파일 200·document.fonts MaidolNakseo loaded. 시안 https://claude.ai/artifact/9zjZqGkhqQJDdoWBoxqRym (9종·라이선스·용량). 커밋 85e68aa.
+- 카메라(대표 10-22): utils/pickImage takePhoto(앱 launchCameraAsync 후면·JPEG / 웹 input capture=environment)·recoverPendingCameraPhotos(안드로이드), 낙서장 카메라 버튼 → { startWith:'camera' }(웹은 한 번 눌러 열기), 쓰기 화면 큰 '사진 찍기/사진첩' 버튼·사진 눌러 다시 찍기/삭제(최대 5)·사진 source 기록, app.json 카메라 권한 문구에 낙서장 추가(다음 네이티브 빌드). 커밋 95504b5.
+- 곡 미리 첨부: FeedCompose { attachTrack | attachTrackId, kind?:'club', clubId } — 곡 ⋮ '낙서장/크루에 공유'(track-menu 세션) 계약, 공유 곡이 임시저장보다 우선. 커밋 50f0ab9.
+- '이 낙서로 노래 만들기' 카드 DIARY_SONG_ENABLED=false — story-to-song 세션에 연결 지점(goDiarySong·consumeDiaryTopic/Photos·사진 objectName) 전달.

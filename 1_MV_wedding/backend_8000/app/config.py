@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     # v17.0 — Grok Imagine Video (xAI). 실제 토큰은 운영 .env 에서 사용자가 채움.
     xai_api_key: str = ""
 
+    # voice-clone (포팅 from 0_platform_music) — 외부에서 접근 가능한 백엔드 base URL (Suno 콜백 수신용).
+    # 비어있으면 "https://localhost" 더미 사용 (개발환경 — 콜백 미수신, 폴링 폴백).
+    public_base_url: str = ""
+
+    # voice-clone — presigned URL 의 외부 접근용 호스트 override.
+    # 형식 "host:port" (예: "203.0.113.10:9100"). 빈 값이면 기본 minio_endpoint 사용.
+    # .env 의 MINIO_PUBLIC_HOST 로 오버라이드 (pydantic-settings 자동 매핑).
+    minio_public_host: str = ""
+
     @property
     def postgres_dsn(self) -> str:
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

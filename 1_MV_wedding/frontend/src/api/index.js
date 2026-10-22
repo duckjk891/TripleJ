@@ -442,6 +442,49 @@ export const preMVResultVideoUrl = (id) => {
   return `${API.defaults.baseURL}/pre-mv/jobs/${id}/result?token=${encodeURIComponent(token)}`;
 };
 
+// v76 — Voice cloning (Suno V5_5). prefix /api/voice-clone.
+// 흐름: create(소스 음성 업로드 → validate) → poll until status=awaiting_verify
+//   → verify(검증 문구 녹음 업로드 → generate) → poll until status=ready (voice_id 확보).
+// 상태: validating | awaiting_verify | generating | ready | failed.
+//
+// createVoiceClone: FormData {
+//   source_file(File audio), voice_name, description, vocal_start_s(float),
+//   vocal_end_s(float), language(기본 "ko"), style_mode("sing"|"speak"|"rap") }.
+// 응답: { clone_id, validate_task_id, status }.
+// 마이크 녹음(webm/opus)은 백엔드가 mp3 로 정규화하므로 그대로 업로드 OK.
+export const createVoiceClone = (formData) =>
+  API.post('/voice-clone/create', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+
+// verifyVoiceClone: FormData {
+//   verify_file(File audio — 검증 문구 낭독 녹음),
+//   singer_skill_level("beginner"|"intermediate"|"advanced"|"professional") }.
+// 응답: { clone_id, generate_task_id, status }.
+export const verifyVoiceClone = (cloneId, formData) =>
+  API.post(`/voice-clone/${cloneId}/verify`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+
+// 단일 클론 폴링. 응답 doc: { clone_id, status, voice_name, description,
+//   voice_id, validate_info(검증 문구 string), error_message, ... }.
+// 백엔드가 진행중(validating/generating)이면 GET 시 sunoapi 폴링 1회 동반.
+export const getVoiceClone = (cloneId) =>
+  API.get(`/voice-clone/${cloneId}`);
+
+// 응답: { clones: [doc, ...] } — 이전에 만든 보컬 재사용 목록.
+export const listVoiceClones = () =>
+  API.get('/voice-clone/list');
+
+export const deleteVoiceClone = (cloneId) =>
+  API.delete(`/voice-clone/${cloneId}`);
+
+// 검증 문구 재생성. 응답: { validate_task_id }. 이후 getVoiceClone 폴링으로 새 phrase 수신.
+export const regenerateVoiceClonePhrase = (cloneId) =>
+  API.post(`/voice-clone/${cloneId}/regenerate-phrase`);
+
 // Share (public)
 export const getSharedMV = (token) => API.get(`/share/${token}`);
 

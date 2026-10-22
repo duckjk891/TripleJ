@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 _HANGUL_RE = re.compile(r"[가-힣]")
 
+# voice-clone (포팅 from 0_platform_music) — Suno V5_5 voice cloning 엔드포인트.
+# voice_clone_service 가 `.format(base=...)` 로 사용. base 는 settings.suno_api_url.rstrip("/").
+SUNO_VOICE_VALIDATE_URL = "{base}/api/v1/voice/validate"
+SUNO_VOICE_VALIDATE_INFO_URL = "{base}/api/v1/voice/validate-info"  # validate phrase 폴링용
+SUNO_VOICE_REGENERATE_URL = "{base}/api/v1/voice/regenerate"
+SUNO_VOICE_GENERATE_URL = "{base}/api/v1/voice/generate"
+SUNO_VOICE_RECORD_INFO_URL = "{base}/api/v1/voice/record-info"
+SUNO_VOICE_CHECK_URL = "{base}/api/v1/voice/check-voice"
+
 
 def _has_hangul(text: str) -> bool:
     return bool(text) and bool(_HANGUL_RE.search(text))
@@ -197,6 +206,24 @@ async def generate_music_for_job(
         body["title"] = lyrics_title[:80]
     if main_info:
         body["vocalGender"] = main_info["gender"]
+
+    # ---- 보이스 클론(내 목소리) 적용 ----
+    # music_spec.voice_clone = {clone_id, voice_id, name} — StoryWizard "내 목소리로 만들기"
+    # 에서 만든 보이스 클론. voice_id 가 있으면 그 음색으로 노래하도록 Suno 에 전달한다.
+    #
+    # ⚠️ 미확정(사용자 확인 필요): Suno V5_5 voice-clone 의 voice_id 를 음원 /generate 에
+    #   적용하는 "정확한 필드"는 9005 코드에도 소비 예시가 없어 단정 불가. 코드 내 유일한
+    #   음색-지정 메커니즘인 personaId 로 전달하고 모델을 V5_5 로 강제한다(클론은 V5_5 필요).
+    #   실제 Suno 가 invalid persona 등을 반환하면 필드명을 voiceId 로 교체해야 할 수 있음.
+    voice_clone = music_spec.get("voice_clone") or {}
+    clone_voice_id = voice_clone.get("voice_id") if isinstance(voice_clone, dict) else None
+    if clone_voice_id:
+        body["personaId"] = clone_voice_id
+        body["model"] = "V5_5"  # voice clone 은 V5_5 필요
+        logger.info(
+            "Suno: job %s using voice clone persona voice_id=%s (model forced V5_5)",
+            job_id, clone_voice_id,
+        )
 
     # ---- Step 1: 생성 요청 ----
     await _update_progress(mongo_db, job_id, 10)

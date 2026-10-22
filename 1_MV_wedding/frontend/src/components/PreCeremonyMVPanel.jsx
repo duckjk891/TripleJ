@@ -2078,7 +2078,25 @@ function SceneCard({
               <span className="pre-mv-scene-card__warn-icon" aria-hidden="true">
                 {scene.video_error_reason === 'content_policy' ? '🚫' : '⚠'}
               </span>
-              <span className="pre-mv-scene-card__video-error">
+              <span
+                className="pre-mv-scene-card__video-error"
+                title={scene.video_error || ''}
+                style={{ cursor: scene.video_error ? 'pointer' : undefined }}
+                onClick={() => {
+                  if (scene.video_error || scene.video_error_reason) {
+                    // 잘리지 않은 전체 에러 본문을 브라우저 콘솔로 출력 (클릭 시).
+                    console.error(
+                      `[PreMV] scene ${scene.scene_number} 영상 실패 — 전체 본문:`,
+                      {
+                        scene_number: scene.scene_number,
+                        video_status: scene.video_status,
+                        video_error_reason: scene.video_error_reason,
+                        video_error: scene.video_error,
+                      },
+                    );
+                  }
+                }}
+              >
                 {scene.video_error_reason === 'content_policy'
                   ? '콘텐츠 정책 거부 (모델 출력 모더레이션) — 다른 영상 모델로 시도해보세요.'
                   : (scene.video_error

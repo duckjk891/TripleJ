@@ -1,0 +1,166 @@
+<title>MAIDOL 낙서장 손글씨</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&family=Gamja+Flower&family=Poor+Story&family=Hi+Melody&display=swap">
+<style>
+/* Layout: 앱 톤(밤 보라) 단일 다크 — 머리말 → 글꼴 후보 3개(같은 낙서를 카드로) → 쓰기 입력칸 미리보기 → 정할 것 */
+:root {
+  color-scheme: dark;
+  --bg: #0d0820; --s1: #1e1340; --s2: #2a1758; --s3: #3a2569;
+  --fg: #ffffff; --sub: #c9b8f5; --muted: #8a78b3;
+  --accent: #a855f7; --gold: #fbbf24; --paper: #f6f1ff; --ink: #2a1758;
+  --f-ui: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--f-ui); font-size: 15px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 36px; }
+h1 { font-size: clamp(26px, 4vw, 34px); font-weight: 900; margin: 0; letter-spacing: -0.02em; text-wrap: balance; }
+h2 { font-size: 20px; margin: 0; }
+.eyebrow { font-size: 12px; letter-spacing: .12em; color: #c084fc; font-weight: 700; }
+.lead { color: var(--sub); max-width: 64ch; margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 18px; }
+.opt { background: var(--s1); border: 1px solid var(--s2); border-radius: 18px; padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.opt.rec { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.opt-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.letter { font-size: 22px; font-weight: 900; color: #c084fc; }
+.name { font-weight: 700; }
+.tag { font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 6px; padding: 1px 7px; }
+.meta { font-size: 12.5px; color: var(--muted); margin: 0; }
+.card { background: #160d33; border: 1px solid var(--s2); border-radius: 14px; padding: 10px; display: grid; gap: 8px; }
+.head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.av { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #a855f7, #fbbf24); display: grid; place-items: center; font-weight: 700; font-size: 11px; }
+.who b { display: block; font-size: 12.5px; }
+.who span { color: var(--muted); font-size: 11px; }
+.dline { display: flex; justify-content: space-between; border-bottom: 1px dashed var(--s3); padding-bottom: 4px; font-size: 12.5px; color: #c084fc; font-weight: 700; }
+.dline span { color: var(--sub); font-weight: 400; }
+.paper { background: var(--paper); color: var(--ink); border-radius: 10px; padding: 10px 12px; font-size: 19px; line-height: 1.55;
+  background-image: repeating-linear-gradient(transparent 0 28.5px, rgba(124,58,237,.14) 28.5px 29.5px); }
+.input { border: 1.5px dashed var(--s3); border-radius: 10px; padding: 10px 12px; font-size: 18px; color: var(--fg); min-height: 64px; }
+.input i { font-style: normal; color: var(--muted); }
+.f-a { font-family: "Gamja Flower", var(--f-ui); }
+.f-b { font-family: "Poor Story", var(--f-ui); }
+.f-c { font-family: "Hi Melody", var(--f-ui); }
+.box { background: var(--s1); border: 1px solid var(--s2); border-radius: 16px; padding: 16px 18px; display: grid; gap: 8px; }
+.box ul { margin: 0; padding-left: 18px; color: var(--sub); display: grid; gap: 5px; font-size: 14px; }
+.box b { color: var(--fg); }
+.cam-grid { display: flex; flex-wrap: wrap; gap: 22px; justify-content: center; }
+.cam { margin: 0; width: 300px; max-width: 100%; display: grid; gap: 10px; }
+.cam figcaption { font-size: 13px; color: var(--sub); }
+.cam figcaption b { display: block; color: var(--fg); font-size: 15px; }
+.phone { position: relative; height: 470px; border-radius: 30px; border: 7px solid #251a44; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; font-size: 13px; }
+.ph-top { padding: 14px 14px 8px; font-weight: 800; font-size: 17px; display: flex; justify-content: space-between; align-items: center; }
+.ph-r { font-size: 12px; font-weight: 400; color: var(--sub); }
+.ph-r b { color: var(--accent); }
+.ph-seg { display: flex; border-bottom: 1px solid var(--s1); }
+.ph-seg span { flex: 1; text-align: center; padding: 8px 0; color: var(--muted); font-weight: 600; }
+.ph-seg span.on { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.ph-body { padding: 10px; display: grid; gap: 10px; align-content: start; }
+.photo-lg { height: 130px; border-radius: 10px; background: linear-gradient(160deg, #1e3a8a, #9333ea 55%, #f9a8d4); }
+.fab-cam, .fab-pen { position: absolute; right: 18px; display: grid; place-items: center; border-radius: 50%; }
+.fab-cam { bottom: 86px; width: 44px; height: 44px; background: var(--s2); border: 1px solid var(--accent); }
+.fab-pen { bottom: 22px; width: 54px; height: 54px; background: var(--accent); box-shadow: 0 6px 16px rgba(168,85,247,.5); }
+.fab-cam svg, .fab-pen svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pb { text-align: center; padding: 12px 0; border-radius: 12px; border: 1px solid var(--accent); color: var(--accent); font-weight: 700; font-size: 12.5px; line-height: 1.5; }
+.pb.main { background: var(--accent); color: #fff; }
+.thumbs { display: flex; gap: 10px; }
+.th { width: 64px; height: 64px; border-radius: 10px; position: relative; }
+.th.t1 { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+.th.t2 { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
+.th i { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,.75); font-style: normal; font-size: 10px; display: grid; place-items: center; }
+.sheet { background: var(--s1); border: 1px solid var(--s3); border-radius: 14px; padding: 10px; display: grid; gap: 6px; text-align: center; font-size: 13px; }
+.sheet span { padding: 6px 0; border-top: 1px solid var(--s2); color: var(--sub); }
+.sheet .del { color: #f87171; }
+.answer { background: var(--s2); border-radius: 14px; padding: 14px 16px; color: var(--sub); }
+.answer b { color: var(--fg); }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:10px">
+    <div class="eyebrow">MAIDOL · 낙서장 손글씨 시안 · 2026-10-22</div>
+    <h1>낙서가 손글씨로 보여요</h1>
+    <p class="lead">'일기장'이 '낙서장'이 되고, 낙서 본문(목록 카드·상세·쓰기 입력칸)이 울퉁불퉁한 손글씨로 보입니다. 같은 낙서를 세 글꼴로 띄웠어요. 하나 골라 주세요. 모두 무료 상업용(SIL OFL)이고 Google Fonts 공식 저장소에서 받습니다.</p>
+  </header>
+
+  <section class="grid" aria-label="글꼴 후보">
+    <article class="opt rec">
+      <div class="opt-h"><span class="letter">A</span><span class="name">감자꽃 (Gamja Flower)</span><span class="tag">추천</span></div>
+      <p class="meta">가장 울퉁불퉁 · 굵고 귀여움 · 앱 용량 +1.0MB</p>
+      <div class="card">
+        <div class="head"><div class="av">L</div><div class="who"><b>lovvepearl</b><span>방금 전</span></div></div>
+        <div class="dline">2026.10.22 목 <span>🥰 설렘</span></div>
+        <div class="paper f-a">첫 곡이 차트 87위에 올랐다! 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시 만들어 볼까~ ♡</div>
+      </div>
+      <div class="input f-a">오늘 하루를 끄적여 보세요<i>|</i></div>
+    </article>
+    <article class="opt">
+      <div class="opt-h"><span class="letter">B</span><span class="name">푸어스토리 (Poor Story)</span></div>
+      <p class="meta">삐뚤빼뚤 연필 느낌 · 가늘고 가벼움 · 앱 용량 +0.3MB</p>
+      <div class="card">
+        <div class="head"><div class="av">L</div><div class="who"><b>lovvepearl</b><span>방금 전</span></div></div>
+        <div class="dline">2026.10.22 목 <span>🥰 설렘</span></div>
+        <div class="paper f-b">첫 곡이 차트 87위에 올랐다! 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시 만들어 볼까~ ♡</div>
+      </div>
+      <div class="input f-b">오늘 하루를 끄적여 보세요<i>|</i></div>
+    </article>
+    <article class="opt">
+      <div class="opt-h"><span class="letter">C</span><span class="name">하이멜로디 (Hi Melody)</span></div>
+      <p class="meta">흔들리는 볼펜 글씨 · 길쭉하고 발랄 · 앱 용량 +1.0MB</p>
+      <div class="card">
+        <div class="head"><div class="av">L</div><div class="who"><b>lovvepearl</b><span>방금 전</span></div></div>
+        <div class="dline">2026.10.22 목 <span>🥰 설렘</span></div>
+        <div class="paper f-c">첫 곡이 차트 87위에 올랐다! 밤새 고친 후렴이 드디어 마음에 든다. 내일은 커버를 다시 만들어 볼까~ ♡</div>
+      </div>
+      <div class="input f-c">오늘 하루를 끄적여 보세요<i>|</i></div>
+    </article>
+  </section>
+
+  <section style="display:grid;gap:14px" aria-label="카메라">
+    <h2>카메라로 바로 낙서하기</h2>
+    <div class="cam-grid">
+      <figure class="cam">
+        <figcaption><b>① 낙서장 — 카메라 버튼</b>글쓰기 버튼 위 작은 카메라를 누르면 바로 카메라가 열리고, 찍으면 낙서 쓰기로 이어져요.</figcaption>
+        <div class="phone">
+          <div class="ph-top">낙서장</div>
+          <div class="ph-seg"><span class="on">전체</span><span>내 낙서</span><span>공지</span></div>
+          <div class="ph-body">
+            <div class="card"><div class="head"><div class="av">민</div><div class="who"><b>민트초코</b><span>1시간 전</span></div></div>
+              <div class="photo-lg"></div>
+              <div class="paper f-a" style="font-size:16px">오늘 서점에서 산 책 표지가 너무 예뻐서 찰칵 📚</div></div>
+          </div>
+          <div class="fab-cam" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+          <div class="fab-pen" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        </div>
+      </figure>
+      <figure class="cam">
+        <figcaption><b>② 낙서하기 — 큰 사진 버튼</b>사진 찍기·사진첩을 크게 나란히. 여러 장(최대 5장), 찍은 사진은 바로 보이고 눌러서 다시 찍기·삭제.</figcaption>
+        <div class="phone">
+          <div class="ph-top">✕ 낙서하기 <span class="ph-r">임시저장 &nbsp;<b>저장</b></span></div>
+          <div class="ph-body">
+            <div class="input f-a" style="min-height:70px">책 표지 보자마자 노래 가사가 떠올랐다…<i>|</i></div>
+            <div class="pbtns"><div class="pb main">📷<br>사진 찍기</div><div class="pb">🖼<br>사진첩 2/5</div></div>
+            <div class="thumbs"><div class="th t1"><i>✕</i></div><div class="th t2"><i>✕</i></div></div>
+            <div class="sheet"><b>사진</b><span>다시 찍기</span><span class="del">삭제</span><span>닫기</span></div>
+          </div>
+        </div>
+      </figure>
+    </div>
+    <p class="meta">웹(app.maidol.ai.kr)은 휴대폰 브라우저에서 카메라가 바로 열리고, 컴퓨터에서는 파일 고르기로 열려요. 아이폰 사진은 JPEG 로 바꿔 올리고, 안드로이드에서 카메라 도중 앱이 꺼져도 돌아오면 찍은 사진을 되살려요. 찍은 사진은 나중에 '낙서·사진으로 노래 만들기'에서도 그대로 쓸 수 있게 남겨 둬요.</p>
+  </section>
+
+  <section class="box">
+    <h2>함께 바뀌는 것</h2>
+    <ul>
+      <li>하단 탭·화면 제목 <b>일기장 → 낙서장</b>, 상단 [전체]·<b>[내 낙서]</b>·[공지], 버튼 <b>'낙서하기'</b></li>
+      <li>스타 안내 <b>'낙서하기 +3⭐'</b>, 새 소식·알림("새 낙서를 남겼어요")·AI 상담 안내도 낙서로</li>
+      <li>손글씨는 <b>낙서 본문에만</b> (날짜·버튼·메뉴는 지금 글꼴 그대로라 읽기 쉬움)</li>
+      <li>앱이 무거워지지 않게 <b>자주 쓰는 한글 2,350자</b>만 담아요. 드문 글자(예: 똠, 햏)는 기본 글꼴로 보입니다.</li>
+      <li>'이 낙서로 노래 만들기'는 새 노래 만들기 방식이 정해질 때까지 <b>숨겨 둡니다</b>.</li>
+    </ul>
+  </section>
+
+  <div class="answer">답은 <b>A</b>, <b>B</b>, <b>C</b> 중 하나로 주세요. 고르시면 그 글꼴로 앱에 넣고, 서버(스타 통일·크루 ⭐10·낙서 이름)와 함께 올려도 될지 다시 여쭤볼게요.</div>
+</div>

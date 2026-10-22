@@ -8,6 +8,7 @@ import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import StoryWizardPage from './pages/StoryWizardPage';
+import StoryInputPreview from './pages/StoryInputPreview';
 import GenerationStatusPage from './pages/GenerationStatusPage';
 import MVPlayerPage from './pages/MVPlayerPage';
 import MyWeddingMVPage from './pages/MyWeddingMVPage';
@@ -26,6 +27,7 @@ export default function App() {
         <main className="app-main">
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            <Route path="/preview/story-input" element={<StoryInputPreview />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route

@@ -85,6 +85,14 @@ class VocalStyles(BaseModel):
     sub: str
 
 
+class VoiceCloneRef(BaseModel):
+    """보이스 클론(내 목소리) 참조 — StoryWizard "내 목소리로 만들기" 에서 생성.
+    ready 상태 클론만 voice_id 를 가진다. suno_generator 가 voice_id 로 음색을 적용."""
+    clone_id: str | None = None
+    voice_id: str | None = None
+    name: str | None = None
+
+
 class MusicSpec(BaseModel):
     genre: str
     moods: list[str] = Field(default_factory=list)
@@ -94,3 +102,5 @@ class MusicSpec(BaseModel):
     # v14 — 한영 혼합 비율 옵션 추가 (ko_en_73 = 한국어 70% + 영어 30%, 등).
     language: Literal["ko", "ko_en_73", "ko_en_55", "ko_en_37", "en"] = "ko"
     model: str | None = None
+    # 보이스 클론 참조 (선택). 있으면 그 음색으로 노래 생성.
+    voice_clone: VoiceCloneRef | None = None

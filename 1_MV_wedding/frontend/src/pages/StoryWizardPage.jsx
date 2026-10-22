@@ -9,6 +9,7 @@ import MentionField from '../components/MentionField';
 import PolishButton from '../components/PolishButton';
 import CharacterSheetPanel from '../components/CharacterSheetPanel';
 import PlaceAssetPanel from '../components/PlaceAssetPanel';
+import VoiceClonePanel from '../components/VoiceClonePanel';
 import './StoryWizardPage.css';
 
 const DRAFT_KEY = 'wedding-wizard-draft';
@@ -215,6 +216,9 @@ const initialData = () => ({
     vocal_styles: { main: 'female_warm', sub: 'male_warm' },
     language: 'ko',
     model: null,
+    // v76 — 내 목소리로 만든 보컬 클론 선택. null 이면 프리셋 보컬 스타일 사용.
+    // 선택 시 { clone_id, voice_id, name }.
+    voice_clone: null,
   },
   sheets: {
     groom_casual: emptySheetSlot(),
@@ -745,9 +749,12 @@ export default function StoryWizardPage() {
       moods: data.music_spec.moods,
       duration_minutes: data.music_spec.duration_minutes,
       vocal_form: data.music_spec.vocal_form,
-      vocal_styles: isDuet ? data.music_spec.vocal_styles : null,
+      // 솔로/듀엣 모두 vocal_styles 전달 — 솔로는 백엔드가 main 만 사용(sub 무시).
+      vocal_styles: data.music_spec.vocal_styles,
       language: data.music_spec.language,
       model: data.music_spec.model,
+      // v76 — 내 목소리 클론을 선택했으면 함께 전달 (없으면 null).
+      voice_clone: data.music_spec.voice_clone || null,
     };
 
     return { storyPayload, musicSpec };
@@ -1211,7 +1218,7 @@ export default function StoryWizardPage() {
           </div>
         </div>
 
-        {isDuet && (
+        {isDuet && !data.music_spec.voice_clone && (
           <div className="field-row">
             <div className="field">
               <label htmlFor="vocal_main">메인 보컬 스타일</label>
@@ -1257,6 +1264,47 @@ export default function StoryWizardPage() {
             </div>
           </div>
         )}
+
+        {!isDuet && !data.music_spec.voice_clone && (
+          <div className="field">
+            <label htmlFor="vocal_main_solo">보컬 스타일</label>
+            <select
+              id="vocal_main_solo"
+              value={data.music_spec.vocal_styles.main}
+              onChange={(e) =>
+                updateMusic({
+                  vocal_styles: {
+                    ...data.music_spec.vocal_styles,
+                    main: e.target.value,
+                  },
+                })
+              }
+            >
+              {VOCAL_STYLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {data.music_spec.voice_clone && (
+          <p className="muted" style={{ margin: '4px 0 12px' }}>
+            🎤 내 목소리(클론) 사용 중 — 프리셋 보컬 스타일은 적용되지 않아요.
+            (음색은 내 목소리로, 장르·무드는 위 설정을 따릅니다.)
+          </p>
+        )}
+
+        <div className="field">
+          <label>
+            내 목소리 <span className="opt">(선택 · 쓰면 프리셋 보컬 스타일 대신 적용돼요)</span>
+          </label>
+          <VoiceClonePanel
+            value={data.music_spec.voice_clone}
+            onSelect={(vc) => updateMusic({ voice_clone: vc })}
+          />
+        </div>
 
         <div className="field">
           <label>언어</label>
@@ -1467,8 +1515,16 @@ export default function StoryWizardPage() {
             <dt>보컬</dt>
             <dd>
               {vocalFormLabel}
-              {m.vocal_form === 'duet' && ` · 메인 ${mainLabel} / 서브 ${subLabel}`}
+              {m.vocal_form === 'duet'
+                ? ` · 메인 ${mainLabel} / 서브 ${subLabel}`
+                : ` · ${mainLabel}`}
             </dd>
+            {m.voice_clone && (
+              <>
+                <dt>내 목소리</dt>
+                <dd>{m.voice_clone.name}</dd>
+              </>
+            )}
             <dt>언어</dt>
             <dd>
               {{

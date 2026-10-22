@@ -35,6 +35,7 @@ from .routes import (
     pre_mv,
     share,
     story,
+    voice_clone,
     wedding_photos,
 )
 from .services.outfit_seeder import seed_outfits
@@ -124,6 +125,8 @@ app.include_router(extra_scene_images.router)
 app.include_router(extra_videos.router)
 # v33 — Wizard 작성중 draft 영속화
 app.include_router(mv_drafts.router)
+# voice-clone (포팅 from 0_platform_music) — Suno V5_5 voice cloning, prefix /api/voice-clone
+app.include_router(voice_clone.router)
 
 
 @app.get("/api/health")
