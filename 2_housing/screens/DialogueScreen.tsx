@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { StackActions, useFocusEffect } from '@react-navigation/native';
 // v3.214 ②: 기록안내 시트 상한 = 네이티브 헤더 하단 — useHeaderHeight 측정값을 PolicySheet 로 전달
 // (Modal 은 별도 창이라 시트 내부에서 훅 호출이 무효 → 화면에서 재서 prop 으로 내린다)
 import { useHeaderHeight } from '@react-navigation/elements';
@@ -14,6 +14,7 @@ import {
   Animated,
   useWindowDimensions,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -281,6 +282,21 @@ export default function DialogueScreen({ route, navigation }: Props) {
     return () => clearInterval(interval);
   }, [currentIndex]);
 
+  // 대화에서 다음 화면으로 — RootStack 라우트는 parent navigator로 이동.
+  // v3.399 [iOS]: 대화 화면은 작업실 위에 겹쳐 뜬 모달이라, 그 위에 다음 화면을 쌓으면 iOS 가 아래에서 올라오는 시트로 띄웠고
+  //  시트 위에는 확인 창·휴식 광고 창이 뜨지 못했다('가사 생성 시작' 무반응 — 대표 아이폰 실기기 10-22). iOS 는 대화 화면을
+  //  다음 화면으로 교체해 일반 화면으로 연다(뒤로 가면 작업실). 안드로이드는 종전 그대로.
+  const goForward = (target: string, params?: object) => {
+    const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+    if (ROOT_TARGETS.includes(target)) {
+      navigation.getParent()?.navigate(target as any, params as any);
+    } else if (Platform.OS === 'ios') {
+      navigation.dispatch(StackActions.replace(target, params));
+    } else {
+      navigation.navigate(target as any, params as any);
+    }
+  };
+
   const handleTap = () => {
     if (isTyping) {
       setDisplayedText(currentNode.text);
@@ -297,16 +313,10 @@ export default function DialogueScreen({ route, navigation }: Props) {
         }
         // v3.130 — 가사 선택 모드로 보관함 진입 (파서가 params 미지원이라 별칭 처리)
         if (target === 'LyricsBookPick') {
-          navigation.navigate('LyricsBook' as any, { pickerMode: true });
+          goForward('LyricsBook', { pickerMode: true });
           return;
         }
-        // RootStack 라우트는 parent navigator로 이동
-        const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
-        if (ROOT_TARGETS.includes(target)) {
-          navigation.getParent()?.navigate(target as any);
-        } else {
-          navigation.navigate(target as any);
-        }
+        goForward(target);
         return;
       }
     }
@@ -336,15 +346,10 @@ export default function DialogueScreen({ route, navigation }: Props) {
         }
         // v3.130 — 가사 선택 모드 별칭 (탭 진행 경로와 동일 처리)
         if (target === 'LyricsBookPick') {
-          navigation.navigate('LyricsBook' as any, { pickerMode: true });
+          goForward('LyricsBook', { pickerMode: true });
           return;
         }
-        const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
-        if (ROOT_TARGETS.includes(target)) {
-          navigation.getParent()?.navigate(target as any);
-        } else {
-          navigation.navigate(target as any);
-        }
+        goForward(target);
         return;
       }
     }

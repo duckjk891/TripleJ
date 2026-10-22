@@ -176,6 +176,10 @@ const SettingsScreenD = withScreenDialogHost(SettingsScreen, 'Settings');
 const FeedComposeScreenD = withScreenDialogHost(FeedComposeScreen, 'FeedCompose');
 const ShareComposeScreenD = withScreenDialogHost(ShareComposeScreen, 'ShareCompose');
 const DialogueScreenD = withScreenDialogHost(DialogueScreen, 'Dialogue');
+// v3.399 [iOS]: 아래에서 올라오는 화면(플레이어·설정·피드 작성·공유)을 iOS 에서는 시트(modal) 대신 일반 화면(card)으로 —
+// 시트 위에는 앱 루트 팝업(출석·별 안내·초대·동의·로그인 창·확인 창)이 뜨지 못하고, 시트에서 연 다음 화면도 다시 시트로 쌓였다
+// (대표 아이폰 실기기 10-22 '팝업 무반응'). 올라오는 애니메이션은 그대로, 안드로이드는 종전 그대로.
+const IOS_SCREEN_PRESENTATION = Platform.OS === 'ios' ? ('card' as const) : ('modal' as const);
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -1107,17 +1111,17 @@ export default function App() {
             <RootStack.Screen
               name="Player"
               component={PlayerScreenD}
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+              options={{ presentation: IOS_SCREEN_PRESENTATION, animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen
               name="Settings"
               component={SettingsScreenD}
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+              options={{ presentation: IOS_SCREEN_PRESENTATION, animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen name="UserChannel" component={UserChannelScreen} options={{ headerShown: true, headerTitle: '채널', headerStyle: { backgroundColor: colors.bg.deepest }, headerTintColor: colors.text.primary, headerShadowVisible: false }} />
             {/* v3.73: 피드작성도 다른 페이지처럼 상단바에 타이틀 — X(취소)는 좌측, 등록은 화면에서 headerRight로 주입 */}
             <RootStack.Screen name="FeedCompose" component={FeedComposeScreenD} options={({ navigation, route }) => ({
-              presentation: 'modal', animation: 'slide_from_bottom',
+              presentation: IOS_SCREEN_PRESENTATION, animation: 'slide_from_bottom',
               headerShown: true,
               // v3.115: 커뮤니티(공지) 모드면 타이틀도 구분 · v3.245: 클럽 글쓰기 타이틀
               headerTitle: () => (
@@ -1155,7 +1159,7 @@ export default function App() {
               name="ShareCompose"
               component={ShareComposeScreenD}
               options={({ navigation }) => ({
-                presentation: 'modal',
+                presentation: IOS_SCREEN_PRESENTATION,
                 animation: 'slide_from_bottom',
                 ...stackHeader(navigation, '공유하기'),
               })}

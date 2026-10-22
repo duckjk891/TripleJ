@@ -522,7 +522,8 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
       {store.generatedPrompt ? (
         <View style={inputAreaStyle}>
           <TouchableOpacity
-            style={[styles.sendButton, { flex: 1, paddingVertical: 14 }]}
+            // v3.399: flex:1(세로 부모 안) 때문에 높이가 패딩만 남아 글자가 안 보이던 버튼(대표 아이폰 실기기 10-22) → 가로 꽉 채움·가운데 정렬
+            style={[styles.sendButton, { marginHorizontal: 16, marginTop: 10, paddingVertical: 14, alignItems: 'center' }]}
             onPress={() => navigation.navigate('LyricsPromptReview')}
           >
             <AppText style={styles.sendButtonText}>요청사항으로 돌아가기</AppText>

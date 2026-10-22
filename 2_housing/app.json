@@ -52,7 +52,12 @@
       "associatedDomains": [
         "applinks:api.maidol.ai.kr",
         "applinks:app.maidol.ai.kr"
-      ]
+      ],
+      "splash": {
+        "image": "./assets/splash-blank-ios.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#0d0820"
+      }
     },
     "android": {
       "adaptiveIcon": {
