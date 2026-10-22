@@ -1201,7 +1201,12 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   // v3.161b(대표 확정): 커버 = 음악재생바(슬라이더)와 같은 가로폭(winW-48)의 정사각.
   // 세로 여백 압축으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
-  const { width: winW, height: winH } = useWindowDimensions();
+  const { width: winW, height: winRawH } = useWindowDimensions();
+  // v3.398 [iOS]: 플레이어는 iOS 에서 시트(pageSheet)로 떠서 상태바 + 약 10pt 아래부터 시작한다 — 창 높이 그대로 계산하면
+  //  작은 아이폰(6s·SE·8, 667pt)에서 아래 '가사·제작 노트·스타일링' 토글이 화면 밖으로 밀렸다(대표 실기기 10-22).
+  //  시트 안은 상태바 아래라 위 여백(insets.top)도 필요 없다.
+  const iosSheet = Platform.OS === 'ios';
+  const winH = iosSheet ? winRawH - insets.top - 10 : winRawH;
   // v3.237 B: 공유 CTA 행(높이 32 + 위 여백 8)이 보일 때만 예약분에 더한다 — 작은 화면에서 컨트롤·액션 행 밀림 방지.
   //  CTA 표시 중엔 하한 180→140: 하한이 걸리는 소형 화면(360×640 = 미표시도 하한 180)에서 예약분이 무의미해지지 않게
   //  (coverH + 460 + 40 ≤ winH 를 640 높이까지 보장). 미표시 = v3.236 수식 그대로.
@@ -1229,7 +1234,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: iosSheet ? 0 : insets.top, paddingBottom: insets.bottom }]}>
       {/* Background gradient simulation */}
       <View style={styles.bgOverlay} />
 

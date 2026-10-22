@@ -289,7 +289,10 @@ function StudioNavigator() {
         name="Dialogue"
         component={DialogueScreenD}
         options={{
-          presentation: 'transparentModal',
+          // v3.398: iOS 는 transparentModal 이 앱 전체를 덮어 작업실 상단바(뒤로 화살표)·하단 탭이 가려져
+          // 디렉터 대화·작사 진행에서 빠져나갈 수 없었다(대표 실기기 10-22, 심사 iPad 도 동일 위험).
+          // contained = 작업실 영역 안에만 띄움(안드로이드와 같은 모양) — 상단바 화살표가 보인다.
+          presentation: Platform.OS === 'ios' ? 'containedTransparentModal' : 'transparentModal',
           animation: 'fade',
         }}
       />

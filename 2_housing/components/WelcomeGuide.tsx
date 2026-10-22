@@ -128,7 +128,8 @@ export default function WelcomeGuide() {
 
   const cardW = Math.min(winW, 480);
   // 이미지 영역: 화면 높이의 약 46% (폰 캡처 비율 540:1170 유지, 상단 크롭 표시)
-  const shotH = Math.round(Math.min(winH * 0.46, 520));
+  // v3.398: 작은 화면(667pt — 아이폰 6s·SE·8, 심사 iPad 호환 모드)에서 46%면 카드가 넘쳐 제목·설명 아래가 잘렸다 → 남는 높이 안으로
+  const shotH = Math.round(Math.max(200, Math.min(winH * 0.46, 520, winH - 400)));
   const shotW = Math.round(shotH * (540 / 1170));
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
