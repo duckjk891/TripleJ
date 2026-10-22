@@ -38,6 +38,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
 import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
+import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 입력칸 손글씨
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
   DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
@@ -86,6 +87,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const isClub = kind === 'club';
   // v3.389 [Diary]: kind='feed' = 일기
   const isDiary = kind === 'feed';
+  const nakseoFont = useNakseoFont(); // v3.400 [NakseoFont] 낙서 입력칸 손글씨(중학생체)
   const clubId: string | undefined = isEdit
     ? (editFeed.club_id ? String(editFeed.club_id) : undefined)
     : route?.params?.clubId ? String(route.params.clubId) : undefined;
@@ -705,7 +707,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           />
         ) : null}
         <TextInput
-          style={styles.bodyInput}
+          style={[styles.bodyInput, isDiary && nakseoFont ? { fontFamily: nakseoFont, fontSize: 18, lineHeight: 26 } : null]}
           placeholder={
             isCommunity ? '구독자에게 알릴 소식을 적어주세요.'
             : isClub ? `${CLUB_LABEL} 멤버들과 나누고 싶은 이야기를 적어주세요.` // v3.252 리네이밍

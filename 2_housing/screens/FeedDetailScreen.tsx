@@ -3,6 +3,7 @@
 // 렌더는 기존 FeedCard 재사용(좋아요·댓글·답글·신고·공유 상호작용 그대로).
 // 블록 렌더(텍스트/트랙/[item] 마커)는 FeedScreen과 동일 규칙.
 import { useState, useCallback } from 'react';
+import { useNakseoFont } from '../utils/nakseoFont'; // v3.400
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { View, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -47,6 +48,7 @@ const parseItemMarker = (text?: string): FeedItemAttach | null => {
 };
 
 export default function FeedDetailScreen() {
+  const nakseoFont = useNakseoFont(); // v3.400 [NakseoFont] 낙서 본문 손글씨
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const feedId = String(route.params?.feedId ?? '');
@@ -188,7 +190,7 @@ export default function FeedDetailScreen() {
         {isDiary && textBlocks.length ? (
           <View style={styles.paper}>
             {textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" style={styles.paperText}>{b.text}</AppText>
+              <AppText key={`t${i}`} variant="body" style={[styles.paperText, nakseoFont ? { fontFamily: nakseoFont, fontSize: 17, lineHeight: 26 } : null]}>{b.text}</AppText>
             ))}
           </View>
         ) : textBlocks.map((b, i) => (

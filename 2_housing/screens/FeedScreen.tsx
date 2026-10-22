@@ -24,6 +24,7 @@ import { useLikesStore } from '../stores/likesStore';
 import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import DiaryCalendar from '../components/diary/DiaryCalendar'; // v3.389 [Diary]
+import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 본문 손글씨
 import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, backdateOptions } from '../utils/diary';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
@@ -117,6 +118,7 @@ export default function FeedScreen() {
   const isChild = useIsChild();
   const canFeedWrite = useKidsPermission('feed_write');
   const feedWriteBlocked = isChild && !canFeedWrite;
+  const nakseoFont = useNakseoFont(); // v3.400 [NakseoFont] 낙서 본문 손글씨(중학생체 부분 글꼴)
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -362,7 +364,7 @@ export default function FeedScreen() {
             {isDiary && textBlocks.length ? (
               <View style={styles.paper}>
                 {textBlocks.map((b, i) => (
-                  <AppText key={`t${i}`} variant="body" style={styles.paperText}>{b.text}</AppText>
+                  <AppText key={`t${i}`} variant="body" style={[styles.paperText, nakseoFont ? { fontFamily: nakseoFont, fontSize: 17, lineHeight: 26 } : null]}>{b.text}</AppText>
                 ))}
               </View>
             ) : textBlocks.map((b, i) => (
