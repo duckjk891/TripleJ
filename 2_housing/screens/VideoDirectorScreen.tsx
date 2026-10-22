@@ -1628,11 +1628,20 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
             <View style={styles.directorBubble}>
               <AppText style={styles.directorName}>영상 디렉터</AppText>
               <AppText style={styles.directorText}>
-                진행하던 영상 만들기를 이어서 할게요! 새로 시작하고 싶으면 아래 버튼을 눌러주세요.
+                진행하던 영상 만들기는 자동으로 저장돼 있어요. 그대로 이어서 할까요, 처음부터 새로 할까요?
               </AppText>
-              <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
-                <AppText style={styles.restartInlineBtnText}>처음부터</AppText>
-              </TouchableOpacity>
+              {/* v3.398(지유 DM 10-21 "처음 옆에 이대로 or 저장이 있으면"): '이대로 이어서' 버튼 추가 — 안내만 닫고 계속 */}
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.restartInlineBtn, { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary }]}
+                  onPress={() => { if (__DEV__) console.info('[VideoDraft] 이대로 이어서'); setShowResumeNotice(false); }}
+                >
+                  <AppText style={[styles.restartInlineBtnText, { color: '#fff' }]}>이대로 이어서</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.restartInlineBtn} onPress={handleRestartFromScratch}>
+                  <AppText style={styles.restartInlineBtnText}>처음부터</AppText>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}

@@ -181,6 +181,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.281 [SectionLyrics]: 하단 입력 영역의 구성별 편집기 카드 목록 최대 높이(키보드가 올라와도 진행바·확인 버튼이 남게)
   const { height: windowHeight } = useWindowDimensions();
   const sectionLyricsMaxHeight = Math.round(Math.min(300, Math.max(170, windowHeight * 0.32)));
+  // v3.398(김수석 DM 10-20 "가사 전체편집할 때 모바일에서 5줄밖에 안 보여요"): 전체 편집 입력칸은 lyricsInput 의
+  //   maxHeight 200 에 묶여 있었다 → 화면 높이의 40%(200~360px)까지 늘려 10~14줄이 보이게.
+  const rawLyricsMaxHeight = Math.round(Math.min(360, Math.max(200, windowHeight * 0.4)));
   const musicStore = useMusicStore();
   const lyricsStore = useLyricsStore();
 
@@ -1990,7 +1993,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 value={editedLyrics}
                 onChange={setEditedLyrics}
                 maxHeight={sectionLyricsMaxHeight}
-                inputStyle={[styles.lyricsInput, styles.sectionLyricsRawInput]}
+                inputStyle={[styles.lyricsInput, styles.sectionLyricsRawInput, { maxHeight: rawLyricsMaxHeight }]}
                 placeholder="가사를 입력하세요"
               />
             </View>
