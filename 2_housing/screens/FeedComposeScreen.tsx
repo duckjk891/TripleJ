@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'; // 앱 키보드 처리 통일(앱 전용 버그 세션 요청)
-import { pickImages } from '../utils/pickImage'; // 앱=사진첩(HEIC→JPEG), 웹=DocumentPicker 그대로
+import { pickImages, takePhoto, recoverPendingCameraPhotos } from '../utils/pickImage'; // v3.400 [Camera] // 앱=사진첩(HEIC→JPEG), 웹=DocumentPicker 그대로
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Button, Tag } from '../components/ui';
@@ -47,6 +47,7 @@ interface AttachedImage {
   mime: string;
   status: 'uploading' | 'done' | 'failed';
   objectName?: string;
+  source?: 'camera' | 'library' | 'paste'; // v3.400 [Camera] 어디서 온 사진인지(노래 만들기 파이프라인 참고용)
 }
 
 export default function FeedComposeScreen({ navigation, route }: any) {
@@ -326,8 +327,10 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     }
   };
 
-  const pickImage = async (pasted?: PastedAsset[]) => {
-    if (images.length >= MAX_FEED_IMAGES) {
+  // v3.400 [Camera] opts.replaceKey = 그 사진을 새 사진으로 바꾸기(다시 찍기) · opts.source = 출처 표시
+  const pickImage = async (pasted?: PastedAsset[], opts: { replaceKey?: string; source?: AttachedImage['source'] } = {}) => {
+    const replacing = !!opts.replaceKey && images.some((i) => i.key === opts.replaceKey);
+    if (images.length >= MAX_FEED_IMAGES && !replacing) {
       showAlert('안내', `사진은 최대 ${MAX_FEED_IMAGES}장까지 첨부할 수 있어요.`);
       return;
     }
@@ -335,7 +338,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     // v3.273: multiple — OS 피커에서 한 번에 여러 장(남은 슬롯만큼 수용, 초과분은 안내 후 버림)
     const res: DocumentPicker.DocumentPickerResult = pasted ? ({ canceled: false, assets: pasted } as any) : await pickImages({ multiple: true, limit: MAX_FEED_IMAGES - images.length });
     if (res.canceled || !res.assets?.length) return;
-    const room = MAX_FEED_IMAGES - images.length;
+    const room = MAX_FEED_IMAGES - images.length + (replacing ? 1 : 0);
     const skipped: string[] = [];
     const valid = res.assets.filter((f) => {
       const mime = f.mimeType || '';
@@ -354,10 +357,63 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       key: `${Date.now()}-${images.length + i}-${i}`,
       localUri: f.uri, name: f.name || 'image.jpg', mime: f.mimeType || 'image/jpeg',
       status: 'uploading',
+      source: opts.source || (pasted ? 'paste' : 'library'),
     }));
-    setImages((prev) => [...prev, ...entries]);
+    setImages((prev) => [...prev.filter((i) => !replacing || i.key !== opts.replaceKey), ...entries]);
     entries.forEach((e) => uploadImage(e));
   };
+
+  // v3.400 [Camera] 사진 찍기 — replaceKey 면 그 사진을 다시 찍은 사진으로 교체
+  const shootPhoto = async (replaceKey?: string) => {
+    if (!replaceKey && images.length >= MAX_FEED_IMAGES) {
+      showAlert('안내', `사진은 최대 ${MAX_FEED_IMAGES}장까지 첨부할 수 있어요.`);
+      return;
+    }
+    try {
+      const r = await takePhoto();
+      if (r.denied) {
+        showAlert('카메라 권한', '카메라를 쓰려면 휴대폰 설정에서 MAIDOL 의 카메라 권한을 켜 주세요.');
+        return;
+      }
+      if (r.canceled || !r.assets?.length) return;
+      await pickImage(r.assets as any, { replaceKey, source: 'camera' });
+    } catch (err: any) {
+      console.error('[Camera] 촬영 실패', { message: err?.message });
+      showAlert('오류', '카메라를 열지 못했어요. 사진첩에서 골라 주세요.');
+    }
+  };
+  // 사진 눌렀을 때(올라간 사진) — 다시 찍기 / 삭제
+  const photoMenu = (img: AttachedImage) => {
+    showAlert('사진', '이 사진을 다시 찍거나 삭제할 수 있어요.', [
+      { text: '다시 찍기', onPress: () => { void shootPhoto(img.key); } },
+      { text: '삭제', style: 'destructive', onPress: () => setImages((prev) => prev.filter((i) => i.key !== img.key)) },
+      { text: '닫기', style: 'cancel' },
+    ]);
+  };
+  // v3.400 [Camera] 낙서장 '사진 찍고 낙서하기' 진입(startWith=camera) — 열자마자 카메라 /
+  // 안드로이드: 카메라 중 앱이 정리됐다 돌아오면 남은 사진 복구
+  const startWithCamera = !isEdit && isDiary && route?.params?.startWith === 'camera';
+  useEffect(() => {
+    if (isChild || feedWriteBlocked || isCommunity) return;
+    let alive = true;
+    (async () => {
+      const recovered = await recoverPendingCameraPhotos();
+      if (!alive) return;
+      if (recovered.length) { await pickImage(recovered as any, { source: 'camera' }); return; }
+      if (!startWithCamera) return;
+      // 웹 브라우저는 사용자가 직접 누른 순간에만 카메라(파일 입력)를 열 수 있어 한 번 눌러 열게 한다
+      if (Platform.OS === 'web') {
+        showAlert('사진 찍고 낙서하기', '카메라를 열어 사진을 찍어 보세요.', [
+          { text: '나중에', style: 'cancel' },
+          { text: '사진 찍기', onPress: () => { void shootPhoto(); } },
+        ]);
+      } else {
+        await shootPhoto();
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // v3.328 [PasteImage] 웹 Ctrl+V 이미지 붙여넣기(어린이 이미지 금지 게이트 유지)
   usePasteImages(!isChild && !feedWriteBlocked, (assets) => { void pickImage(assets); });
@@ -375,7 +431,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     const draft = {
       v: 1, saved_at: Date.now(), body, mood, diaryDate, visibility,
       attached: attached ? { id: String(attached.id), title: attached.title, artist_name: (attached as any).artist_name, cover_image: (attached as any).cover_image } : null,
-      images: images.filter((i) => i.status === 'done' && i.objectName).map((i) => ({ objectName: i.objectName, localUri: i.localUri, name: i.name })),
+      images: images.filter((i) => i.status === 'done' && i.objectName).map((i) => ({ objectName: i.objectName, localUri: i.localUri, name: i.name, source: i.source })),
       items: attachedItems,
     };
     try {
@@ -392,7 +448,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     AsyncStorage.removeItem(draftKey).catch(() => {});
   };
   useEffect(() => {
-    if (!useDraft || !draftKey) return;
+    if (!useDraft || !draftKey || startWithCamera) return; // v3.400 카메라 바로 진입은 임시저장 묻지 않음(보관은 유지)
     let alive = true;
     AsyncStorage.getItem(draftKey).then((raw) => {
       if (!alive || !raw) return;
@@ -409,7 +465,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         if (Array.isArray(d.images)) {
           setImages(d.images.slice(0, MAX_FEED_IMAGES).map((im: any, i: number) => ({
             key: `draft_${i}_${im.objectName}`, localUri: im.localUri || '', name: im.name || `image_${i}`,
-            mime: 'image/jpeg', status: 'done' as const, objectName: im.objectName,
+            mime: 'image/jpeg', status: 'done' as const, objectName: im.objectName, source: im.source,
           })));
         }
         if (Array.isArray(d.items)) setAttachedItems(d.items);
@@ -434,7 +490,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       { text: '취소', style: 'cancel' },
       { text: '노래 만들러 가기', onPress: async () => {
         if (useDraft) await saveDraft(true);
-        startDiarySongFlow(navigation, text);
+        startDiarySongFlow(navigation, text, images.filter((i) => i.status === 'done' && i.objectName).map((i) => i.objectName as string));
       } },
     ]);
   };
@@ -699,7 +755,19 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 5장(v3.273).
             v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
         {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
-        {!isCommunity && !isChild ? (
+        {/* v3.400 [Camera] 낙서: 사진 찍기·사진첩을 크게 나란히(여러 장 · 눌러서 다시 찍기/삭제) */}
+        {isDiary && !isChild ? (
+          <View style={styles.photoRow}>
+            <TouchableOpacity style={styles.photoBtn} onPress={() => { void shootPhoto(); }} accessibilityLabel="사진 찍기">
+              <Feather name="camera" size={22} color={colors.text.primary} />
+              <AppText variant="footnote" style={{ color: colors.text.primary, fontWeight: '700' }}>사진 찍기</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.photoBtn, styles.photoBtnAlt]} onPress={() => { void pickImage(); }} accessibilityLabel="사진첩에서 고르기">
+              <Feather name="image" size={22} color={colors.accent.primary} />
+              <AppText variant="footnote" tone="accent" style={{ fontWeight: '700' }}>사진첩{images.length ? ` ${images.length}/${MAX_FEED_IMAGES}` : ''}</AppText>
+            </TouchableOpacity>
+          </View>
+        ) : !isCommunity && !isChild ? (
           <TouchableOpacity style={styles.attachBtn} onPress={() => { void pickImage(); }} accessibilityLabel="사진 첨부">
             <Feather name="image" size={15} color={colors.accent.primary} />
             <AppText variant="footnote" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
@@ -712,9 +780,9 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             {images.map((img) => (
               <View key={img.key} style={styles.imageThumbWrap}>
                 <TouchableOpacity
-                  disabled={img.status !== 'failed'}
-                  onPress={() => retryImage(img)}
-                  accessibilityLabel={img.status === 'failed' ? '사진 업로드 재시도' : '첨부된 사진'}
+                  disabled={img.status === 'uploading' || (img.status === 'done' && !isDiary)}
+                  onPress={() => (img.status === 'failed' ? retryImage(img) : photoMenu(img))}
+                  accessibilityLabel={img.status === 'failed' ? '사진 업로드 재시도' : '첨부된 사진 — 다시 찍기·삭제'}
                 >
                   <Image source={{ uri: img.localUri }} style={[styles.imageThumb, img.status !== 'done' && { opacity: 0.4 }]} />
                 </TouchableOpacity>
@@ -998,6 +1066,13 @@ const styles = StyleSheet.create({
   itemPreviewImg: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   // v3.111: 첨부 사진 미리보기 (썸네일 + 업로드 상태 오버레이 + 제거 버튼)
   imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.md },
+  // v3.400 [Camera] 사진 찍기·사진첩 큰 버튼
+  photoRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  photoBtn: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xs, paddingVertical: spacing.md,
+    borderRadius: radius.lg, backgroundColor: colors.accent.primary,
+  },
+  photoBtnAlt: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.accent.primary },
   imageThumbWrap: { width: 72, height: 72 },
   imageThumb: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   imageThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },

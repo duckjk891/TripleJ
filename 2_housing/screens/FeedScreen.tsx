@@ -237,9 +237,12 @@ export default function FeedScreen() {
     ? posts.filter((p) => p.diary_date === selectedDay)
     : posts;
   const canWriteOn = (ymd: string | null) => !!ymd && backdateOptions().some((o) => o.ymd === ymd);
-  const openCompose = (diaryDate?: string) => {
-    if (__DEV__) console.info('[Diary] 쓰기 진입', { diaryDate });
-    navigation.navigate('FeedCompose', diaryDate && diaryDate !== kstToday() ? { diaryDate } : undefined);
+  const openCompose = (diaryDate?: string, startWith?: 'camera') => {
+    if (__DEV__) console.info('[Diary] 쓰기 진입', { diaryDate, startWith });
+    const params: any = {};
+    if (diaryDate && diaryDate !== kstToday()) params.diaryDate = diaryDate;
+    if (startWith) params.startWith = startWith; // v3.400 [Camera] 사진 찍고 낙서하기
+    navigation.navigate('FeedCompose', Object.keys(params).length ? params : undefined);
   };
 
   // 피드 전체의 트랙을 큐로 모아두고, 탭한 트랙부터 재생
@@ -536,6 +539,17 @@ export default function FeedScreen() {
       {/* v3.210 ①: [내 공지] 탭에서는 kind='community'로 작성 진입(MyMusicScreen 새 공지 작성 관행) */}
       {/* v3.232 K8(B4): 어린이(보호자 허용 없음)는 글쓰기 Fab 숨김 */}
       {/* v3.307: [공지] 탭은 공식 계정만 작성(공지 글) — 일반 사용자는 Fab 숨김 */}
+      {/* v3.400 [Camera] 사진 찍고 낙서하기 — 글쓰기 버튼 위 작은 카메라 버튼(공지 탭·어린이·미니플레이어 표시 중엔 숨김) */}
+      {user && !feedWriteBlocked && !isChild && tab !== 'notice' && !fabHidden ? (
+        <TouchableOpacity
+          style={styles.cameraFab}
+          activeOpacity={0.85}
+          onPress={() => openCompose(tab === 'mine' && canWriteOn(selectedDay) ? selectedDay! : undefined, 'camera')}
+          accessibilityLabel="사진 찍고 낙서하기"
+        >
+          <Feather name="camera" size={20} color="#fff" />
+        </TouchableOpacity>
+      ) : null}
       {user && !feedWriteBlocked && (tab !== 'notice' || isOfficial) ? (
         <Fab
           onPress={() => {
@@ -608,6 +622,13 @@ const styles = StyleSheet.create({
   headText: { marginLeft: spacing.md, flex: 1 },
   title: { marginTop: spacing.md },
   body: { marginTop: spacing.sm },
+  // v3.400 [Camera] Fab(지름 56, 하단 12·오른쪽 20) 바로 위 작은 카메라 버튼
+  cameraFab: {
+    position: 'absolute', bottom: 12 + 56 + spacing.md, right: spacing.xl + 6,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.accent.primary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 6, elevation: 6,
+  },
   // v3.389 [Diary] 목록 머리·보상 띠·공책 종이·달력 아래 날짜 제목
   listHeader: { gap: spacing.md, marginBottom: spacing.md },
   reward: {

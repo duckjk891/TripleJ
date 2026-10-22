@@ -58,3 +58,71 @@ export async function pickImages(opts: { multiple?: boolean; limit?: number } = 
 export function pickImage(): Promise<PickedImageResult> {
   return pickImages({ multiple: false });
 }
+
+// ── v3.400 [Camera] 낙서장 카메라(대표 10-22 "카메라를 자유롭게") ─────────────────────────────
+//  · 앱: expo-image-picker launchCameraAsync(후면 우선 — 삼성 등 일부 기기는 무시될 수 있음), JPEG 0.85.
+//    아이폰 카메라 결과는 JPEG 로 오므로 HEIC 변환 불필요. 권한 거절 = { canceled: true, denied: true }.
+//  · 웹: <input type=file accept="image/*" capture="environment"> — 폰 브라우저는 카메라, PC 는 파일 선택.
+//  · 안드로이드에서 카메라 중 앱이 정리되면 결과가 사라짐 → 화면 진입 때 recoverPendingCameraPhotos() 로 복구.
+export type TakePhotoResult = PickedImageResult & { denied?: boolean };
+
+function webCapture(): Promise<TakePhotoResult> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') { resolve({ canceled: true, assets: null } as TakePhotoResult); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.setAttribute('capture', 'environment');
+    input.style.display = 'none';
+    let done = false;
+    const finish = (r: TakePhotoResult) => { if (done) return; done = true; input.remove(); resolve(r); };
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (!f) { finish({ canceled: true, assets: null } as TakePhotoResult); return; }
+      const mime = f.type || mimeFromName(f.name) || 'image/jpeg';
+      finish({
+        canceled: false,
+        assets: [{ uri: URL.createObjectURL(f), name: f.name || `camera_${Date.now()}.jpg`, mimeType: mime, size: f.size, lastModified: Date.now(), file: f } as any],
+      } as TakePhotoResult);
+    });
+    input.addEventListener('cancel', () => finish({ canceled: true, assets: null } as TakePhotoResult));
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+/** 사진 찍기 1장 — 반환 모양은 pickImages 와 같음(호출부 검사·업로드 로직 공용) */
+export async function takePhoto(): Promise<TakePhotoResult> {
+  if (Platform.OS === 'web') return webCapture();
+  const perm = await ImagePicker.requestCameraPermissionsAsync();
+  if (!perm.granted) {
+    console.info('[Camera] 권한 거절', { canAskAgain: perm.canAskAgain });
+    return { canceled: true, assets: null, denied: true } as TakePhotoResult;
+  }
+  const res = await ImagePicker.launchCameraAsync({
+    mediaTypes: ['images'],
+    quality: 0.85,
+    exif: false,
+    cameraType: ImagePicker.CameraType.back,
+  });
+  if (res.canceled || !res.assets?.length) return { canceled: true, assets: null } as TakePhotoResult;
+  const assets = res.assets.map((a, i) => toDocumentAsset({ ...a, fileName: a.fileName || `camera_${Date.now()}_${i}.jpg` }, i));
+  if (__DEV__) console.info('[Camera] 촬영', { count: assets.length, mimes: assets.map((a) => a.mimeType) });
+  return { canceled: false, assets } as TakePhotoResult;
+}
+
+/** 안드로이드 — 카메라 중 앱이 정리됐다가 돌아온 경우 남은 촬영 결과(없으면 []) */
+export async function recoverPendingCameraPhotos() {
+  if (Platform.OS !== 'android') return [];
+  try {
+    const pending: any = await ImagePicker.getPendingResultAsync();
+    const list = Array.isArray(pending) ? pending : pending ? [pending] : [];
+    const out = list.flatMap((r: any) => (r && !r.canceled && Array.isArray(r.assets) ? r.assets : []))
+      .map((a: any, i: number) => toDocumentAsset(a, i));
+    if (out.length) console.info('[Camera] 촬영 결과 복구', { count: out.length });
+    return out;
+  } catch (err: any) {
+    console.error('[Camera] 촬영 결과 복구 실패', { message: err?.message });
+    return [];
+  }
+}

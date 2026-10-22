@@ -247,7 +247,7 @@ export type RootStackParamList = {
   UserChannel: { authorId: string; name?: string; initialTab?: 'music' | 'artists' | 'feed' | 'community' };
   // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
   // v3.245: kind='club' + clubId — 클럽 게시판 글쓰기(ClubHome 진입, payload kind='club'+club_id)
-  FeedCompose: { kind?: 'feed' | 'community' | 'club'; clubId?: string; diaryDate?: string; editFeed?: any; attachTrackId?: string; attachTrack?: any } | undefined;
+  FeedCompose: { kind?: 'feed' | 'community' | 'club'; clubId?: string; diaryDate?: string; editFeed?: any; attachTrackId?: string; attachTrack?: any; startWith?: 'camera' } | undefined;
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
   FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };

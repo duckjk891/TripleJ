@@ -183,14 +183,20 @@ export function startMakeLikeFlow(navigation: any, track: MakeLikeTrackLike): vo
 // 앱 재시작 시 사라지는 1회용 값(일기 본문은 일기 임시저장이 따로 보관).
 const DIARY_TOPIC_MAX = 300;
 let pendingDiaryTopic: string | null = null;
+let pendingDiaryPhotos: string[] = []; // v3.400 낙서 사진 objectName(feeds/{uid}/...) — '낙서·사진으로 노래 만들기' 파이프라인이 꺼내 씀
 export function consumeDiaryTopic(): string | null {
   const t = pendingDiaryTopic;
   pendingDiaryTopic = null;
   return t;
 }
+export function consumeDiaryPhotos(): string[] {
+  const p = pendingDiaryPhotos;
+  pendingDiaryPhotos = [];
+  return p;
+}
 
 /** 일기 쓰기(RootStack 모달)에서 호출 — 모달을 닫고 작업실 작사 디렉터로(popTo, Map 하부 적재). */
-export function startDiarySongFlow(navigation: any, diaryText: string): void {
+export function startDiarySongFlow(navigation: any, diaryText: string, photoObjectNames: string[] = []): void {
   const topic = (diaryText || '').replace(/\s+/g, ' ').trim().slice(0, DIARY_TOPIC_MAX);
   if (!topic) return;
   const target = (nonce: string) => ({
@@ -200,6 +206,7 @@ export function startDiarySongFlow(navigation: any, diaryText: string): void {
   const go = () => {
     applyMakeLikePreset({ genre: '', mood: '' }); // 이전 작사 작업본 비움(호출 전 확인)
     pendingDiaryTopic = topic;
+    pendingDiaryPhotos = photoObjectNames.slice(0, 5);
     const nonce = `diary-${Date.now()}`;
     console.info('[DiarySong] 작사 디렉터로', { len: topic.length });
     navigation.popTo('MainTabs', target(nonce));
