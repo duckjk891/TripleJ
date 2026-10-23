@@ -13,10 +13,11 @@ export const NOTE = {
   padBottom: 8,
   padX: 14,       // 좌우 여백(여백선 없음)
   sink: 7,        // 줄 상자 아래에서 줄까지 — 웹 실측: 중학생체 20px 한글 바닥 ≈ 줄 상자 위에서 21px
-  paper: '#1b1338',
-  ink: '#f3edff',
-  line: 'rgba(192,132,252,0.24)',
-  placeholder: '#7d6aa8',
+  // v3.403b(대표 10-23 "베이지 색에 줄글 형태면 더 노트 같을 것"): 베이지 종이·진한 잉크·옅은 갈색 줄
+  paper: '#f3ead6',
+  ink: '#2c2540',
+  line: '#d9cba8',
+  placeholder: '#9b8c6c',
 };
 
 /** 줄 노트 글자 스타일(손글씨 글꼴은 호출부가 fontFamily 로) */
