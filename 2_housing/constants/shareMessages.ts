@@ -115,7 +115,7 @@ export const SHARE_MESSAGES_DEFAULT: ShareMessageConfig = {
       body_other: '💌 {받는 사람}에게 바치는 노래\n「{곡명}」 - {아티스트}\n{받는 사람} 생각하면서 골랐어요.\n세상에 하나뿐인 노래, 들어줄래요? 🎵',
     },
   ],
-  benefit: { text: '가입 이벤트 기간 가입 시 ⭐{amount} 추가 증정!' },
+  benefit: { text: '가입 이벤트 기간에 가입하고 본인확인하면 ⭐{amount} 추가 증정!' }, // v3.408 본인확인 때 지급
   og_description: '이런 날엔 이런 노래 🎵 탭하면 재생 · 나도 1분 만에 만들기',
   limits: { body: 200, recipient: 20, head_title: 40 },
   recipient_default: '소중한 당신',

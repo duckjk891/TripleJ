@@ -354,7 +354,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   const shareFeed = async () => {
     try {
       // v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 혜택 줄
-      const benefit = isBenefitActive(Date.now()) ? `\n🎁 가입 이벤트 기간 가입 시 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : '';
+      const benefit = isBenefitActive(Date.now()) ? `\n🎁 가입 이벤트 기간에 가입하고 본인확인하면 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : '';
       await Share.share({ message: `MAIDOL ${isDiaryKind ? '낙서' : '피드'} "${feed.title || (isDiaryKind ? fmtDiaryDate(feed.diary_date) || '낙서' : '게시물')}"${benefit}\n${BACKEND_BASE_URL}/feed/${feed.id}` });
     } catch (err: any) {
       console.error('[FeedCard] 공유 실패', { message: err?.message });

@@ -258,7 +258,7 @@ export default function AuthPanel({ onSuccess, onModeChange, initialMode, social
       <Feather name="gift" size={14} color={colors.accent.primary} />
       <View style={{ flex: 1 }}>
         <AppText variant="caption" tone="accent">
-          {`추천코드 ${validReferral} 적용돼요 — 구글·카카오로 가입해도 ⭐50을 받아요`}
+          {`추천코드 ${validReferral} 적용돼요 — 가입 후 본인확인을 마치면 ⭐50을 받아요`}
         </AppText>
         <AppText variant="caption" tone="muted">새로 가입할 때만 적용돼요. 이미 가입한 계정에는 적용되지 않아요.</AppText>
       </View>

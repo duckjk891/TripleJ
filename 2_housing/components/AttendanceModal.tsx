@@ -76,7 +76,10 @@ export default function AttendanceModal() {
       await loadStatus();
     } catch (err: any) {
       console.error('[AttendanceModal] check-in 실패', { status: err?.response?.status });
-      setError('출석체크에 실패했어요. 잠시 후 다시 시도해 주세요.');
+      // v3.408: 본인확인 전 신규 계정은 서버가 403 + 안내 문구('본인확인을 마치면 출석 별을 받을 수 있어요.')
+      setError(err?.response?.status === 403 && err?.response?.data?.error
+        ? String(err.response.data.error)
+        : '출석체크에 실패했어요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setClaiming(false);
     }

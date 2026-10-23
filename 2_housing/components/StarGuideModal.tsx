@@ -24,7 +24,8 @@ type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio' | 'community' | '
 const ROW_ICON_SIZE = 18;
 const ROW_ICON_COLOR = colors.text.secondary;
 const EARN_ROWS: { icon: ReactNode; label: string; amount: string; sub?: string; action?: EarnAction; newsId?: string }[] = [
-  { icon: <Feather name="gift" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '첫 가입 보너스', amount: '+50', sub: '한 번만' },
+  { icon: <Feather name="gift" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '첫 가입 보너스', amount: '+50', sub: '본인확인 후 · 한 분당 한 번' }, // v3.408
+  { icon: <Feather name="smartphone" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '휴대폰 본인확인', amount: '+30', sub: '한 분당 한 번' },
   { icon: <Feather name="shield" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '보호자 동의 완료', amount: '+30', sub: '만 14세 미만 · 한 번만' }, // v3.230 A8: 본인인증 유도 제거(추후 적용)
   { icon: <Feather name="users" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '친구 초대', amount: '+50', sub: '눌러서 공유하기', action: 'invite' },
   { icon: <Feather name="calendar" size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />, label: '매일 출석체크', amount: '+10', sub: '5일차 +30 · 10일차 +100', action: 'attendance' },

@@ -44,7 +44,7 @@ export default function IdentityNudgeHost() {
         console.info('[IdentityNudge] 유도 팝업 노출', { uid: uid.slice(0, 8) });
         showAlert(
           '본인인증하고 ⭐30 받기',
-          '휴대폰 본인인증을 하면 ⭐30을 드려요.\n혹시 MAIDOL 계정이 여러 개라면 하나로 합쳐 드려요.',
+          '휴대폰 본인인증을 하면 ⭐30을 드려요(한 분당 한 번).\n혹시 MAIDOL 계정이 여러 개라면 하나로 합쳐 드려요.',
           [
             { text: '나중에', style: 'cancel', onPress: () => console.info('[IdentityNudge] 나중에') },
             { text: '본인인증하기', onPress: () => { void startIdentityVerify('nudge'); } },

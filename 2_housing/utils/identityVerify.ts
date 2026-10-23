@@ -26,7 +26,9 @@ export async function handleIdentityResult(r: IdentityResult, src: string): Prom
   }
   if (r.status === 'verified') {
     await refreshMe();
-    showAlert('본인인증 완료', '본인인증이 완료됐어요. ⭐30을 드렸어요!');
+    // v3.408: 가입 선물·인증 별은 본인확인 때 한 분당 1회 — 서버가 준 만큼만 안내(같은 명의 두 번째 계정은 0)
+    const total = r.rewards?.total ?? 0;
+    showAlert('본인인증 완료', total > 0 ? `본인인증이 완료됐어요. ⭐${total}을 드렸어요!` : '본인인증이 완료됐어요.');
     return;
   }
   if (r.status === 'cancelled' || r.status === 'pending') return;

@@ -16,18 +16,18 @@ const DEVICE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
 export const GUEST_TEXT = {
   usedTitle: '체험은 1회예요',
-  usedBody: '가입하면 계속 만들 수 있어요(⭐ 지급)',
+  usedBody: '가입하면 계속 만들 수 있어요(본인확인 후 ⭐ 지급)',
   dailyCapTitle: '오늘 체험이 마감됐어요',
-  dailyCapBody: '가입하면 바로 이어서 만들 수 있어요(⭐ 지급)',
+  dailyCapBody: '가입하면 바로 이어서 만들 수 있어요(본인확인 후 ⭐ 지급)',
   resultBanner: '체험 결과예요 — 가입 없이 작곡까지 체험할 수 있어요',
   /** v3.277 작곡 체험 이후(작곡 체험을 이미 쓴 기기) 가사 결과 배너 */
   resultBannerComposeUsed: '체험 결과예요 — 가입하면 저장하고 작곡까지 이어서 할 수 있어요',
   composeUsedTitle: '작곡 체험은 1회예요',
-  composeUsedBody: '가입하면 계속 만들 수 있어요(⭐ 지급)',
+  composeUsedBody: '가입하면 계속 만들 수 있어요(본인확인 후 ⭐ 지급)',
   composeDailyCapTitle: '오늘 작곡 체험이 마감됐어요',
-  composeDailyCapBody: '가입하면 바로 이어서 만들 수 있어요(⭐ 지급)',
+  composeDailyCapBody: '가입하면 바로 이어서 만들 수 있어요(본인확인 후 ⭐ 지급)',
   composeIpCapTitle: '이 네트워크의 오늘 체험이 마감됐어요',
-  composeIpCapBody: '가입하면 바로 이어서 만들 수 있어요(⭐ 지급)',
+  composeIpCapBody: '가입하면 바로 이어서 만들 수 있어요(본인확인 후 ⭐ 지급)',
   musicResultBanner: '체험 곡이에요 — 가입하면 발매해서 차트에 올릴 수 있어요',
   claimedTitle: '체험 곡을 가져왔어요',
   claimedBody: '작업실 > 생성 이력에서 발매할 수 있어요.',

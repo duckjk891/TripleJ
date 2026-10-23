@@ -27,6 +27,8 @@ export interface IdentityResult {
   error: string | null;
   merge_candidate?: boolean; // v3.352
   rid?: string; // v3.352 앱이 붙임(통합 화면 조회용)
+  /** v3.408 본인확인 때 지급된 별(가입·이벤트·추천·인증 합계 — 같은 명의 두 번째 계정은 0) */
+  rewards?: { granted?: Record<string, number>; total: number };
 }
 
 export interface IdentityConfig {

@@ -52,7 +52,7 @@ export default function AppShareModal() {
 
   const inviteUrl = code ? `${BACKEND_BASE_URL}/invite/${code}` : '';
   // v3.212 — 확정 멘트(랜딩 카피 톤 정렬). 공유·링크 복사 모두 동일 전문(shareTextFull) 사용.
-  const shareTextBase = `나의 AI 아이돌, MAIDOL\n작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.\n추천코드 ${code} 입력하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요.`;
+  const shareTextBase = `나의 AI 아이돌, MAIDOL\n작사·작곡부터 앨범 커버까지, AI가 무료로 완성해요.\n추천코드 ${code} 넣고 가입·본인확인하면 두 사람 모두 ⭐50, 시작은 3분이면 충분해요.`;
   const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const showMsg = (m: string) => { setMessage(m); setTimeout(() => setMessage(''), 4000); };
@@ -93,9 +93,9 @@ export default function AppShareModal() {
           ) : (
             <>
               <AppText variant="footnote" tone="secondary" center style={styles.desc}>
-                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 ⭐50을 받아요!
+                친구가 내 추천코드로 가입하고 본인확인하면{'\n'}두 사람 모두 ⭐50을 받아요!
                 {/* v3.332: '베타' 표현 제거 — 가입 이벤트(~10-30 KST) 기간에만 표시 */}
-                {isBenefitActive(Date.now()) ? `\n가입 이벤트 기간엔 가입만 해도 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : ''}
+                {isBenefitActive(Date.now()) ? `\n가입 이벤트 기간엔 가입하고 본인확인하면 ⭐${SHARE_BENEFIT_FALLBACK.amount} 추가 증정!` : ''}
               </AppText>
 
               <View style={styles.codeBox}>
