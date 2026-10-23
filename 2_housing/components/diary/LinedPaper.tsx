@@ -82,9 +82,11 @@ export function LinedTextInput({ minLines = 6, style, value, ...rest }: TextInpu
 const styles = StyleSheet.create({
   paper: { backgroundColor: NOTE.paper, borderRadius: radius.md, overflow: 'hidden' },
   rule: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: NOTE.line },
-  mirror: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
+  // 사본은 탭을 받지 않고 입력칸 아래에(웹은 absolute 가 일반 요소 위에 그려져 탭을 가로챔 — 미리보기에서 발견)
+  mirror: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0, zIndex: 0, ...(Platform.OS === 'web' ? ({ pointerEvents: 'none' } as any) : null) },
   body: { paddingTop: NOTE.padTop, paddingBottom: NOTE.padBottom, paddingLeft: NOTE.padX, paddingRight: NOTE.padX },
   input: {
+    position: 'relative', zIndex: 1,
     padding: 0, paddingTop: 0, paddingBottom: 0, margin: 0,
     ...(Platform.OS === 'android' ? { includeFontPadding: false } : null),
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', resize: 'none', overflow: 'hidden' } as any) : null),
