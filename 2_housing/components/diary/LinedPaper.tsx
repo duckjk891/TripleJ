@@ -51,8 +51,10 @@ export default function LinedPaper({ children, minLines = 1, style }: PaperProps
 /** 줄 노트 입력칸 — 글 길이만큼 늘어나는 여러 줄 입력(내부 스크롤 없음) */
 export function LinedTextInput({ minLines = 6, style, onContentSizeChange, ...rest }: TextInputProps & { minLines?: number }) {
   const [contentH, setContentH] = useState(0);
-  // 글 줄 수 + 빈 줄 1개(쓰는 줄 아래에 항상 여유 줄)
-  const lines = Math.max(minLines, Math.ceil((contentH || 0) / NOTE.lineHeight) + 1);
+  // 글 줄 수 + (앱만) 빈 줄 1개. 웹(textarea)은 contentSize 가 상자 높이 이상(scrollHeight)이라 +1 을 하면
+  // 높이↑→contentSize↑ 가 끝없이 반복된다(React #185, 미리보기에서 발견) — 웹은 여유 줄 없이 글 줄 수만.
+  const spare = Platform.OS === 'web' ? 0 : 1;
+  const lines = Math.max(minLines, Math.ceil(Math.round(contentH || 0) / NOTE.lineHeight) + spare);
   return (
     <LinedPaper minLines={lines}>
       <TextInput
