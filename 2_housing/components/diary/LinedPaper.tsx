@@ -8,11 +8,11 @@ import { radius } from '../../theme/spacing';
 
 export const NOTE = {
   lineHeight: 28,
-  fontSize: 18,
+  fontSize: 20,
   padTop: 6,
   padBottom: 8,
   marginLeft: 26, // 여백선 위치
-  sink: 6,        // 줄 상자 아래에서 줄까지(중학생체 글자 바닥에 맞춤)
+  sink: 7,        // 줄 상자 아래에서 줄까지 — 웹 실측: 중학생체 20px 한글 바닥 ≈ 줄 상자 위에서 21px
   paper: '#1b1338',
   ink: '#f3edff',
   line: 'rgba(192,132,252,0.24)',
