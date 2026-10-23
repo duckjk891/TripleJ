@@ -39,6 +39,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
 import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 입력칸 손글씨
+import { LinedTextInput } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
   DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
@@ -706,6 +707,20 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             maxLength={80}
           />
         ) : null}
+        {/* v3.403 [LinedNote] 낙서는 줄 노트 입력칸(글 길이만큼 늘어나고 줄이 따라옴) */}
+        {isDiary ? (
+          <View style={{ marginTop: spacing.md }}>
+            <LinedTextInput
+              minLines={6}
+              style={nakseoFont ? { fontFamily: nakseoFont } : null}
+              placeholder="오늘 하루를 끄적여 보세요. 들은 노래, 만든 곡, 있었던 일 무엇이든요."
+              value={body}
+              onChangeText={setBody}
+              maxLength={2000}
+              accessibilityLabel="낙서 내용"
+            />
+          </View>
+        ) : (
         <TextInput
           style={[styles.bodyInput, isDiary && nakseoFont ? { fontFamily: nakseoFont, fontSize: 18, lineHeight: 26 } : null]}
           placeholder={
@@ -719,6 +734,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           multiline
           textAlignVertical="top"
         />
+        )}
         {/* v3.389 [Diary]: 글자 수(공백 제외 — 서버 보상 기준과 같음) + 오늘 보상 안내 */}
         {isDiary ? (
           <View style={styles.countRow}>

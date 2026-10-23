@@ -25,6 +25,7 @@ import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import DiaryCalendar from '../components/diary/DiaryCalendar'; // v3.389 [Diary]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 본문 손글씨
+import LinedPaper, { noteTextStyle } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, backdateOptions } from '../utils/diary';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
@@ -361,13 +362,19 @@ export default function FeedScreen() {
         onUpdated={() => fetchFeed()}
         renderBlocks={() => (
           <View>
-            {isDiary && textBlocks.length ? (
-              <View style={styles.paper}>
-                {textBlocks.map((b, i) => (
-                  <AppText key={`t${i}`} variant="body" style={[styles.paperText, nakseoFont ? { fontFamily: nakseoFont, fontSize: 17, lineHeight: 26 } : null]}>{b.text}</AppText>
-                ))}
-              </View>
-            ) : textBlocks.map((b, i) => (
+            {isDiary && textBlocks.length ? (() => {
+              // v3.403 [LinedNote] 카드는 줄 노트 최대 5줄 — 길면 '더 보기'(상세로)
+              const note = textBlocks.map((b) => b.text).join('\n');
+              const long = note.split('\n').length > 5 || note.length > 110;
+              return (
+                <TouchableOpacity activeOpacity={0.85} disabled={!long || !item.id} onPress={() => navigation.navigate('FeedDetail', { feedId: String(item.id) })} style={styles.noteWrap}>
+                  <LinedPaper>
+                    <AppText numberOfLines={5} style={[noteTextStyle, nakseoFont ? { fontFamily: nakseoFont } : null]}>{note}</AppText>
+                  </LinedPaper>
+                  {long ? <AppText variant="caption" tone="accent" style={styles.noteMore}>더 보기</AppText> : null}
+                </TouchableOpacity>
+              );
+            })() : textBlocks.map((b, i) => (
               <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
             ))}
             {imageBlocks.map((b, i) => {
@@ -648,6 +655,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm, paddingHorizontal: spacing.md, gap: spacing.xs,
   },
   paperText: { color: colors.bg.surface2, lineHeight: 24 },
+  noteWrap: { marginTop: spacing.sm },
+  noteMore: { alignSelf: 'flex-end', marginTop: spacing.xs },
   bgmLabel: { color: colors.accent.secondary, fontWeight: '700', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
   // v3.69: 트랙 블록 래퍼 — 카드 안 인셋 배경 위에 공용 TrackRow를 얹는다
   trackBlockWrap: {

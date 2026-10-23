@@ -4,6 +4,7 @@
 // 블록 렌더(텍스트/트랙/[item] 마커)는 FeedScreen과 동일 규칙.
 import { useState, useCallback } from 'react';
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400
+import LinedPaper, { noteTextStyle } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { View, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -188,11 +189,10 @@ export default function FeedDetailScreen() {
     return (
       <View>
         {isDiary && textBlocks.length ? (
-          <View style={styles.paper}>
-            {textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" style={[styles.paperText, nakseoFont ? { fontFamily: nakseoFont, fontSize: 17, lineHeight: 26 } : null]}>{b.text}</AppText>
-            ))}
-          </View>
+          // v3.403 [LinedNote] 상세는 줄 노트 전체(글 길이만큼 줄이 늘어남)
+          <LinedPaper minLines={3} style={{ marginTop: spacing.sm }}>
+            <AppText style={[noteTextStyle, nakseoFont ? { fontFamily: nakseoFont } : null]}>{textBlocks.map((b) => b.text).join('\n')}</AppText>
+          </LinedPaper>
         ) : textBlocks.map((b, i) => (
           <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
         ))}
