@@ -19,7 +19,8 @@ import { View, Image, FlatList, TouchableOpacity, Pressable, TextInput, Activity
 import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
-import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError, sanitizeServerText } from '../utils/identityGate';
+import { isIdentityRequiredError, sanitizeServerText } from '../utils/identityGate';
+import { askDmIdentity } from '../utils/identityVerify';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -291,10 +292,9 @@ export default function DmChatScreen() {
       console.error('[DmChat] 전송 실패', { cid, status });
       // v3.232 B2: 서버 403 child_restricted(본문 또는 detail 안의 code)는 api 인터셉터가 이미 안내 — 자체 팝업 생략
       if (isChildRestrictedError(err)) return;
-      // v3.230 A8: 서버 '본인인증 후 이용' 문장은 노출하지 않고 준비 중 안내로(본인인증 유도 금지)
-      showAlert('알림', isIdentityRequiredError(err?.response?.status, err?.response?.data)
-        ? DM_UNAVAILABLE_MESSAGE
-        : sanitizeServerText(err?.response?.data?.detail || err?.response?.data?.error, '메시지를 보낼 수 없습니다.'));
+      // v3.409 (대표 10-23): 본인확인이 필요하면 '준비 중' 대신 본인확인 안내(확인 후 다시 보내면 됨)
+      if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) { askDmIdentity('send'); return; }
+      showAlert('알림', sanitizeServerText(err?.response?.data?.detail || err?.response?.data?.error, '메시지를 보낼 수 없습니다.'));
     } finally {
       setSending(false);
     }

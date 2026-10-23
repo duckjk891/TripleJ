@@ -15,7 +15,8 @@ import { dmSocketSubscribe } from '../services/dmSocket'; // v3.407 [DmEdit] 삭
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
-import { DM_UNAVAILABLE_MESSAGE, isIdentityRequiredError } from '../utils/identityGate';
+import { DM_IDENTITY_HINT, isIdentityRequiredError } from '../utils/identityGate';
+import { askDmIdentity } from '../utils/identityVerify';
 import { useIsChild, KIDS_TEXT } from '../utils/kidsMode';
 // v3.233 E5: 보호자 dm_friends 허용 어린이 — 맞팔 친구 DM
 import { useKidsPermission, filterChildDmConversations, isChildRestrictedError } from '../utils/kidsMode';
@@ -239,7 +240,7 @@ export default function DmInboxScreen() {
       } catch (err: any) {
         console.error('[DmInbox] 사용자 검색 실패', { status: err?.response?.status });
         if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
-          console.info('[IdentityBypass] dm search 403 identity — 준비 중 안내');
+          console.info('[DmInbox] dm search 403 identity — 본인확인 안내(v3.409)');
           setPeerDmLimited(true); setDmVerified(false);
         }
         setSearchFailed(true); setResults([]);
@@ -259,9 +260,9 @@ export default function DmInboxScreen() {
     } catch (err: any) {
       console.error('[DmInbox] 대화 시작 실패', { peerId, status: err?.response?.status });
       if (isIdentityRequiredError(err?.response?.status, err?.response?.data)) {
-        console.info('[IdentityBypass] dm start 403 identity — 준비 중 안내');
+        console.info('[DmInbox] dm start 403 identity — 본인확인 안내(v3.409)');
         setPeerDmLimited(true); setDmVerified(false);
-        showAlert('알림', DM_UNAVAILABLE_MESSAGE);
+        askDmIdentity('start', () => { void load(); });
         return;
       }
       setSearchFailed(true);
@@ -477,9 +478,19 @@ export default function DmInboxScreen() {
             </View>
             <AppText variant="caption" tone="secondary" style={styles.composeHint}>
               {peerDmLimited
-                ? DM_UNAVAILABLE_MESSAGE
+                ? DM_IDENTITY_HINT
                 : '닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요. 닉네임#태그 또는 #태그로 정확히 찾을 수 있어요.'}
             </AppText>
+            {peerDmLimited ? (
+              // v3.409: 미인증 회원 — '준비 중' 대신 본인확인 바로가기
+              <TouchableOpacity
+                onPress={() => askDmIdentity('compose', () => { void load(); })}
+                style={{ alignSelf: 'flex-start', marginHorizontal: spacing.lg, marginBottom: spacing.sm }}
+                accessibilityLabel="본인확인하고 DM 쓰기"
+              >
+                <AppText variant="footnote" tone="accent">본인확인하기 ›</AppText>
+              </TouchableOpacity>
+            ) : null}
             <View style={styles.searchBox}>
               <Feather name="search" size={16} color={colors.text.muted} />
               <TextInput
@@ -496,7 +507,7 @@ export default function DmInboxScreen() {
                 <AppText variant="footnote" tone="muted" style={styles.searchStatus}>검색 중...</AppText>
               ) : searchFailed ? (
                 <AppText variant="footnote" tone="muted" style={styles.searchStatus}>
-                  {peerDmLimited ? DM_UNAVAILABLE_MESSAGE : '검색에 실패했습니다.'}
+                  {peerDmLimited ? DM_IDENTITY_HINT : '검색에 실패했습니다.'}
                 </AppText>
               ) : !query.trim() ? (
                 // v3.216 ③: 빈 검색어 — maidol_official 고정 행 + v3.318 서로 팔로우 목록(공식 계정 제외).

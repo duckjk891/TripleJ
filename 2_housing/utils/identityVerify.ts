@@ -7,6 +7,7 @@ import { friendlyErrorMessage } from './friendlyError';
 import { getMe } from '../services/authService';
 import { useAuthStore } from '../stores/authStore';
 import type { IdentityResult } from '../services/identityService';
+import { DM_IDENTITY_MESSAGE, DM_IDENTITY_TITLE } from './identityGate';
 
 async function refreshMe(): Promise<void> {
   try { useAuthStore.getState().setUser((await getMe()) as any); } catch { /* 표시용 갱신 실패 무시 */ }
@@ -44,4 +45,21 @@ export async function startIdentityVerify(src: string): Promise<void> {
     console.error('[IdentityVerify] 시작 실패', { src, status: err?.response?.status });
     showAlert('본인인증', friendlyErrorMessage(err));
   }
+}
+
+/**
+ * v3.409 DM 본인확인 안내 — [나중에] [본인확인하기]. 본인확인을 마치면 onDone(목록·권한 다시 불러오기).
+ * (가입 때 본인확인을 하는 신규 회원은 해당 없음 — 10-12 이전 가입 미인증 회원 대상)
+ */
+export function askDmIdentity(src: string, onDone?: () => void): void {
+  console.info('[IdentityVerify] DM 본인확인 안내', { src });
+  showAlert(DM_IDENTITY_TITLE, DM_IDENTITY_MESSAGE, [
+    { text: '나중에', style: 'cancel' },
+    {
+      text: '본인확인하기',
+      onPress: () => {
+        void startIdentityVerify(`dm_${src}`).then(() => onDone?.());
+      },
+    },
+  ]);
 }

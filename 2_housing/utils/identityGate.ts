@@ -10,6 +10,13 @@
 export const FACE_UNAVAILABLE_TITLE = '얼굴 인증을 잠시 이용할 수 없어요';
 export const FACE_UNAVAILABLE_MESSAGE =
   '지금은 얼굴 사진으로 아티스트를 만들 수 없어요. 잠시 후 다시 시도하거나, 사진 없이 가상 아티스트로 만들 수 있어요.';
+// v3.409 (대표 10-23 "DM 본인확인 팝업으로 바꿔"): DM 만은 '준비 중' 대신 본인확인 안내(⭐30 — 한 분당 한 번).
+export const DM_IDENTITY_TITLE = '본인확인이 필요해요';
+export const DM_IDENTITY_MESSAGE =
+  '다른 회원과 메시지를 주고받으려면 휴대폰 본인확인을 한 번 해 주세요. 확인하면 ⭐30도 드려요(한 분당 한 번).';
+export const DM_IDENTITY_HINT =
+  '본인확인을 하면 다른 회원과 메시지를 주고받을 수 있어요. 공식 계정 문의는 지금도 할 수 있어요.';
+/** @deprecated v3.409 — DM 은 askDmIdentity(본인확인 안내)로 대체. 다른 곳 호환용으로만 남김 */
 export const DM_UNAVAILABLE_MESSAGE =
   '다른 회원과 메시지를 주고받는 기능은 아직 준비 중이에요. 문의는 공식 계정으로 보내주세요.';
 
