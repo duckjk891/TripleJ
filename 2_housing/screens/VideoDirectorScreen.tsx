@@ -1001,6 +1001,12 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   const handlePickLyrics = (lyricsMode: 'scroll' | 'line') => {
     setPickedLyricsMode(lyricsMode);
     pushUser(lyricsMode === 'scroll' ? '흐르는 가사' : '한 줄씩', 'lyricsMode');
+    // v3.405(대표 "가사가 올라가는 형태는 자막 위치 선택지 없이 가운데"): SNS 세로 + 흐르는 가사 = 위치 질문 없이 가운데
+    if (lyricsMode === 'scroll' && pickedFormat === 'sns') {
+      if (__DEV__) console.info('[VideoDirector] 흐르는 가사 — 위치 질문 생략(가운데)');
+      beginGeneration('scroll', 'mid', null);
+      return;
+    }
     pushDirector(
       pickedLayout === 'center'
         ? '자막(가사)은 어디에 둘까요? 기본은 중앙 이미지 바로 아래예요.'
@@ -1011,6 +1017,14 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
 
   // v3.183: 자막 위치 선택 → 생성
   const handlePickSubPos = (subpos: 'near' | 'mid' | 'low') => {
+    const label = subpos === 'near'
+      ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽')
+      : subpos === 'mid' ? '중간' : '아래쪽';
+    beginGeneration(pickedLyricsMode, subpos, label);
+  };
+
+  // v3.405: 위치 선택(또는 생략) → 생성 공통. label=null 이면 답변 버블 없이 바로 진행
+  const beginGeneration = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low', label: string | null) => {
     // v3.228 W0-1: 카드 더블클릭/연타 — 첫 탭이 가드를 잡으면 이후 탭은 버블·요청 모두 0
     if (busyRef.current) { logDupBlock('tap-while-busy', { subpos }); return; }
     if (!selected) return;
@@ -1020,12 +1034,9 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       return;
     }
     busyRef.current = true;
-    const label = subpos === 'near'
-      ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽')
-      : subpos === 'mid' ? '중간' : '아래쪽';
-    pushUser(label, 'subPos');
+    if (label) pushUser(label, 'subPos');
     lastSubposRef.current = subpos; // v3.282: [구간 다시 자르기] 재생성용
-    startGeneration(pickedLyricsMode, subpos);
+    startGeneration(lyricsMode, subpos);
   };
 
   const styleParams = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => ({
@@ -1050,7 +1061,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   // v3.214 ⑤ 부수: 확인 팝업/게이트 취소 시 subPos 답변 버블 잔존 정리 — 마지막 user 버블 1개 제거
   const rollbackToSubPos = () => {
     setChat((p) => (p[p.length - 1]?.type === 'user' ? p.slice(0, -1) : p));
-    setStep('subPos');
+    // v3.405: SNS + 흐르는 가사는 위치 질문이 없다 → 가사 표시 방식 질문으로 되돌림
+    setStep(pickedFormat === 'sns' && pickedLyricsMode === 'scroll' ? 'lyricsMode' : 'subPos');
   };
 
   // v3.214 ⑨: 생성/다시 만들기 진입 게이트 — 쿨다운 중이면 과금 확인 전에 쿨다운 다이얼로그
@@ -1360,7 +1372,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
           const remain = Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0));
           setFatigueRemainSec(remain);
           pushDirector('영상 디렉터가 잠시 쉬는 중이에요. 휴식을 단축하거나 잠시 후 다시 시도해주세요.');
-          setStep('subPos');
+          setStep(pickedFormat === 'sns' && pickedLyricsMode === 'scroll' ? 'lyricsMode' : 'subPos');
           handedOff = true; // 가드는 다이얼로그가 소유 — 취소 시 해제, 해제 시 proceedGeneration 재진입
           showFatigueCooldownDialog({
             status: fatigue,

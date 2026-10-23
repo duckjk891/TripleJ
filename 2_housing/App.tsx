@@ -53,6 +53,7 @@ import MiniPlayer from './components/MiniPlayer';
 import InAppEscapeBanner from './components/InAppEscapeBanner';
 import HomeHeaderActions from './components/HomeHeaderActions';
 import AttendanceModal from './components/AttendanceModal';
+import { useFonts } from 'expo-font'; // v3.405 상단바 로고 Inter Bold
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { showAlert } from './utils/appAlert';
@@ -372,10 +373,14 @@ function MiniPlayerWrapper() {
 }
 
 // 상단 헤더 로고 (차트=홈 전용) — v3.193: 스플래시 2막과 동일한 M|AI|DOL 분절(AI만 강조색)
+// v3.405(대표 "로고가 영상과 달라 보인다"): 기기 기본 글꼴(아이폰 SF Pro·갤럭시 Roboto) 대신 Inter Bold 로 통일 —
+//   SNS 공유 영상 로고와 같은 글꼴(OFL, 'MAIDOL' 6글자만 담은 2KB 부분 글꼴). 로드 전·실패 시 기존 기본 글꼴 굵게.
 function LogoTitle() {
+  const [logoFontReady] = useFonts({ MaidolLogo: require('./assets/fonts/MaidolLogo-InterBold.ttf') });
+  const logoFont = logoFontReady ? { fontFamily: 'MaidolLogo', fontWeight: 'normal' as const } : null;
   return (
-    <AppText variant="title2" style={{ letterSpacing: 1 }}>
-      M<AppText variant="title2" tone="accent">AI</AppText>DOL
+    <AppText variant="title2" style={[{ letterSpacing: 1 }, logoFont]}>
+      M<AppText variant="title2" tone="accent" style={logoFont}>AI</AppText>DOL
     </AppText>
   );
 }
