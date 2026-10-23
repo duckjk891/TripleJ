@@ -11,6 +11,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { fetchOfficial, type OfficialContact } from '../services/officialService';
+import { dmSocketSubscribe } from '../services/dmSocket'; // v3.407 [DmEdit] 삭제·수정 미리보기 즉시 반영
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
@@ -122,6 +123,22 @@ export default function DmInboxScreen() {
   }, [user, isChild]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // v3.407 [DmEdit]: 목록을 보고 있는 동안 상대·내 다른 기기가 마지막 메시지를 삭제·수정하면 미리보기만 교체.
+  // 서버는 '마지막 메시지였을 때만' last_message_text 를 동봉(null 이면 목록 영향 없음). 순서·안읽음은 불변.
+  useFocusEffect(useCallback(() => {
+    const unsub = dmSocketSubscribe((ev) => {
+      if (ev.type !== 'message_deleted' && ev.type !== 'message_edited') return;
+      const preview = ev.last_message_text;
+      if (typeof preview !== 'string') return;
+      const cid = String(ev.conversation_id || '');
+      if (__DEV__) console.info('[DmInbox] 미리보기 갱신', { type: ev.type, cid });
+      const patch = (list: DmConversation[]) => list.map((c) => (c.conversation_id === cid ? { ...c, last_message_text: preview } : c));
+      setConvs(patch);
+      setRequests(patch);
+    });
+    return unsub;
+  }, []));
 
   // v3.233 E5: 맞팔 목록(services/followService — 기존 GET /follows/followers·following 교집합). 실패 = null(공식만)
   const loadFriends = useCallback(async () => {

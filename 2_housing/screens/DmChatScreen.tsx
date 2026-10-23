@@ -10,9 +10,12 @@ import { enterToSendHandler } from '../utils/enterToSend';
 //   Keyboard 이벤트 미의존)하므로 이 실패 인과 자체를 우회한다. iOS도 동일 컴포넌트로 통일(behavior='padding').
 // v3.207(⑥): 신고(CS DM) 이미지 첨부 — feed-image 관행 복제(DocumentPicker image/* → POST /upload/dm-image →
 //   object_name → 메시지 body image_object_name) + 말풍선 이미지 렌더(서버 직렬화 image_url).
+// v3.407 [DmEdit]: 내 말풍선 길게 누르기 → 앱 내 팝업(수정·삭제). 삭제 = 확인 후 '삭제된 메시지예요'(흐린 기울임),
+//   수정 = 입력바 재사용('메시지 수정 중 · 취소' 바, 보내기 = 저장) → 시간 옆 '(수정됨)'. 실시간 message_deleted/edited 반영.
+//   웹: 내 말풍선 글자 선택·우클릭 메뉴가 길게 누르기를 가로채지 않게 userSelect none + contextmenu 차단(우클릭 = 메뉴).
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { View, Image, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Image, FlatList, TouchableOpacity, Pressable, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 무반응 방지
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { showAlert } from '../utils/appAlert';
@@ -23,6 +26,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { pickImages } from '../utils/pickImage'; // v3.391 [PickImage]
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { dmSocketSubscribe } from '../services/dmSocket';
+import { deleteDmMessage, editDmMessage } from '../services/dmService'; // v3.407 [DmEdit]
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar } from '../components/ui';
 import ReportModal from '../components/ReportModal';
@@ -46,7 +50,19 @@ interface DmMessage {
   image_urls?: (string | null)[] | null;
   // v3.359 [Governance]: 상담 AI 가 보낸 답변(사람이 아닌 AI 답변임을 표시)
   ai_generated?: boolean;
+  // v3.407 [DmEdit]: 삭제·수정 표식(서버가 삭제 메시지의 원문·사진은 내려주지 않음)
+  deleted?: boolean;
+  deleted_at?: string | null;
+  edited?: boolean;
+  edited_at?: string | null;
 }
+
+// v3.407 [DmEdit]
+const DM_DELETED_TEXT = '삭제된 메시지예요';
+/** 삭제 응답이 비었을 때(구 서버 등) 로컬에서 삭제 상태로 바꾼 사본 */
+const asDeleted = (m: DmMessage): DmMessage => ({
+  ...m, deleted: true, edited: false, text: '', image_object_name: null, image_url: null, image_object_names: [], image_urls: [],
+});
 
 // v3.207(⑥): 첨부 선검증 — 백엔드 /upload/dm-image 계약(feed-image 복제: jpg/png/webp ≤15MB)과 짝
 const DM_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -117,6 +133,11 @@ export default function DmChatScreen() {
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
+  // v3.407 [DmEdit]: 수정 중인 내 메시지 — 입력바를 재사용하고, 취소하면 쓰던 초안을 되돌린다
+  const [editingMsg, setEditingMsg] = useState<DmMessage | null>(null);
+  const draftBeforeEditRef = useRef<string>('');
+  const editingIdRef = useRef<string | null>(null);
+  editingIdRef.current = editingMsg?.id ?? null;
   const listRef = useRef<FlatList>(null);
 
   const isPendingReceived = conv?.status === 'pending' && user && String(conv?.requester_id) !== String(user.id);
@@ -144,6 +165,22 @@ export default function DmChatScreen() {
     const t = setInterval(load, 8000);
     const unsub = dmSocketSubscribe((ev) => {
       if (ev.type === 'message' || ev.type === 'read' || ev.type === 'accepted') load();
+      // v3.407 [DmEdit]: 상대(또는 내 다른 기기)의 삭제·수정 — 열린 대화면 해당 말풍선만 교체(전체 재조회 없음)
+      else if ((ev.type === 'message_deleted' || ev.type === 'message_edited') && String(ev.conversation_id) === String(cid)) {
+        const mid = String(ev.message_id || ev.message?.id || '');
+        if (!mid) return;
+        if (__DEV__) console.info('[DmChat] 실시간 메시지 변경', { type: ev.type, mid });
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== mid) return m;
+          if (ev.message) return { ...m, ...ev.message };
+          return ev.type === 'message_deleted' ? asDeleted(m) : m;
+        }));
+        if (ev.type === 'message_deleted' && editingIdRef.current === mid) {
+          // 다른 기기에서 지운 메시지를 수정 중이었다면 수정 모드 해제(초안 복원)
+          setEditingMsg(null);
+          setText(draftBeforeEditRef.current);
+        }
+      }
     });
     return () => { clearInterval(t); unsub(); };
   }, [load]));
@@ -296,34 +333,150 @@ export default function DmChatScreen() {
     ]);
   };
 
+  // ── v3.407 [DmEdit] 내 메시지 수정·삭제 ──
+  const replaceMessage = (id: string, next: DmMessage) => setMessages((prev) => prev.map((m) => (m.id === id ? next : m)));
+
+  const cancelEdit = () => {
+    if (__DEV__) console.info('[DmChat] 수정 취소', { mid: editingMsg?.id });
+    setEditingMsg(null);
+    setText(draftBeforeEditRef.current);
+  };
+
+  const startEdit = (m: DmMessage) => {
+    if (__DEV__) console.info('[DmChat] 수정 시작', { mid: m.id });
+    // 이미 수정 중이면 그 초안 대신 '수정 전 쓰던 글'을 그대로 유지
+    if (!editingMsg) draftBeforeEditRef.current = text;
+    setEditingMsg(m);
+    setText(m.text || '');
+  };
+
+  const doDelete = async (m: DmMessage) => {
+    if (!cid) return;
+    try {
+      const r = await deleteDmMessage(cid, m.id);
+      replaceMessage(m.id, r.message ? { ...m, ...r.message } : asDeleted(m));
+      if (editingMsg?.id === m.id) cancelEdit();
+      if (__DEV__) console.info('[DmChat] 삭제 완료', { mid: m.id, preview: r.previewUpdated });
+    } catch (err: any) {
+      console.error('[DmChat] 삭제 실패', { mid: m.id, status: err?.response?.status });
+      showAlert('알림', sanitizeServerText(err?.response?.data?.detail || err?.response?.data?.error, '메시지를 삭제하지 못했어요. 잠시 후 다시 시도해주세요.'));
+    }
+  };
+
+  const confirmDelete = (m: DmMessage) => {
+    showAlert('메시지 삭제', "이 메시지를 삭제할까요? 상대방 화면에서도 '삭제된 메시지예요'로 바뀌어요.", [
+      { text: '취소', style: 'cancel' },
+      { text: '삭제', style: 'destructive', onPress: () => { void doDelete(m); } },
+    ]);
+  };
+
+  const lastMenuAtRef = useRef(0);
+  const openMyMessageMenu = (m: DmMessage) => {
+    if (m.deleted) return;
+    // 모바일 웹은 길게 누르기와 contextmenu 가 함께 와서 팝업이 두 번 뜰 수 있음 — 0.8초 안 중복 무시
+    const now = Date.now();
+    if (now - lastMenuAtRef.current < 800) return;
+    lastMenuAtRef.current = now;
+    if (__DEV__) console.info('[DmChat] 내 메시지 메뉴', { mid: m.id });
+    showAlert('메시지', undefined, [
+      { text: '수정', onPress: () => startEdit(m) },
+      { text: '삭제', style: 'destructive', onPress: () => confirmDelete(m) },
+      { text: '취소', style: 'cancel' },
+    ]);
+  };
+
+  const saveEdit = async () => {
+    const m = editingMsg;
+    if (!m || !cid || sending) return;
+    const t = text.trim();
+    if (t === (m.text || '').trim()) { cancelEdit(); return; } // 바뀐 게 없으면 그냥 닫기
+    const hasImages = dmImageUris(m).length > 0;
+    if (!t && !hasImages) {
+      showAlert('안내', '내용을 입력해주세요. 메시지를 지우려면 길게 눌러 삭제를 골라주세요.');
+      return;
+    }
+    setSending(true);
+    try {
+      const r = await editDmMessage(cid, m.id, t);
+      replaceMessage(m.id, r.message ? { ...m, ...r.message } : { ...m, text: t, edited: true });
+      setEditingMsg(null);
+      setText(draftBeforeEditRef.current);
+      if (__DEV__) console.info('[DmChat] 수정 완료', { mid: m.id, preview: r.previewUpdated });
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.error('[DmChat] 수정 실패', { mid: m.id, status });
+      if (isChildRestrictedError(err)) return; // 인터셉터가 이미 안내
+      if (status === 409) { // 다른 기기에서 이미 삭제됨
+        replaceMessage(m.id, asDeleted(m));
+        setEditingMsg(null);
+        setText(draftBeforeEditRef.current);
+      }
+      showAlert('알림', sanitizeServerText(err?.response?.data?.detail || err?.response?.data?.error, '메시지를 수정하지 못했어요. 잠시 후 다시 시도해주세요.'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const submit = () => { if (editingMsg) void saveEdit(); else void send(); };
+
+  // 웹: 내 말풍선 우클릭 = 같은 메뉴(브라우저 메뉴 대신), 글자 선택 끔
+  const webBubbleProps = (m: DmMessage) => (Platform.OS === 'web'
+    ? { onContextMenu: (e: any) => { e?.preventDefault?.(); if (!m.deleted) openMyMessageMenu(m); } }
+    : {});
+
   const renderMsg = ({ item }: { item: DmMessage }) => {
     const mine = user && String(item.sender_id) === String(user.id);
+    const deleted = !!item.deleted;
     // v3.207(⑥)→v3.274: 이미지 메시지 — 한 말풍선에 이미지 세로 스택(최대 5장), 텍스트는 아래
-    const imgUris = dmImageUris(item);
+    const imgUris = deleted ? [] : dmImageUris(item);
+    const onLong = mine && !deleted ? () => openMyMessageMenu(item) : undefined;
+    const bubble = (
+      <View style={[
+        styles.bubble, mine ? styles.bubbleMine : styles.bubblePeer,
+        deleted ? styles.bubbleDeleted : null,
+        editingMsg?.id === item.id ? styles.bubbleEditing : null,
+      ]}>
+        {imgUris.map((u, i) => (
+          // v3.275 [피드백4-54]: 사진 탭 = 원본 크게 보기(종전: 썸네일 고정 — 스크린샷 글씨 판독 불가)
+          <TouchableOpacity
+            key={`${item.id}-img-${i}`} style={i > 0 ? { marginTop: spacing.xs } : null}
+            activeOpacity={0.85} onPress={() => setViewerUri(u)} accessibilityLabel="사진 크게 보기"
+            onLongPress={onLong} delayLongPress={350}
+          >
+            <DmMessageImage uri={u} />
+          </TouchableOpacity>
+        ))}
+        {deleted ? (
+          <AppText variant="footnote" tone="muted" style={styles.textDeleted}>{DM_DELETED_TEXT}</AppText>
+        ) : item.text ? (
+          <AppText variant="footnote" style={[imgUris.length ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
+            {item.text}
+          </AppText>
+        ) : null}
+      </View>
+    );
     return (
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubblePeer]}>
-          {imgUris.map((u, i) => (
-            // v3.275 [피드백4-54]: 사진 탭 = 원본 크게 보기(종전: 썸네일 고정 — 스크린샷 글씨 판독 불가)
-            <TouchableOpacity
-              key={`${item.id}-img-${i}`} style={i > 0 ? { marginTop: spacing.xs } : null}
-              activeOpacity={0.85} onPress={() => setViewerUri(u)} accessibilityLabel="사진 크게 보기"
-            >
-              <DmMessageImage uri={u} />
-            </TouchableOpacity>
-          ))}
-          {item.text ? (
-            <AppText variant="footnote" style={[imgUris.length ? { marginTop: spacing.xs } : null, mine ? styles.textMine : null]}>
-              {item.text}
-            </AppText>
-          ) : null}
-        </View>
+        {onLong ? (
+          <Pressable
+            onLongPress={onLong}
+            delayLongPress={350}
+            accessibilityLabel="내 메시지 — 길게 눌러 수정·삭제"
+            style={({ pressed }) => [Platform.OS === 'web' ? styles.noSelectWeb : null, pressed ? { opacity: 0.85 } : null]}
+            {...(webBubbleProps(item) as any)}
+          >
+            {bubble}
+          </Pressable>
+        ) : bubble}
         <View style={styles.msgMeta}>
           {!mine && item.ai_generated ? (
             <AppText variant="caption" tone="accent" accessibilityLabel="AI 답변">AI 답변 · </AppText>
           ) : null}
           <AppText variant="caption" tone="muted">{fmtClock(item.created_at)}</AppText>
-          {!mine ? (
+          {item.edited && !deleted ? (
+            <AppText variant="caption" tone="muted" accessibilityLabel="수정된 메시지"> (수정됨)</AppText>
+          ) : null}
+          {!mine && !deleted ? (
             <TouchableOpacity onPress={() => setReportMsg(item.id)} accessibilityLabel="메시지 신고">
               <AppText variant="caption" tone="muted"> · 신고</AppText>
             </TouchableOpacity>
@@ -407,7 +560,17 @@ export default function DmChatScreen() {
       {!isPendingReceived ? (
         <View>
           {/* v3.207(⑥)→v3.273: 첨부 이미지 미리보기 스트립(최대 5장) — 업로드 상태(스피너/실패 재시도) + 장별 X 제거 */}
-          {attachedImages.length ? (
+          {/* v3.407 [DmEdit]: 수정 모드 안내 바 — 취소하면 쓰던 초안 복원 */}
+          {editingMsg ? (
+            <View style={styles.editBar}>
+              <Feather name="edit-2" size={13} color={colors.accent.primary} />
+              <AppText variant="caption" tone="secondary" style={{ flex: 1 }} numberOfLines={1}>메시지 수정 중</AppText>
+              <TouchableOpacity onPress={cancelEdit} accessibilityLabel="메시지 수정 취소" style={{ paddingHorizontal: 4 }}>
+                <AppText variant="caption" tone="accent">취소</AppText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {attachedImages.length && !editingMsg ? (
             <View style={styles.attachRow}>
               {attachedImages.map((img) => (
                 <View key={img.key} style={{ position: 'relative' }}>
@@ -442,31 +605,33 @@ export default function DmChatScreen() {
           {/* v3.207(⑤): 수동 리프트(marginBottom+kbLift) 제거 — keyboard-controller KAV padding이 담당 */}
           <View style={styles.inputBar}>
             {/* v3.232 K7(B3): 어린이는 사진 첨부 없음(서버 /upload/dm-image 도 403) */}
-            {!isChild && (
+            {!isChild && !editingMsg && (
             <TouchableOpacity onPress={() => { void pickImage(); }} accessibilityLabel="이미지 첨부" style={{ padding: 6 }}>
               <Feather name="image" size={20} color={attachedImages.length >= DM_MAX_IMAGES ? colors.text.muted : colors.text.secondary} />
             </TouchableOpacity>
             )}
             <TextInput
               style={styles.input}
-              placeholder="메시지 입력..."
+              placeholder={editingMsg ? '수정할 내용을 입력해주세요' : '메시지 입력...'}
               placeholderTextColor={colors.text.muted}
               value={text}
               onChangeText={setText}
               maxLength={2000}
               multiline
-              onKeyPress={enterToSendHandler(() => { void send(); })} // v3.326 PC 웹 Enter 전송
+              onKeyPress={enterToSendHandler(submit)} // v3.326 PC 웹 Enter 전송 · v3.407 수정 중이면 저장
             />
             <TouchableOpacity
-              onPress={send}
-              disabled={sending || (!text.trim() && !attachedImages.some((i) => i.status === 'done'))}
-              accessibilityLabel="보내기"
+              onPress={submit}
+              disabled={sending || (editingMsg
+                ? (!text.trim() && !dmImageUris(editingMsg).length)
+                : (!text.trim() && !attachedImages.some((i) => i.status === 'done')))}
+              accessibilityLabel={editingMsg ? '수정 저장' : '보내기'}
               style={{ padding: 6 }}
             >
               <Feather
-                name="send"
+                name={editingMsg ? 'check' : 'send'}
                 size={20}
-                color={text.trim() || attachedImages.some((i) => i.status === 'done') ? colors.accent.primary : colors.text.muted}
+                color={text.trim() || (!editingMsg && attachedImages.some((i) => i.status === 'done')) ? colors.accent.primary : colors.text.muted}
               />
             </TouchableOpacity>
           </View>
@@ -515,6 +680,18 @@ const styles = StyleSheet.create({
   bubbleMine: { backgroundColor: colors.accent.primary },
   bubblePeer: { backgroundColor: colors.bg.surface1 },
   textMine: { color: '#fff' },
+  // v3.407 [DmEdit]: 삭제된 메시지(흐린 기울임) · 수정 중 말풍선 테두리 · 웹 글자 선택 끔 · 수정 모드 바
+  bubbleDeleted: { backgroundColor: colors.bg.surface1, opacity: 0.7 },
+  textDeleted: { fontStyle: 'italic' },
+  bubbleEditing: { borderWidth: 1.5, borderColor: colors.accent.primaryGlow },
+  noSelectWeb: { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' } as any,
+  editBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginHorizontal: spacing.lg, marginTop: spacing.sm,
+    paddingVertical: 6, paddingHorizontal: spacing.md,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
   msgMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   // v3.207(⑥): 말풍선 이미지 — 화면 폭 대비 고정폭, 비율은 DmMessageImage가 getSize로 결정
   msgImage: { width: 200, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },

@@ -1,12 +1,13 @@
 // [dmSocket] DM 실시간 WebSocket 싱글턴 — MAIDOL dmSocket.js 이식(RN/웹 공용).
-// 서버 /api/dm/ws?token=JWT 로 연결, 이벤트(message/unread/read/accepted)를 리스너에 브로드캐스트.
+// 서버 /api/dm/ws?token=JWT 로 연결, 이벤트(message/unread/read/accepted, v3.407 message_deleted/message_edited)를 리스너에 브로드캐스트.
 // 재연결: 지수 백오프 1s→최대 30s. keepalive: 25s ping. 30초 폴링은 폴백으로 별도 유지(HomeHeaderActions).
 // v3.252: 크루 채팅 'club_chat' 이벤트 분기 — 별도 리스너 채널(clubListeners)로만 전달해
 //   기존 dm 리스너(HomeHeaderActions else refresh() 등)에 신규 이벤트가 새지 않게 한다(무회귀).
 //   재연결 시 'open' 이벤트도 club 채널에만 브로드캐스트 — ClubChat이 after 캐치업 1회에 사용.
 import { BACKEND_BASE_URL } from './api';
 
-type DmEvent = { type: 'message' | 'unread' | 'read' | 'accepted' | 'pong'; [k: string]: any };
+// v3.407 [DmEdit]: message_deleted / message_edited — {conversation_id, message_id, message, last_message_text}
+type DmEvent = { type: 'message' | 'unread' | 'read' | 'accepted' | 'pong' | 'message_deleted' | 'message_edited'; [k: string]: any };
 type Listener = (ev: DmEvent) => void;
 // v3.252: 크루 채팅 이벤트 — {type:'club_chat', club_id, message:{…}} + 재연결 신호 {type:'open'}
 export type ClubChatEvent = { type: 'club_chat' | 'open'; club_id?: string | number; message?: any; [k: string]: any };
