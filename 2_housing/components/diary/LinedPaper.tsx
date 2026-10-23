@@ -51,7 +51,8 @@ export default function LinedPaper({ children, minLines = 1, style }: PaperProps
 /** 줄 노트 입력칸 — 글 길이만큼 늘어나는 여러 줄 입력(내부 스크롤 없음) */
 export function LinedTextInput({ minLines = 6, style, onContentSizeChange, ...rest }: TextInputProps & { minLines?: number }) {
   const [contentH, setContentH] = useState(0);
-  const lines = Math.max(minLines, Math.ceil((contentH || 0) / NOTE.lineHeight));
+  // 글 줄 수 + 빈 줄 1개(쓰는 줄 아래에 항상 여유 줄)
+  const lines = Math.max(minLines, Math.ceil((contentH || 0) / NOTE.lineHeight) + 1);
   return (
     <LinedPaper minLines={lines}>
       <TextInput
