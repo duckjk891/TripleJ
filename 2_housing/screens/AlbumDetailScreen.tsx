@@ -137,17 +137,15 @@ export default function AlbumDetailScreen() {
 
   const playFrom = (track: any) => {
     if (!tracks.length) return;
-    // v3.223 ①: 앨범 개별 곡 탭 = append(차트 곡 탭 관행 1:1 — addToQueue 중복 방지+해당 곡 재생).
-    // 앨범 리스트로 큐를 교체하지 않는다(로그인 재생목록 보존 — 교체는 플레이리스트 재생만).
-    if (__DEV__) console.info('[AlbumDetail] 재생(append)', { albumId, trackId: track?.id });
-    // 앨범 상세 cover_image는 조립된 프록시 경로 — 큐에는 object명(cover_image_url)만 남긴다
-    const rowTrack = toRowTrack(track);
-    playerStore.addToQueue(rowTrack);
-    const q = usePlayerStore.getState().queue;
-    const idx = q.findIndex((t: any) => String(t.id) === String(track.id));
-    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
-    usePlayerStore.getState().startRadio(String(track.id)); // v3.360 [TapRadio] 누른 곡 다음은 추천
-    navigation.navigate('Player', { track: rowTrack });
+    // v3.406 (대표 10-23, 지유님 신고 "앨범 전체 재생 중 3번째 곡 뒤에 앨범 밖 곡"): 앨범 곡을 누르면
+    //   앨범 곡 전체로 재생목록을 바꾸고 누른 곡부터 — 앨범 순서대로 이어지고, 끝나면 추천곡(기존 마지막 곡 처리).
+    //   (예전 v3.223 '뒤에 추가 + v3.360 누른 곡 다음은 추천'은 앨범 안에서 추천으로 새던 원인)
+    const rows = tracks.map(toRowTrack);
+    const idx = rows.findIndex((t: any) => String(t.id) === String(track.id));
+    playerStore.setQueue(rows);
+    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    if (__DEV__) console.info('[AlbumDetail] 재생(앨범 순서)', { albumId, trackId: track?.id, idx, n: rows.length });
+    navigation.navigate('Player', { track: rows[idx >= 0 ? idx : 0] });
   };
 
   // v3.241 [P0-2]: 전체재생 = 앨범 트랙 전체로 큐 교체 후 1번 트랙부터(v3.36 정책: 리스트 단위 재생=

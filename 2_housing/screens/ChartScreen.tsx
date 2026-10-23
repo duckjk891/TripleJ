@@ -113,6 +113,9 @@ export default function ChartScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
+  // v3.406 (오리쟁이님 신고·대표 승인): '내 재생목록' 편집 — 여러 곡 골라 빼기
+  const [queueEdit, setQueueEdit] = useState(false);
+  const [queueSel, setQueueSel] = useState<Record<string, boolean>>({});
   const [latestAlbums, setLatestAlbums] = useState<Album[]>([]); // v3.96(A-20)→v3.106: 신곡 탭 상단 최신 앨범
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
@@ -174,7 +177,36 @@ export default function ChartScreen() {
     fetchChart(activeTab);
     if (activeTab === 'new') fetchLatestAlbums(); // v3.106: 신곡 탭 새로고침 시 최신 앨범도 갱신
   };
-  const handleTabPress = (tab: ChartTab) => { if (tab !== activeTab) setActiveTab(tab); };
+  const handleTabPress = (tab: ChartTab) => {
+    if (tab !== activeTab) { setActiveTab(tab); setQueueEdit(false); setQueueSel({}); }
+  };
+
+  // v3.406: 재생목록에서 빼기 — 한 곡(⋮ 메뉴) / 여러 곡(편집). 지금 재생 중인 곡은 빼지 않는다.
+  const isNowPlaying = (id: any) => {
+    const st = usePlayerStore.getState();
+    return !!st.track && String(st.queue[st.currentIndex]?.id) === String(id);
+  };
+  const removeOneFromQueue = (t: any) => {
+    if (isNowPlaying(t?.id)) { showAlert('지금 재생 중인 곡이에요', '다른 곡을 재생한 뒤에 뺄 수 있어요.'); return; }
+    const q = usePlayerStore.getState().queue;
+    const i = q.findIndex((x: any) => String(x?.id) === String(t?.id));
+    if (i >= 0) usePlayerStore.getState().removeFromQueue(i);
+    if (__DEV__) console.info('[ChartScreen] 재생목록에서 빼기', { id: t?.id, index: i });
+  };
+  const removeSelectedFromQueue = () => {
+    const ids = Object.keys(queueSel).filter((k) => queueSel[k]);
+    if (!ids.length) return;
+    showAlert('선택한 곡을 뺄까요?', `${ids.length}곡을 재생목록에서 빼요.`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '빼기', style: 'destructive', onPress: () => {
+          const n = usePlayerStore.getState().removeManyFromQueue(ids);
+          setQueueSel({});
+          if (n < ids.length) showAlert('재생 중인 곡은 남겨 뒀어요', '지금 재생 중인 곡은 다른 곡을 재생한 뒤에 뺄 수 있어요.');
+        },
+      },
+    ]);
+  };
 
   const requireLogin = (): boolean => {
     if (!user) {
@@ -263,7 +295,13 @@ export default function ChartScreen() {
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
     const rankColor = RANK_COLORS[rank] || colors.text.muted;
-    const left = activeTab === 'new'
+    const editingQueue = activeTab === 'queue' && queueEdit;
+    const left = editingQueue
+      ? <View style={[trackRowStyles.rank, { alignItems: 'center' }]}>
+          <Feather name={queueSel[String(item.id)] ? 'check-square' : 'square'} size={18}
+            color={queueSel[String(item.id)] ? colors.accent.primary : colors.text.muted} />
+        </View>
+      : activeTab === 'new'
       ? <View style={trackRowStyles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
       : activeTab === 'queue'
       ? (index === playerStore.currentIndex
@@ -305,7 +343,9 @@ export default function ChartScreen() {
         track={item}
         left={left}
         liked={!!likedMap[item.id]}
-        onPress={() => handleTrackPress(item)}
+        onPress={() => (editingQueue
+          ? setQueueSel((p) => ({ ...p, [String(item.id)]: !p[String(item.id)] }))
+          : handleTrackPress(item))}
         onMore={() => setActionTrack(item)}
         footer={footer}
         // v3.311→v3.313: TOP100·일간·주간·월간 행 재생수 = 그 차트의 순위 기준 재생수(서버 chart_plays — 없으면 총 재생수)
@@ -404,7 +444,42 @@ export default function ChartScreen() {
                 renderItem={renderTrack}
                 ListHeaderComponent={
                   // v3.292 [ChartAddAll] (대표 10-06): 곡 수 표기 제거, 신곡 탭은 최신 앨범 "아래"(곡 목록 바로 위)에 전체 담기
-                  isQueue ? latestAlbumsHeader : (
+                  isQueue ? (
+                    // v3.406: 내 재생목록 머리 — 곡 수 · 편집(여러 곡 골라 빼기)
+                    <View style={styles.addAllRow}>
+                      {queueEdit ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            const all = data.every((t: any) => queueSel[String(t.id)]);
+                            setQueueSel(all ? {} : Object.fromEntries(data.map((t: any) => [String(t.id), true])));
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="전체 선택"
+                        >
+                          <AppText variant="footnote" tone="secondary">
+                            {data.every((t: any) => queueSel[String(t.id)]) ? '선택 해제' : '전체 선택'}
+                          </AppText>
+                        </TouchableOpacity>
+                      ) : <AppText variant="caption" tone="muted">{data.length}곡</AppText>}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                        {queueEdit ? (
+                          <TouchableOpacity onPress={removeSelectedFromQueue} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel="선택한 곡 빼기">
+                            <AppText variant="footnote" style={{ color: Object.values(queueSel).some(Boolean) ? colors.status.error : colors.text.muted }}>
+                              선택 빼기{Object.values(queueSel).filter(Boolean).length ? ` (${Object.values(queueSel).filter(Boolean).length})` : ''}
+                            </AppText>
+                          </TouchableOpacity>
+                        ) : null}
+                        <TouchableOpacity
+                          onPress={() => { setQueueEdit((v) => !v); setQueueSel({}); }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel={queueEdit ? '편집 끝내기' : '재생목록 편집'}
+                        >
+                          <AppText variant="footnote" tone="accent">{queueEdit ? '완료' : '편집'}</AppText>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
                     <>
                       {latestAlbumsHeader}
                       <View style={styles.addAllRow}>
@@ -464,6 +539,9 @@ export default function ChartScreen() {
         track={actionTrack}
         onClose={() => setActionTrack(null)}
         onPlay={(t) => handleTrackPress(t as ChartTrack)}
+        extraItems={activeTab === 'queue'
+          ? [{ icon: 'minus-circle', label: '재생목록에서 빼기', onPress: (t) => removeOneFromQueue(t) }]
+          : undefined}
         onLikeChanged={(trackId, delta) => setTracks((prev) => prev.map((t) => t.id === trackId
           ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) }
           : t))}

@@ -89,6 +89,8 @@ interface PlayerState {
   /** v3.286 [RelatedVariety]: 곡을 현재 곡 바로 뒤로(이미 큐에 있으면 그 자리에서 옮김). 반환: 새 인덱스(-1=불가) */
   placeNextAfterCurrent: (track: any) => number;
   removeFromQueue: (index: number) => void;
+  /** v3.406: 여러 곡 한 번에 빼기(곡 id) — 지금 재생 중인 곡은 빼지 않는다. 반환: 뺀 곡 수 */
+  removeManyFromQueue: (ids: string[]) => number;
   reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
   /** 로그아웃 시 현재 재생목록을 그 계정 보관함에 저장한 뒤 큐·재생상태를 초기화 */
   resetOnLogout: () => void;
@@ -379,6 +381,20 @@ export const usePlayerStore = create<PlayerState>()(
         else if (index === currentIndex) nextIndex = Math.min(currentIndex, next.length - 1);
         set({ queue: next, currentIndex: nextIndex });
         saveOwnerQueue();
+      },
+      removeManyFromQueue: (ids) => {
+        const { queue, currentIndex } = get();
+        const drop = new Set(ids.map(String));
+        const cur = queue[currentIndex];
+        if (cur) drop.delete(String(cur.id)); // 재생 중인 곡은 남김(소리와 목록이 어긋나지 않게)
+        if (!drop.size) return 0;
+        const next = queue.filter((t) => !drop.has(String(t?.id)));
+        const removed = queue.length - next.length;
+        const nextIndex = cur ? next.findIndex((t) => t === cur) : Math.min(currentIndex, next.length - 1);
+        set({ queue: next, currentIndex: nextIndex });
+        saveOwnerQueue();
+        if (__DEV__) console.info('[Queue] 여러 곡 빼기', { removed, left: next.length, currentIndex: nextIndex });
+        return removed;
       },
       reorderQueue: (from, to) => {
         const { queue, currentIndex } = get();
