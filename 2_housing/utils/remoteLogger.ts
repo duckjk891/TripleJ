@@ -140,7 +140,10 @@ function _currentUrl(): string {
       // v3.216 ①: OAuth 콜백 `#token=` 등 해시는 로그에 싣지 않는다(토큰 유출 방어)
       return window.location.href.split('#')[0];
     }
-    return navigationRef?.getCurrentRoute?.()?.name || '';
+    // v3.403: 준비 전 getCurrentRoute 는 console.error 를 남겨 → 이 로거가 다시 기록 → 무한 재귀(앱 종료,
+    //  대표 아이폰 10-22 'Maximum call stack size exceeded' — 광고 no-fill 오류 기록 중). 준비됐을 때만 읽는다.
+    if (!navigationRef?.isReady?.()) return '';
+    return navigationRef.getCurrentRoute()?.name || '';
   } catch {
     return '';
   }
@@ -169,7 +172,11 @@ function _selfWarn(msg: string, ctx?: Record<string, any>): void {
   } catch { /* noop */ }
 }
 
+// v3.403: 기록 중에 또 console 이 불리면(하위 호출의 경고 등) 다시 기록하지 않는다 — 무한 재귀 차단
+let _enqueueing = false;
 function _enqueue(level: string, args: any[], extraStack?: string): void {
+  if (_enqueueing) return;
+  _enqueueing = true;
   try {
     // v3.227: 인증 일시정지 중(같은 토큰)에는 쌓지도 않는다
     if (_syncAuthBlock(_currentToken())) return;
@@ -196,6 +203,8 @@ function _enqueue(level: string, args: any[], extraStack?: string): void {
     if (_queue.length >= FLUSH_THRESHOLD) void _flush();
   } catch {
     // serialization 실패 → 조용히 drop (절대 throw 금지)
+  } finally {
+    _enqueueing = false;
   }
 }
 
@@ -369,7 +378,24 @@ export function initRemoteLogger(): void {
         g.ErrorUtils.setGlobalHandler((e: any, isFatal?: boolean) => {
           try {
             _enqueue('error', [e?.message || 'global error', { kind: 'ErrorUtils', isFatal: !!isFatal }], e?.stack);
-            void _flush(); // fatal일 수 있으니 즉시 전송 시도(게이트 통과 시)
+            // v3.402: 릴리즈 fatal 은 기본 핸들러가 곧바로 앱을 종료해(RCTFatal) 전송이 늘 유실됐다(대표 아이폰 충돌 10-22,
+            // .ips 에 JS 오류 문장 없음). fatal 이면 전송(진행 중 전송 뒤 한 번 더)을 최대 2.5초 기다린 뒤 기본 핸들러로 넘긴다.
+            if (isFatal && !__DEV__) {
+              let done = false;
+              const finish = () => {
+                if (done) return;
+                done = true;
+                if (typeof prevHandler === 'function') prevHandler(e, isFatal);
+              };
+              Promise.resolve(_inflight)
+                .catch(() => undefined)
+                .then(() => _flush())
+                .catch(() => undefined)
+                .finally(finish);
+              setTimeout(finish, 2500);
+              return;
+            }
+            void _flush(); // 즉시 전송 시도(게이트 통과 시)
           } catch { /* noop */ }
           if (typeof prevHandler === 'function') prevHandler(e, isFatal);
         });

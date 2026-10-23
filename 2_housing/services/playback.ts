@@ -64,6 +64,13 @@ import { prebufferTrack, releaseStalePlaying, takePrebuffered } from './webPrebu
 // v3.70: 로드 세대 토큰 — 로딩 도중 사용자가 플레이어를 닫거나 다른 곡으로 전환하면
 // 늦게 완료된 createAsync 결과(유령 사운드)를 즉시 폐기한다.
 let loadGen = 0;
+/** v3.402: 플레이어 화면 자체 로드도 같은 세대를 쓴다 — 더 새 로드(미니 '다음' 등)가 시작되면 늦게 끝난 로드는 폐기 */
+export function beginPlaybackLoad(): number {
+  return ++loadGen;
+}
+export function isCurrentPlaybackLoad(gen: number): boolean {
+  return gen === loadGen;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // v3.216b F10: 웹 미디어 세션 단일 지점 — 안드로이드 크롬 상단 미디어 알림 위젯.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useDialogStore, type DialogButton } from '../stores/dialogStore';
 import { colors } from '../theme/colors';
@@ -53,7 +53,9 @@ export default function AppDialogHost({ nestedIn, active = true }: { nestedIn?: 
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} />
           <View style={styles.box} key={dialog.id}>
             {!!dialog.title && <Text style={styles.title}>{dialog.title}</Text>}
-            {custom.render({ close: closeCustom, lockUntil })}
+            <DialogErrorBoundary title={dialog.title} onClose={closeCustom}>
+              {custom.render({ close: closeCustom, lockUntil })}
+            </DialogErrorBoundary>
           </View>
         </View>
       </Modal>
@@ -122,6 +124,31 @@ export default function AppDialogHost({ nestedIn, active = true }: { nestedIn?: 
       </View>
     </Modal>
   );
+}
+
+// v3.402: 커스텀 본문(휴식 단축 창 등) 렌더·effect 오류가 앱 전체를 종료시키지 않게(대표 아이폰 10-22 — 휴식 중 디렉터 선택 시 앱 종료,
+// .ips = JS fatal). 오류는 원격 로그로 남기고 창 안에 안내 + 닫기만 보여 준다.
+class DialogErrorBoundary extends Component<{ title?: string; onClose: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: any) {
+    console.error('[AppDialogHost] 커스텀 다이얼로그 오류', { title: this.props.title, message: error?.message, stack: String(error?.stack || '').slice(0, 1500) });
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <View>
+        <Text style={styles.message}>문제가 생겨 이 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.</Text>
+        <View style={styles.btnRow}>
+          <TouchableOpacity style={[styles.btn, styles.confirmBtn]} onPress={this.props.onClose} activeOpacity={0.7}>
+            <Text style={styles.confirmBtnText}>확인</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 }
 
 const styles = StyleSheet.create({

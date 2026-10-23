@@ -187,6 +187,7 @@ export class NativeShimSound {
     liveShims.delete(this);
     // v3.392: remove 전에 먼저 멈춘다(잠금화면 컨트롤이 붙은 플레이어가 remove 후에도 소리 내던 경우 방어)
     try { this.player.pause(); } catch {}
+    try { this.player.volume = 0; } catch {} // v3.403: iOS 실기기에서도 확인(10-22) — 소리까지 끈 뒤 해제
     try { this.sub?.remove(); } catch {}
     this.sub = null;
     this.cb = null;

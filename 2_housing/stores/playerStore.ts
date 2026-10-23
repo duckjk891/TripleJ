@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
+import { Platform } from 'react-native';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -287,7 +288,16 @@ export const usePlayerStore = create<PlayerState>()(
       repeat: 'off' as RepeatMode,
       // v3.198: sound가 truthy면 이번 세션에 재생을 시작한 것 — sessionActive를 setter 한 곳에서 일괄 마킹.
       // (null 세팅은 전환/정리 중일 수 있으므로 플래그를 내리지 않는다 — v3.197 재생버튼 1탭 복구 경로 보존)
-      setSound: (sound) => set(sound ? { sound, sessionActive: true } : { sound }),
+      // v3.402: 다른 사운드로 교체되면 이전 사운드를 정리 — 재생 시작 경로가 둘(플레이어 화면·공용 playback)이라
+      //  한쪽이 만든 사운드를 다른 쪽이 덮어쓰면 고아가 되어 두 곡이 겹쳐 들리고, 미니플레이어 닫기도 한쪽만 껐다
+      //  (대표 아이폰 실기기 10-22: 차트 재생 → 미니 '다음' 겹침·닫아도 계속 재생). 웹은 단일 element 재사용이라 제외.
+      setSound: (sound) => {
+        const prev = get().sound;
+        if (Platform.OS === 'ios' && prev && sound && prev !== sound) { // v3.404 frontend: 안드로이드는 네이티브 큐 엔진(v3.392)이 플레이어 1개를 관리 — iOS 만
+          try { (prev as any).unloadAsync?.()?.catch?.(() => undefined); } catch { /* 이미 해제됨 */ }
+        }
+        set(sound ? { sound, sessionActive: true } : { sound });
+      },
       setTrack: (track) => set({ track }),
       setIsPlaying: (isPlaying) => set({ isPlaying }),
       setPosition: (position) => set({ position }),
