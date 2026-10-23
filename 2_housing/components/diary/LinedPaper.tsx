@@ -3,7 +3,7 @@
 // 줄은 글자 줄 상자의 아래쪽에서 NOTE.sink 만큼 올라온 자리(글자가 줄 위에 앉게). 왼쪽 빨간 여백선은 대표 요청으로 뺌(10-23).
 // 입력칸은 내부 스크롤 없이 글 길이만큼 늘어나고(바깥 화면이 스크롤) 줄도 같이 늘어나 어긋나지 않는다.
 import { ReactNode, useState } from 'react';
-import { View, TextInput, TextInputProps, StyleSheet, Platform, StyleProp, ViewStyle } from 'react-native';
+import { View, Text, TextInput, TextInputProps, StyleSheet, Platform, StyleProp, ViewStyle } from 'react-native';
 import { radius } from '../../theme/spacing';
 
 export const NOTE = {
@@ -46,32 +46,35 @@ export default function LinedPaper({ children, minLines = 1, style }: PaperProps
   );
 }
 
-/** 줄 노트 입력칸 — 글 길이만큼 늘어나는 여러 줄 입력(내부 스크롤 없음) */
-export function LinedTextInput({ minLines = 6, style, onContentSizeChange, ...rest }: TextInputProps & { minLines?: number }) {
-  const [contentH, setContentH] = useState(0);
-  // 글 줄 수 + (앱만) 빈 줄 1개. 웹(textarea)은 contentSize 가 상자 높이 이상(scrollHeight)이라 +1 을 하면
-  // 높이↑→contentSize↑ 가 끝없이 반복된다(React #185, 미리보기에서 발견) — 웹은 여유 줄 없이 글 줄 수만.
-  const spare = Platform.OS === 'web' ? 0 : 1;
-  const lines = Math.max(minLines, Math.ceil(Math.round(contentH || 0) / NOTE.lineHeight) + spare);
+/** 줄 노트 입력칸 — 글 길이만큼 늘고 줄어드는 여러 줄 입력(내부 스크롤 없음).
+ *  높이는 같은 글꼴·폭의 보이지 않는 글자 사본(Text)을 재서 정한다 — 웹 textarea 의 contentSize(scrollHeight)는
+ *  상자 높이 아래로 줄지 않아(화면 폭이 잠깐 바뀌면 커진 채 남음) 쓰지 않는다. 웹·앱 공통, 되먹임 없음. */
+export function LinedTextInput({ minLines = 6, style, value, ...rest }: TextInputProps & { minLines?: number }) {
+  const [textH, setTextH] = useState(0);
+  // 글 줄 수 + 빈 줄 1개(쓰는 줄 아래에 항상 여유 줄)
+  const lines = Math.max(minLines, Math.ceil(Math.round(textH) / NOTE.lineHeight) + 1);
+  const fontFamily = (StyleSheet.flatten(style) as any)?.fontFamily;
   return (
     <LinedPaper minLines={lines}>
-      <TextInput
-        {...rest}
-        multiline
-        scrollEnabled={false}
-        textAlignVertical="top"
-        placeholderTextColor={rest.placeholderTextColor || NOTE.placeholder}
-        onContentSizeChange={(e) => {
-          setContentH(e.nativeEvent.contentSize.height);
-          onContentSizeChange?.(e);
-        }}
-        style={[
-          noteTextStyle,
-          styles.input,
-          { height: lines * NOTE.lineHeight },
-          style,
-        ]}
-      />
+      <View>
+        <Text
+          style={[noteTextStyle, styles.mirror, fontFamily ? { fontFamily } : null]}
+          onLayout={(e) => setTextH(e.nativeEvent.layout.height)}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          {(value || '') + '\u200b'}
+        </Text>
+        <TextInput
+          {...rest}
+          value={value}
+          multiline
+          scrollEnabled={false}
+          textAlignVertical="top"
+          placeholderTextColor={rest.placeholderTextColor || NOTE.placeholder}
+          style={[noteTextStyle, styles.input, { height: lines * NOTE.lineHeight }, style]}
+        />
+      </View>
     </LinedPaper>
   );
 }
@@ -79,6 +82,7 @@ export function LinedTextInput({ minLines = 6, style, onContentSizeChange, ...re
 const styles = StyleSheet.create({
   paper: { backgroundColor: NOTE.paper, borderRadius: radius.md, overflow: 'hidden' },
   rule: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: NOTE.line },
+  mirror: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   body: { paddingTop: NOTE.padTop, paddingBottom: NOTE.padBottom, paddingLeft: NOTE.padX, paddingRight: NOTE.padX },
   input: {
     padding: 0, paddingTop: 0, paddingBottom: 0, margin: 0,
