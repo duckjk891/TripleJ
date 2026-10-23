@@ -4942,3 +4942,24 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - 곡 미리 첨부: FeedCompose { attachTrack | attachTrackId, kind?:'club', clubId } — 곡 ⋮ '낙서장/크루에 공유'(track-menu 세션) 계약, 공유 곡이 임시저장보다 우선. 커밋 50f0ab9.
 - '이 낙서로 노래 만들기' 카드 DIARY_SONG_ENABLED=false — story-to-song 세션에 연결 지점(goDiarySong·consumeDiaryTopic/Photos·사진 objectName) 전달.
 - (10-22 운영 반영) 서버 v3.395 는 메인 세션이 대표 요청으로 deploy_v3395.sh 실행(12:00 UTC) — 9파일 컨테이너 md5 = 스테이징 새본 확인, health 200·Traceback 0. 웹 app.maidol.ai.kr: 커밋본 git archive(origin/frontend e1d8ab1 — 곡 ⋮ 메뉴 v3.402 포함) 깨끗한 빌드로 미리보기(mvtest) → 운영 배포. 실측 스크린샷 claude_skills_outputs/team-dev/nakseo_v3400/(낙서장·중학생체 입력칸·카메라 버튼·공지 lovvepearl·스타 안내 낙서하기 +3·크루 만들기 +10·스타 제작소 문구).
+
+## v3.402 — 2026-10-22 — 곡 ⋮ 메뉴 개편: 아이콘 한 줄 + 4묶음 (웹·앱, 서버 변경 없음)
+대표: "종류가 너무 많아 헷갈린다"(내 곡 13줄) → 메인 세션 제안 "제안대로" 확정, 시안 확인 시 '플레이리스트'는 두 줄(플레이/리스트)로.
+- components/TrackActionSheet.tsx: 맨 위 아이콘 줄(재생·좋아요·재생목록·플레이/리스트) + 묶음은 같은 시트 안 하위 목록(‹·웹 뒤로 가기·안드로이드 뒤로 = 한 단계 위).
+  · 공유하기 ›: 낙서장(FeedCompose attachTrackId/attachTrack — 낙서장 세션 50f0ab9 계약)·크루(GET /clubs/mine → 크루 고르기 → FeedCompose kind=club, 크루 채팅은 곡 첨부 없음)·SNS(내 곡 = 영상 디렉터 'SNS용 세로' 자동 선택, 남의 곡 = 연결 누락이던 TrackShareDownloadSheet 'SNS 공유' 되살림 — 서버 share-video 는 공개 곡 무인증)·카카오톡(ShareCompose). 낙서장·크루·카카오톡은 기존 공유 게이트(비공개 내 곡 공개 확인·남의 비공개 곡 거절·측정 로그) 그대로, 낙서장·크루·SNS 비로그인 = 로그인 모달.
+  · 이 곡으로 만들기 ›(내 곡): 이 곡 느낌으로 새 곡·편곡/MR(makeItems — 마이페이지가 canArrange·canMakeInstrumental 판단)·영상 만들기(영상 디렉터 형식 질문부터). 남의 곡은 '이 곡 느낌으로 만들기' 한 줄.
+  · 파일 받기 ›(내 곡): 음원(mp3) · 내가 만든 영상(/tracks/my/share-videos 곡별 최신 → saveTrackFileToDevice, 없으면 '영상 만들기' 안내).
+  · 곡 관리 ›(manageItems 넘긴 화면 = 마이페이지): 차트 업로드/숨기기·아티스트 지정·창작 기록·삭제(빨강).
+- screens/MyMusicScreen.tsx: extraItems → makeItems/manageItems, 다운로드 2택 다이얼로그·어디서도 안 열리던 공유/다운로드 시트 제거. PlaylistScreen '이 플레이리스트에서 제거'는 첫 목록 맨 아래 유지.
+- screens/VideoDirectorScreen.tsx: route initialFormat='sns' → 형식 단계 자동 선택, menuNonce — 이미 열린 디렉터에 다시 들어오면 그 곡으로 새로 시작(만드는 중이면 끼어들지 않음). App.tsx 타입.
+- utils/webBackClose.ts: 겹친 시트가 한꺼번에 닫히면 기록 칸을 history.go(-n) 한 번에 정리(예전엔 한 칸만 내려 다음 뒤로 가기가 헛돎). 로그 접두사 [TrackMenu].
+- 검증: tsc 0. 미리보기(mvtest, 비로그인) — 남의 곡 2줄·공유 하위·웹 뒤로/바깥 닫기 go(-2)·카카오톡 ShareCompose·낙서장 비로그인 로그인 모달. 운영(대표 계정, 등록·삭제·공개 전환·스타 사용 없이): 마이페이지 4묶음·만들기 4종·영상 만들기/SNS 공유(SNS 세로 자동 → 구간 단계)·재진입 프리셋(다른 곡으로 바뀜)·파일 받기 2종(영상 없음 안내/있음 found)·곡 관리 4종·창작 기록·크루 목록 → 크루 글쓰기(곡 첨부)·낙서하기(오늘의 BGM 첨부)·낙서장 공지 곡·플레이리스트(내 곡 인식 + 제거)·검색 남의 곡 → SNS 공유 창. 크루 고르기 뒤로 가기 두 번째가 시트를 닫던 문제 발견 → 단계별 기록 칸으로 수정(779ea3a).
+- 커밋 e1d8ab1(운영 반영됨 — 낙서장 세션 배포에 포함), 779ea3a(크루 뒤로 가기 수정 — 운영 배포 대기).
+- 남은 점: 낙서장 곡 블록은 uploader_id 가 없어 내 곡도 '남의 곡' 메뉴(파일 받기 등 미노출 — 안전한 쪽). 영상 디렉터 상단 제목이 다른 탭에서 넘어올 때 겹쳐 보임(기존 동작, 별도 확인 필요).
+
+## v3.403 — 2026-10-23 — 낙서 줄 노트(줄글 노트) — 입력칸·상세·카드 (웹 운영 반영, 대표 승인)
+- 대표 "낙서장 줄글 노트 형태로 입력되는 거 아니었어?" → components/diary/LinedPaper: 어두운 노트 톤·옅은 보라 가로줄(글자 줄 28px마다, 줄=View 웹·앱 공통). 중학생체 20px — 웹 글꼴 지표(fontBoundingBox) 실측으로 한글 바닥 ≈ 줄 상자 위 21px → 줄 위치 sink 7. 왼쪽 빨간 여백선은 대표 요청으로 제거(좌우 14).
+- LinedTextInput(낙서하기): 내부 스크롤 없이 글 높이만큼 늘고 줄어듦 — 높이는 같은 글꼴·폭의 보이지 않는 글자 사본(Text) onLayout 으로 측정(+여유 1줄). 미리보기에서 잡은 버그 3건: ① onContentSizeChange+여유 줄 → 웹 무한 갱신(React #185) ② 웹 textarea scrollHeight 가 상자 아래로 안 줄어 화면 폭 변화 뒤 25줄로 커진 채 남음 ③ absolute 사본이 웹에서 탭을 가로채 입력 불가 — 모두 수정·재확인(8줄 입력→9줄, 삭제→6줄, 오류 0).
+- 카드: 줄 노트 5줄 + 길면 '더 보기'(상세로). 상세: 전체 줄 노트.
+- 미리보기: 입력칸·카드는 로그인·데이터가 없어 미리보기 빌드에만 넣은 시연 화면(실제 컴포넌트, 커밋 안 함), 상세는 실제 화면. 운영: origin/frontend b931d08 깨끗한 빌드(시연 화면 미포함) 배포, 실측 claude_skills_outputs/team-dev/nakseo_v3403_live/(낙서하기 6줄 입력→7줄·'저장하면 +3⭐', 공지 MV 낙서 상세). 저장하지 않음.
+- 남은 확인: 네이티브 앱은 글꼴 렌더링이 달라 실기기에서 줄 위치 한 번 확인 필요(다음 빌드/OTA).
