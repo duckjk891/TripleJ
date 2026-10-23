@@ -1,6 +1,6 @@
 // v3.403 [LinedNote] 낙서 줄 노트(대표 10-23 "줄글 노트 형태로 입력되는 거 아니었어?").
 // 글 높이를 재서(onLayout·onContentSizeChange) 글자 한 줄(lineHeight)마다 가로줄을 그린다 — 웹·앱 공통(줄 = View).
-// 줄은 글자 줄 상자의 아래쪽에서 NOTE.sink 만큼 올라온 자리(글자가 줄 위에 앉게), 왼쪽엔 옅은 빨간 여백선.
+// 줄은 글자 줄 상자의 아래쪽에서 NOTE.sink 만큼 올라온 자리(글자가 줄 위에 앉게). 왼쪽 빨간 여백선은 대표 요청으로 뺌(10-23).
 // 입력칸은 내부 스크롤 없이 글 길이만큼 늘어나고(바깥 화면이 스크롤) 줄도 같이 늘어나 어긋나지 않는다.
 import { ReactNode, useState } from 'react';
 import { View, TextInput, TextInputProps, StyleSheet, Platform, StyleProp, ViewStyle } from 'react-native';
@@ -11,12 +11,11 @@ export const NOTE = {
   fontSize: 20,
   padTop: 6,
   padBottom: 8,
-  marginLeft: 26, // 여백선 위치
+  padX: 14,       // 좌우 여백(여백선 없음)
   sink: 7,        // 줄 상자 아래에서 줄까지 — 웹 실측: 중학생체 20px 한글 바닥 ≈ 줄 상자 위에서 21px
   paper: '#1b1338',
   ink: '#f3edff',
   line: 'rgba(192,132,252,0.24)',
-  margin: 'rgba(248,113,113,0.38)',
   placeholder: '#7d6aa8',
 };
 
@@ -41,7 +40,6 @@ export default function LinedPaper({ children, minLines = 1, style }: PaperProps
         {Array.from({ length: count }, (_, i) => (
           <View key={i} style={[styles.rule, { top: NOTE.padTop + (i + 1) * NOTE.lineHeight - NOTE.sink }]} />
         ))}
-        <View style={styles.marginLine} />
       </View>
       <View style={styles.body}>{children}</View>
     </View>
@@ -81,8 +79,7 @@ export function LinedTextInput({ minLines = 6, style, onContentSizeChange, ...re
 const styles = StyleSheet.create({
   paper: { backgroundColor: NOTE.paper, borderRadius: radius.md, overflow: 'hidden' },
   rule: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: NOTE.line },
-  marginLine: { position: 'absolute', top: 0, bottom: 0, left: NOTE.marginLeft - 8, width: 1.5, backgroundColor: NOTE.margin },
-  body: { paddingTop: NOTE.padTop, paddingBottom: NOTE.padBottom, paddingLeft: NOTE.marginLeft, paddingRight: 12 },
+  body: { paddingTop: NOTE.padTop, paddingBottom: NOTE.padBottom, paddingLeft: NOTE.padX, paddingRight: NOTE.padX },
   input: {
     padding: 0, paddingTop: 0, paddingBottom: 0, margin: 0,
     ...(Platform.OS === 'android' ? { includeFontPadding: false } : null),
