@@ -61,6 +61,8 @@ import {
 import { openLoginModal } from '../utils/loginModal';
 import { isGuestTrialUsed, getGuestSong, getGuestComposeStatus, guestComposeStreamUrl, clearGuestPendingGen, type GuestSong } from '../utils/guestTrial';
 import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
+import { startStorySong } from '../utils/makeLike'; // v3.410 [StorySong] 내 낙서로 노래 만들기
+import { STORY_TEXT, useStorySongAvailable } from '../utils/storySong';
 
 const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
 
@@ -256,6 +258,7 @@ export default function MapScreen({ navigation }: Props) {
   const mapScale = screenWidth / MAP_WIDTH;
   const displayHeight = MAP_HEIGHT * mapScale;
   const { user } = useAuthStore();
+  const storySongOn = useStorySongAvailable(); // v3.410 [StorySong] 서버 지원 확인 뒤 카드 표시
   const lyricsStore = useLyricsStore();
   const musicStore = useMusicStore();
   // v3.229 [DirectorResume]: 아티스트 draft 구독 — 작업실 복귀 시 "이어서 하기" 말풍선 재계산용(값은 판정 함수가 읽음)
@@ -1193,6 +1196,24 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       ) : null}
 
+      {/* v3.410 [StorySong] 지도 위 카드 '내 낙서로 노래 만들기'(대표 확정 10-23) — 누르면 재료 담기 화면 직행.
+          게스트는 체험 곡 카드가 없을 때만(글만 1번 체험 — 사진·날씨는 로그인 후) */}
+      {storySongOn && (user || !guestSong) ? (
+        <TouchableOpacity
+          style={styles.storySongCard}
+          activeOpacity={0.85}
+          onPress={() => startStorySong(navigation, null)}
+          accessibilityLabel={STORY_TEXT.mapTitle}
+        >
+          <Feather name="edit-3" size={18} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <AppText style={styles.storySongTitle}>{STORY_TEXT.mapTitle}</AppText>
+            <AppText style={styles.storySongSub}>{STORY_TEXT.mapSub}</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color="#e9d5ff" />
+        </TouchableOpacity>
+      ) : null}
+
       {/* v3.107: 대기열 단계 팝업·광고 보상 팝업 제거 — 결과는 각 로딩 화면이 즉시 보여줌 */}
 
       {/* 디렉터 선택 모달 (작사 2명 이상 영입 시) */}
@@ -1466,6 +1487,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'transparent',
   },
+  // v3.410 [StorySong]
+  storySongCard: {
+    position: 'absolute', left: 12, right: 12, bottom: 12, zIndex: 25,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16,
+    backgroundColor: '#5b21b6', borderWidth: 1, borderColor: '#8b5cf6',
+  },
+  storySongTitle: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  storySongSub: { fontSize: 11.5, color: '#e4d8ff', marginTop: 2 },
   guestSongCard: {
     position: 'absolute', left: 12, right: 12, bottom: 12,
     flexDirection: 'row', alignItems: 'center', gap: 8,

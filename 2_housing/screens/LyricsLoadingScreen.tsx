@@ -16,6 +16,7 @@ import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
 import { buildLyricsRequest } from '../utils/lyricsPrompt';
+import { storyLyricsFields } from '../utils/storySong'; // v3.410 [StorySong]
 import { useGemsStore } from '../stores/gemsStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { GEM_REWARDS } from '../data/directors';
@@ -189,7 +190,7 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
       store.setIsLoading(true);
       store.setError(null);
       try {
-        const payload: any = buildLyricsRequest(useLyricsStore.getState());
+        const payload: any = { ...buildLyricsRequest(useLyricsStore.getState()), ...storyLyricsFields() }; // v3.410 [StorySong]
         if (__DEV__) console.info('[LyricsLoading] [guest] 체험 작사 요청', { promptLen: String(payload?.prompt || '').length, genre: payload?.genre ?? null });
         const result = await generateGuestLyrics(payload);
         await markGuestTrialUsed('success');
@@ -253,6 +254,7 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
         // 장르·분위기·스타일·길이는 별도 필드로만 보내고(prompt 중복 제거),
         // duet=true 시 백엔드 듀엣 전용 시스템 프롬프트([Female]/[Male] 라벨)가 활성화된다.
         const payload: any = buildLyricsRequest(useLyricsStore.getState());
+        Object.assign(payload, storyLyricsFields()); // v3.410 [StorySong] 기록에서 온 작사면 분석 id·고른 추천
         // v3.131 (B-2): 작사 성공 시 서버 가사 자산 자동 저장 — "작사 DB" 자동 축적.
         // (비로그인은 서버가 401이므로 애초에 생성 자체가 로그인 필요 — save 무해)
         payload.save = true;

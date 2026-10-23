@@ -65,6 +65,7 @@ import {
 // v3.281 편곡하기 — 완성 곡을 다른 장르·분위기로(서버 upload-cover, ⭐compose). 요청·오류는 기존 작곡 관행 재사용
 import ArrangeSheet, { ArrangeSelection } from '../components/arrange/ArrangeSheet';
 import ResultActionBar, { ResultSecondaryButton, resultBarStyles } from '../components/ResultActionBar';
+import StorySongDiaryCard from '../components/StorySongDiaryCard'; // v3.410 [StorySong] 낙서에 노래 붙이기
 import { arrangeGeneration } from '../services/musicService';
 import { adoptCreationSession } from '../services/creationLogService';
 import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
@@ -1385,6 +1386,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               onPrimary={handleRegenerate}
             />
           )}
+          {/* v3.410 [StorySong] 낙서·사진에서 만든 곡 — 저장 뒤 '이 낙서에 노래 붙이기'/'낙서장에 남기기' */}
+          {hasResult && isSaved ? (
+            <StorySongDiaryCard trackId={effectiveSavedTrackId ? String(effectiveSavedTrackId) : null} navigation={navigation} />
+          ) : null}
         </View>
 
         <View style={{ height: 40 }} />

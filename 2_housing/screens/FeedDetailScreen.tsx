@@ -22,6 +22,9 @@ import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import { playTrackNow } from '../services/playback';
 import { useIsChild } from '../utils/kidsMode';
+import { startStorySong } from '../utils/makeLike'; // v3.410 [StorySong] 이 낙서로 노래 만들기
+import { DIARY_SONG_ENABLED } from '../utils/diary';
+import { useStorySongAvailable } from '../utils/storySong';
 
 interface FeedTrack {
   id: string;
@@ -54,6 +57,7 @@ export default function FeedDetailScreen() {
   const route = useRoute<any>();
   const feedId = String(route.params?.feedId ?? '');
   const user = useAuthStore((s) => s.user);
+  const storySongOn = useStorySongAvailable(); // v3.410 [StorySong]
   const isChild = useIsChild(); // v3.232 K8(D2): 어린이 아이템 카드 구매 링크 비활성
   const [feed, setFeed] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -202,6 +206,29 @@ export default function FeedDetailScreen() {
         })}
         {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
         {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
+        {/* v3.410 [StorySong] 내 낙서 → 재료 담기(글·사진·기분·날짜 그대로, 완성곡은 이 낙서에 붙는다) */}
+        {DIARY_SONG_ENABLED && storySongOn && isDiary && user?.id && feed?.author_id === user.id && !trackBlocks.length ? (
+          <TouchableOpacity
+            style={styles.storySongBtn}
+            activeOpacity={0.85}
+            accessibilityLabel="이 낙서로 노래 만들기"
+            onPress={() => startStorySong(navigation, {
+              source: 'diary',
+              feedId: String(feed.id || feed._id),
+              text: textBlocks.map((b) => b.text).join('\n'),
+              photos: imageBlocks.filter((b) => b.object_name).map((b) => ({ objectName: String(b.object_name), uri: feedImageUri(b) })),
+              mood: feed.mood || null,
+              diaryDate: feed.diary_date || null,
+            }, { fromRootModal: true })}
+          >
+            <Feather name="music" size={16} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <AppText style={styles.storySongText}>이 낙서로 노래 만들기</AppText>
+              <AppText style={styles.storySongSub}>먼저 내 마음을 들여다봐요 · 무료</AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   };
@@ -266,4 +293,11 @@ const styles = StyleSheet.create({
   itemImg: { width: 48, height: 48, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.06)' },
   itemImgEmpty: { alignItems: 'center', justifyContent: 'center' },
   itemLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  // v3.410 [StorySong]
+  storySongBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accent.primaryDim,
+  },
+  storySongText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  storySongSub: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 1 },
 });

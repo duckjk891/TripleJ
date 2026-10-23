@@ -9,6 +9,7 @@
 // - 진행 중 창작물(작사 draft·요청서·작곡 draft)이 있으면 덮어쓰기 전 확인 다이얼로그
 //   [이어서 하기/새로 시작] (2026-09-07 사용자 생성물 보호 정책·v3.219 draft 관행).
 import { showAlert } from './appAlert';
+import { clearStorySong, setStoryInput, type StoryInput } from './storySong'; // v3.410 [StorySong]
 import { useLyricsStore, LyricsDraftChatMessage } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import {
@@ -91,6 +92,7 @@ export function hasCreationWorkInProgress(): boolean {
  * 장르·분위기를 v3.219 draft 대화(선답 버블)로 기록. 반환값 = 선답으로 도달한 step(0/1/2).
  */
 export function applyMakeLikePreset(preset: MakeLikePreset): number {
+  clearStorySong('make_like'); // v3.410 — 느낌 프리셋으로 새로 시작하면 낙서 노래 맥락은 끝
   const s = useLyricsStore.getState();
   s.reset(); // "느낌"만 가져온다 — 이전 작업본·결과물 전부 비움(호출측이 덮어쓰기 확인 담당)
   if (!preset.genre) { s.setDraftOrigin('makeLike', 0); return 0; } // 폴백도 출처 표식(미답 초안 비간주)
@@ -195,30 +197,44 @@ export function consumeDiaryPhotos(): string[] {
   return p;
 }
 
-/** 일기 쓰기(RootStack 모달)에서 호출 — 모달을 닫고 작업실 작사 디렉터로(popTo, Map 하부 적재). */
-export function startDiarySongFlow(navigation: any, diaryText: string, photoObjectNames: string[] = []): void {
-  const topic = (diaryText || '').replace(/\s+/g, ' ').trim().slice(0, DIARY_TOPIC_MAX);
-  if (!topic) return;
-  const target = (nonce: string) => ({
-    screen: 'Studio',
-    params: { screen: 'LyricsInput', initial: false, params: { makeLike: { title: '', nonce } } },
-  });
+/** v3.410 [StorySong] 낙서·사진 → 노래 '재료 담기' 화면으로(대표 확정 SP-1). 작업실·낙서 상세·낙서 쓰기 공용.
+ *  fromRootModal = 낙서 쓰기·상세처럼 루트 화면에서 부를 때(popTo 로 닫고 작업실 하부에 Map 적재). */
+export function startStorySong(navigation: any, input: StoryInput | null, opts: { fromRootModal?: boolean } = {}): void {
   const go = () => {
-    applyMakeLikePreset({ genre: '', mood: '' }); // 이전 작사 작업본 비움(호출 전 확인)
-    pendingDiaryTopic = topic;
-    pendingDiaryPhotos = photoObjectNames.slice(0, 5);
-    const nonce = `diary-${Date.now()}`;
-    console.info('[DiarySong] 작사 디렉터로', { len: topic.length });
-    navigation.popTo('MainTabs', target(nonce));
+    useLyricsStore.getState().reset(); // 이전 작사 작업본 비움(진행 중 확인 뒤)
+    clearStorySong('new_story');
+    setStoryInput(input);
+    const nonce = `story-${Date.now()}`;
+    console.info('[StorySong] 재료 담기로', { source: input?.source ?? 'studio', len: input?.text?.length ?? 0, photos: input?.photos?.length ?? 0 });
+    const target = { screen: 'Studio', params: { screen: 'StorySongInput', initial: false, params: { nonce } } };
+    if (opts.fromRootModal) navigation.popTo('MainTabs', target);
+    else navigation.navigate('MainTabs', target);
   };
   if (hasCreationWorkInProgress()) {
-    showAlert('진행 중인 작곡이 있어요', '이 낙서로 새로 시작하면 만들던 작사 내용은 지워져요.', [
-      { text: '이어서 하기', style: 'cancel', onPress: () => resumeExistingWork(navigation, true) },
+    showAlert('진행 중인 작곡이 있어요', '낙서로 새로 시작하면 만들던 작사 내용은 지워져요.', [
+      { text: '이어서 하기', style: 'cancel', onPress: () => resumeExistingWork(navigation, !!opts.fromRootModal) },
       { text: '낙서로 새로 시작', onPress: go },
     ]);
     return;
   }
   go();
+}
+
+/** 낙서 쓰기(RootStack 모달)의 '이 낙서로 노래 만들기' — v3.410부터 재료 담기 화면으로(글·사진 그대로, 저장 전 글이라 '낙서장에도 남기기' 켜짐). */
+export function startDiarySongFlow(
+  navigation: any, diaryText: string, photoObjectNames: string[] = [],
+  extra: { mood?: string | null; diaryDate?: string | null; draftKey?: string | null; photoUris?: (string | null)[] } = {},
+): void {
+  const text = (diaryText || '').trim();
+  if (!text && !photoObjectNames.length) return;
+  startStorySong(navigation, {
+    source: 'paste',
+    text,
+    photos: photoObjectNames.slice(0, 5).map((o, i) => ({ objectName: o, uri: extra.photoUris?.[i] ?? null })),
+    mood: extra.mood ?? null,
+    diaryDate: extra.diaryDate ?? null,
+    draftKey: extra.draftKey ?? null,
+  }, { fromRootModal: true });
 }
 
 /**

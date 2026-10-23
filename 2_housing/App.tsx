@@ -106,6 +106,8 @@ import SettingsScreen from './screens/SettingsScreen';
 import DialogueScreen from './screens/DialogueScreen';
 import LyricsInputScreen from './screens/LyricsInputScreen';
 import LyricsPromptReviewScreen from './screens/LyricsPromptReviewScreen';
+import StorySongInputScreen from './screens/StorySongInputScreen'; // v3.410 낙서·사진 → 노래(재료 담기)
+import StorySongReadScreen from './screens/StorySongReadScreen'; // v3.410 이런 마음이 보여요
 import LyricsLoadingScreen from './screens/LyricsLoadingScreen';
 import LyricsResultScreen from './screens/LyricsResultScreen';
 // v3.202(J): ComposerInputScreen 삭제 — v3.131부터 도달 불가한 죽은 화면(진입 경로 없음) 폐기
@@ -193,6 +195,9 @@ export type StudioStackParamList = {
   // v3.256 [MakeLike]: 차트 시트 '이 곡 느낌으로 만들기' 직행 진입 — 안내 문구(title)·기마운트 재수화 키(nonce)
   LyricsInput: { makeLike?: { title?: string; nonce?: string } } | undefined;
   LyricsPromptReview: undefined;
+  // v3.410 [StorySong] 재료 담기(입력은 utils/storySong setStoryInput 1회용) → 이런 마음이 보여요(feedId = 노래 붙일 낙서)
+  StorySongInput: { nonce?: string } | undefined;
+  StorySongRead: { feedId?: string; guest?: boolean } | undefined;
   // v3.228 W3: jobId — 진행 중 작사 이어보기(POST 없이 추적 레코드 구독)
   LyricsLoading: { jobId?: string } | undefined;
   LyricsResult: undefined;
@@ -308,6 +313,8 @@ function StudioNavigator() {
         name="LyricsPromptReview"
         component={LyricsPromptReviewScreen}
       />
+      <StudioStack.Screen name="StorySongInput" component={StorySongInputScreen} />
+      <StudioStack.Screen name="StorySongRead" component={StorySongReadScreen} />
       <StudioStack.Screen
         name="LyricsLoading"
         component={LyricsLoadingScreen}

@@ -18,6 +18,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { consumeDiaryTopic } from '../utils/makeLike'; // v3.395 [DiarySong]
+import { clearStorySong } from '../utils/storySong'; // v3.410 [StorySong]
 import { useMusicStore } from '../stores/musicStore';
 // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
@@ -207,6 +208,9 @@ export default function LyricsInputScreen({ navigation, route }: Props) {
     setShowResumeNotice(resumable);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [makeLike?.nonce]);
+
+  // v3.410 [StorySong] 작사 디렉터 대화로 만드는 곡은 낙서 노래가 아니다 — 남은 맥락 지움(완성 화면 '낙서에 붙이기' 오표시 방지)
+  useEffect(() => { clearStorySong('lyrics_director'); }, []);
 
   // v3.395 [DiarySong] '이 일기로 노래 만들기' — 주제(3번) 질문이 오면 일기 글을 입력칸에 미리 넣어 둔다(1회)
   useEffect(() => {

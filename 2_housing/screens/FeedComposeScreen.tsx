@@ -38,6 +38,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
 import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
+import { useStorySongAvailable } from '../utils/storySong'; // v3.410 [StorySong]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 입력칸 손글씨
 import { LinedTextInput } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
@@ -66,6 +67,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.232 K9(B5): 어린이 — 보호자 허용 없으면 진입 차단(안내 후 뒤로). 허용돼도(2차) 사진·아이템 첨부는 숨김.
   // 성인·age_group 없음 = isChild false → 기존 동작 그대로
   const isChild = useIsChild();
+  const storySongOn = useStorySongAvailable(); // v3.410 [StorySong] 서버 지원 확인 뒤 '이 낙서로 노래 만들기'
   const canFeedWrite = useKidsPermission('feed_write');
   const feedWriteBlocked = isChild && !canFeedWrite;
   // v3.115: kind 지원 — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입 시 kind='community'.
@@ -495,14 +497,18 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.395 [DiarySong] 이 일기로 노래 만들기 — 새 일기는 임시저장해 두고(돌아와 이어 쓰기) 작사 디렉터로
   const goDiarySong = () => {
     const text = body.trim();
-    if (!text) { showAlert('알림', '먼저 낙서를 남겨 주세요. 쓴 내용이 노래의 주제가 돼요.'); return; }
+    const done = images.filter((i) => i.status === 'done' && i.objectName);
+    if (!text && !done.length) { showAlert('알림', '먼저 낙서를 남겨 주세요. 쓴 글과 사진이 노래가 돼요.'); return; }
+    // v3.410 [StorySong] 재료 담기로 — 쓰던 글·사진이 그대로 담기고, '낙서장에도 남기기'로 이 낙서를 저장할 수 있다
     showAlert('이 낙서로 노래 만들기', useDraft
-      ? '쓰던 낙서는 임시저장해 둘게요. 작사 디렉터의 주제 질문에 낙서 내용이 미리 들어가 있어요.'
-      : '작사 디렉터의 주제 질문에 낙서 내용이 미리 들어가 있어요.', [
+      ? '쓰던 낙서는 임시저장해 둘게요. 다음 화면에서 내 마음을 들여다보고, 낙서장에도 남길 수 있어요.'
+      : '다음 화면에서 내 마음을 들여다보고 어울리는 노래를 골라 드려요.', [
       { text: '취소', style: 'cancel' },
       { text: '노래 만들러 가기', onPress: async () => {
         if (useDraft) await saveDraft(true);
-        startDiarySongFlow(navigation, text, images.filter((i) => i.status === 'done' && i.objectName).map((i) => i.objectName as string));
+        startDiarySongFlow(navigation, text, done.map((i) => i.objectName as string), {
+          mood, diaryDate, draftKey: useDraft ? draftKey : null, photoUris: done.map((i) => i.localUri || null),
+        });
       } },
     ]);
   };
@@ -750,12 +756,12 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ) : null}
         {/* v3.395 [DiarySong](대표): 쓴 일기로 노래를 만들 수 있다는 안내 + 작사 디렉터 직행(주제 칸에 일기 글) */}
-        {isDiary && DIARY_SONG_ENABLED ? (
+        {isDiary && DIARY_SONG_ENABLED && storySongOn && !isEdit ? (
           <TouchableOpacity style={styles.songCard} onPress={goDiarySong} activeOpacity={0.8} accessibilityLabel="이 낙서로 노래 만들기">
             <Feather name="music" size={16} color={colors.accent.secondary} />
             <View style={{ flex: 1 }}>
               <AppText variant="footnote" style={{ color: colors.accent.secondary, fontWeight: '700' }}>이 낙서로 노래 만들기</AppText>
-              <AppText variant="caption" tone="muted">쓴 낙서가 노래 가사의 주제가 돼요. 작사 디렉터가 이어서 도와줘요.</AppText>
+              <AppText variant="caption" tone="muted">쓴 낙서와 사진으로 내 마음을 들여다보고 노래로 만들어요.</AppText>
             </View>
             <Feather name="chevron-right" size={16} color={colors.text.muted} />
           </TouchableOpacity>
