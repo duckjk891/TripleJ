@@ -20,7 +20,9 @@ import { useNavigation } from '@react-navigation/native';
 import { blockUser } from '../../services/blockService';
 import { isBenefitActive } from '../../utils/shareMessage';
 import { SHARE_BENEFIT_FALLBACK } from '../../constants/shareMessages';
-import { fmtDiaryDate, moodOf, visibilityOf, DiaryVisibility } from '../../utils/diary'; // v3.389 [Diary]
+import { fmtDiaryDate, moodOf, visibilityOf, DiaryVisibility, DIARY_SONG_ENABLED } from '../../utils/diary'; // v3.389 [Diary]
+import { startStorySongFromFeed, feedHasSong } from '../../utils/makeLike'; // v3.412 [StorySong] ⋮ '이 낙서로 노래 만들기'
+import { useStorySongAvailable } from '../../utils/storySong';
 
 // v3.60: 픽셀 게임창 콘셉트(v3.51~52) 철회 — 앱 기본 다크 톤으로 통일(무난한 카드).
 // 참조 구조는 유지하고 값만 테마 색으로 매핑해 변경 범위를 최소화. FeedScreen도 공유.
@@ -89,6 +91,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
   // v3.210 ①-C: 공개 상태 — 응답 is_public(내 글 탭은 비공개 포함). 미포함 구응답은 공개 취급.
   // v3.389 [Diary]: 일기(kind='feed')는 공개 범위 3가지 — 서버 visibility 우선(구응답은 is_public 파생)
   const isDiaryKind = (feed.kind || 'feed') === 'feed';
+  const storySongOn = useStorySongAvailable(); // v3.412 서버 지원 확인 뒤 ⋮ 메뉴 항목
   const [vis, setVis] = useState<DiaryVisibility>(visibilityOf(feed));
   const isPublic = vis === 'public';
   const diaryMood = moodOf(feed.mood);
@@ -448,6 +451,13 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, onUpdated, re
               {/* v3.210 ①-C: 내 글 한정 공개↔비공개 전환
                   v3.232 B1: 어린이는 숨김(서버 PUT /feeds/{id} 403 — 글 수정 제한) */}
               {/* v3.233: 보호자가 글쓰기(feed_write)를 허용한 어린이는 표시 — feedWriteBlocked 만 숨김 */}
+              {/* v3.412 [StorySong] 저장한 내 낙서에 곡이 없으면 — 나중에라도 노래로(대표 10-26) */}
+              {DIARY_SONG_ENABLED && storySongOn && isDiaryKind && !!feed.diary_date && !feed.report_blinded && !feedHasSong(feed) && (
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); startStorySongFromFeed(navigation, feed); }}>
+                <Feather name="music" size={16} color={colors.accent.secondary} />
+                <AppText variant="footnote" style={{ color: colors.accent.secondary }}>이 낙서로 노래 만들기</AppText>
+              </TouchableOpacity>
+              )}
               {!feedWriteBlocked && !feed.report_blinded && (
               <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); editFeed(); }}>
                 <Feather name="edit-2" size={16} color={feedTheme.sub} />

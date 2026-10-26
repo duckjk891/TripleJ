@@ -21,7 +21,19 @@ export default function StorySongDiaryCard({ trackId, navigation }: { trackId: s
     return () => { alive = false; };
   }, [trackId]);
 
-  if (!ctx || !trackId) return null;
+  if (!ctx) return null;
+  if (!trackId) {
+    // 아직 저장 전 — 무엇을 할 수 있는지만 먼저 보여 준다(버튼은 저장 뒤)
+    return (
+      <View style={[styles.card, styles.cardTop]}>
+        <Feather name="book-open" size={18} color={colors.accent.secondary} />
+        <View style={{ flex: 1 }}>
+          <AppText style={styles.title}>{ctx.feedId ? '이 노래를 낙서에 붙일 수 있어요' : '이 노래를 낙서장에 남길 수 있어요'}</AppText>
+          <AppText style={styles.sub}>마음에 드는 버전을 저장하면 여기에 버튼이 생겨요</AppText>
+        </View>
+      </View>
+    );
+  }
 
   const dismiss = () => { clearStorySong('dismissed'); setCtx(null); };
 
@@ -52,7 +64,7 @@ export default function StorySongDiaryCard({ trackId, navigation }: { trackId: s
   };
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, styles.cardTop]}>
       <Feather name="book-open" size={18} color={colors.accent.secondary} />
       <View style={{ flex: 1 }}>
         <AppText style={styles.title}>{ctx.feedId ? '이 낙서에 노래 붙이기' : '낙서장에 남기기'}</AppText>
@@ -75,6 +87,7 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderRadius: radius.xl, borderWidth: 1, borderColor: 'rgba(251,191,36,0.5)',
     backgroundColor: 'rgba(251,191,36,0.08)',
   },
+  cardTop: { marginTop: 0, marginBottom: spacing.md },
   title: { fontSize: 14, fontWeight: '800', color: colors.text.primary },
   sub: { fontSize: 11.5, color: colors.text.secondary, marginTop: 1 },
   ghost: { paddingVertical: 7, paddingHorizontal: 10 },

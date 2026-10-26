@@ -94,7 +94,10 @@ export async function analyzeStory(body: StoryAnalyzeBody, requestId: string, gu
 
 /** 완성곡을 낙서에 붙이기 — 낙서 블록을 그대로 다시 보내고 곡 블록만 더한다(이미 곡이 있으면 손대지 않음). */
 export async function attachSongToDiary(feedId: string, trackId: string): Promise<'attached' | 'already'> {
-  const { data: feed } = await api.get(`/feeds/${feedId}`);
+  // GET /feeds/{id} 응답은 {feed: {...}} — 블록을 못 읽으면 절대 PUT 하지 않는다(PUT 은 블록 전체를 바꾼다)
+  const { data } = await api.get(`/feeds/${feedId}`);
+  const feed = data?.feed || data;
+  if (!feed || !Array.isArray(feed.blocks)) throw new Error('feed blocks missing');
   const blocks: any[] = [];
   let hasTrack = false;
   for (const b of feed?.blocks || []) {
@@ -106,6 +109,8 @@ export async function attachSongToDiary(feedId: string, trackId: string): Promis
     }
   }
   if (hasTrack) return 'already';
+  const kept = feed.blocks.filter((b: any) => b?.type === 'text' || (b?.type === 'image' && b.object_name)).length;
+  if (blocks.length !== kept) throw new Error('feed block copy mismatch'); // 하나라도 못 옮기면 손대지 않음
   // 글 바로 아래(사진 위)에 곡 — 낙서 쓰기 화면이 저장하는 순서와 같게
   const firstNonText = blocks.findIndex((b) => b.type !== 'text');
   blocks.splice(firstNonText === -1 ? blocks.length : firstNonText, 0, { type: 'track', track_id: String(trackId) });

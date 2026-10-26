@@ -1,11 +1,13 @@
-// v3.410 [StorySong] 재료 담기 — 글(붙여넣기·내 낙서 불러오기) + 사진 2장(일상·책 표지·캡처) + 날씨 → '내 마음 들여다보기'.
+// v3.410 [StorySong] 재료 담기 — 글(붙여넣기·내 낙서 불러오기) + 사진 2장(일상·책 표지·캡처) → '내 마음 들여다보기'.
 // 대표 확정(SP-1, 10-23): 작업실 '내 낙서로 노래 만들기'·낙서장 '이 낙서로 노래 만들기'에서 들어온다.
 // 그 자리에서 쓴 글·사진은 '낙서장에도 남기기'(켜면 분석 성공 직후 나만 보기 낙서로 등록, 사진은 낙서 사진으로 보관).
-// 게스트는 글만 1번(사진·날씨는 로그인 후), 어린이 계정은 사진 없이. 팝업은 모두 앱 안 창(showAlert).
-import { useEffect, useMemo, useRef, useState } from 'react';
+// 게스트는 글만 1번(사진은 로그인 후), 어린이 계정은 사진 없이. 팝업은 모두 앱 안 창(showAlert).
+// v3.411(대표 10-26): 날씨 붙이기 뺌 · 뒤로가기는 작업실 상단바(다른 디렉터 화면과 같은 자리) · 글자 크기 낮춤 ·
+//   사진 처음 넣을 때 사진 AI 처리 동의(photo_ai) · 낙서 등록 응답 {feed:{id}} 읽기 수정.
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
@@ -19,8 +21,7 @@ import { spacing, radius } from '../theme/spacing';
 import { useAuthStore } from '../stores/authStore';
 import api from '../services/api';
 import {
-  analyzeStory, getStoryCities, getStoryWeather, keepStoryPhotos, newStoryRequestId, uploadStoryPhoto,
-  type StoryPhotoKind,
+  analyzeStory, keepStoryPhotos, newStoryRequestId, uploadStoryPhoto, type StoryPhotoKind,
 } from '../services/storySongService';
 import { consumeStoryInput, setStoryAnalysis, STORY_TEXT, type StoryInput } from '../utils/storySong';
 import { pickImages, takePhoto } from '../utils/pickImage';
@@ -28,6 +29,7 @@ import { showAlert } from '../utils/appAlert';
 import { openLoginModal } from '../utils/loginModal';
 import { useIsChild } from '../utils/kidsMode';
 import { useNakseoFont } from '../utils/nakseoFont';
+import { ensurePhotoAiConsent } from '../utils/photoConsent';
 import { fmtDiaryDate, kstToday } from '../utils/diary';
 import { isGuestNow } from '../utils/guestTrial';
 import type { StudioStackParamList } from '../App';
@@ -36,7 +38,6 @@ type Props = NativeStackScreenProps<StudioStackParamList, 'StorySongInput'>;
 
 const TEXT_MAX = 2000;
 const PHOTO_MAX = 2;
-const CITY_KEY = 'maidol_story_city_v1';
 const KIND_LABEL: Record<StoryPhotoKind, string> = { daily: '일상', book: '책 표지', capture: '캡처' };
 
 interface Photo {
@@ -50,8 +51,14 @@ interface Photo {
   fromDiary: boolean; // 이미 낙서에 있던 사진(feeds/) — 다시 올리지 않음
 }
 
+/** POST·GET /feeds 응답은 {feed: {...}} — 옛 모양({id})도 받아 준다 */
+const feedIdOf = (data: any): string | null => {
+  const f = data?.feed || data;
+  const id = f?.id || f?._id;
+  return id ? String(id) : null;
+};
+
 export default function StorySongInputScreen({ navigation }: Props) {
-  const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const guest = isGuestNow();
   const isChild = useIsChild();
@@ -68,57 +75,30 @@ export default function StorySongInputScreen({ navigation }: Props) {
       status: 'done', kind: p.kind || 'daily', fromDiary: true,
     })));
   const extraDiaryPhotos = Math.max(0, (initial?.photos?.length || 0) - PHOTO_MAX);
-  // 낙서 쓰기 화면에서 온 글(아직 저장 전)·작업실에서 새로 쓴 글이면 남기기 선택지 — 저장된 낙서에서 왔으면 숨김
+  // 낙서 쓰기 화면에서 온 글(아직 저장 전)이면 켜 둠 — 저장된 낙서에서 왔으면 선택지 자체를 숨김
   const [keepDiary, setKeepDiary] = useState<boolean>(!!initial?.draftKey);
   const draftKey = initial?.draftKey || null;
-
-  const [weatherOn, setWeatherOn] = useState(false);
-  const [cities, setCities] = useState<{ id: string; name: string }[]>([]);
-  const [manualList, setManualList] = useState<{ id: string; name: string }[]>([]);
-  const [city, setCity] = useState<string>('seoul');
-  const [weatherLabel, setWeatherLabel] = useState<string | null>(null);
-  const [weatherLoading, setWeatherLoading] = useState(false);
-  const [manual, setManual] = useState<string | null>(null); // 직접 고른 날씨
-  const [showCities, setShowCities] = useState(false);
 
   const [diaryPickerOpen, setDiaryPickerOpen] = useState(false);
   const [diaryList, setDiaryList] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
   const requestId = useRef<string>(newStoryRequestId());
 
-  const pastDiary = !!diaryDate && diaryDate !== kstToday();
   const showKeep = !guest && !feedId;
   const canPhoto = !guest && !isChild;
 
-  // 날씨 도시 목록 + 마지막 도시
-  useEffect(() => {
-    getStoryCities().then((r) => { setCities(r.cities); setManualList(r.manual); }).catch(() => {});
-    AsyncStorage.getItem(CITY_KEY).then((c) => { if (c) setCity(c); }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!weatherOn || guest || manual) return;
-    let alive = true;
-    setWeatherLoading(true);
-    getStoryWeather(city)
-      .then((w) => { if (alive) setWeatherLabel(`${w.name} · ${w.label}`); })
-      .catch(() => { if (alive) setWeatherLabel(null); })
-      .finally(() => { if (alive) setWeatherLoading(false); });
-    return () => { alive = false; };
-  }, [weatherOn, city, manual, guest]);
-
-  const chooseCity = (id: string) => {
-    setCity(id);
-    setManual(null);
-    setShowCities(false);
-    AsyncStorage.setItem(CITY_KEY, id).catch(() => {});
-  };
-
-  const toggleWeather = (on: boolean) => {
-    if (on && guest) { openLoginModal({ reason: 'story_weather' }); return; }
-    setWeatherOn(on);
-    if (on && pastDiary) setManual(null); // 지난 날 낙서 — 그날 날씨를 직접 고르게
-  };
+  // 뒤로가기는 작업실 상단바에(작사 입력·디렉터 대화와 같은 자리). Map 으로 돌아가면 Map 이 지운다.
+  useFocusEffect(
+    useCallback(() => {
+      navigation.getParent()?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+    }, [navigation])
+  );
 
   const pasteText = async () => {
     try {
@@ -175,11 +155,12 @@ export default function StorySongInputScreen({ navigation }: Props) {
   const addPhotos = async (camera: boolean) => {
     if (!canPhoto) {
       if (guest) openLoginModal({ reason: 'story_photo' });
-      else showAlert('사진', '어린이 계정에서는 사진 없이 글과 날씨로 만들어요.');
+      else showAlert('사진', '어린이 계정에서는 사진 없이 글로 만들어요.');
       return;
     }
     const room = PHOTO_MAX - photos.length;
     if (room <= 0) { showAlert('사진', `사진은 ${PHOTO_MAX}장까지 넣을 수 있어요.`); return; }
+    if (!(await ensurePhotoAiConsent('story_song'))) return; // 사진 AI 처리 동의(처음 한 번)
     const res: any = camera ? await takePhoto() : await pickImages({ multiple: true, limit: room });
     if (res?.denied) { showAlert('카메라', '카메라 권한이 필요해요. 설정에서 카메라를 허용해 주세요.'); return; }
     if (res?.canceled || !res?.assets?.length) return;
@@ -194,13 +175,6 @@ export default function StorySongInputScreen({ navigation }: Props) {
     setPhotos((prev) => prev.map((p) => (p.key === key ? { ...p, kind } : p)));
   const removePhoto = (key: string) => setPhotos((prev) => prev.filter((p) => p.key !== key));
 
-  const weatherBody = useMemo(() => {
-    if (!weatherOn) return null;
-    if (manual) return { manual };
-    if (weatherLabel) return { city };
-    return null;
-  }, [weatherOn, manual, weatherLabel, city]);
-
   const registerDiary = async (): Promise<string | null> => {
     // 분석이 끝난 뒤 — 글·사진을 나만 보기 낙서로 남기고 사진은 낙서 사진(feeds/)으로 보관
     const ready = photos.filter((p) => p.status === 'done' && p.objectName);
@@ -212,10 +186,10 @@ export default function StorySongInputScreen({ navigation }: Props) {
       title: null, blocks, is_public: false, visibility: 'private', kind: 'feed',
       diary_date: kstToday(), ...(mood ? { mood } : {}),
     });
-    const id = res.data?.id || res.data?._id || res.data?.feed_id;
+    const id = feedIdOf(res.data);
     if (draftKey) AsyncStorage.removeItem(draftKey).catch(() => {});
-    console.info('[StorySong] 낙서장에 남김', { photos: kept.length, reward: res.data?.diary_reward?.awarded ?? 0 });
-    return id ? String(id) : null;
+    console.info('[StorySong] 낙서장에 남김', { hasId: !!id, photos: kept.length, reward: res.data?.diary_reward?.awarded ?? 0 });
+    return id;
   };
 
   const onRead = async () => {
@@ -231,13 +205,14 @@ export default function StorySongInputScreen({ navigation }: Props) {
         feed_id: feedId,
         text: body,
         photos: guest ? [] : photos.map((p) => ({ object_name: p.objectName as string, kind: p.kind })),
-        weather: guest ? null : weatherBody,
+        weather: null,
         mood, diary_date: diaryDate,
       }, requestId.current, guest);
       let targetFeed = feedId;
       if (showKeep && keepDiary) {
         try {
           targetFeed = await registerDiary();
+          if (targetFeed) setFeedId(targetFeed); // 다시 들여다봐도 같은 낙서 — 두 번 남기지 않게
         } catch (err: any) {
           console.error('[StorySong] 낙서장에 남기기 실패', { status: err?.response?.status });
           showAlert('낙서장', err?.response?.data?.message || err?.response?.data?.error || '낙서장에 남기지 못했어요. 노래는 이어서 만들 수 있어요.');
@@ -257,8 +232,9 @@ export default function StorySongInputScreen({ navigation }: Props) {
         setPhotos((prev) => prev.map((p) => (p.fromDiary ? p : { ...p, status: 'failed' })));
         showAlert('사진', data.message);
       } else if (st === 429 && data.error === 'guest_trial_used') {
-        showAlert('체험은 1번이에요', '가입하면 사진과 날씨까지 넣어 계속 만들 수 있어요.', [
-          { text: '나중에', style: 'cancel' },
+        // 들여다보기 체험은 썼어도 작사 체험이 남았으면 작사 디렉터와 이어 만들 수 있다
+        showAlert('들여다보기 체험은 1번이에요', '가입하면 사진까지 넣어 계속 만들 수 있어요. 작사 디렉터와 대화로 만들어 볼 수도 있어요.', [
+          { text: '작사 디렉터와 만들기', onPress: () => navigation.navigate('LyricsInput', { guestTrial: true } as any) },
           { text: '가입하기', onPress: () => openLoginModal({ reason: 'story_guest_used' }) },
         ]);
       } else if (data.message) {
@@ -271,28 +247,19 @@ export default function StorySongInputScreen({ navigation }: Props) {
     }
   };
 
-  const cityName = cities.find((c) => c.id === city)?.name || '서울';
-
   return (
     <KeyboardAvoid style={styles.container} iosOffset={120}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.lg }]} keyboardShouldPersistTaps="handled">
-        <View style={styles.headRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로">
-            <Feather name="chevron-left" size={24} color={colors.text.secondary} />
-          </TouchableOpacity>
-          <AppText variant="headline">무엇으로 만들까요</AppText>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={{ gap: 2 }}>
+          <AppText variant="bodyStrong">무엇으로 만들까요</AppText>
+          <AppText variant="caption" tone="muted">글이나 사진 하나만 있어도 돼요. 마음을 들여다보고 어울리는 노래를 골라 드려요.</AppText>
         </View>
-        <AppText variant="footnote" tone="muted" style={{ marginBottom: spacing.md }}>
-          글이나 사진 하나만 있어도 돼요. MAIDOL이 마음을 들여다보고 어울리는 노래를 골라 드려요.
-        </AppText>
 
         {/* 글 */}
         <View style={styles.card}>
-          <View style={styles.cardHead}>
-            <AppText variant="caption" tone="muted">
-              글 · {text.length.toLocaleString()} / {TEXT_MAX.toLocaleString()}자{feedId && diaryDate ? ` · ${fmtDiaryDate(diaryDate)} 낙서` : ''}
-            </AppText>
-          </View>
+          <AppText variant="caption" tone="muted">
+            글 · {text.length.toLocaleString()} / {TEXT_MAX.toLocaleString()}자{feedId && diaryDate ? ` · ${fmtDiaryDate(diaryDate)} 낙서` : ''}
+          </AppText>
           <LinedTextInput
             minLines={5}
             style={nakseoFont ? { fontFamily: nakseoFont } : null}
@@ -319,9 +286,7 @@ export default function StorySongInputScreen({ navigation }: Props) {
 
         {/* 사진 */}
         <View style={styles.card}>
-          <View style={styles.cardHead}>
-            <AppText variant="caption" tone="muted">사진 · 최대 {PHOTO_MAX}장 · 일상 / 책 표지 / 캡처</AppText>
-          </View>
+          <AppText variant="caption" tone="muted">사진 · 최대 {PHOTO_MAX}장 · 일상 / 책 표지 / 캡처</AppText>
           {photos.map((p) => (
             <View key={p.key} style={styles.photoRow}>
               <TouchableOpacity
@@ -331,24 +296,24 @@ export default function StorySongInputScreen({ navigation }: Props) {
                 {p.uri ? <Image source={{ uri: p.uri }} style={styles.thumb} /> : <View style={[styles.thumb, styles.thumbEmpty]} />}
                 {p.status !== 'done' ? (
                   <View style={styles.thumbOverlay}>
-                    {p.status === 'uploading' ? <ActivityIndicator color="#fff" /> : <Feather name="refresh-cw" size={18} color="#fff" />}
+                    {p.status === 'uploading' ? <ActivityIndicator color="#fff" /> : <Feather name="refresh-cw" size={16} color="#fff" />}
                   </View>
                 ) : null}
               </TouchableOpacity>
-              <View style={{ flex: 1, gap: spacing.xs }}>
+              <View style={{ flex: 1, gap: spacing.xxs }}>
                 <View style={styles.chipRow}>
                   {(Object.keys(KIND_LABEL) as StoryPhotoKind[]).map((k) => (
                     <Tag key={k} size="sm" label={KIND_LABEL[k]} selected={p.kind === k} onPress={() => setKind(p.key, k)} />
                   ))}
                 </View>
-                <AppText variant="caption" tone="muted">
+                <AppText variant="caption" tone="muted" style={styles.hint}>
                   {p.kind === 'book' ? '책 제목과 분위기만 봐요. 책 속 문장은 가사에 넣지 않아요.'
                     : p.kind === 'capture' ? '프로필 메시지 같은 글만 봐요. 이름·번호는 보지 않아요.'
                       : '사진 속 분위기만 봐요. 사람 얼굴은 알아보지 않아요.'}
                 </AppText>
               </View>
               <TouchableOpacity onPress={() => removePhoto(p.key)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="사진 빼기">
-                <Feather name="x" size={18} color={colors.text.muted} />
+                <Feather name="x" size={16} color={colors.text.muted} />
               </TouchableOpacity>
             </View>
           ))}
@@ -366,49 +331,9 @@ export default function StorySongInputScreen({ navigation }: Props) {
           ) : null}
         </View>
 
-        {/* 날씨 */}
-        <View style={styles.card}>
-          <View style={styles.switchRow}>
-            <AppText variant="footnote" style={{ flex: 1 }}>날씨 붙이기</AppText>
-            <Switch value={weatherOn} onValueChange={toggleWeather} trackColor={{ true: colors.accent.primary, false: colors.border.default }} />
-          </View>
-          {weatherOn ? (
-            <>
-              {!manual && !pastDiary ? (
-                <View style={styles.switchRow}>
-                  <AppText variant="body" style={{ flex: 1 }}>
-                    {weatherLoading ? `${cityName} 날씨 가져오는 중…` : weatherLabel || `${cityName} 날씨를 가져오지 못했어요. 아래에서 골라 주세요.`}
-                  </AppText>
-                  <Tag size="sm" label="도시 바꾸기" onPress={() => setShowCities((v) => !v)} />
-                </View>
-              ) : null}
-              {showCities ? (
-                <View style={styles.chipRow}>
-                  {cities.map((c) => <Tag key={c.id} size="sm" label={c.name} selected={c.id === city} onPress={() => chooseCity(c.id)} />)}
-                </View>
-              ) : null}
-              {(pastDiary || manual || (!weatherLoading && !weatherLabel)) ? (
-                <>
-                  <AppText variant="caption" tone="muted">{pastDiary ? '그날 날씨를 골라 주세요' : '직접 고르기'}</AppText>
-                  <View style={styles.chipRow}>
-                    {manualList.map((m) => (
-                      <Tag key={m.id} size="sm" label={m.name} selected={manual === m.id} onPress={() => setManual((v) => (v === m.id ? null : m.id))} />
-                    ))}
-                  </View>
-                </>
-              ) : (
-                <TouchableOpacity onPress={() => setManual(manualList[0]?.id || 'clear')}>
-                  <AppText variant="caption" tone="accent">직접 고르기</AppText>
-                </TouchableOpacity>
-              )}
-              <AppText variant="caption" tone="muted">출처: 기상청 · 위치 권한은 쓰지 않아요</AppText>
-            </>
-          ) : null}
-        </View>
-
         <TouchableOpacity style={[styles.cta, busy && { opacity: 0.7 }]} onPress={onRead} disabled={busy} accessibilityLabel={STORY_TEXT.readButton}>
           {busy ? (
-            <View style={{ alignItems: 'center', gap: spacing.xs }}>
+            <View style={{ alignItems: 'center', gap: spacing.xxs }}>
               <ActivityIndicator color="#fff" />
               <AppText style={styles.ctaText}>{STORY_TEXT.reading}</AppText>
               <AppText style={styles.ctaSub}>{STORY_TEXT.readingSub}</AppText>
@@ -420,7 +345,7 @@ export default function StorySongInputScreen({ navigation }: Props) {
             </>
           )}
         </TouchableOpacity>
-        <View style={{ height: insets.bottom + 80 }} />
+        <View style={{ height: 96 }} />
       </ScrollView>
 
       {/* 내 낙서 불러오기 */}
@@ -428,7 +353,7 @@ export default function StorySongInputScreen({ navigation }: Props) {
         <View style={styles.modalBack}>
           <View style={styles.modalCard}>
             <View style={styles.switchRow}>
-              <AppText variant="subtitle" style={{ flex: 1 }}>내 낙서 불러오기</AppText>
+              <AppText variant="bodyStrong" style={{ flex: 1 }}>내 낙서 불러오기</AppText>
               <TouchableOpacity onPress={() => setDiaryPickerOpen(false)} accessibilityLabel="닫기"><Feather name="x" size={20} color={colors.text.muted} /></TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 420 }}>
@@ -440,7 +365,7 @@ export default function StorySongInputScreen({ navigation }: Props) {
                 return (
                   <TouchableOpacity key={String(f.id || f._id)} style={styles.diaryRow} onPress={() => applyDiary(f)}>
                     <AppText variant="caption" tone="muted">{fmtDiaryDate(f.diary_date) || ''}{nImg ? ` · 사진 ${nImg}장` : ''}</AppText>
-                    <AppText variant="body" numberOfLines={2}>{String(first)}</AppText>
+                    <AppText variant="footnote" numberOfLines={2}>{String(first)}</AppText>
                   </TouchableOpacity>
                 );
               })}
@@ -454,25 +379,24 @@ export default function StorySongInputScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
-  scroll: { paddingHorizontal: spacing.lg, gap: spacing.md },
-  headRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
+  scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.md },
   card: {
-    backgroundColor: colors.bg.surface1, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.default,
     padding: spacing.md, gap: spacing.sm,
   },
-  cardHead: { flexDirection: 'row', alignItems: 'center' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   photoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  thumb: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
+  hint: { fontSize: 11 },
+  thumb: { width: 56, height: 56, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   thumbEmpty: { borderWidth: 1, borderColor: colors.border.default },
   thumbOverlay: { ...StyleSheet.absoluteFillObject, borderRadius: radius.md, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
   cta: {
-    marginTop: spacing.sm, borderRadius: radius.xl, paddingVertical: spacing.md, alignItems: 'center',
+    marginTop: spacing.xs, borderRadius: radius.lg, paddingVertical: spacing.md, alignItems: 'center',
     backgroundColor: colors.accent.primaryDim,
   },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-  ctaSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
+  ctaText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  ctaSub: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2 },
   modalBack: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: spacing.lg },
   modalCard: { backgroundColor: colors.bg.surface1, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.sm },
   diaryRow: { paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border.subtle, gap: 2 },

@@ -1,10 +1,10 @@
 // v3.410 [StorySong] 이런 마음이 보여요 — 감정·키워드·'멈춰 있는 마음'·'풀어낼 방향' + 추천 3개 + 반전 1개(대표 확정 SP-1).
 // 고른 추천을 작사 작업본(lyricsStore)에 채우고 기존 '작사 요청 정리' 화면(LyricsPromptReview)으로 — 게스트 체험·휴식·⭐5 확인은 그대로.
 // 반전 추천은 추천 3개 아래 금색 점선 카드로 항상 보인다(결정 4). 힘든 마음 신호(care)면 상담 안내를 먼저 앱 안 창으로(결정 7).
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { AppText, Tag } from '../components/ui';
 import { colors } from '../theme/colors';
@@ -22,8 +22,19 @@ const DURATIONS = [{ v: 60, l: '1분' }, { v: 120, l: '2분' }, { v: 180, l: '3�
 const KIND_LABEL: Record<string, string> = { daily: '사진', book: '책', capture: '캡처' };
 
 export default function StorySongReadScreen({ navigation, route }: Props) {
-  const insets = useSafeAreaInsets();
   const a = getStoryAnalysis();
+  // v3.411 뒤로가기는 작업실 상단바(재료 담기와 같은 자리)
+  useFocusEffect(
+    useCallback(() => {
+      navigation.getParent()?.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+            <Feather name="arrow-left" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+        ),
+      });
+    }, [navigation])
+  );
   const feedId = route.params?.feedId || null;
   const guest = !!route.params?.guest;
   const [picked, setPicked] = useState<string>('p1');
@@ -39,7 +50,7 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
 
   if (!a) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top + spacing.xxl, paddingHorizontal: spacing.lg }]}>
+      <View style={[styles.container, { paddingTop: spacing.xl, paddingHorizontal: spacing.lg }]}>
         <AppText tone="secondary">들여다본 결과가 없어요. 다시 해 주세요.</AppText>
         <TouchableOpacity style={[styles.cta, { marginTop: spacing.lg }]} onPress={() => navigation.goBack()}>
           <AppText style={styles.ctaText}>돌아가기</AppText>
@@ -79,11 +90,11 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
       >
         {twist ? <AppText style={styles.twistTag}>반전 추천</AppText> : null}
         <View style={styles.pickHead}>
-          <AppText variant="bodyStrong" style={{ flex: 1 }}>{p.genre} · {p.mood}</AppText>
+          <AppText variant="footnote" style={{ flex: 1, fontWeight: '700' }}>{p.genre} · {p.mood}</AppText>
           {sel ? <Feather name="check-circle" size={18} color={twist ? colors.accent.secondary : colors.accent.primaryGlow} /> : null}
         </View>
         <AppText variant="caption" tone="secondary">빠르기 {p.tempo}</AppText>
-        <AppText variant="footnote" style={{ color: colors.text.primary }}>{p.reason}</AppText>
+        <AppText variant="caption" style={{ color: colors.text.primary }}>{p.reason}</AppText>
       </TouchableOpacity>
     );
   };
@@ -96,17 +107,12 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.lg }]}>
-        <View style={styles.headRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로">
-            <Feather name="chevron-left" size={24} color={colors.text.secondary} />
-          </TouchableOpacity>
-          <AppText variant="headline">{STORY_TEXT.readTitle}</AppText>
-        </View>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <AppText variant="bodyStrong">{STORY_TEXT.readTitle}</AppText>
 
         <View style={styles.card}>
           <AppText variant="caption" tone="muted">한 줄로</AppText>
-          <AppText variant="subtitle">{a.read.summary}</AppText>
+          <AppText variant="bodyStrong">{a.read.summary}</AppText>
         </View>
 
         <View style={styles.card}>
@@ -124,9 +130,9 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
 
         <View style={[styles.card, styles.stuck]}>
           <AppText variant="caption" tone="muted">멈춰 있는 마음</AppText>
-          <AppText variant="body">{a.read.stuck}</AppText>
+          <AppText variant="footnote">{a.read.stuck}</AppText>
           <AppText variant="caption" tone="muted" style={{ marginTop: spacing.xs }}>노래로 풀어낼 방향</AppText>
-          <AppText variant="body">{a.read.release}</AppText>
+          <AppText variant="footnote">{a.read.release}</AppText>
         </View>
 
         {notes.length ? (
@@ -135,7 +141,7 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
-        <AppText variant="subtitle" style={{ marginTop: spacing.sm }}>어떤 노래로 할까요?</AppText>
+        <AppText variant="bodyStrong" style={{ marginTop: spacing.xs }}>어떤 노래로 할까요?</AppText>
         {a.picks.map((p) => <PickCard key={p.id} p={p} />)}
         <PickCard p={a.twist} twist />
 
@@ -150,7 +156,7 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
           <AppText style={styles.ctaText}>이 느낌으로 가사 쓰기</AppText>
           <AppText style={styles.ctaSub}>{guest ? '무료 체험으로 가사까지' : '다음 화면에서 한 번 더 확인해요 · ⭐5'}</AppText>
         </TouchableOpacity>
-        <View style={{ height: insets.bottom + 80 }} />
+        <View style={{ height: 96 }} />
       </ScrollView>
     </View>
   );
@@ -158,16 +164,15 @@ export default function StorySongReadScreen({ navigation, route }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
-  scroll: { paddingHorizontal: spacing.lg, gap: spacing.md },
-  headRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm },
   card: {
-    backgroundColor: colors.bg.surface1, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.default,
     padding: spacing.md, gap: spacing.xs,
   },
   stuck: { borderLeftWidth: 3, borderLeftColor: colors.accent.secondary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
   meterRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  meterLabel: { width: 64 },
+  meterLabel: { width: 56 },
   meterTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.bg.surface2, overflow: 'hidden' },
   meterFill: { height: 6, borderRadius: 3, backgroundColor: colors.accent.primary },
   pick: {
@@ -181,6 +186,6 @@ const styles = StyleSheet.create({
   pickHead: { flexDirection: 'row', alignItems: 'center' },
   optRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
   cta: { marginTop: spacing.sm, borderRadius: radius.xl, paddingVertical: spacing.md, alignItems: 'center', backgroundColor: colors.accent.primaryDim },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-  ctaSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
+  ctaText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  ctaSub: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2 },
 });
