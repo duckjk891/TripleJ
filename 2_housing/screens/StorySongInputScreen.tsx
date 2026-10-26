@@ -232,8 +232,9 @@ export default function StorySongInputScreen({ navigation }: Props) {
         setPhotos((prev) => prev.map((p) => (p.fromDiary ? p : { ...p, status: 'failed' })));
         showAlert('사진', data.message);
       } else if (st === 429 && data.error === 'guest_trial_used') {
-        showAlert('체험은 1번이에요', '가입하면 사진까지 넣어 계속 만들 수 있어요.', [
-          { text: '나중에', style: 'cancel' },
+        // 들여다보기 체험은 썼어도 작사 체험이 남았으면 작사 디렉터와 이어 만들 수 있다
+        showAlert('들여다보기 체험은 1번이에요', '가입하면 사진까지 넣어 계속 만들 수 있어요. 작사 디렉터와 대화로 만들어 볼 수도 있어요.', [
+          { text: '작사 디렉터와 만들기', onPress: () => navigation.navigate('LyricsInput', { guestTrial: true } as any) },
           { text: '가입하기', onPress: () => openLoginModal({ reason: 'story_guest_used' }) },
         ]);
       } else if (data.message) {
