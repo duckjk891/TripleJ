@@ -1165,6 +1165,11 @@ export default function MusicResultScreen({ navigation, route }: Props) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {/* v3.411 [StorySong] 낙서·사진에서 만든 곡 — 작곡이 끝나면 맨 위에 '이 낙서에 붙일까요?'(대표 10-26).
+            저장 전에는 안내만, 저장하면 붙이기/남기기 버튼 */}
+        {hasResult ? (
+          <StorySongDiaryCard trackId={isSaved && effectiveSavedTrackId ? String(effectiveSavedTrackId) : null} navigation={navigation} />
+        ) : null}
         {/* Director message */}
         <View style={styles.directorRow}>
           <View style={styles.portraitContainer}>
@@ -1386,10 +1391,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               onPrimary={handleRegenerate}
             />
           )}
-          {/* v3.410 [StorySong] 낙서·사진에서 만든 곡 — 저장 뒤 '이 낙서에 노래 붙이기'/'낙서장에 남기기' */}
-          {hasResult && isSaved ? (
-            <StorySongDiaryCard trackId={effectiveSavedTrackId ? String(effectiveSavedTrackId) : null} navigation={navigation} />
-          ) : null}
+
         </View>
 
         <View style={{ height: 40 }} />
