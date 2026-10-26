@@ -56,8 +56,9 @@
       "splash": {
         "image": "./assets/splash-blank-ios.png",
         "resizeMode": "contain",
-        "backgroundColor": "#0d0820"
-      }
+        "backgroundColor": "#ffffff"
+      },
+      "backgroundColor": "#ffffff"
     },
     "android": {
       "adaptiveIcon": {
@@ -124,7 +125,8 @@
             }
           ]
         }
-      ]
+      ],
+      "userInterfaceStyle": "automatic"
     },
     "web": {
       "favicon": "./assets/favicon.png"
