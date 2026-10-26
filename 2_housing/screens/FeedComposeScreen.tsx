@@ -37,7 +37,7 @@ import { CLUB_LABEL } from '../services/clubService'; // v3.252 리네이밍 —
 import { usePlayerStore } from '../stores/playerStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePointsStore } from '../stores/pointsStore';
-import { startDiarySongFlow } from '../utils/makeLike'; // v3.395 [DiarySong]
+import { startDiarySongFlow, startStorySongFromFeed } from '../utils/makeLike'; // v3.395 [DiarySong] · v3.412 저장된 낙서
 import { useStorySongAvailable } from '../utils/storySong'; // v3.410 [StorySong]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 입력칸 손글씨
 import { LinedTextInput } from '../components/diary/LinedPaper'; // v3.403 줄 노트
@@ -496,6 +496,16 @@ export default function FeedComposeScreen({ navigation, route }: any) {
 
   // v3.395 [DiarySong] 이 일기로 노래 만들기 — 새 일기는 임시저장해 두고(돌아와 이어 쓰기) 작사 디렉터로
   const goDiarySong = () => {
+    // v3.412 [StorySong] 수정 화면(저장된 낙서, 곡 없음) — 이 낙서로 만들고 완성곡은 이 낙서에 붙인다(대표 10-26)
+    if (isEdit && editFeed?.id) {
+      showAlert('이 낙서로 노래 만들기', '고친 내용은 노래 재료로 쓰지만 낙서에는 저장되지 않아요. 먼저 저장하려면 취소 후 저장해 주세요.', [
+        { text: '취소', style: 'cancel' },
+        { text: '노래 만들러 가기', onPress: () => {
+          startStorySongFromFeed(navigation, editFeed, { fromRootModal: true, text: body.trim() });
+        } },
+      ]);
+      return;
+    }
     const text = body.trim();
     const done = images.filter((i) => i.status === 'done' && i.objectName);
     if (!text && !done.length) { showAlert('알림', '먼저 낙서를 남겨 주세요. 쓴 글과 사진이 노래가 돼요.'); return; }
@@ -756,7 +766,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
           </View>
         ) : null}
         {/* v3.395 [DiarySong](대표): 쓴 일기로 노래를 만들 수 있다는 안내 + 작사 디렉터 직행(주제 칸에 일기 글) */}
-        {isDiary && DIARY_SONG_ENABLED && storySongOn && !isEdit ? (
+        {isDiary && DIARY_SONG_ENABLED && storySongOn && (!isEdit || !attached) ? (
           <TouchableOpacity style={styles.songCard} onPress={goDiarySong} activeOpacity={0.8} accessibilityLabel="이 낙서로 노래 만들기">
             <Feather name="music" size={16} color={colors.accent.secondary} />
             <View style={{ flex: 1 }}>

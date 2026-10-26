@@ -22,7 +22,7 @@ import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import { playTrackNow } from '../services/playback';
 import { useIsChild } from '../utils/kidsMode';
-import { startStorySong } from '../utils/makeLike'; // v3.410 [StorySong] 이 낙서로 노래 만들기
+import { startStorySongFromFeed } from '../utils/makeLike'; // v3.410 [StorySong] 이 낙서로 노래 만들기
 import { DIARY_SONG_ENABLED } from '../utils/diary';
 import { useStorySongAvailable } from '../utils/storySong';
 
@@ -212,14 +212,7 @@ export default function FeedDetailScreen() {
             style={styles.storySongBtn}
             activeOpacity={0.85}
             accessibilityLabel="이 낙서로 노래 만들기"
-            onPress={() => startStorySong(navigation, {
-              source: 'diary',
-              feedId: String(feed.id || feed._id),
-              text: textBlocks.map((b) => b.text).join('\n'),
-              photos: imageBlocks.filter((b) => b.object_name).map((b) => ({ objectName: String(b.object_name), uri: feedImageUri(b) })),
-              mood: feed.mood || null,
-              diaryDate: feed.diary_date || null,
-            }, { fromRootModal: true })}
+            onPress={() => startStorySongFromFeed(navigation, feed, { fromRootModal: true })}
           >
             <Feather name="music" size={16} color="#fff" />
             <View style={{ flex: 1 }}>

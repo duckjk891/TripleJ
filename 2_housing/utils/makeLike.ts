@@ -220,6 +220,24 @@ export function startStorySong(navigation: any, input: StoryInput | null, opts: 
   go();
 }
 
+/** v3.412 [StorySong] 저장된 내 낙서(서버 feed 객체)로 — 낙서 ⋮ 메뉴·낙서 상세·낙서 수정 화면 공용. 완성곡은 이 낙서에 붙는다. */
+export function startStorySongFromFeed(navigation: any, feed: any, opts: { fromRootModal?: boolean; text?: string } = {}): void {
+  const blocks: any[] = feed?.blocks || [];
+  const text = opts.text ?? blocks.filter((b) => b?.type === 'text' && b.text && !String(b.text).startsWith('[item]')).map((b) => b.text).join('\n');
+  startStorySong(navigation, {
+    source: 'diary',
+    feedId: String(feed?.id || feed?._id),
+    text,
+    photos: blocks.filter((b) => b?.type === 'image' && b.object_name)
+      .map((b) => ({ objectName: String(b.object_name), uri: b.image_url || null })),
+    mood: feed?.mood || null,
+    diaryDate: feed?.diary_date || null,
+  }, { fromRootModal: opts.fromRootModal });
+}
+
+/** 낙서에 이미 곡이 붙어 있나(곡 블록) — 없을 때만 '노래 만들기'를 보인다 */
+export const feedHasSong = (feed: any): boolean => (feed?.blocks || []).some((b: any) => b?.type === 'track');
+
 /** 낙서 쓰기(RootStack 모달)의 '이 낙서로 노래 만들기' — v3.410부터 재료 담기 화면으로(글·사진 그대로, 저장 전 글이라 '낙서장에도 남기기' 켜짐). */
 export function startDiarySongFlow(
   navigation: any, diaryText: string, photoObjectNames: string[] = [],
