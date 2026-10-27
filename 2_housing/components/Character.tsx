@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { TouchableOpacity, StyleSheet, Animated, Easing, View, Text } from 'react-native';
 import SpriteAnimator, { AnimationType, Direction } from './SpriteAnimator';
+import { useAppActive } from '../hooks/useAppActive';
 import { colors } from '../theme/colors';
 
 // 디렉터별 스프라이트 시트
@@ -65,14 +66,16 @@ export default function Character({
   // walkDeltas는 수신만 하고 사용하지 않음 (나중에 재활성 시 코드 유지)
   void walkDeltas;
 
+  const appActive = useAppActive(); // v3.415: 화면이 꺼지면 동작 순환 정지(iOS 백그라운드 CPU)
   useEffect(() => {
+    if (!appActive) return undefined;
     const interval = setInterval(() => {
       // 스프라이트 방향은 정면 고정 (이동 없음) — updater 안에서 다른 setState 호출 금지
       setAnimIndex((i) => (i + 1) % cycle.length);
     }, 3000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
+  }, [type, appActive]);
 
   const spriteScale = mapScale * 1.5;
 

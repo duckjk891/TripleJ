@@ -63,6 +63,7 @@ import { isGuestTrialUsed, getGuestSong, getGuestComposeStatus, guestComposeStre
 import { startGuestLyricsTrial } from '../utils/guestTrialEntry';
 import { startStorySong } from '../utils/makeLike'; // v3.410 [StorySong] 내 낙서로 노래 만들기
 import { STORY_TEXT, useStorySongAvailable } from '../utils/storySong';
+import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore'; // v3.414 카드가 미니 플레이어에 가리지 않게
 
 const isRegisteredGenJob = (j: TrackedJob) => !!getKindAdapter(j.kind);
 
@@ -259,6 +260,7 @@ export default function MapScreen({ navigation }: Props) {
   const displayHeight = MAP_HEIGHT * mapScale;
   const { user } = useAuthStore();
   const storySongOn = useStorySongAvailable(); // v3.410 [StorySong] 서버 지원 확인 뒤 카드 표시
+  const miniPlayerOn = useMiniPlayerVisible(); // v3.414 오리쟁이 10-26 신고: 음악 재생 중이면 카드가 미니 플레이어 뒤로 숨음
   const lyricsStore = useLyricsStore();
   const musicStore = useMusicStore();
   // v3.229 [DirectorResume]: 아티스트 draft 구독 — 작업실 복귀 시 "이어서 하기" 말풍선 재계산용(값은 판정 함수가 읽음)
@@ -1200,7 +1202,7 @@ export default function MapScreen({ navigation }: Props) {
           게스트는 체험 곡 카드가 없을 때만(글만 1번 체험 — 사진·날씨는 로그인 후) */}
       {storySongOn && (user || !guestSong) ? (
         <TouchableOpacity
-          style={styles.storySongCard}
+          style={[styles.storySongCard, miniPlayerOn && { bottom: 12 + MINI_PLAYER_HEIGHT }]}
           activeOpacity={0.85}
           onPress={() => startStorySong(navigation, null)}
           accessibilityLabel={STORY_TEXT.mapTitle}

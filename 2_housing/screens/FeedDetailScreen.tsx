@@ -2,7 +2,7 @@
 // 딥링크: aidol://feed/{id} · {BACKEND_BASE_URL}/feed/{id} → App.tsx linking 설정에서 이 화면으로 매핑.
 // 렌더는 기존 FeedCard 재사용(좋아요·댓글·답글·신고·공유 상호작용 그대로).
 // 블록 렌더(텍스트/트랙/[item] 마커)는 FeedScreen과 동일 규칙.
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400
 import LinedPaper, { noteTextStyle } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -114,6 +114,25 @@ export default function FeedDetailScreen() {
   const feedTracks = (): FeedTrack[] =>
     ((feed?.blocks || []) as FeedBlock[]).filter((b) => b.type === 'track' && b.track?.id).map((b) => b.track as FeedTrack);
 
+  // v3.414 [DiaryBGM] 낙서 상세 = 그 낙서에 붙은 노래(대표 10-26, 오리쟁이 요청) — 아무것도 안 듣고 있을 때만 자동 재생,
+  // 듣던 곡이 있으면 끊지 않고 위쪽에 '이 낙서의 노래 듣기' 버튼. 같은 낙서에서는 한 번만.
+  const autoPlayedFor = useRef<string | null>(null);
+  const diarySong: FeedTrack | null = (feed && (feed.kind || 'feed') === 'feed' && feed.diary_date)
+    ? (feedTracks()[0] || (feed.bgm_track?.id && !feed.bgm_track.deleted ? (feed.bgm_track as FeedTrack) : null))
+    : null;
+  useEffect(() => {
+    if (!diarySong?.id || !feed?.id || autoPlayedFor.current === String(feed.id)) return;
+    autoPlayedFor.current = String(feed.id);
+    const s = usePlayerStore.getState();
+    if (s.isPlaying) {
+      console.info('[DiaryBGM] 듣던 곡 있음 — 자동 재생 안 함', { feed: String(feed.id).slice(-6) });
+      return;
+    }
+    console.info('[DiaryBGM] 낙서 노래 자동 재생', { feed: String(feed.id).slice(-6), track: String(diarySong.id).slice(-6) });
+    playTrackNow(diarySong);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feed?.id, diarySong?.id]);
+
   // 재생 토글 — 현재 곡이면 일시정지/재개, 아니면 그 곡부터 재생(FeedScreen과 동일)
   const handleTrackTap = async (track: FeedTrack) => {
     if (!track?.id) return;
@@ -190,8 +209,16 @@ export default function FeedDetailScreen() {
     // v3.389 [Diary]: 일기(서버 diary_date 동반)는 공책 종이 위에 — FeedScreen 과 같은 모양
     // ('이 일기로 노래 만들기' 버튼은 대표 결정 ④A — 기능이 나오면 이 아래에 켠다)
     const isDiary = (feed?.kind || 'feed') === 'feed' && !!feed?.diary_date;
+    const otherPlaying = !!diarySong && isPlaying && String(nowId) !== String(diarySong.id);
     return (
       <View>
+        {otherPlaying ? (
+          <TouchableOpacity style={styles.diarySongBtn} activeOpacity={0.85} onPress={() => playTrackNow(diarySong as FeedTrack)}
+            accessibilityLabel="이 낙서의 노래 듣기">
+            <Feather name="play-circle" size={18} color="#fff" />
+            <AppText style={styles.storySongText} numberOfLines={1}>이 낙서의 노래 듣기 · {diarySong?.title || ''}</AppText>
+          </TouchableOpacity>
+        ) : null}
         {isDiary && textBlocks.length ? (
           // v3.403 [LinedNote] 상세는 줄 노트 전체(글 길이만큼 줄이 늘어남)
           <LinedPaper minLines={3} style={{ marginTop: spacing.sm }}>
@@ -293,4 +320,8 @@ const styles = StyleSheet.create({
   },
   storySongText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   storySongSub: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 1 },
+  diarySongBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accent.primaryDim,
+  },
 });
