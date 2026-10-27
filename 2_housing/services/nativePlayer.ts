@@ -11,6 +11,7 @@
 // services/playback.ts 의 [NativePlayer] 구역이 정한다.
 //
 // 아이폰·웹은 이 엔진을 쓰지 않는다(NATIVE_QUEUE_ENGINE=false) — 기존 경로 그대로.
+import { AppState } from 'react-native';
 import { MaidolPlayer, type NativePlayerState, type NativeTrackItem } from '../modules/maidol-player';
 import { streamProxyUrl } from './api';
 import { trackCoverUri } from '../utils/coverUri';
@@ -122,8 +123,40 @@ export function engineSongStalled(): boolean {
 }
 
 /** 재생 중 위치 이벤트 간격(ms) — MV·가사 화면에서만 짧게 */
+// v3.415b [NativePlayer]: 화면 꺼짐·백그라운드에서는 위치 이벤트를 5초에 한 번만(곡 바뀜·재생/정지·오류·끝은 즉시).
+// 아이폰 6s 실측(10-27, v3.415): 백그라운드 상태 콜백마다 store 위치를 써서 플레이어·미니가 계속 다시 그려져 CPU 한도로 종료.
+// 안드로이드도 같은 구조(평소 1초, MV/가사 탭을 연 채 화면을 끄면 250ms)라 배터리·발열·저사양 종료 위험 → 같은 규칙.
+// 재생 기록(70%)은 5초 간격 관측으로도 판정된다. 옛 빌드 네이티브는 최대 2초로 잘라 받는다(그래도 종전보다 2~8배 적음).
+const BACKGROUND_PROGRESS_MS = 5000;
+let wantedProgressMs = 1000; // 화면이 켜져 있을 때 원하는 간격(PlayerScreen MV/가사 탭 = 250)
+let appActive = AppState.currentState === 'active';
+
+async function applyProgressInterval(reason: string): Promise<void> {
+  if (!MaidolPlayer) return;
+  const ms = appActive ? wantedProgressMs : BACKGROUND_PROGRESS_MS;
+  try { await MaidolPlayer.setProgressInterval(ms); } catch {}
+  if (__DEV__) console.info('[NativePlayer] progress interval', { ms, reason });
+}
+
 export async function engineSetProgressInterval(ms: number): Promise<void> {
-  try { await MaidolPlayer?.setProgressInterval(ms); } catch {}
+  wantedProgressMs = ms;
+  await applyProgressInterval('request');
+}
+
+if (MaidolPlayer) {
+  AppState.addEventListener('change', (st) => {
+    const active = st === 'active';
+    if (active === appActive) return;
+    appActive = active;
+    void applyProgressInterval(active ? 'foreground' : 'background');
+    console.warn('[NativePlayer] 위치 이벤트 간격', { appState: st, ms: active ? wantedProgressMs : BACKGROUND_PROGRESS_MS });
+    // 화면 복귀 — 진행바를 바로 맞춘다(다음 1초 이벤트를 기다리지 않음). onState 구독이 store 에 쓴다.
+    if (active) {
+      MaidolPlayer?.getState()
+        .then((fresh) => { noteState(fresh); if (fresh) engineHandlers?.onState(fresh); })
+        .catch(() => {});
+    }
+  });
 }
 
 // 재생 화면(PlayerScreen)이 붙이는 상태 콜백 — expo-av setOnPlaybackStatusUpdate 호환(하나만)
@@ -231,11 +264,13 @@ export type EngineHandlers = {
 };
 
 let subs: { remove: () => void }[] = [];
+let engineHandlers: EngineHandlers | null = null;
 let lastKey: string | null = null;
 
 /** 이벤트 구독(앱 기동 시 1회) — 다시 부르면 이전 구독을 지우고 새로 건다 */
 export function initNativeEngine(h: EngineHandlers): void {
   if (!MaidolPlayer) return;
+  engineHandlers = h;
   subs.forEach((s) => { try { s.remove(); } catch {} });
   subs = [
     MaidolPlayer.addListener('onTrackChange', (e) => {

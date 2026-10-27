@@ -186,7 +186,13 @@ class MaidolPlayerModule : Module() {
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("setProgressInterval") { ms: Int ->
-      tickMs = ms.coerceIn(100, 2000).toLong()
+      // v3.415b: 백그라운드 5초 간격 허용(종전 상한 2초) — JS 가 화면 꺼짐 때 5000 을 요청한다
+      tickMs = ms.coerceIn(100, 10_000).toLong()
+      // 이미 걸려 있는 다음 틱도 새 간격으로(백그라운드 진입 직후 250ms 틱이 이어지지 않게)
+      if (ticking) {
+        main.removeCallbacks(tick)
+        main.postDelayed(tick, tickMs)
+      }
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("getState") { promise: Promise ->
