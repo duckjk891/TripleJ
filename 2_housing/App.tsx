@@ -82,7 +82,8 @@ import { useRewardNotice } from './hooks/useRewardNotice'; // v3.230 A7-2
 import { useUiStore } from './stores/uiStore';
 import { usePlayerStore } from './stores/playerStore';
 // v3.197(T4): 포그라운드 복귀 시 재생상태 리컨사일 — 죽은 사운드면 UI를 일시정지로 정합화(자동 재재생 금지)
-import { initPlaybackReconciler, teardownPlaybackReconciler } from './services/playback';
+import { initPlaybackReconciler, teardownPlaybackReconciler, skipFromRemote } from './services/playback';
+import { enableRemoteTrackCommands } from './modules/maidol-remote-commands'; // v3.416 [RemoteCmd]
 import { usePointsStore } from './stores/pointsStore';
 import api, { BACKEND_BASE_URL } from './services/api';
 
@@ -1082,6 +1083,11 @@ export default function App() {
     const stopCrewPreview = initCrewPreviewWatcher(); // v3.343 크루 비회원 1분 미리 듣기
     return () => { teardownPlaybackReconciler(); stopCrewPreview(); };
   }, []);
+  // v3.416 [RemoteCmd] iOS 잠금화면·제어센터·이어폰 다음/이전 곡(모듈 없는 빌드·안드로이드·웹은 no-op)
+  useEffect(() => enableRemoteTrackCommands(
+    () => { void skipFromRemote('next'); },
+    () => { void skipFromRemote('prev'); },
+  ), []);
   // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용
   const [currentRoute, setCurrentRoute] = useState<string | undefined>(undefined);
   const syncRoute = () => {

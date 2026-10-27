@@ -1434,3 +1434,33 @@ export function teardownPlaybackReconciler(): void {
   reconcilerSubscription = null;
   reconcilerInited = false; // 재진입 가드 리셋 — 다음 init에서 재등록 가능
 }
+
+/**
+ * v3.416 [RemoteCmd] 잠금화면·제어센터·이어폰·차량 '다음 곡/이전 곡'(iOS 모듈 maidol-remote-commands) —
+ * 미니플레이어 수동 다음/이전과 같은 동작(다음 = Inst 건너뛰기, 큐 끝이면 관련곡 이어듣기).
+ */
+export async function skipFromRemote(dir: 'next' | 'prev'): Promise<void> {
+  try {
+    const st = usePlayerStore.getState();
+    if (!st.track) return;
+    if (dir === 'next') {
+      const idx = st.getNextManualIndex();
+      console.info('[RemoteCmd] 다음', { idx });
+      if (idx >= 0 && st.queue[idx]) {
+        st.playTrackAtIndex(idx);
+        await loadAndPlayTrack(st.queue[idx]);
+        return;
+      }
+      await autoContinueWithRelated();
+      return;
+    }
+    const idx = st.getPrevIndex();
+    console.info('[RemoteCmd] 이전', { idx });
+    if (idx >= 0 && st.queue[idx]) {
+      st.playTrackAtIndex(idx);
+      await loadAndPlayTrack(st.queue[idx]);
+    }
+  } catch (err: any) {
+    console.warn('[RemoteCmd] 처리 실패', { dir, message: err?.message });
+  }
+}
