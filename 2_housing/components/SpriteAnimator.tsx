@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Image, ImageSourcePropType, StyleSheet } from 'react-native';
+import { useAppActive } from '../hooks/useAppActive';
 
 const FRAME_W = 32;
 const FRAME_H = 64; // 캐릭터 1프레임 = 32x64 (머리+몸통 2행)
@@ -58,10 +59,13 @@ export default function SpriteAnimator({
 }: Props) {
   const [frame, setFrame] = useState(0);
   const config = ANIMATIONS[animation];
+  // v3.415: 화면이 꺼지면(백그라운드) 프레임 타이머 정지 — iOS 백그라운드 CPU 한도 초과로 앱 종료 방지(10-27)
+  const appActive = useAppActive();
+  const running = playing && appActive;
 
   useEffect(() => {
-    if (!playing) {
-      setFrame(0);
+    if (!running) {
+      if (!playing) setFrame(0);
       return;
     }
 
@@ -71,7 +75,7 @@ export default function SpriteAnimator({
     }, 1000 / fps);
 
     return () => clearInterval(interval);
-  }, [animation, playing, fps]);
+  }, [animation, playing, running, fps]);
 
   // 프레임 좌표 계산
   let col: number;

@@ -13,7 +13,7 @@
 // 한계(정직 기재): Android 는 MediaSession 기반이라 장시간 백그라운드에서 OS 가 프로세스를
 // 회수할 수 있다(전용 포그라운드 서비스는 RNTP 영역 — 실기기 검증 후 미흡 시 2차 이관).
 // iOS 는 UIBackgroundModes audio + shouldPlayInBackground 로 표준 경로.
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   createAudioPlayer,
   type AudioPlayer,
@@ -92,16 +92,23 @@ export function syncNativeLockScreen(track: any): void {
   lockScreenTrack = {
     title: track.title || 'MAIDOL',
     artist: track.artist_name || track.uploader_nickname || 'MAIDOL',
-    artUrl: trackCoverUri(track),
+    // v3.415: 잠금화면 커버는 썸네일(640) — 원본(장당 6~8MB PNG)을 넘기면 iOS expo-audio 가 상태 갱신(0.5초)마다
+    //  다시 받아 디코딩해 CPU·데이터를 쓰고, 새 곡 이미지를 다 받기 전까지 이전 곡 커버가 남았다(대표 아이폰 6s 10-27).
+    artUrl: trackCoverUri(track, 640),
   };
   applyLockScreen(activeShim);
 }
+
+/** v3.415: 백그라운드 상태 콜백 간격(iOS) */
+const BACKGROUND_STATUS_MS = 5000;
 
 export class NativeShimSound {
   player: AudioPlayer;
   private cb: ((status: AvLikeStatus) => void) | null = null;
   private sub: { remove: () => void } | null = null;
   private removed = false;
+  private lastDeliveredAt = 0;
+  private lastDeliveredPlaying = false;
   private lastStatus: AvLikeStatus = {
     isLoaded: false, positionMillis: 0, isPlaying: false,
     didJustFinish: false, shouldPlay: false,
@@ -113,6 +120,16 @@ export class NativeShimSound {
     this.sub = player.addListener('playbackStatusUpdate', (st: AudioStatus) => {
       const av = toAvStatus(st as any);
       this.lastStatus = av;
+      // v3.415 [iOS]: 화면이 꺼져(백그라운드) 있으면 상태 콜백을 5초에 한 번만 — 0.5초마다 재생 위치를 store 에 쓰면
+      //  플레이어·미니플레이어가 계속 다시 그려져, 느린 기기(아이폰 6s)에서 iOS 백그라운드 CPU 한도(60초 중 80%)를 넘어
+      //  앱이 강제 종료됐다(cpu_resource_fatal, 대표 실기기 10-27). 곡 끝(didJustFinish)·재생 상태 변화는 바로 전달.
+      if (Platform.OS === 'ios' && AppState.currentState !== 'active') {
+        const now = Date.now();
+        const changed = av.didJustFinish || av.isPlaying !== this.lastDeliveredPlaying || !!av.error;
+        if (!changed && now - this.lastDeliveredAt < BACKGROUND_STATUS_MS) return;
+        this.lastDeliveredAt = now;
+      }
+      this.lastDeliveredPlaying = av.isPlaying;
       try {
         this.cb?.(av);
       } catch (err: any) {
