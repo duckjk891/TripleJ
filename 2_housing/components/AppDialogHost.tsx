@@ -89,7 +89,7 @@ export default function AppDialogHost({ nestedIn, active = true }: { nestedIn?: 
         key={i}
         style={[
           styles.btn,
-          vertical && styles.btnVertical,
+          vertical ? styles.btnVertical : styles.btnRowItem,
           isCancel ? styles.cancelBtn : isDestructive ? styles.destructiveBtn : styles.confirmBtn,
           btnLocked && styles.btnLocked,
         ]}
@@ -182,8 +182,9 @@ const styles = StyleSheet.create({
   },
   btnRow: { flexDirection: 'row', gap: 8 },
   btnCol: { gap: 8 },
+  // v3.417: flex:1 은 가로 배치(btnRowItem)에서만 — 세로 3버튼에서 flex:1 위에 덮어쓰는 방식은 아이폰에서 상자 높이를
+  //  버튼 하나만큼 덜 계산해 마지막 버튼(취소)이 상자 밖으로 나왔다(DM 내 메시지 메뉴, 대표 아이폰 10-28).
   btn: {
-    flex: 1,
     paddingVertical: 12,
     minHeight: 44,
     justifyContent: 'center',
@@ -193,6 +194,7 @@ const styles = StyleSheet.create({
   // v3.118.3: 웹에서 flex:0이 flex-basis 압축으로 버튼 높이를 무너뜨려 글자 잘림
   // (앨범 커버 변경 3버튼 등 세로 스택 전부) — 화풍 버튼(v3.109)과 동일 패턴 수정.
   btnVertical: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  btnRowItem: { flex: 1 },
   btnLocked: { opacity: 0.45 },
   cancelBtn: {
     backgroundColor: colors.bg.surface2,
