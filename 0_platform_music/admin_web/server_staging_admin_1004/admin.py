@@ -74,6 +74,16 @@ async def _log_admin_action(
     )
 
 
+async def _log_admin_view(current_admin, action: str, target_type: str, target_id, details: Optional[dict] = None):
+    """v3.359 [Governance] 관리자 개인정보 열람 기록(접속기록) — 자체 연결·best-effort(실패해도 열람은 진행)."""
+    try:
+        from ..database import postgres as _pg
+        async with _pg._pool.acquire() as _c:
+            await _log_admin_action(_c, str(current_admin["id"]), action, target_type, str(target_id)[:300], details)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[admin-view] log failed action=%s err=%s", action, type(e).__name__)
+
+
 # ---------------------------------------------------------------------------
 # 1. GET /dashboard
 # ---------------------------------------------------------------------------
@@ -244,6 +254,7 @@ async def get_user_detail(
     current_admin=Depends(get_admin_user),
     conn=Depends(get_pg),
 ):
+    await _log_admin_view(current_admin, "view_user", "user", user_id)  # v3.359 열람 기록
     try:
         uid = uuid.UUID(user_id)
     except ValueError:
@@ -1349,6 +1360,7 @@ async def get_user_recent_content(
     user_id: str,
     current_admin=Depends(get_admin_user),
 ):
+    await _log_admin_view(current_admin, "view_user_content", "user", user_id)  # v3.359 열람 기록
     """양면 뷰 우측 — 대상 사용자의 최근 트랙 20건 + 현재 캐릭터 상태.
 
     캐릭터 시트·원본 사진은 존재 여부 + 어드민 프록시 경로(/api/admin/media/...)로
@@ -1446,6 +1458,7 @@ async def get_report_evidence_file(
     current_admin=Depends(get_admin_user),
     conn=Depends(get_pg),
 ):
+    await _log_admin_view(current_admin, "view_report_evidence", "report", report_id, {"idx": idx})  # v3.359
     """어드민 전용 증거 파일 서빙 — evidence.items[idx] (이미지/JSON).
 
     evidence/ 는 공개 프록시·presign 전부 차단되어 있으므로 이 문이 유일한 출구.
@@ -1492,6 +1505,7 @@ async def admin_media_proxy(
     object_name: str,
     current_admin=Depends(get_admin_user),
 ):
+    await _log_admin_view(current_admin, "view_media", "media", object_name)  # v3.359 원본 사진·시트 열람 기록
     """어드민 전용 images 버킷 프록시 — recent-content 의 캐릭터 시트·원본 열람용.
 
     faces/(암호화 얼굴 데이터)는 어드민에게도 원문 노출 금지. 경로 탈출 차단.
@@ -1644,3 +1658,83 @@ async def admin_delete_club(
         "member_count": member_count,
         "hard_deleted": False,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# v3.359 [Governance] 얼굴 인증 면제 관리 — 종전 DB 직접 등록 → 관리자 API + 감사 기록(admin_logs)
+#   Mongo face_verify_exemptions {user_id, reason, granted_by, created_at, revoked_at?, revoked_by?} 형식 그대로
+#   (판정은 face_verify_service.is_face_verify_exempt — revoked_at 없는 문서 = 면제, 캐시 60초).
+# ---------------------------------------------------------------------------
+class FaceExemptBody(BaseModel):
+    user_id: str
+    reason: str
+
+
+@router.get("/face-exemptions")
+async def list_face_exemptions(current_admin=Depends(get_admin_user), conn=Depends(get_pg)):
+    docs = await get_mongo().face_verify_exemptions.find({}).sort("created_at", -1).to_list(length=200)
+    ids = []
+    for d in docs:
+        try:
+            ids.append(uuid.UUID(str(d.get("user_id"))))
+        except (ValueError, TypeError):
+            pass
+    nick = {}
+    if ids:
+        rows = await conn.fetch("SELECT id, nickname FROM users WHERE id = ANY($1::uuid[])", ids)
+        nick = {str(r["id"]): r["nickname"] for r in rows}
+    out = [{
+        "id": str(d["_id"]), "user_id": d.get("user_id"), "nickname": nick.get(str(d.get("user_id"))),
+        "reason": d.get("reason"), "granted_by": d.get("granted_by"),
+        "created_at": d["created_at"].isoformat() if d.get("created_at") else None,
+        "revoked_at": d["revoked_at"].isoformat() if d.get("revoked_at") else None,
+        "revoked_by": d.get("revoked_by"), "active": not d.get("revoked_at"),
+    } for d in docs]
+    await _log_admin_action(conn, str(current_admin["id"]), "view_face_exemptions", "face_exemption", "list", {"count": len(out)})
+    return {"exemptions": out}
+
+
+@router.post("/face-exemptions")
+async def grant_face_exemption(body: FaceExemptBody, current_admin=Depends(get_admin_user), conn=Depends(get_pg)):
+    try:
+        uid = uuid.UUID(body.user_id.strip())
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 사용자 ID입니다."})
+    reason = (body.reason or "").strip()
+    if len(reason) < 2:
+        return JSONResponse(status_code=400, content={"error": "면제 사유를 입력해 주세요."})
+    if not await conn.fetchval("SELECT 1 FROM users WHERE id = $1", uid):
+        return JSONResponse(status_code=404, content={"error": "사용자를 찾을 수 없습니다."})
+    col = get_mongo().face_verify_exemptions
+    if await col.find_one({"user_id": str(uid), "revoked_at": {"$exists": False}}):
+        return JSONResponse(status_code=409, content={"error": "이미 면제된 사용자입니다."})
+    now = datetime.now(timezone.utc)
+    res = await col.insert_one({"user_id": str(uid), "reason": reason[:300], "granted_by": str(current_admin["id"]), "created_at": now})
+    await _log_admin_action(conn, str(current_admin["id"]), "face_exempt_grant", "user", str(uid), {"reason": reason[:300]})
+    try:
+        from ..services import face_verify_service as _fv
+        _fv._EXEMPT_CACHE.pop(str(uid), None)
+    except Exception:
+        pass
+    logger.warning("[FaceExempt] granted user=%s by=%s", str(uid)[:8], str(current_admin["id"])[:8])
+    return {"ok": True, "id": str(res.inserted_id)}
+
+
+@router.post("/face-exemptions/{user_id}/revoke")
+async def revoke_face_exemption(user_id: str, current_admin=Depends(get_admin_user), conn=Depends(get_pg)):
+    now = datetime.now(timezone.utc)
+    res = await get_mongo().face_verify_exemptions.update_many(
+        {"user_id": user_id, "revoked_at": {"$exists": False}},
+        {"$set": {"revoked_at": now, "revoked_by": str(current_admin["id"])}},
+    )
+    if not res.modified_count:
+        return JSONResponse(status_code=404, content={"error": "면제 중인 사용자가 아닙니다."})
+    await _log_admin_action(conn, str(current_admin["id"]), "face_exempt_revoke", "user", user_id[:64], None)
+    try:
+        from ..services import face_verify_service as _fv
+        _fv._EXEMPT_CACHE.pop(user_id, None)
+    except Exception:
+        pass
+    logger.warning("[FaceExempt] revoked user=%s by=%s", user_id[:8], str(current_admin["id"])[:8])
+    return {"ok": True, "revoked": res.modified_count}

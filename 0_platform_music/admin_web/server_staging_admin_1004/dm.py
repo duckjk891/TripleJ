@@ -19,6 +19,9 @@ psubscribe 한다. 클럽 이벤트는 수신 워커에서 club_members 조회(6
 클럽 단위로 publish 해 송신측 팬아웃 비용 0, 멤버십 판정은 수신 워커가 캐시로).
 캐시 TTL 60s 동안 신규 승인 멤버는 이벤트 미수신·kick 직후 멤버는 수신 가능(허용 오차).
 
+v3.407: 보낸 메시지 삭제(`DELETE /conversations/{cid}/messages/{mid}`)·수정
+(`PATCH /conversations/{cid}/messages/{mid}` {text}) — 발신자만, WS message_deleted/message_edited.
+
 로그 prefix [dm](REST) / [dm-ws](WS) / [dm-pubsub](리스너) — id 앞 8자만,
 본문 텍스트 원문·토큰·JWT_SECRET 미로그.
 """
@@ -62,6 +65,48 @@ from ..services.word_filter import social_filter_on, word_filter_response  # v3.
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dm", tags=["DM"])
+
+
+# 관리자 확인용 접속 기기 — 앱이 보내는 기본 User-Agent 로 판별(앱 업데이트 불필요).
+#   아이폰 앱 "MAIDOL/<빌드> CFNetwork/… Darwin/…" · 안드로이드 앱 "okhttp/…" · 웹 "Mozilla/…"
+# 앱이 X-Client-Platform / X-App-Version 헤더를 보내면 그 값을 우선한다.
+# 사용자 API 응답에는 싣지 않는다(관리자 문의함에서만 노출).
+_CLIENT_UA_MAX = 300
+
+
+def client_info(request: Request) -> dict:
+    ua = (request.headers.get("user-agent") or "").strip()
+    hinted = (request.headers.get("x-client-platform") or "").strip().lower()
+    app_version = (request.headers.get("x-app-version") or "").strip()[:32] or None
+    app_build = None
+    if hinted in ("ios", "android", "web"):
+        platform = hinted
+    elif ua.startswith("MAIDOL/") and "CFNetwork" in ua:
+        platform = "ios"
+        app_build = ua.split("/", 1)[1].split(" ", 1)[0][:16] or None
+    elif ua.lower().startswith("okhttp"):
+        platform = "android"
+    elif ua.startswith("Mozilla/"):
+        platform = "web"
+    else:
+        platform = "other"
+    device = None
+    if platform == "web":
+        if "iPhone" in ua:
+            device = "iphone"
+        elif "iPad" in ua:
+            device = "ipad"
+        elif "Android" in ua:
+            device = "android"
+        else:
+            device = "pc"
+    return {
+        "platform": platform,
+        "device": device,
+        "app_build": app_build,
+        "app_version": app_version,
+        "ua": ua[:_CLIENT_UA_MAX] or None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +379,15 @@ async def post_message(
             image_object_name=body.image_object_name,
             image_object_names=body.image_object_names,
         )
+        # 접속 기기 기록 (관리자 문의함 표시용) — 실패해도 전송은 유지
+        try:
+            from bson import ObjectId as _ObjectId
+            if message and _ObjectId.is_valid(str(message.get("id") or "")):
+                await get_mongo().dm_messages.update_one(
+                    {"_id": _ObjectId(str(message["id"]))}, {"$set": {"client": client_info(request)}},
+                )
+        except Exception:
+            logger.warning("[dm] client info save failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)
         # admin-web 1004 — 공식 계정에게 보낸 "[오류신고: 사유] …" DM 은 관리자 '오류 신고'에도 접수
         # (실패 격리: 접수 실패가 DM 전송을 막지 않음).
         if (body.text or "").lstrip().startswith("[오류신고"):
@@ -347,12 +401,80 @@ async def post_message(
                     )
             except Exception:
                 logger.warning("[dm] issue bridge failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)
+        # v3.282 CS 워커 — 공식 계정 대화면 AI 1차 응대 예약(태스크 예약만·동기·비차단, 공식 여부 판정은
+        # 태스크 안에서). 어떤 예외도 DM 전송 응답을 막지 않는다.
+        try:
+            from ..services import cs_worker
+            cs_worker.schedule_from_dm(cid, str(me))
+        except Exception:
+            logger.warning("[dm] cs worker schedule failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)
         return {"message": message}
     except HTTPException:
         raise
     except Exception:
         logger.exception("[dm] post_message failed me=%s conv=%s", _short(me), _short(cid))
         return JSONResponse(status_code=500, content={"error": "메시지를 보낼 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# v3.407 — 보낸 메시지 삭제·수정 (발신자 본인만, 기한 없음, 공식 CS 대화 포함)
+# ---------------------------------------------------------------------------
+class EditMessageBody(BaseModel):
+    text: str = ""
+
+
+async def _edit_text_guard(me, text: str, conn):
+    """수정 문구 금칙어·어린이 검사 — post_message 와 동일 분기(같은 kids_policy·word_filter 사용).
+    통과면 None, 거부면 JSONResponse. 수정은 사진 첨부가 없으므로 dm_image 검사는 해당 없음."""
+    if kids_policy.kids_enabled() and await kids_policy.is_child_user(me, conn):
+        return await word_filter_response(me, [text], "dm", child=True)
+    if kids_policy.kids_enabled() or getattr(settings, "word_filter_all_users", False) or social_filter_on():
+        return await word_filter_response(me, [text], "dm", child=False)
+    return None
+
+
+@router.delete("/conversations/{cid}/messages/{mid}")
+async def delete_dm_message(
+    cid: str,
+    mid: str,
+    current_user=Depends(get_current_user),
+):
+    """보낸 메시지 삭제(soft) — 발신자만. 원문은 DB 보존(신고·CS), 응답·목록에는 '삭제된 메시지예요'.
+    실시간 message_deleted 를 상대·본인 다른 기기에 발행. CS 워커 재실행 없음."""
+    me = current_user["id"]
+    logger.info("[dm] delete_message me=%s conv=%s msg=%s", _short(me), _short(cid), _short(mid))
+    try:
+        return await dm_service.delete_message(get_mongo(), cid, mid, me)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[dm] delete_message failed me=%s conv=%s msg=%s", _short(me), _short(cid), _short(mid))
+        return JSONResponse(status_code=500, content={"error": "메시지를 삭제할 수 없어요."})
+
+
+@router.patch("/conversations/{cid}/messages/{mid}")
+async def edit_dm_message(
+    cid: str,
+    mid: str,
+    body: EditMessageBody,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
+):
+    """보낸 메시지 수정 — 발신자만, 삭제된 메시지 409. 전송과 같은 길이·금칙어·게이트 검사.
+    edited_at·edit_history(최근 10) 기록, 최초 원문 original_text 보존. 실시간 message_edited 발행."""
+    me = current_user["id"]
+    logger.info("[dm] edit_message me=%s conv=%s msg=%s len=%d", _short(me), _short(cid), _short(mid), len(body.text or ""))
+    _wf = await _edit_text_guard(me, body.text, conn)
+    if _wf is not None:
+        logger.info("[dm] edit_message word filter denied me=%s conv=%s msg=%s", _short(me), _short(cid), _short(mid))
+        return _wf
+    try:
+        return await dm_service.edit_message(conn, get_mongo(), me_id=me, conversation_id=cid, message_id=mid, text=body.text)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[dm] edit_message failed me=%s conv=%s msg=%s", _short(me), _short(cid), _short(mid))
+        return JSONResponse(status_code=500, content={"error": "메시지를 수정할 수 없어요."})
 
 
 @router.post("/conversations/{cid}/read")
@@ -482,6 +604,29 @@ async def decline_request(cid: str, current_user=Depends(get_current_user)):
     except Exception:
         logger.exception("[dm] decline_request failed me=%s conv=%s", _short(me), _short(cid))
         return JSONResponse(status_code=500, content={"error": "요청을 처리할 수 없습니다."})
+
+
+@router.get("/blocks")
+async def list_blocks(current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    """v3.294 [Block] 내가 차단한 사용자 목록(최근 순) — 설정 '차단한 사용자' 화면."""
+    me = str(current_user["id"])
+    try:
+        rows = await get_mongo().dm_blocks.find({"blocker_id": me}).sort("created_at", -1).to_list(length=500)
+        ids = [str(r.get("blocked_id")) for r in rows if r.get("blocked_id")]
+        users = await dm_service.hydrate_users(conn, ids)
+        items = []
+        for r in rows:
+            uid = str(r.get("blocked_id") or "")
+            if not uid:
+                continue
+            u = users.get(uid) or {"id": uid, "nickname": None, "profile_image": None, "code": None}
+            ca = r.get("created_at")
+            items.append({**u, "blocked_at": ca.isoformat() if hasattr(ca, "isoformat") else None})
+        logger.info("[Block] list me=%s count=%d", _short(me), len(items))
+        return {"blocks": items}
+    except Exception:
+        logger.exception("[Block] list failed me=%s", _short(me))
+        return JSONResponse(status_code=500, content={"error": "차단 목록을 불러올 수 없습니다."})
 
 
 @router.post("/blocks/{uid}")

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import ClientBadge from '../components/ClientBadge';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   getCsConversations, getCsMessages, replyCs, markCsRead, sendCs, broadcastCs,
@@ -91,6 +92,7 @@ function Inbox({ onUnreadChange }) {
   };
 
   const peerId = active?.peer?.id;
+  const lastClient = [...messages].reverse().find((m) => m.sender_id === peerId && m.client)?.client;
 
   return (
     <div className="inbox">
@@ -118,7 +120,10 @@ function Inbox({ onUnreadChange }) {
       <div className="inbox-thread card">
         {!active ? <p className="cell-sub">왼쪽에서 대화를 선택하세요.</p> : (
           <>
-            <h3 className="section-title">{active.peer?.nickname}</h3>
+            <h3 className="section-title">
+              {active.peer?.nickname}
+              {lastClient && <span style={{ marginLeft: 8, fontWeight: 400 }}><ClientBadge client={lastClient} /></span>}
+            </h3>
             <div className="thread-body">
               {messages.map((m) => {
                 const mine = m.sender_id !== peerId;
@@ -138,7 +143,10 @@ function Inbox({ onUnreadChange }) {
                     {!mine && /^\s*\[오류신고/.test(m.text || '') && (
                       <Link to="/issues" className="badge badge--amber" style={{ marginTop: 3 }}>오류 신고로 접수됨 →</Link>
                     )}
-                    <div className="cell-sub bubble-time">{formatDate(m.created_at)}</div>
+                    <div className="cell-sub bubble-time">
+                      {formatDate(m.created_at)}
+                      {!mine && m.client && <> · <ClientBadge client={m.client} /></>}
+                    </div>
                   </div>
                 );
               })}

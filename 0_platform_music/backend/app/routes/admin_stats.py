@@ -96,6 +96,7 @@ FEATURES = [
     ("feed", "피드 작성", "feeds", "created_at", "author_id", None),
     ("dm", "DM 전송", "dm_messages", "created_at", "sender_id", None),
     ("attendance", "출석체크", "point_events", "created_at", "user_id", {"action": "attendance"}),
+    ("star_station", "스타 제작소", "point_events", "created_at", "user_id", {"action": "star_station"}),
 ]
 
 

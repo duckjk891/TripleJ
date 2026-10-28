@@ -151,7 +151,8 @@ import re as _re
 _DM_ISSUE_RE = _re.compile(r"^\s*\[오류신고\s*[:：]\s*([^\]]{1,40})\]\s*(.*)$", _re.S)
 _DM_REASON_MAP = {
     "재생 오류": "playback",
-    "결제·별 오류": "payment",
+    "결제·별 오류": "payment",  # 옛 앱 빌드
+    "결제·스타 오류": "payment",  # v3.395 스타 표기 통일
     "계정 문제": "account",
     "로그인·계정 인증 문제": "auth",
     "기타": "other",

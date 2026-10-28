@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import ClientBadge from '../components/ClientBadge';
 import { useNavigate } from 'react-router-dom';
 import {
   getIssues, getIssueSummary, getIssueRelatedErrors, updateIssueStatus,
@@ -67,7 +68,7 @@ function IssueModal({ issue, onClose, onSaved }) {
             <><dt>직전 동선</dt><dd>{issue.recent_pages.map(pageLabel).join('  ←  ')}</dd></>
           )}
           <dt>앱 버전</dt><dd>{issue.app_version || '-'}</dd>
-          <dt>기기</dt><dd className="cell-sub">{issue.user_agent || '-'}</dd>
+          <dt>접속 기기</dt><dd><ClientBadge ua={issue.user_agent} appVersion={issue.app_version} />{issue.user_agent && <div className="cell-sub" style={{ marginTop: 4 }}>{issue.user_agent}</div>}</dd>
           {issue.handled_at && (<><dt>최근 처리</dt><dd>{formatDate(issue.handled_at)}</dd></>)}
         </dl>
 
@@ -165,7 +166,7 @@ function Inbox({ onChanged }) {
       {loading ? <p className="loading">로딩 중…</p> : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>접수일</th><th>유형</th><th>내용</th><th>신고자</th><th>앱 버전</th><th>상태</th></tr></thead>
+            <thead><tr><th>접수일</th><th>유형</th><th>내용</th><th>신고자</th><th>접속 기기</th><th>상태</th></tr></thead>
             <tbody>
               {issues.map((it) => (
                 <tr key={it.id} className="row-click" onClick={() => setOpen(it)}>
@@ -174,7 +175,7 @@ function Inbox({ onChanged }) {
                   <td style={{ minWidth: 200 }}>{(it.text || '').slice(0, 80) || <span className="cell-sub">(입력 없음)</span>}
                     {it.page_url && <div className="cell-sub">{it.page_url}</div>}</td>
                   <td className="nowrap">{it.nickname || '-'}</td>
-                  <td className="nowrap cell-sub">{it.app_version || '-'}</td>
+                  <td className="nowrap"><ClientBadge ua={it.user_agent} appVersion={it.app_version} /></td>
                   <td><StatusBadge s={it.status} /></td>
                 </tr>
               ))}

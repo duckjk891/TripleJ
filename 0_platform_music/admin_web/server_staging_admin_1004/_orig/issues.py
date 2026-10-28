@@ -137,3 +137,70 @@ async def create_issue(
     except Exception:
         logger.exception("[issues] create failed user=%s", user_tag)
         return JSONResponse(status_code=500, content={"error": "신고를 접수할 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# admin-web 1004 — DM 경유 오류 신고 연결
+#   앱(v3.95~)의 "문의하기(오류 신고)"는 공식 계정 DM 에 "[오류신고: 사유] 내용" 을 보내기만 하고
+#   POST /api/issues 를 호출하지 않아, 관리자 '오류 신고' 화면이 비어 있었다. 공식 계정으로 온
+#   DM 중 이 머리말이 붙은 메시지를 issue_reports 에도 접수한다(앱 수정 없이 기존 빌드에 적용).
+#   실패 격리 — 어떤 예외도 DM 전송을 막지 않는다. dm_message_id 로 중복 접수 방지.
+# ---------------------------------------------------------------------------
+import re as _re
+
+_DM_ISSUE_RE = _re.compile(r"^\s*\[오류신고\s*[:：]\s*([^\]]{1,40})\]\s*(.*)$", _re.S)
+_DM_REASON_MAP = {
+    "재생 오류": "playback",
+    "결제·별 오류": "payment",  # 옛 앱 빌드
+    "결제·스타 오류": "payment",  # v3.395 스타 표기 통일
+    "계정 문제": "account",
+    "로그인·계정 인증 문제": "auth",
+    "기타": "other",
+}
+
+
+def parse_dm_issue(text):
+    """'[오류신고: 사유] 내용' → (reason_code, 내용). 머리말이 없으면 None."""
+    m = _DM_ISSUE_RE.match(text or "")
+    if not m:
+        return None
+    label = m.group(1).strip()
+    return _DM_REASON_MAP.get(label, "other"), m.group(2).strip()
+
+
+async def create_issue_from_dm(mongo, user_id, message: dict, user_agent=None, created_at=None):
+    """공식 계정으로 온 DM 메시지를 오류 신고로 접수. 접수하면 issue id, 대상 아니면 None."""
+    parsed = parse_dm_issue(message.get("text"))
+    if not parsed:
+        return None
+    reason, body_text = parsed
+    message_id = str(message.get("id") or "")
+    if message_id and await mongo.issue_reports.find_one({"dm_message_id": message_id}, {"_id": 1}):
+        return None
+    image_count = len(message.get("image_object_names") or [])
+    if image_count:
+        body_text = (body_text + "\n" if body_text else "") + "(사진 {}장 첨부 — DM 대화에서 확인)".format(image_count)
+    doc = {
+        "user_id": str(user_id),
+        "reason": reason,
+        "text": (body_text or "(내용 없이 접수됨 — DM 대화에서 확인)")[:MAX_ISSUE_TEXT_LEN],
+        "page_url": None,
+        "recent_pages": [],
+        "user_agent": (user_agent or "")[:MAX_UA_LEN] or None,
+        "app_version": None,
+        "status": "received",
+        "admin_note": None,
+        "handled_by": None,
+        "handled_at": None,
+        "dm_conversation_id": message.get("conversation_id"),
+        "dm_message_id": message_id or None,
+        "source": "dm",
+        "created_at": created_at or datetime.now(timezone.utc),
+    }
+    result = await mongo.issue_reports.insert_one(doc)
+    logger.info(
+        "[issues] create from dm user=%s issue=%s reason=%s",
+        str(user_id)[:8], str(result.inserted_id), reason,
+    )
+    return str(result.inserted_id)
+
