@@ -67,6 +67,48 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dm", tags=["DM"])
 
 
+# 관리자 확인용 접속 기기 — 앱이 보내는 기본 User-Agent 로 판별(앱 업데이트 불필요).
+#   아이폰 앱 "MAIDOL/<빌드> CFNetwork/… Darwin/…" · 안드로이드 앱 "okhttp/…" · 웹 "Mozilla/…"
+# 앱이 X-Client-Platform / X-App-Version 헤더를 보내면 그 값을 우선한다.
+# 사용자 API 응답에는 싣지 않는다(관리자 문의함에서만 노출).
+_CLIENT_UA_MAX = 300
+
+
+def client_info(request: Request) -> dict:
+    ua = (request.headers.get("user-agent") or "").strip()
+    hinted = (request.headers.get("x-client-platform") or "").strip().lower()
+    app_version = (request.headers.get("x-app-version") or "").strip()[:32] or None
+    app_build = None
+    if hinted in ("ios", "android", "web"):
+        platform = hinted
+    elif ua.startswith("MAIDOL/") and "CFNetwork" in ua:
+        platform = "ios"
+        app_build = ua.split("/", 1)[1].split(" ", 1)[0][:16] or None
+    elif ua.lower().startswith("okhttp"):
+        platform = "android"
+    elif ua.startswith("Mozilla/"):
+        platform = "web"
+    else:
+        platform = "other"
+    device = None
+    if platform == "web":
+        if "iPhone" in ua:
+            device = "iphone"
+        elif "iPad" in ua:
+            device = "ipad"
+        elif "Android" in ua:
+            device = "android"
+        else:
+            device = "pc"
+    return {
+        "platform": platform,
+        "device": device,
+        "app_build": app_build,
+        "app_version": app_version,
+        "ua": ua[:_CLIENT_UA_MAX] or None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # WebSocket 연결 매니저 (in-memory, 멀티탭 대비 user_id → set[WebSocket])
 # ---------------------------------------------------------------------------
@@ -337,6 +379,15 @@ async def post_message(
             image_object_name=body.image_object_name,
             image_object_names=body.image_object_names,
         )
+        # 접속 기기 기록 (관리자 문의함 표시용) — 실패해도 전송은 유지
+        try:
+            from bson import ObjectId as _ObjectId
+            if message and _ObjectId.is_valid(str(message.get("id") or "")):
+                await get_mongo().dm_messages.update_one(
+                    {"_id": _ObjectId(str(message["id"]))}, {"$set": {"client": client_info(request)}},
+                )
+        except Exception:
+            logger.warning("[dm] client info save failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)
         # admin-web 1004 — 공식 계정에게 보낸 "[오류신고: 사유] …" DM 은 관리자 '오류 신고'에도 접수
         # (실패 격리: 접수 실패가 DM 전송을 막지 않음).
         if (body.text or "").lstrip().startswith("[오류신고"):

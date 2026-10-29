@@ -355,8 +355,15 @@ async def _snapshot_evidence(report_id: str, target_type: str, target_id: str, c
                 logger.warning("[evidence] target gone report=%s type=dm_message", _short(report_id))
                 return
             owner_id = doc.get("sender_id")
+            # admin-web 1004 — 첨부 이미지도 증거로 보존(단일 image_object_name + v3.274 배열 병합,
+            # 중복 제거). 사진만 보낸 DM 신고 시 어드민이 볼 자료가 없던 문제 수정.
+            _dm_images: list = []
+            for _n in ([doc.get("image_object_name")] if doc.get("image_object_name") else []) + list(doc.get("image_object_names") or []):
+                if _n and _n not in _dm_images:
+                    _dm_images.append(_n)
             target_summary = {
                 "text": str(doc.get("text") or "")[:100],
+                "image_count": len(_dm_images),
             }
             await _snapshot_json_item(items, report_id, "content", {
                 "target_type": "dm_message",
@@ -364,9 +371,12 @@ async def _snapshot_evidence(report_id: str, target_type: str, target_id: str, c
                 "owner_id": owner_id,
                 "conversation_id": doc.get("conversation_id"),
                 "text": doc.get("text"),
+                "image_object_names": _dm_images,
                 "created_at": doc.get("created_at"),
                 "captured_at": captured_at,
             })
+            for _i, _n in enumerate(_dm_images):
+                await _snapshot_image_item(items, report_id, "image_{}".format(_i + 1), _n)
 
         evidence = {
             "owner_id": owner_id,

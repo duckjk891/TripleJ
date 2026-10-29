@@ -154,6 +154,20 @@ async def get_cs_messages(
         mongo = get_mongo()
         await _assert_official_conversation(mongo, cid, official_id, admin_tag)
         items = await dm_service.get_messages(mongo, cid, official_id, before=before, limit=limit)
+        # 사용자가 보낸 메시지의 접속 기기(dm.py client_info) — 관리자 응답에만 동봉
+        try:
+            from bson import ObjectId as _Oid
+            oids = [_Oid(m["id"]) for m in items if m.get("id") and _Oid.is_valid(m["id"])]
+            if oids:
+                clients = {
+                    str(d["_id"]): d.get("client")
+                    async for d in mongo.dm_messages.find({"_id": {"$in": oids}, "client": {"$exists": True}}, {"client": 1})
+                }
+                for m in items:
+                    if m.get("id") in clients:
+                        m["client"] = clients[m["id"]]
+        except Exception:
+            logger.warning("[admin-cs] client info attach failed cid=%s", _short(cid), exc_info=True)
         return {"messages": items}
     except HTTPException:
         raise
