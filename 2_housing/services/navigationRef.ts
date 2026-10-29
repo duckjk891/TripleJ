@@ -12,6 +12,33 @@ export function navigateGlobal(name: string, params?: object) {
   }
 }
 
+/**
+ * v3.419: 시작 화면(Splash, 5초 뒤 MainTabs 로 replace)이 끝날 때까지 대기 — 최대 timeoutMs.
+ * Splash 중에 다른 화면으로 이동하면 Splash 의 replace 가 뒤이어 차트로 덮어쓴다
+ * (첫 방문자 '무료로 한 곡 만들어보기' → 재료 담기 → 차트로 튕김, 대표 10-29).
+ */
+export function whenPastSplash(timeoutMs = 8000): Promise<void> {
+  const past = () => navigationRef.isReady() && !!navigationRef.getCurrentRoute()?.name
+    && navigationRef.getCurrentRoute()?.name !== 'Splash';
+  if (past()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    let off: (() => void) | undefined;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      off?.();
+      resolve();
+    };
+    // 컨테이너 준비 전엔 state 리스너를 못 다니 짧게 폴링도 한다
+    const poll = setInterval(() => { if (past()) finish(); }, 200);
+    const timer = setTimeout(finish, timeoutMs);
+    try { off = navigationRef.addListener('state', () => { if (past()) finish(); }); } catch { /* 폴링으로 대체 */ }
+  });
+}
+
 // v3.216b F1: 로그인 성공 시 항상 차트 탭으로 리셋 착지 — 이메일·소셜·토큰 콜백 공용.
 // Splash 표시 중이거나 컨테이너 미준비면 no-op: Splash는 어차피 MainTabs(초기 탭 Chart)로
 // replace 되므로 인트로를 끊지 않고도 차트 착지가 보장된다.

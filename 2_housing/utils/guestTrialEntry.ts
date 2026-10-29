@@ -2,7 +2,7 @@
 // 체험을 이미 쓴 기기는 로그인 모달로 유도한다. 네비게이션은 전역 ref(어느 화면에서든).
 // v3.277 [GuestCompose]: 작사 체험은 썼지만 작곡 체험은 안 쓴 게스트 — 남아 있는 체험 가사가 있으면
 // 가사 결과(LyricsResult)로 보내 '작곡하러 가기'로 작곡 체험을 이어가게 한다.
-import { navigateGlobal } from '../services/navigationRef';
+import { navigateGlobal, whenPastSplash } from '../services/navigationRef';
 import { openLoginModal } from './loginModal';
 import { isGuestTrialUsed, isGuestComposeUsed, getGuestPendingGen } from './guestTrial';
 import { showAlert } from './appAlert';
@@ -10,6 +10,8 @@ import { useLyricsStore } from '../stores/lyricsStore';
 import { clearStorySong, setStoryInput, storySongAvailable } from './storySong'; // v3.413 체험 = 재료 담기
 
 export async function startGuestLyricsTrial(source: string): Promise<void> {
+  // v3.419: 시작 화면(5초) 중에 누르면, 시작 화면이 끝난 뒤 이동(그 전에 가면 시작 화면이 차트로 덮어씀)
+  await whenPastSplash();
   let used = false;
   try { used = await isGuestTrialUsed(); } catch { used = false; }
   let composeUsed = true;

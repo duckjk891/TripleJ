@@ -16,7 +16,7 @@ import { whenBootAuthSettled } from '../utils/bootAuth';
 import { isClubLinkEntry } from '../utils/clubLink';
 import { isCardLinkEntry } from '../utils/trackLink'; // v3.418 명함 QR
 import { isCrewAreaRoute, onDeferredWelcomeRequest } from '../utils/deferredWelcome';
-import { navigationRef } from '../services/navigationRef';
+import { navigationRef, whenPastSplash } from '../services/navigationRef';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { useRootModalOpen } from '../utils/modalTurn';
@@ -113,6 +113,9 @@ export default function WelcomeGuide() {
           offs.push(navigationRef.addListener('state', onNav));
           return;
         }
+        // v3.419: 시작 화면(5초 인트로) 위에 뜨지 않게 — 끝난 뒤 노출(그 사이 로그인되면 대상 아님)
+        await whenPastSplash();
+        if (useAuthStore.getState().user) return;
         console.info('[WelcomeGuide] 첫 실행 — 노출');
         setVisible(true);
       } catch (e: any) {
