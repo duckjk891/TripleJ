@@ -26,7 +26,8 @@ const MAX_QUEUE = 300;
 const IGNORED_SCREENS = new Set(['Splash']);
 
 /** v3.237: 커스텀 이벤트(공유 측정 — 서버 analytics.py EVENT_TYPES 확장분). 구서버는 조용히 버린다. */
-export type CustomEventType = 'share_compose_open' | 'share_sent' | 'share_link_open' | 'share_cta_tap';
+export type CustomEventType = 'share_compose_open' | 'share_sent' | 'share_link_open' | 'share_cta_tap'
+  | 'auth_fail'; // v3.420 로그인 전 소셜 로그인 실패 단계(서버 analytics.py AUTH_EVENT_TYPES — 단계·코드만)
 /** 이벤트 속성 — 원시값만(서버가 허용 키만 정제 저장). 본문·받는 사람 이름 등 사용자 텍스트는 넣지 말 것. */
 export type AnalyticsProps = Record<string, string | number | boolean>;
 
@@ -36,7 +37,7 @@ type AnalyticsEvent =
   | { type: CustomEventType; session_id: string; ts: string; props: AnalyticsProps };
 
 const CUSTOM_EVENT_TYPES: ReadonlySet<string> = new Set<CustomEventType>([
-  'share_compose_open', 'share_sent', 'share_link_open', 'share_cta_tap',
+  'share_compose_open', 'share_sent', 'share_link_open', 'share_cta_tap', 'auth_fail',
 ]);
 const MAX_PROPS = 16;
 
@@ -193,7 +194,7 @@ export function sanitizeEventProps(props: unknown): AnalyticsProps {
  * v3.237: 커스텀 이벤트 1건 적재(같은 큐·배치·device_id·세션). 전송 실패는 무음(분석이 앱 동작에 영향 X).
  * 서버: POST /api/analytics/events — type + ts(=started_at) + props(허용 키만 저장).
  */
-export function trackEvent(type: CustomEventType, props: AnalyticsProps = {}): void {
+export function trackEvent(type: CustomEventType, props: AnalyticsProps = {}, opts?: { flush?: boolean }): void {
   try {
     if (!_initialized || !CUSTOM_EVENT_TYPES.has(type)) {
       if (__DEV__) console.info('[screenAnalytics] trackEvent 무시', { type, initialized: _initialized });
@@ -201,7 +202,8 @@ export function trackEvent(type: CustomEventType, props: AnalyticsProps = {}): v
     }
     _queue.push({ type, session_id: _sessionId, ts: new Date().toISOString(), props: sanitizeEventProps(props) });
     if (_queue.length > MAX_QUEUE) _queue = _queue.slice(-MAX_QUEUE);
-    if (_queue.length >= FLUSH_THRESHOLD) _flush();
+    // v3.420: opts.flush = 바로 전송(로그인 실패처럼 사용자가 곧 앱을 닫을 수 있는 순간)
+    if (opts?.flush || _queue.length >= FLUSH_THRESHOLD) _flush();
   } catch (err: any) {
     console.error('[screenAnalytics] fail — trackEvent', { type, message: err?.message });
   }
