@@ -56,6 +56,11 @@ logger = logging.getLogger(__name__)
 _PUBLIC_BASE_URL = "https://api.maidol.ai.kr"
 _WEBAPP_URL = "https://app.maidol.ai.kr"
 _APP_TRACK_SCHEME = "aidol://track/"  # app.json scheme — '앱에서 열기' best-effort (App Links 는 D13 이월)
+# 10-29 명함 QR(?src=card) — 앱 출시 후 웹 대신 앱으로. 안드로이드 = 앱 있으면 그 곡(인텐트), 없으면 Play,
+# 아이폰 = App Store(사파리는 앱 설치 여부를 알 수 없어 스킴 시도 시 오류 창). PC 는 종전대로 웹앱.
+# .env PLAY_STORE_URL 은 내부 테스트 링크라 쓰지 않는다.
+_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.maidol.app"
+_APP_STORE_URL = "https://apps.apple.com/kr/app/id6820885751"
 _DEFAULT_OG_URL = f"{_PUBLIC_BASE_URL}/static/og/invite_og_v2.png"  # 1200×630 (invite 랜딩과 공용)
 
 _TRACK_ID_RE = re.compile(r"^[0-9a-f]{24}$")
@@ -278,7 +283,7 @@ async def _record_visit(track_id: str, share_id: Optional[str], bot: bool) -> No
 
 
 def _render_track_html(track_id: str, title: str, artist: str, has_cover: bool,
-                       og_desc: str = _OG_DESC, share_id: Optional[str] = None) -> str:
+                       og_desc: str = _OG_DESC, share_id: Optional[str] = None, card: bool = False) -> str:
     """공개 곡 랜딩. track_id 는 _TRACK_ID_RE 통과값(소문자 24hex), share_id 는 _SHARE_ID_RE 통과값 또는 None
     — URL 조립은 이 두 값만 사용."""
     t = html.escape(_clean_text(title, _TITLE_MAX) or "제목 없음", quote=True)
@@ -297,12 +302,47 @@ def _render_track_html(track_id: str, title: str, artist: str, has_cover: bool,
     <p class="lede">{desc}</p>
     <a class="cta" id="listen" href="{html.escape(listen_url, quote=True)}">바로 듣기</a>
     <a class="open-app" href="{app_url}">앱에서 열기</a>"""
+    if card:
+        return _render_card_html(track_id, t, artist_line, desc, og_title, og_image, page_url, listen_url, app_url)
     # 이동 URL 은 서버 검증 id(+ 검증된 s)로만 조립된 상수 형식(제목·기타 쿼리값 혼입 없음).
     script = f"""
   <script>
     (function () {{
       var u = "{listen_url}";
       try {{ window.location.replace(u); }} catch (e) {{ /* no-op — [바로 듣기] 버튼으로 이동 */ }}
+    }})();
+  </script>"""
+    return _page(og_type="music.song", og_title=og_title, og_desc=desc,
+                 og_image=og_image, og_url=page_url, body=body, script=script)
+
+
+def _render_card_html(track_id: str, t: str, artist_line: str, desc: str, og_title: str, og_image: str,
+                      page_url: str, listen_url: str, app_url: str) -> str:
+    """명함 QR 랜딩 — 기기별로 앱/스토어로 보낸다. 자동 이동이 막히는 브라우저(일부 인앱)를 위해 버튼도 둔다."""
+    from urllib.parse import quote
+    intent_url = (f"intent://track/{track_id}#Intent;scheme=aidol;package=com.maidol.app;"
+                  f"S.browser_fallback_url={quote(_PLAY_STORE_URL, safe='')};end")
+    body = f"""    <img class="cover" src="{og_image}" alt="">
+    <h1>{t}</h1>{artist_line}
+    <p class="lede">{desc}</p>
+    <a class="cta" id="listen" href="{html.escape(listen_url, quote=True)}">바로 듣기</a>
+    <a class="open-app" id="store" href="{_APP_STORE_URL}" style="display:none;margin:0 8px">앱 받기</a>
+    <a class="open-app" id="web" href="{html.escape(listen_url, quote=True)}" style="display:none;margin:0 8px">웹에서 바로 듣기</a>"""
+    script = f"""
+  <script>
+    (function () {{
+      var ua = navigator.userAgent || "";
+      var android = /Android/i.test(ua);
+      var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      var dest = "{listen_url}";
+      if (android || ios) {{
+        dest = android ? "{intent_url}" : "{_APP_STORE_URL}";
+        var b = document.getElementById("listen"), st = document.getElementById("store"), w = document.getElementById("web");
+        b.href = dest; b.textContent = android ? "MAIDOL 앱에서 듣기" : "App Store에서 MAIDOL 받기";
+        if (android) {{ st.href = "{_PLAY_STORE_URL}"; st.textContent = "Google Play에서 앱 받기"; st.style.display = ""; }}
+        w.style.display = "";
+      }}
+      try {{ window.location.replace(dest); }} catch (e) {{ /* no-op — 버튼으로 이동 */ }}
     }})();
   </script>"""
     return _page(og_type="music.song", og_title=og_title, og_desc=desc,
@@ -345,10 +385,12 @@ async def track_share_landing(request: Request, track_id: str):
     has_cover = _cover_path_allowed(cover)
     share_id, s_tag = _share_id(request)
     bot = _is_bot(request)
-    logger.info("[ShareLanding] track=%s ok=True cover=%s s=%s bot=%s ua=%s", track_id[:8], has_cover, s_tag, bot, ua)
+    logger.info("[ShareLanding] track=%s ok=True cover=%s s=%s bot=%s ua=%s card=%s", track_id[:8], has_cover, s_tag, bot, ua,
+                request.query_params.get("src") == "card")
     og_desc = await get_og_description()
+    card = request.query_params.get("src") == "card"
     content = _render_track_html(track_id, doc.get("title") or "", doc.get("artist_name") or "", has_cover,
-                                 og_desc=og_desc, share_id=share_id)
+                                 og_desc=og_desc, share_id=share_id, card=card)
     await _record_visit(track_id, share_id, bot)
     return HTMLResponse(status_code=200, content=content, headers=dict(_HTML_HEADERS))
 

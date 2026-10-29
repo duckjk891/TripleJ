@@ -92,7 +92,8 @@ SHARE_PROP_RULES = {
     "outcome": _enum("shared", "copied", "manual", "cancelled", "failed"),
     "src": _src,
     "logged_in": _bool,
-    "dest": _enum("signup", "studio"),
+    "dest": _enum("signup", "studio", "store_android", "store_ios"),  # v3.418 명함 QR → 앱 설치
+    "card": _bool,  # v3.418 명함 QR 진입
 }
 
 
