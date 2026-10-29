@@ -307,7 +307,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const fromCard = viaShare && route.params?.fromCard === true;
   const cardStoreOs = fromCard ? webMobileOs() : null;
   const shareCtaLabel = fromCard ? '내 이야기로 노래 만들기' : '나도 이런 곡 만들기';
-  // v3.418c: 명함 QR(휴대폰 웹) — 재생 화면 10초 뒤 설치 팝업 1회. 다른 곡으로 넘어가 CTA 가 사라지면 취소
+  // v3.418c: 명함 QR(휴대폰 웹) — 재생 화면 15초 뒤 설치 팝업 1회. 다른 곡으로 넘어가 CTA 가 사라지면 취소
   useEffect(() => {
     if (!cardStoreOs || !showShareCta || cardInstallAutoShown) return;
     const t = setTimeout(() => {
@@ -2006,8 +2006,8 @@ export default function PlayerScreen({ route, navigation }: any) {
 
 // v3.237 B: 공유 CTA 행 세로 예약분 = styles.shareCta height(32) + marginTop(8)
 const SHARE_CTA_RESERVE = 40;
-// v3.418c [CardQR] 명함 QR 로 온 휴대폰 방문자 — 재생 화면 도착 10초 뒤 설치 팝업 1회(페이지당)
-const CARD_INSTALL_AUTO_MS = 10000;
+// v3.418c [CardQR] 명함 QR 로 온 휴대폰 방문자 — 재생 화면 도착 15초 뒤 설치 팝업 1회(페이지당, 대표 10-29 15초)
+const CARD_INSTALL_AUTO_MS = 15000;
 let cardInstallAutoShown = false;
 
 function showCardInstallPopup(reason: 'cta' | 'auto', trackId: string): void {
