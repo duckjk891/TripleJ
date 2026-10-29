@@ -307,9 +307,20 @@ export default function PlayerScreen({ route, navigation }: any) {
   const fromCard = viaShare && route.params?.fromCard === true;
   const cardStoreOs = fromCard ? webMobileOs() : null;
   const shareCtaLabel = fromCard ? '내 이야기로 노래 만들기' : '나도 이런 곡 만들기';
+  // v3.418c: 명함 QR(휴대폰 웹) — 재생 화면 10초 뒤 설치 팝업 1회. 다른 곡으로 넘어가 CTA 가 사라지면 취소
+  useEffect(() => {
+    if (!cardStoreOs || !showShareCta || cardInstallAutoShown) return;
+    const t = setTimeout(() => {
+      if (cardInstallAutoShown) return;
+      cardInstallAutoShown = true;
+      showCardInstallPopup('auto', shareRouteTrackId);
+    }, CARD_INSTALL_AUTO_MS);
+    return () => clearTimeout(t);
+  }, [cardStoreOs, showShareCta, shareRouteTrackId]);
   const handleShareCta = () => {
+    if (cardStoreOs) { showCardInstallPopup('cta', shareRouteTrackId); return; } // v3.418c 명함 QR(휴대폰) = 설치 팝업
     const loggedIn = !!user;
-    const dest = cardStoreOs ? `store_${cardStoreOs}` : loggedIn ? 'studio' : 'signup';
+    const dest = loggedIn ? 'studio' : 'signup';
     console.info(`[ShareCTA] tap dest=${dest}`, { id: shareRouteTrackId, s: shareLinkId || null });
     try {
       // 측정(개인정보 없음): 곡 id·공유 id·목적지·로그인 여부만
@@ -321,7 +332,6 @@ export default function PlayerScreen({ route, navigation }: any) {
       console.error('[ShareCTA] share_cta_tap 기록 실패', { message: err?.message });
     }
     try {
-      if (cardStoreOs && openAppStoreFromWeb()) return;
       // v3.256 [MakeLike]: 목적지 배선을 utils/makeLike 공용으로 이동(동작 불변 — 회원 popTo Map·비회원 가입 직행)
       navigateShareCtaDestination(navigation, loggedIn);
     } catch (err: any) {
@@ -1996,6 +2006,28 @@ export default function PlayerScreen({ route, navigation }: any) {
 
 // v3.237 B: 공유 CTA 행 세로 예약분 = styles.shareCta height(32) + marginTop(8)
 const SHARE_CTA_RESERVE = 40;
+// v3.418c [CardQR] 명함 QR 로 온 휴대폰 방문자 — 재생 화면 도착 10초 뒤 설치 팝업 1회(페이지당)
+const CARD_INSTALL_AUTO_MS = 10000;
+let cardInstallAutoShown = false;
+
+function showCardInstallPopup(reason: 'cta' | 'auto', trackId: string): void {
+  console.info('[CardQR] 설치 팝업', { reason, id: trackId });
+  showAlert(
+    '앱에서 내 노래 만들기',
+    'MAIDOL 앱을 받으면 내 이야기로 노래를 만들 수 있어요. 무료예요.',
+    [
+      { text: '더 들을게요', style: 'cancel' },
+      {
+        text: '앱 설치하기',
+        onPress: () => {
+          // 측정: 설치 버튼을 누른 때만 share_cta_tap 1건(dest=store_android|store_ios) — 개인정보 없음
+          try { trackEvent('share_cta_tap', { dest: `store_${webMobileOs()}`, track_id: trackId, card: true, logged_in: !!useAuthStore.getState().user }); } catch {}
+          openAppStoreFromWeb();
+        },
+      },
+    ],
+  );
+}
 
 const styles = StyleSheet.create({
   // v3.237 B: 공유 링크 진입 '나도 이런 곡 만들기' — 보조 강조(아웃라인 필), 높이 고정(coverH 예약분과 일치)
