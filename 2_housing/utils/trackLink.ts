@@ -166,6 +166,11 @@ let consuming = false;
 /** 같은 링크의 연속 수신(getInitialURL + url 이벤트 중복 등) 억제 창 */
 export const TRACK_LINK_DEDUPE_MS = 3000;
 let lastCaptured: { id: string; at: number } | null = null;
+/** v3.418: 이번 실행이 명함 QR 진입인지(웹 모듈 로드 시 캡처) — WelcomeGuide 가 첫 방문 안내를 생략 */
+let cardEntry = false;
+export function isCardLinkEntry(): boolean {
+  return cardEntry;
+}
 
 export function peekPendingTrackLink(): PendingTrackLink | null {
   return pending;
@@ -182,7 +187,7 @@ function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: nu
   lastCaptured = { id, at: now };
   pending = shareId ? { id, src, shareId } : { id, src };
   if (view) pending.view = view;
-  if (card) pending.card = true;
+  if (card) { pending.card = true; cardEntry = true; }
   console.info('[TrackLink] captured', { id, src, s: shareId || null, view: view || null, card });
   return true;
 }
@@ -332,4 +337,5 @@ export function __resetTrackLinkForTest(): void {
   pending = null;
   consuming = false;
   lastCaptured = null;
+  cardEntry = false;
 }
