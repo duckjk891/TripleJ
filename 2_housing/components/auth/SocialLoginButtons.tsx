@@ -20,6 +20,20 @@ import { savePendingReferral } from '../../utils/pendingReferral';
 import { ACCOUNT_SUSPENDED_CODE, KIDS_TEXT, isAccountSuspendedCallback, isAccountSuspendedError, notifyAccountSuspended } from '../../utils/kidsRestricted';
 import { AppText } from '../ui';
 import { googleNativeSignIn, isGoogleNativeAvailable, isUserCancel } from '../../modules/google-native-signin';
+import { trackEvent } from '../../utils/screenAnalytics';
+
+// v3.420 (대표 10-29, 장재님 신고): 로그인 전 소셜 로그인 실패 단계를 서버 분석 이벤트로 남긴다
+// (원격 로그는 로그인 후에만 전송 → 로그인 실패 원인이 서버에 안 남던 문제). 단계·오류 코드·HTTP 상태만 — 토큰·이메일·메시지 원문 없음.
+type AuthFailStage = 'native_credential' | 'native_server' | 'browser_cancel' | 'browser_dismiss'
+  | 'browser_no_token' | 'browser_session' | 'browser_error';
+function reportAuthFail(provider: string, stage: AuthFailStage, extra: { code?: unknown; status?: unknown; fallback?: boolean } = {}): void {
+  const props: Record<string, string | number | boolean> = { provider, stage };
+  const code = String(extra.code ?? '').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 64);
+  if (code) props.code = code;
+  if (typeof extra.status === 'number') props.status = extra.status;
+  if (typeof extra.fallback === 'boolean') props.fallback = extra.fallback;
+  trackEvent('auth_fail', props, { flush: true });
+}
 import {
   chromeIntentUrl,
   googleBlockedInAppKind,
@@ -182,6 +196,7 @@ export default function SocialLoginButtons({
       }
       // 토큰 값 없음 — 오류 코드·메시지만(원격 로그로 어떤 기기·설정에서 폴백되는지 추적)
       console.warn('[GoogleNative] 계정창 실패 → 브라우저 방식', { code: err?.code, message: String(err?.message || '').slice(0, 160) });
+      reportAuthFail('google', 'native_credential', { code: err?.code, fallback: true });
       return false;
     }
     try {
@@ -193,6 +208,7 @@ export default function SocialLoginButtons({
       const ok = await useAuthStore.getState().loginWithToken(String(res.data?.token || ''));
       if (!ok) {
         console.error('[GoogleNative] 세션 열기 실패');
+        reportAuthFail('google', 'native_server', { code: 'session_open', fallback: false });
         if (useAuthStore.getState().error !== KIDS_TEXT.accountSuspended) showAlert('알림', GENERIC_FAIL_MSG);
         return true;
       }
@@ -206,10 +222,12 @@ export default function SocialLoginButtons({
       // 401 토큰 확인 실패(콘솔 클라이언트 설정 문제일 수 있음)·404/405 서버 미배포·503 미설정 → 브라우저 방식
       if (status === 401 || status === 404 || status === 405 || status === 503) {
         console.warn('[GoogleNative] 서버 확인 실패 → 브라우저 방식', { status, code: err?.response?.data?.code });
+        reportAuthFail('google', 'native_server', { status, code: err?.response?.data?.code, fallback: true });
         return false;
       }
       const serverCode = err?.response?.data?.code;
       console.error('[GoogleNative] 서버 로그인 실패', { status, code: serverCode || err?.code, message: err?.message });
+      reportAuthFail('google', 'native_server', { status, code: serverCode || err?.code, fallback: false });
       showAlert('알림', sanitizeServerMessage(serverCode === 'account_merge_error' ? serverCode : err?.response?.data?.error));
       return true;
     }
@@ -302,6 +320,7 @@ export default function SocialLoginButtons({
           const ok = await useAuthStore.getState().loginWithToken(decodeURIComponent(tokenMatch[1]));
           if (!ok) {
             console.error(`[${logPrefix}] 콜백 토큰 세션 열기 실패`, { provider });
+            reportAuthFail(provider, 'browser_session');
             // v3.233: 이용 중지(account_suspended) 는 api 인터셉터가 이미 안내 — 일반 실패 팝업 생략(이중 팝업 방지)
             if (useAuthStore.getState().error !== KIDS_TEXT.accountSuspended) showAlert('알림', GENERIC_FAIL_MSG);
           } else {
@@ -314,6 +333,7 @@ export default function SocialLoginButtons({
           let serverMsg: string | null = null;
           try { serverMsg = errMatch ? decodeURIComponent(errMatch[1]) : null; } catch { serverMsg = null; }
           console.error(`[${logPrefix}] 콜백에 토큰 없음`, { provider, hasError: !!errMatch });
+          reportAuthFail(provider, 'browser_no_token', { code: errMatch ? 'error_param' : 'none' });
           // v3.233: 보호자 동의 철회 계정 — 서버 `#error=account_suspended` → 이용 중지 안내(App.tsx 딥링크 수신과 3초 중복 억제 공유)
           if (isAccountSuspendedCallback(result.url)) {
             console.info(`[KidsGuard] social login blocked — account suspended provider=${provider}`);
@@ -325,9 +345,12 @@ export default function SocialLoginButtons({
       } else {
         // cancel/dismiss — 사용자가 닫았거나 백엔드 앱 복귀 미지원. 에러 alert 없이 조용히 복귀.
         if (__DEV__) console.info(`[${logPrefix}] 콜백 미수신(취소/닫힘)`, { provider, type: result?.type });
+        // v3.420: 브라우저에서 돌아오지 못함(장재님 사례 — 서버 콜백 0건). 사용자 취소와 구분은 type 으로.
+        reportAuthFail(provider, result?.type === 'cancel' ? 'browser_cancel' : 'browser_dismiss', { code: result?.type });
       }
     } catch (err: any) {
       console.error(`[${logPrefix}] 소셜 로그인 실패`, { provider, message: err?.message });
+      reportAuthFail(provider, 'browser_error', { code: err?.code });
       showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
     } finally {
       setBusy(null);

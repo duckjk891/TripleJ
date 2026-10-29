@@ -27,6 +27,14 @@ if [[ -z "$MESSAGE" ]]; then
 fi
 EAS="npx -y eas-cli@latest"
 
+# v3.420b (10-29 확인): google-services.json(깃 제외 파일)이 없으면 runtime(fingerprint)이 빌드와 달라져
+# "OTA 불가"로 잘못 나온다(깨끗한 워크트리에서 실제로 발생). 메인 체크아웃에서 복사해 쓰고, 없으면 중단.
+if [[ ! -f google-services.json ]]; then
+  echo "✖ google-services.json 이 없어요 — 메인 체크아웃(/Users/pearl/TripleJ/2_housing)에서 복사한 뒤 다시 실행하세요." >&2
+  echo "  (없으면 안드로이드 runtime 이 빌드와 달라 'OTA 불가'로 잘못 판정돼요)" >&2
+  exit 1
+fi
+
 echo "▶ 1/4 타입 검사(tsc)"
 npx tsc --noEmit -p .
 

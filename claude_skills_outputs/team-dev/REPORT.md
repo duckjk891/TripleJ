@@ -5033,3 +5033,13 @@ iOS 세션 요청(대표 10-27: 아이폰 6s 화면 끄고 재생 중 1분 뒤 �
 - ② 해당 없음: 잠금화면·알림 커버는 v3.392부터 썸네일 640. 곡 전환 시 Media3 가 새 커버를 비동기로 받아 잠깐 늦을 수는 있음(실기기 확인 대상).
 - 작업실 애니메이션 백그라운드 정지(v3.415 hooks/useAppActive)는 공통이라 안드로이드에도 적용됨.
 - 커밋 89f1957. 검증: tsc 0, Node 시험 6/6, Kotlin 로컬 컴파일. 실기기 미확인.
+
+## v3.420 / v3.420b — 2026-10-29 — 목소리 학습 일시 오류 1회 자동 재제출 · 로그인 전 소셜 로그인 실패 기록 (서버 운영 반영, 앱은 다음 빌드/OTA)
+- 계기: 장재님 오류 신고(앱 구글 로그인 3회 — 계정창 실패→브라우저 폴백, 서버 콜백 0건; 휴대폰 웹에선 정상 로그인) — 공식 DM 답장(안드로이드 업데이트 후 안내 약속), 신고 in_progress.
+  지유님 목소리 학습 마지막 단계 Suno "Internal Error, Please try again later."(500) 실패(⭐5 자동 환불).
+- 서버(server_staging_v3420_authlog_vcretry, 대표가 deploy_v3420.sh 실행 — health ok·oauth 302×3·Traceback 0):
+  - voice_clone_service: generate 일시 오류(5xx·'try again' 등) → 같은 낭독 녹음으로 1회 자동 재제출(원자 클레임, 옛 작업 늦은 콜백 무시, 2회째·비일시 오류는 종전대로 실패+환불). 격리 시험 16/16.
+  - analytics: auth_fail 이벤트(provider·stage·code·status·fallback 만 — 토큰·이메일·메시지 원문 없음), [AuthFail] 로그.
+- 앱(847d889): SocialLoginButtons 실패 9지점에서 auth_fail 즉시 전송(trackEvent flush). 다음 안드로이드 빌드 또는 1.3.3 출시 후 OTA.
+- v3.420b(621172f): ota_update.sh — google-services.json 없으면 중단. 깨끗한 워크트리에서 runtime 이 빌드와 달라 'OTA 불가' 오판했던 원인.
+  실측: 빌드 18(3df3ccf) runtime d0f8a3e1…, 최신 frontend 에서 v3.415b Kotlin(modules/maidol-player)만 되돌리면 일치 → 1.3.3 출시 뒤 OTA 가능(대표 결정: 심사 중 금지, 출시 뒤).
