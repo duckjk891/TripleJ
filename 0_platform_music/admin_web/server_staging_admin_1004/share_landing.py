@@ -56,8 +56,9 @@ logger = logging.getLogger(__name__)
 _PUBLIC_BASE_URL = "https://api.maidol.ai.kr"
 _WEBAPP_URL = "https://app.maidol.ai.kr"
 _APP_TRACK_SCHEME = "aidol://track/"  # app.json scheme — '앱에서 열기' best-effort (App Links 는 D13 이월)
-# 10-29 명함 QR(?src=card) — 앱 출시 후 웹 대신 앱으로. 안드로이드 = 앱 있으면 그 곡(인텐트), 없으면 Play,
-# 아이폰 = App Store(사파리는 앱 설치 여부를 알 수 없어 스킴 시도 시 오류 창). PC 는 종전대로 웹앱.
+# 10-29 명함 QR(?src=card) — 이 화면에서 곡을 들려주고 '내 이야기로 노래 만들기' → 앱 설치(_render_card_html).
+# 안드로이드 = 앱 있으면 앱 실행(인텐트), 없으면 Play · 아이폰 = App Store(사파리는 앱 설치 여부를 몰라
+# 스킴 시도 시 오류 창) · PC = 웹앱.
 # .env PLAY_STORE_URL 은 내부 테스트 링크라 쓰지 않는다.
 _PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.maidol.app"
 _APP_STORE_URL = "https://apps.apple.com/kr/app/id6820885751"
@@ -318,31 +319,82 @@ def _render_track_html(track_id: str, title: str, artist: str, has_cover: bool,
 
 def _render_card_html(track_id: str, t: str, artist_line: str, desc: str, og_title: str, og_image: str,
                       page_url: str, listen_url: str, app_url: str) -> str:
-    """명함 QR 랜딩 — 기기별로 앱/스토어로 보낸다. 자동 이동이 막히는 브라우저(일부 인앱)를 위해 버튼도 둔다."""
+    """명함 QR 랜딩(대표 10-29) — 이 화면에서 곡을 들려주고, '내 이야기로 노래 만들기'를 누르면 앱 설치로.
+    안드로이드 = 앱 있으면 앱 실행(인텐트), 없으면 Play · 아이폰 = App Store · PC = 웹앱(설치 불가).
+    휴대폰 브라우저는 소리 자동 재생을 막아서 재생 버튼을 한 번 누르게 한다. 자동 이동 없음."""
     from urllib.parse import quote
-    intent_url = (f"intent://track/{track_id}#Intent;scheme=aidol;package=com.maidol.app;"
+    intent_url = (f"intent://#Intent;scheme=aidol;package=com.maidol.app;"
                   f"S.browser_fallback_url={quote(_PLAY_STORE_URL, safe='')};end")
+    audio_url = f"{_PUBLIC_BASE_URL}/api/tracks/stream-proxy/{track_id}"
     body = f"""    <img class="cover" src="{og_image}" alt="">
     <h1>{t}</h1>{artist_line}
-    <p class="lede">{desc}</p>
-    <a class="cta" id="listen" href="{html.escape(listen_url, quote=True)}">바로 듣기</a>
-    <a class="open-app" id="store" href="{_APP_STORE_URL}" style="display:none;margin:0 8px">앱 받기</a>
-    <a class="open-app" id="web" href="{html.escape(listen_url, quote=True)}" style="display:none;margin:0 8px">웹에서 바로 듣기</a>"""
+    <div class="player">
+      <button type="button" class="play" id="play" aria-label="재생">
+        <svg id="ic-play" viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.87l11-6.5a1 1 0 0 0 0-1.74l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>
+        <svg id="ic-pause" viewBox="0 0 24 24" width="26" height="26" fill="currentColor" style="display:none"><rect x="6" y="5" width="4.5" height="14" rx="1.2"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.2"/></svg>
+      </button>
+      <div class="track">
+        <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+        <div class="time"><span id="cur">0:00</span><span id="dur"></span></div>
+      </div>
+    </div>
+    <p class="lede" id="msg">재생 버튼을 눌러 들어보세요</p>
+    <a class="cta" id="make" href="{html.escape(listen_url, quote=True)}">내 이야기로 노래 만들기</a>
+    <p class="sub" id="sub">MAIDOL 앱에서 무료로 만들 수 있어요</p>
+    <a class="open-app" id="web" href="{html.escape(listen_url, quote=True)}" style="display:none">설치 없이 웹에서 계속 듣기</a>
+    <audio id="audio" src="{audio_url}" preload="metadata"></audio>"""
     script = f"""
+  <style>
+    .player {{ display: flex; align-items: center; gap: 14px; margin: 4px 0 14px; text-align: left; }}
+    .play {{ flex: none; width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; color: #fff;
+      background: linear-gradient(120deg, #8b5cf6, #6d28d9); box-shadow: 0 6px 20px rgba(109, 40, 217, 0.45); }}
+    .play:active {{ opacity: 0.85; }}
+    .track {{ flex: 1; min-width: 0; }}
+    .bar {{ height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.14); overflow: hidden; cursor: pointer; }}
+    .fill {{ height: 100%; width: 0; background: #a78bfa; }}
+    .time {{ display: flex; justify-content: space-between; font-size: 12px; color: #a9a3c8; margin-top: 6px; }}
+    .sub {{ font-size: 13px; color: #a9a3c8; margin: -4px 0 16px; }}
+  </style>
   <script>
     (function () {{
       var ua = navigator.userAgent || "";
       var android = /Android/i.test(ua);
       var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-      var dest = "{listen_url}";
+      var make = document.getElementById("make");
       if (android || ios) {{
-        dest = android ? "{intent_url}" : "{_APP_STORE_URL}";
-        var b = document.getElementById("listen"), st = document.getElementById("store"), w = document.getElementById("web");
-        b.href = dest; b.textContent = android ? "MAIDOL 앱에서 듣기" : "App Store에서 MAIDOL 받기";
-        if (android) {{ st.href = "{_PLAY_STORE_URL}"; st.textContent = "Google Play에서 앱 받기"; st.style.display = ""; }}
-        w.style.display = "";
+        make.href = android ? "{intent_url}" : "{_APP_STORE_URL}";
+        document.getElementById("sub").textContent = android
+          ? "Google Play에서 MAIDOL 앱을 받아 무료로 만들 수 있어요"
+          : "App Store에서 MAIDOL 앱을 받아 무료로 만들 수 있어요";
+        document.getElementById("web").style.display = "";
+      }} else {{
+        document.getElementById("sub").textContent = "웹에서 무료로 만들 수 있어요";
       }}
-      try {{ window.location.replace(dest); }} catch (e) {{ /* no-op — 버튼으로 이동 */ }}
+      var a = document.getElementById("audio"), btn = document.getElementById("play");
+      var icP = document.getElementById("ic-play"), icS = document.getElementById("ic-pause");
+      var fill = document.getElementById("fill"), cur = document.getElementById("cur"), dur = document.getElementById("dur");
+      var msg = document.getElementById("msg");
+      function fmt(x) {{ x = Math.max(0, Math.floor(x || 0)); return Math.floor(x / 60) + ":" + ("0" + (x % 60)).slice(-2); }}
+      function sync() {{ var p = !a.paused; icP.style.display = p ? "none" : ""; icS.style.display = p ? "" : "none"; }}
+      btn.addEventListener("click", function () {{
+        if (a.paused) {{ var r = a.play(); if (r && r.catch) r.catch(function () {{ msg.textContent = "재생하지 못했어요. 앱에서 들어보세요"; }}); }}
+        else a.pause();
+      }});
+      a.addEventListener("play", function () {{ sync(); msg.textContent = "듣고 마음에 들면, 내 이야기로도 만들어 보세요"; }});
+      a.addEventListener("pause", sync);
+      a.addEventListener("loadedmetadata", function () {{ if (isFinite(a.duration)) dur.textContent = fmt(a.duration); }});
+      a.addEventListener("timeupdate", function () {{
+        cur.textContent = fmt(a.currentTime);
+        if (a.duration) fill.style.width = (a.currentTime / a.duration * 100) + "%";
+      }});
+      a.addEventListener("ended", function () {{ sync(); msg.textContent = "이번엔 내 이야기로 노래를 만들어 볼까요?"; }});
+      a.addEventListener("error", function () {{ msg.textContent = "이 곡은 MAIDOL 앱에서 들을 수 있어요"; btn.disabled = true; btn.style.opacity = "0.4"; }});
+      document.getElementById("bar").addEventListener("click", function (e) {{
+        if (!a.duration) return;
+        var r = this.getBoundingClientRect();
+        a.currentTime = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * a.duration;
+      }});
     }})();
   </script>"""
     return _page(og_type="music.song", og_title=og_title, og_desc=desc,
