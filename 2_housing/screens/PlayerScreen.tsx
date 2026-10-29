@@ -59,6 +59,7 @@ import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
 import { trackEvent } from '../utils/screenAnalytics';
 import { normalizeShareId } from '../utils/trackLink';
+import { openAppStoreFromWeb, webMobileOs } from '../utils/storeLinks'; // v3.418 명함 QR
 // v3.256 [MakeLike]: v3.237 공유 CTA 목적지 배선 공용화(동작 불변) — 시트 '이 곡 느낌으로 만들기'와 같은 집
 import { navigateShareCtaDestination } from '../utils/makeLike';
 import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
@@ -302,19 +303,25 @@ export default function PlayerScreen({ route, navigation }: any) {
   const shareCurrentId = (storeTrack || track)?.id;
   const showShareCta = !!shareRouteTrackId && shareCurrentId != null && String(shareCurrentId) === shareRouteTrackId;
   const shareLinkId = normalizeShareId(route.params?.shareId);
+  // v3.418 [CardQR] 명함 QR 진입 — CTA '내 이야기로 노래 만들기', 휴대폰 웹이면 누를 때 앱 설치(안드로이드 = 앱 있으면 실행)
+  const fromCard = viaShare && route.params?.fromCard === true;
+  const cardStoreOs = fromCard ? webMobileOs() : null;
+  const shareCtaLabel = fromCard ? '내 이야기로 노래 만들기' : '나도 이런 곡 만들기';
   const handleShareCta = () => {
     const loggedIn = !!user;
-    const dest = loggedIn ? 'studio' : 'signup';
+    const dest = cardStoreOs ? `store_${cardStoreOs}` : loggedIn ? 'studio' : 'signup';
     console.info(`[ShareCTA] tap dest=${dest}`, { id: shareRouteTrackId, s: shareLinkId || null });
     try {
       // 측정(개인정보 없음): 곡 id·공유 id·목적지·로그인 여부만
       const props: Record<string, string | number | boolean> = { dest, track_id: shareRouteTrackId, logged_in: loggedIn };
       if (shareLinkId) props.share_id = shareLinkId;
+      if (fromCard) props.card = true;
       trackEvent('share_cta_tap', props);
     } catch (err: any) {
       console.error('[ShareCTA] share_cta_tap 기록 실패', { message: err?.message });
     }
     try {
+      if (cardStoreOs && openAppStoreFromWeb()) return;
       // v3.256 [MakeLike]: 목적지 배선을 utils/makeLike 공용으로 이동(동작 불변 — 회원 popTo Map·비회원 가입 직행)
       navigateShareCtaDestination(navigation, loggedIn);
     } catch (err: any) {
@@ -1517,10 +1524,10 @@ export default function PlayerScreen({ route, navigation }: any) {
           onPress={handleShareCta}
           hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="나도 이런 곡 만들기"
+          accessibilityLabel={shareCtaLabel}
         >
           <Feather name="music" size={14} color={colors.accent.primary} />
-          <AppText variant="footnote" tone="accent">나도 이런 곡 만들기</AppText>
+          <AppText variant="footnote" tone="accent">{shareCtaLabel}</AppText>
         </TouchableOpacity>
       ) : null}
 
