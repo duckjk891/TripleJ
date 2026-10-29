@@ -59,6 +59,7 @@ import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
 import { trackEvent } from '../utils/screenAnalytics';
 import { normalizeShareId } from '../utils/trackLink';
+import { openAppStoreFromWeb, webMobileOs } from '../utils/storeLinks'; // v3.418 명함 QR
 // v3.256 [MakeLike]: v3.237 공유 CTA 목적지 배선 공용화(동작 불변) — 시트 '이 곡 느낌으로 만들기'와 같은 집
 import { navigateShareCtaDestination } from '../utils/makeLike';
 import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
@@ -302,7 +303,22 @@ export default function PlayerScreen({ route, navigation }: any) {
   const shareCurrentId = (storeTrack || track)?.id;
   const showShareCta = !!shareRouteTrackId && shareCurrentId != null && String(shareCurrentId) === shareRouteTrackId;
   const shareLinkId = normalizeShareId(route.params?.shareId);
+  // v3.418 [CardQR] 명함 QR 진입 — CTA '내 이야기로 노래 만들기', 휴대폰 웹이면 누를 때 앱 설치(안드로이드 = 앱 있으면 실행)
+  const fromCard = viaShare && route.params?.fromCard === true;
+  const cardStoreOs = fromCard ? webMobileOs() : null;
+  const shareCtaLabel = fromCard ? '내 이야기로 노래 만들기' : '나도 이런 곡 만들기';
+  // v3.418c: 명함 QR(휴대폰 웹) — 재생 화면 15초 뒤 설치 팝업 1회. 다른 곡으로 넘어가 CTA 가 사라지면 취소
+  useEffect(() => {
+    if (!cardStoreOs || !showShareCta || cardInstallAutoShown) return;
+    const t = setTimeout(() => {
+      if (cardInstallAutoShown) return;
+      cardInstallAutoShown = true;
+      showCardInstallPopup('auto', shareRouteTrackId);
+    }, CARD_INSTALL_AUTO_MS);
+    return () => clearTimeout(t);
+  }, [cardStoreOs, showShareCta, shareRouteTrackId]);
   const handleShareCta = () => {
+    if (cardStoreOs) { showCardInstallPopup('cta', shareRouteTrackId); return; } // v3.418c 명함 QR(휴대폰) = 설치 팝업
     const loggedIn = !!user;
     const dest = loggedIn ? 'studio' : 'signup';
     console.info(`[ShareCTA] tap dest=${dest}`, { id: shareRouteTrackId, s: shareLinkId || null });
@@ -310,6 +326,7 @@ export default function PlayerScreen({ route, navigation }: any) {
       // 측정(개인정보 없음): 곡 id·공유 id·목적지·로그인 여부만
       const props: Record<string, string | number | boolean> = { dest, track_id: shareRouteTrackId, logged_in: loggedIn };
       if (shareLinkId) props.share_id = shareLinkId;
+      if (fromCard) props.card = true;
       trackEvent('share_cta_tap', props);
     } catch (err: any) {
       console.error('[ShareCTA] share_cta_tap 기록 실패', { message: err?.message });
@@ -1517,10 +1534,10 @@ export default function PlayerScreen({ route, navigation }: any) {
           onPress={handleShareCta}
           hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="나도 이런 곡 만들기"
+          accessibilityLabel={shareCtaLabel}
         >
           <Feather name="music" size={14} color={colors.accent.primary} />
-          <AppText variant="footnote" tone="accent">나도 이런 곡 만들기</AppText>
+          <AppText variant="footnote" tone="accent">{shareCtaLabel}</AppText>
         </TouchableOpacity>
       ) : null}
 
@@ -1989,6 +2006,28 @@ export default function PlayerScreen({ route, navigation }: any) {
 
 // v3.237 B: 공유 CTA 행 세로 예약분 = styles.shareCta height(32) + marginTop(8)
 const SHARE_CTA_RESERVE = 40;
+// v3.418c [CardQR] 명함 QR 로 온 휴대폰 방문자 — 재생 화면 도착 15초 뒤 설치 팝업 1회(페이지당, 대표 10-29 15초)
+const CARD_INSTALL_AUTO_MS = 15000;
+let cardInstallAutoShown = false;
+
+function showCardInstallPopup(reason: 'cta' | 'auto', trackId: string): void {
+  console.info('[CardQR] 설치 팝업', { reason, id: trackId });
+  showAlert(
+    '앱에서 내 노래 만들기',
+    'MAIDOL 앱을 받으면 내 이야기로 노래를 만들 수 있어요. 무료예요.',
+    [
+      { text: '더 들을게요', style: 'cancel' },
+      {
+        text: '앱 설치하기',
+        onPress: () => {
+          // 측정: 설치 버튼을 누른 때만 share_cta_tap 1건(dest=store_android|store_ios) — 개인정보 없음
+          try { trackEvent('share_cta_tap', { dest: `store_${webMobileOs()}`, track_id: trackId, card: true, logged_in: !!useAuthStore.getState().user }); } catch {}
+          openAppStoreFromWeb();
+        },
+      },
+    ],
+  );
+}
 
 const styles = StyleSheet.create({
   // v3.237 B: 공유 링크 진입 '나도 이런 곡 만들기' — 보조 강조(아웃라인 필), 높이 고정(coverH 예약분과 일치)

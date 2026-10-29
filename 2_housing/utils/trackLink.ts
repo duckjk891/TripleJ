@@ -14,6 +14,8 @@
 //   형식(8자 소문자 base36) 검증 후 pending 에 함께 보관 → 소비 시 Player 파라미터 `shareId` + 측정 이벤트
 //   `share_link_open`(track_id·share_id·logged_in — 개인정보·자유 문자열 없음). 형식 불일치·없음 = shareId 없이 기존 동작 그대로.
 //   웹 주소창 정리 시 `track` 과 함께 `s` 도 제거(`ref`·hash 보존).
+// v3.418 [CardQR] 명함 QR(`maidol.ai.kr/c/{id}` → 서버 랜딩 → `/?track={id}&src=card`) 진입 표시 — Player 파라미터
+//   `fromCard`. 웹 재생 화면 그대로 듣고, 공유 CTA 가 '내 이야기로 노래 만들기'(휴대폰 = 앱 설치)로 바뀐다(대표 10-29).
 import { Platform } from 'react-native';
 import api from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
@@ -33,6 +35,8 @@ export interface PendingTrackLink {
   shareId?: string;
   /** v3.386: 열 상세 탭(`?view=outfit` — 광고주 사이트 '내 옷이 나온 곡'에서 진입). 허용값만 */
   view?: TrackLinkView;
+  /** v3.418: 명함 QR 진입(`?src=card`) */
+  card?: boolean;
 }
 
 /** v3.386: `view` 허용값 — 지금은 착장(outfit)만 */
@@ -46,6 +50,17 @@ export function parseViewFromSearch(search: string | null | undefined): TrackLin
     return (params.get('view') || '').trim().toLowerCase() === 'outfit' ? 'outfit' : '';
   } catch {
     return '';
+  }
+}
+
+/** v3.418: search 에 `src=card` 가 있는지(순수) */
+export function parseCardFromSearch(search: string | null | undefined): boolean {
+  if (!search) return false;
+  try {
+    const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+    return params.getAll('src').some((v) => v.trim().toLowerCase() === 'card');
+  } catch {
+    return false;
   }
 }
 
@@ -137,6 +152,7 @@ export function stripTrackParam(href: string): string | null {
     u.searchParams.delete('track');
     u.searchParams.delete('s');
     u.searchParams.delete('view'); // v3.386
+    u.searchParams.delete('src'); // v3.418 명함 QR
     const qs = u.searchParams.toString();
     return `${u.pathname}${qs ? `?${qs}` : ''}${u.hash}`;
   } catch {
@@ -150,12 +166,17 @@ let consuming = false;
 /** 같은 링크의 연속 수신(getInitialURL + url 이벤트 중복 등) 억제 창 */
 export const TRACK_LINK_DEDUPE_MS = 3000;
 let lastCaptured: { id: string; at: number } | null = null;
+/** v3.418: 이번 실행이 명함 QR 진입인지(웹 모듈 로드 시 캡처) — WelcomeGuide 가 첫 방문 안내를 생략 */
+let cardEntry = false;
+export function isCardLinkEntry(): boolean {
+  return cardEntry;
+}
 
 export function peekPendingTrackLink(): PendingTrackLink | null {
   return pending;
 }
 
-function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: number = Date.now(), view: TrackLinkView | '' = ''): boolean {
+function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: number = Date.now(), view: TrackLinkView | '' = '', card = false): boolean {
   if (!id) return false;
   if (lastCaptured && lastCaptured.id === id && now - lastCaptured.at < TRACK_LINK_DEDUPE_MS) {
     // v3.237: 중복 수신 중 뒤늦게 공유 ID 가 온 경우(같은 곡·아직 미소비)만 보강
@@ -166,7 +187,8 @@ function setPending(id: string, src: TrackLinkSrc, shareId: string = '', now: nu
   lastCaptured = { id, at: now };
   pending = shareId ? { id, src, shareId } : { id, src };
   if (view) pending.view = view;
-  console.info('[TrackLink] captured', { id, src, s: shareId || null, view: view || null });
+  if (card) { pending.card = true; cardEntry = true; }
+  console.info('[TrackLink] captured', { id, src, s: shareId || null, view: view || null, card });
   return true;
 }
 
@@ -176,7 +198,7 @@ export function captureWebTrackLink(): string {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
     const search = window.location.search;
     const id = parseTrackIdFromSearch(search);
-    if (id) setPending(id, 'web', parseShareIdFromSearch(search), Date.now(), parseViewFromSearch(search));
+    if (id) setPending(id, 'web', parseShareIdFromSearch(search), Date.now(), parseViewFromSearch(search), parseCardFromSearch(search));
     return id;
   } catch (err: any) {
     console.error('[TrackLink] web capture 실패', { message: err?.message });
@@ -273,8 +295,9 @@ export async function consumePendingTrackLink(deps: ConsumeDeps): Promise<Consum
     usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : q.length - 1);
     const params: any = link.shareId ? { track: qt, via: 'share', shareId: link.shareId } : { track: qt, via: 'share' };
     if (link.view === 'outfit') params.openOutfit = true; // v3.386 착장 탭으로 상세 열기
+    if (link.card) params.fromCard = true; // v3.418 명함 QR
     deps.navigate('Player', params);
-    console.info('[TrackLink] consumed', { id: link.id, src: link.src, s: link.shareId || null, view: link.view || null, from: route, queueLen: q.length });
+    console.info('[TrackLink] consumed', { id: link.id, src: link.src, s: link.shareId || null, view: link.view || null, card: !!link.card, from: route, queueLen: q.length });
     emitShareLinkOpen(link);
     return 'consumed';
   } catch (err: any) {
@@ -314,4 +337,5 @@ export function __resetTrackLinkForTest(): void {
   pending = null;
   consuming = false;
   lastCaptured = null;
+  cardEntry = false;
 }
