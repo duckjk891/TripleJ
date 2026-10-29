@@ -1199,8 +1199,8 @@ export default function MapScreen({ navigation }: Props) {
       ) : null}
 
       {/* v3.410 [StorySong] 지도 위 카드 '내 낙서로 노래 만들기'(대표 확정 10-23) — 누르면 재료 담기 화면 직행.
-          게스트는 체험 곡 카드가 없을 때만(글만 1번 체험 — 사진·날씨는 로그인 후) */}
-      {storySongOn && (user || !guestSong) ? (
+          v3.421: 로그인 회원만 — 게스트는 작업실 어디를 눌러도 체험 제안 팝업(handleGuestTouch)이 떠서 입구가 겹쳤다(대표 10-29). */}
+      {storySongOn && user ? (
         <TouchableOpacity
           style={[styles.storySongCard, miniPlayerOn && { bottom: 12 + MINI_PLAYER_HEIGHT }]}
           activeOpacity={0.85}
