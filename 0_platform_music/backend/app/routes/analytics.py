@@ -14,7 +14,7 @@ screen·session_* 처리는 v3.236 과 동일(props 무시).
 """
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Request
@@ -150,7 +150,35 @@ async def _ensure_indexes(coll) -> None:
     await coll.create_index("received_at", expireAfterSeconds=RETENTION_DAYS * 24 * 3600)
     await coll.create_index([("type", 1), ("started_at", 1)])
     await coll.create_index("session_id")
+    await coll.create_index([("user_id", 1), ("received_at", -1)])  # latest_app_version
     _index_ready = True
+
+
+APP_VERSION_LOOKBACK = timedelta(days=3)
+
+
+async def latest_app_version(mongo, user_id, platform: Optional[str] = None, before: Optional[datetime] = None) -> Optional[str]:
+    """그 사용자가 마지막으로 보낸 분석 이벤트의 앱 버전(앱이 batch 마다 싣는 Constants version).
+
+    DM·오류 신고에 앱 버전을 남기는 용도 — 안드로이드 앱 UA(okhttp)엔 버전이 없어서.
+    before(naive UTC) 시점 이전 3일 안의 이벤트만 본다. 실패·없음 = None.
+    """
+    if not user_id:
+        return None
+    end = before or datetime.now(timezone.utc).replace(tzinfo=None)
+    q = {
+        "user_id": str(user_id),
+        "app_version": {"$nin": [None, ""]},
+        "received_at": {"$lte": end + timedelta(minutes=5), "$gte": end - APP_VERSION_LOOKBACK},
+    }
+    if platform:
+        q["platform"] = platform
+    try:
+        doc = await mongo.analytics_events.find_one(q, {"app_version": 1}, sort=[("received_at", -1)])
+    except Exception:
+        logger.warning("[analytics] latest app version lookup failed", exc_info=True)
+        return None
+    return (doc or {}).get("app_version") or None
 
 
 @router.post("/events")

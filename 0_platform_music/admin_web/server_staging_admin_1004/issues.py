@@ -168,7 +168,7 @@ def parse_dm_issue(text):
     return _DM_REASON_MAP.get(label, "other"), m.group(2).strip()
 
 
-async def create_issue_from_dm(mongo, user_id, message: dict, user_agent=None, created_at=None):
+async def create_issue_from_dm(mongo, user_id, message: dict, user_agent=None, created_at=None, app_version=None):
     """공식 계정으로 온 DM 메시지를 오류 신고로 접수. 접수하면 issue id, 대상 아니면 None."""
     parsed = parse_dm_issue(message.get("text"))
     if not parsed:
@@ -187,7 +187,7 @@ async def create_issue_from_dm(mongo, user_id, message: dict, user_agent=None, c
         "page_url": None,
         "recent_pages": [],
         "user_agent": (user_agent or "")[:MAX_UA_LEN] or None,
-        "app_version": None,
+        "app_version": (app_version or "")[:MAX_APP_VERSION_LEN] or None,
         "status": "received",
         "admin_note": None,
         "handled_by": None,

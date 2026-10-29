@@ -159,13 +159,23 @@ async def get_cs_messages(
             from bson import ObjectId as _Oid
             oids = [_Oid(m["id"]) for m in items if m.get("id") and _Oid.is_valid(m["id"])]
             if oids:
-                clients = {
-                    str(d["_id"]): d.get("client")
-                    async for d in mongo.dm_messages.find({"_id": {"$in": oids}, "client": {"$exists": True}}, {"client": 1})
+                raw = {
+                    str(d["_id"]): d
+                    async for d in mongo.dm_messages.find({"_id": {"$in": oids}, "client": {"$exists": True}}, {"client": 1, "created_at": 1})
                 }
+                clients = {k: d.get("client") for k, d in raw.items()}
+                from .analytics import latest_app_version
                 for m in items:
-                    if m.get("id") in clients:
-                        m["client"] = clients[m["id"]]
+                    c = clients.get(m.get("id"))
+                    if not c:
+                        continue
+                    if c.get("platform") in ("ios", "android") and not c.get("app_version"):
+                        # 10-28 기록분은 버전 없음 — 보낸 시각 직전 분석 이벤트의 앱 버전으로 보충(저장은 안 함)
+                        before = raw[m["id"]].get("created_at")
+                        if getattr(before, "tzinfo", None):
+                            before = before.astimezone(_tz.utc).replace(tzinfo=None)
+                        c = {**c, "app_version": await latest_app_version(mongo, m.get("sender_id"), c["platform"], before)}
+                    m["client"] = c
         except Exception:
             logger.warning("[admin-cs] client info attach failed cid=%s", _short(cid), exc_info=True)
         return {"messages": items}

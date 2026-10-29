@@ -380,11 +380,17 @@ async def post_message(
             image_object_names=body.image_object_names,
         )
         # 접속 기기 기록 (관리자 문의함 표시용) — 실패해도 전송은 유지
+        _client = None
         try:
             from bson import ObjectId as _ObjectId
+            _client = client_info(request)
+            if _client["platform"] in ("ios", "android") and not _client["app_version"]:
+                # 안드로이드 앱 UA 엔 버전이 없음 — 앱이 분석 이벤트에 싣는 버전으로 보충
+                from .analytics import latest_app_version
+                _client["app_version"] = await latest_app_version(get_mongo(), me, _client["platform"])
             if message and _ObjectId.is_valid(str(message.get("id") or "")):
                 await get_mongo().dm_messages.update_one(
-                    {"_id": _ObjectId(str(message["id"]))}, {"$set": {"client": client_info(request)}},
+                    {"_id": _ObjectId(str(message["id"]))}, {"$set": {"client": _client}},
                 )
         except Exception:
             logger.warning("[dm] client info save failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)
@@ -398,6 +404,7 @@ async def post_message(
                 if _official and _conv and str(me) != _official and _official in (_conv.get("participants") or []):
                     await create_issue_from_dm(
                         get_mongo(), me, message, user_agent=request.headers.get("user-agent"),
+                        app_version=(_client or {}).get("app_version"),
                     )
             except Exception:
                 logger.warning("[dm] issue bridge failed me=%s conv=%s", _short(me), _short(cid), exc_info=True)

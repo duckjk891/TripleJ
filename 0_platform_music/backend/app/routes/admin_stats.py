@@ -493,3 +493,56 @@ async def paths(days: int = 7, limit: int = 30, current_admin=Depends(get_admin_
             "path": _dedupe(s["screens"]),
         })
     return {"days": days, "sessions": len(sessions), "top_transitions": top_edges, "recent": items, "closed_key": APP_CLOSED}
+
+
+# ---------------------------------------------------------------------------
+# 앱 버전 분포 — 기기마다 기간 안 마지막 분석 이벤트의 (플랫폼, 앱 버전). 업데이트 반영률 확인용.
+# 버전은 앱이 이벤트 batch 에 싣는 값(app.json version, Constants.expoConfig).
+# ---------------------------------------------------------------------------
+def _version_key(v: str):
+    return tuple(int(p) if p.isdigit() else 0 for p in (v or "").split("."))
+
+
+@router.get("/app-versions")
+async def app_versions(days: int = 7, current_admin=Depends(get_admin_user)):
+    if days < 1 or days > MAX_DAYS:
+        return JSONResponse(status_code=400, content={"error": f"기간은 1~{MAX_DAYS}일이어야 합니다."})
+    since = _since_utc_naive(days)
+    devices = await get_mongo().analytics_events.aggregate([
+        {"$match": {"received_at": {"$gte": since}, "app_version": {"$nin": [None, ""]}}},
+        {"$sort": {"received_at": 1}},
+        {"$group": {
+            "_id": "$device_id",
+            "platform": {"$last": "$platform"},
+            "version": {"$last": "$app_version"},
+            "user": {"$max": "$user_id"},
+            "last_at": {"$last": "$received_at"},
+        }},
+    ]).to_list(length=None)
+
+    rows: dict = {}
+    for d in devices:
+        key = (d.get("platform") or "other", d.get("version"))
+        r = rows.setdefault(key, {"platform": key[0], "version": key[1], "devices": 0, "users": set(), "last_at": None})
+        r["devices"] += 1
+        if d.get("user"):
+            r["users"].add(d["user"])
+        if d.get("last_at") and (r["last_at"] is None or d["last_at"] > r["last_at"]):
+            r["last_at"] = d["last_at"]
+
+    out = []
+    for r in rows.values():
+        out.append({
+            "platform": r["platform"],
+            "version": r["version"],
+            "devices": r["devices"],
+            "users": len(r["users"]),
+            "last_at": r["last_at"].isoformat() + "Z" if r["last_at"] else None,
+        })
+    order = {"ios": 0, "android": 1, "web": 2}
+    out.sort(key=lambda r: (order.get(r["platform"], 9), tuple(-x for x in _version_key(r["version"]))))
+    return {
+        "days": days,
+        "versions": out,
+        "note": "기기(앱 설치) 단위, 기간 안 마지막으로 쓴 버전 기준. 사용자 = 로그인해서 쓴 계정 수",
+    }

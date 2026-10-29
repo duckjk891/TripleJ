@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { getFeatureUsage, getRetention, getScreenAnalytics } from '../api';
+import { getAppVersions, getFeatureUsage, getRetention, getScreenAnalytics } from '../api';
+import { formatDate } from './Dashboard';
 import Journeys from './Journeys';
 
 const DAYS_OPTS = [7, 14, 30];
+const PLATFORM_LABELS = { ios: '아이폰 앱', android: '안드로이드 앱', web: '웹' };
 
 // 앱 라우트명 → 화면 이름 (없으면 라우트명 그대로)
 const SCREEN_LABELS = {
@@ -36,6 +38,7 @@ export default function AnalyticsPage() {
   const [features, setFeatures] = useState(null);
   const [screens, setScreens] = useState(null);
   const [retention, setRetention] = useState(null);
+  const [versions, setVersions] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -44,6 +47,8 @@ export default function AnalyticsPage() {
     setError('');
     getFeatureUsage(days).then((r) => setFeatures(r.data)).catch(() => setError('사용 분석 데이터를 불러오지 못했습니다.'));
     getScreenAnalytics(days).then((r) => setScreens(r.data)).catch(() => {});
+    setVersions(null);
+    getAppVersions(days).then((r) => setVersions(r.data)).catch(() => setVersions({ versions: [] }));
   }, [days]);
 
   useEffect(() => {
@@ -113,6 +118,36 @@ export default function AnalyticsPage() {
       </div>
 
       <Journeys days={days} />
+
+      {/* ---------- 앱 버전 분포 ---------- */}
+      <div className="card">
+        <h3 className="section-title">앱 버전 (최근 {days}일)</h3>
+        {!versions ? <p className="loading">로딩 중…</p> : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>플랫폼</th><th>버전</th><th>기기</th><th>로그인 사용자</th><th>마지막 사용</th></tr></thead>
+              <tbody>
+                {versions.versions.map((v) => {
+                  const total = versions.versions.filter((x) => x.platform === v.platform).reduce((a, x) => a + x.devices, 0);
+                  return (
+                    <tr key={`${v.platform}-${v.version}`}>
+                      <td className="cell-main">{PLATFORM_LABELS[v.platform] || v.platform}</td>
+                      <td className="nowrap">{v.version}</td>
+                      <td>{v.devices}대{total ? <span className="cell-sub"> ({Math.round((v.devices / total) * 100)}%)</span> : null}</td>
+                      <td>{v.users}명</td>
+                      <td className="nowrap">{v.last_at ? formatDate(v.last_at) : '-'}</td>
+                    </tr>
+                  );
+                })}
+                {versions.versions.length === 0 && <tr><td colSpan={5} className="td-empty">기록이 없습니다</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="cell-sub" style={{ marginTop: 8 }}>
+          기기(앱 설치)마다 기간 안에 마지막으로 쓴 버전 기준. %는 같은 플랫폼 안 비율. 웹 버전은 배포된 웹 화면의 버전입니다.
+        </p>
+      </div>
 
       {/* ---------- 기능 사용량 ---------- */}
       <div className="card">
