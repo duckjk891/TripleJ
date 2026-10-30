@@ -111,6 +111,35 @@ export interface VoiceSample {
   duration_s: number;
   size_bytes?: number;
   created_at?: string;
+  /** v3.423 사용자가 붙인 이름(없으면 '') · 화면 표시 이름(label 우선) */
+  label?: string;
+  display_name?: string;
+  /** v3.423 이 샘플로 만든 목소리·아티스트(최신 순, 아티스트 중복 제거) */
+  used_by?: { voice_name: string; artist_name: string }[];
+  /** v3.423 들어 보기 주소(1시간 유효) */
+  preview_url?: string | null;
+}
+
+/** v3.423 PATCH /voice-clone/samples/label — 보관함 샘플 이름 붙이기/고치기(빈 값 = 원래 이름) */
+export const renameVoiceSample = async (objectName: string, label: string): Promise<{ label: string; display_name: string }> => {
+  try {
+    const res = await api.patch('/voice-clone/samples/label', { object_name: objectName, label });
+    if (__DEV__) console.info('[voiceService] renameVoiceSample ok', { len: label.length });
+    return res.data;
+  } catch (err: any) {
+    console.error('[voiceService] renameVoiceSample 실패:', err?.response?.status, err?.message);
+    throw err;
+  }
+};
+
+/** v3.423 샘플을 어디에 썼는지 한 줄 — 아티스트 우선, 없으면 목소리 이름 */
+export function sampleUsageText(s: VoiceSample): string {
+  const used = s.used_by || [];
+  const artists = Array.from(new Set(used.map((u) => u.artist_name).filter(Boolean)));
+  if (artists.length) return `${artists.join('·')} 아티스트에 사용`;
+  const voices = Array.from(new Set(used.map((u) => u.voice_name).filter(Boolean)));
+  if (voices.length) return `'${voices[0]}' 목소리로 학습`;
+  return '';
 }
 
 /** GET /voice-clone/samples — 이전에 업로드한 원음 목록 (S3 실존 검증 통과분만) */
