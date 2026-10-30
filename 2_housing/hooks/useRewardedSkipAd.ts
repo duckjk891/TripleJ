@@ -22,6 +22,7 @@ import { isKidsRestrictedUser } from '../utils/kidsRestricted';
 import { isTrackingAsked, markTrackingNotNeeded, requestTrackingOnce, whenTrackingSettled } from '../utils/trackingConsent';
 // v3.392 [NativePlayer]: 광고 동안 듣던 노래 일시정지 → 끝나면(닫힘·보상·오류) 원래 재생 중이었을 때만 이어 재생
 import { pauseGlobalPlaybackFor, type GlobalPlaybackHold } from '../services/playback';
+import { MODAL_GAP_MS, setRootModalOpen, waitModalTurn } from '../utils/modalTurn';
 
 // try-require 게이트 — web 은 metro 에서 빈 모듈, Expo Go 는 require 실패
 // v3.215: 실기기(1.1.4)에서 광고 버튼 미노출 진단 — 실패 사유를 warn 으로 승격(릴리즈 원격 로그 수집 대상).
@@ -204,6 +205,18 @@ export function preloadRewardedSkipAd(): void {
 
 export type RewardedAdWatchResult = 'earned' | 'dismissed';
 
+// v3.422 [ModalTurn]: iOS 는 광고를 '지금 맨 위 창' 위에 띄운다. 휴식 창(RN Modal)을 닫자마자 광고를 띄우면 아직 닫히기 전인
+// 그 창 위에 붙었다가 창과 함께 내려가고(광고 1초 뒤 사라짐), 보이지 않는 막이 남아 화면 전체가 안 눌렸다
+// (DDui님 아이폰 1.3.3, 10-30 영상 디렉터 휴식). 창 닫힘이 끝난 뒤 띄우고, 광고가 내려간 뒤에 다음 팝업을 띄운다.
+const IOS = Platform.OS === 'ios';
+const AD_MODAL_KEY = 'rewarded-ad';
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+async function waitIosModalsClosed(): Promise<void> {
+  if (!IOS) return;
+  await delay(MODAL_GAP_MS); // 방금 닫은 창(화면 안 다이얼로그 포함)의 닫힘 애니메이션
+  await waitModalTurn(AD_MODAL_KEY, 50, 2000).promise; // 앱 루트 창이 떠 있거나 닫히는 중이면 더 기다림(최대 2초)
+}
+
 /**
  * pre-load 된 보상형 광고를 표시하고 시청 결과를 돌려준다.
  * - 'earned': EARNED_REWARD 수신 후 닫힘(끝까지 시청) — 이후 SSV 콜백으로 서버 적립이 진행된다.
@@ -254,6 +267,7 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
     const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      if (IOS) setRootModalOpen(AD_MODAL_KEY, false);
       unsubs.forEach((un) => {
         try {
           un();
@@ -262,7 +276,8 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
       preloadRewardedSkipAd(); // 다음 시청 대비 재로드
       const why = earned ? 'ad-earned' : 'ad-closed-or-error';
       void holdReady.then((h) => h?.resume(why));
-      fn();
+      if (IOS) setTimeout(fn, MODAL_GAP_MS); // 광고 화면이 내려간 뒤 결과 팝업(닫히는 광고 위에 띄우면 안 보이고 굳음)
+      else fn();
     };
     try {
       unsubs.push(
@@ -278,7 +293,7 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
       );
       unsubs.push(
         ad.addAdEventListener(admob.AdEventType.CLOSED, () => {
-          if (__DEV__) console.info('[AdReward] 광고 닫힘 — earned:', earned);
+          console.info('[AdReward] 광고 닫힘 — earned:', earned);
           settle(() => resolve(earned ? 'earned' : 'dismissed'));
         })
       );
@@ -288,10 +303,16 @@ export function showRewardedSkipAd(): Promise<RewardedAdWatchResult> {
           settle(() => reject(err instanceof Error ? err : new Error(String(err?.message ?? err))));
         })
       );
-      void holdReady.then(() => {
+      void Promise.all([holdReady, waitIosModalsClosed()]).then(() => {
         if (settled) return;
         try {
-          ad.show();
+          if (IOS) setRootModalOpen(AD_MODAL_KEY, true); // 광고 동안 자동 팝업(출석 등)이 광고 위에 뜨지 않게
+          console.info('[AdReward] show');
+          // show() 는 Promise — 표시 실패가 ERROR 이벤트 없이 거절로만 오면 결과가 영영 안 와 조용히 멈췄다
+          Promise.resolve(ad.show()).catch((err: any) => {
+            console.error('[AdReward] show 거절:', err);
+            settle(() => reject(err instanceof Error ? err : new Error(String(err?.message ?? err))));
+          });
         } catch (err) {
           console.error('[AdReward] show 실패:', err);
           settle(() => reject(err instanceof Error ? err : new Error(String(err))));
