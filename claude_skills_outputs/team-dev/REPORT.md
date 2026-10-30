@@ -5043,3 +5043,10 @@ iOS 세션 요청(대표 10-27: 아이폰 6s 화면 끄고 재생 중 1분 뒤 �
 - 앱(847d889): SocialLoginButtons 실패 9지점에서 auth_fail 즉시 전송(trackEvent flush). 다음 안드로이드 빌드 또는 1.3.3 출시 후 OTA.
 - v3.420b(621172f): ota_update.sh — google-services.json 없으면 중단. 깨끗한 워크트리에서 runtime 이 빌드와 달라 'OTA 불가' 오판했던 원인.
   실측: 빌드 18(3df3ccf) runtime d0f8a3e1…, 최신 frontend 에서 v3.415b Kotlin(modules/maidol-player)만 되돌리면 일치 → 1.3.3 출시 뒤 OTA 가능(대표 결정: 심사 중 금지, 출시 뒤).
+
+## v3.423 — 2026-10-30 — 목소리 샘플 보관함: 이름 바꾸기·어느 아티스트에 썼는지·들어 보기 (지유님 의견, 서버·웹 운영 반영)
+- 요청: 대표 10-30 "1~3번하고 화면 ui 보여줘" → "반영하자".
+- 서버(server_staging_v3421_voicesample): `list_voice_samples` 에 label·display_name·used_by(학습 기록 source_object_name → 연결 아티스트, 최대 6)·preview_url(1시간) 추가, `PATCH /api/voice-clone/samples/label`(본인 샘플만, 30자, 빈 값=원래 이름). 격리 테스트 11/11.
+- 앱(c46d6df): 샘플 줄에 ▶/■ 들어 보기·✏️ 이름 바꾸기(AppModal)·'길이 · 날짜 · A·B 아티스트에 사용' 표시.
+- 운영 반영 10-30 17:00 KST: deploy_v3423.sh(md5 가드·.bak_pre_v3423·pre-v3423-live 태그·진행 작업 0건 대기) — health ok, oauth 302×3, 새 주소 401(로그인 필요, 404 아님), Traceback 0. 웹: 깨끗한 워크트리(origin/frontend c46d6df) 빌드 → app.maidol.ai.kr 배포, 번들에 samples/label 포함 확인.
+- 앱(스토어 빌드)은 1.3.3 출시 뒤 OTA 에 함께 포함.
