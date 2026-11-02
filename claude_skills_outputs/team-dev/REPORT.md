@@ -5050,3 +5050,9 @@ iOS 세션 요청(대표 10-27: 아이폰 6s 화면 끄고 재생 중 1분 뒤 �
 - 앱(c46d6df): 샘플 줄에 ▶/■ 들어 보기·✏️ 이름 바꾸기(AppModal)·'길이 · 날짜 · A·B 아티스트에 사용' 표시.
 - 운영 반영 10-30 17:00 KST: deploy_v3423.sh(md5 가드·.bak_pre_v3423·pre-v3423-live 태그·진행 작업 0건 대기) — health ok, oauth 302×3, 새 주소 401(로그인 필요, 404 아님), Traceback 0. 웹: 깨끗한 워크트리(origin/frontend c46d6df) 빌드 → app.maidol.ai.kr 배포, 번들에 samples/label 포함 확인.
 - 앱(스토어 빌드)은 1.3.3 출시 뒤 OTA 에 함께 포함.
+
+## v3.424 — 2026-11-02 — 명함 QR: 휴대폰도 우선 웹앱에서 이어서 만들기 (웹 운영 반영)
+- 요청: 대표 11-02 "명함 찍으면 우선 웹앱으로 연결되게 해두자. 아직 안드로이드 업데이트가 안 돼서".
+- 변경(8b8d937): utils/storeLinks `CARD_QR_APP_INSTALL = false` 스위치 — PlayerScreen 명함 진입(fromCard)의 15초 설치 팝업·CTA 스토어 이동을 끔. CTA '내 이야기로 노래 만들기' = PC 와 같은 흐름(비회원 가입 → 작업실, 회원 작업실).
+- 배포: 깨끗한 워크트리(origin/frontend) 빌드 → app.maidol.ai.kr. 실측(안드로이드 휴대폰 크기): maidol.ai.kr/c/{곡} → 재생 화면, 20초 지나도 설치 팝업 없음, CTA → 웹 회원가입(after=studio).
+- 되돌리기: 앱 업데이트(Play 1.3.3 출시 + OTA) 끝나면 스위치 true + 웹 배포.
