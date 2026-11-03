@@ -1,0 +1,235 @@
+<title>반값 치킨 러프 콘티</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;800&family=Nanum+Pen+Script&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: storyboard sheet — 9:16 pencil frames beside cut notes, beats as colored section rails */
+:root{
+  --paper:#eef0f3; --sheet:#ffffff; --ink:#2b2f36; --pencil:#5b6270; --faint:#c9ced6;
+  --accent:#8b3fe0; --ki:#2f80c9; --seung:#d0772a; --jeon:#c8336a; --gyeol:#2a9d6f;
+  --safe:rgba(139,63,224,.10);
+  --f-display:"Gothic A1","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --f-body:"Gothic A1","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --f-hand:"Nanum Pen Script","Apple SD Gothic Neo",cursive;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#16181d; --sheet:#20232a; --ink:#e7e9ee; --pencil:#a9b0bd; --faint:#3a3f49;
+  --accent:#b98af5; --ki:#6fb2f0; --seung:#f0a15e; --jeon:#ef6f9b; --gyeol:#5fd0a2;
+  --safe:rgba(185,138,245,.13); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#16181d; --sheet:#20232a; --ink:#e7e9ee; --pencil:#a9b0bd; --faint:#3a3f49;
+  --accent:#b98af5; --ki:#6fb2f0; --seung:#f0a15e; --jeon:#ef6f9b; --gyeol:#5fd0a2;
+  --safe:rgba(185,138,245,.13); color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:28px;min-width:0}
+.wrap>*{min-width:0}
+header h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,4vw,38px);margin:0;text-wrap:balance;letter-spacing:-.01em}
+header .sub{color:var(--pencil);margin:4px 0 0;font-size:14px}
+.logline{background:var(--sheet);border-left:4px solid var(--accent);padding:16px 18px;border-radius:4px;font-size:16px;max-width:70ch}
+.logline b{color:var(--accent)}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.rule{background:var(--sheet);padding:14px 16px;border-radius:4px;font-size:14px;min-width:0}
+.rule h3{margin:0 0 4px;font-size:13px;letter-spacing:.06em;color:var(--pencil);font-weight:600}
+.beatbar{display:flex;height:34px;border-radius:4px;overflow:hidden;font-size:12px;font-weight:600;color:#fff}
+.beatbar div{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;padding:0 4px}
+.beat{display:grid;gap:14px}
+.beat>h2{margin:0;font-family:var(--f-display);font-size:20px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.beat>h2 small{font-family:var(--f-mono);font-size:12px;color:var(--pencil);font-weight:500}
+.beat>h2 .tag{display:inline-block;width:12px;height:12px;border-radius:2px;align-self:center}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:14px}
+@media (max-width:420px){.cards{grid-template-columns:1fr}}
+.card{background:var(--sheet);border-radius:4px;padding:14px;display:grid;grid-template-columns:118px 1fr;gap:14px;min-width:0;border-top:3px solid var(--bc)}
+.frame{width:118px;max-width:100%;aspect-ratio:9/16;background:var(--sheet);border:1.5px solid var(--ink);border-radius:2px}
+.frame svg{display:block;width:100%;height:100%}
+.meta{min-width:0;display:grid;gap:6px;align-content:start}
+.row1{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.cid{font-family:var(--f-mono);font-weight:500;font-size:15px}
+.chip{font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--faint);color:var(--pencil);white-space:nowrap}
+.chip.vid{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.time{font-family:var(--f-mono);font-size:12px;color:var(--pencil);font-variant-numeric:tabular-nums}
+.desc{font-size:14px;margin:0}
+.kv{font-size:12.5px;color:var(--pencil);margin:0}
+.kv b{color:var(--ink);font-weight:600}
+details{font-size:12.5px}
+summary{cursor:pointer;color:var(--accent);font-weight:600}
+summary:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.prompt{margin:8px 0 0;background:var(--paper);padding:10px;border-radius:4px;font-family:var(--f-mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.copy{margin-top:6px;font:inherit;font-size:12px;padding:4px 10px;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--pencil)}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.sw{width:14px;height:10px;display:inline-block;border:1px solid var(--faint)}
+footer{font-size:13px;color:var(--pencil);max-width:70ch}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>반값 치킨 · 러프 콘티</h1>
+  <p class="sub">「더 나오려는 것을 막는 것일뿐」 1분 티저 · 펄킴 · 19.8초 → 76.6초 + 끝 장면 3초 = 59.8초</p>
+</header>
+
+<div class="logline">헬스장 등록 한 달째 한 번도 안 간 <b>펄킴이</b>, 오늘만큼은 꼭 <b>러닝 한 시간</b>을 하려는데, 헬스장 1층에 새로 연 치킨집이 <b>“오픈 기념, 딱 1시간만 반값!”</b>을 외치고 있다.</div>
+
+<div class="beatbar" aria-label="기승전결 구간 비율">
+  <div style="flex:11.1;background:var(--ki)">기 11초</div>
+  <div style="flex:22.7;background:var(--seung)">승 23초</div>
+  <div style="flex:15.5;background:var(--jeon)">전 15.5초</div>
+  <div style="flex:7.5;background:var(--gyeol)">결 7.5</div>
+  <div style="flex:3;background:var(--pencil)">끝</div>
+</div>
+
+<div class="rules">
+  <div class="rule"><h3>180도 규칙</h3>펄킴은 늘 <b>왼쪽 → 오른쪽</b>(헬스장 계단 쪽)으로 움직여요. 치킨집 사람들은 늘 <b>화면 오른쪽</b>. 카메라는 거리 쪽에서만 찍어요.</div>
+  <div class="rule"><h3>자막·UI 자리</h3>콘티 칸의 <b>옅은 보라 띠</b>는 위 9%(숏폼 아이콘)와 아래 20%(가사 자막) 자리예요. 얼굴과 중요한 물건은 띠 밖에 두세요.</div>
+  <div class="rule"><h3>쓰는 법</h3>콘티로 <b>위치와 프레임</b>을 먼저 정해요. 칸마다 “러프 콘티 그리기 프롬프트”로 연필 스케치를 뽑을 수 있어요. 완성 이미지는 같은 구도에 빛·색·재질만 입혀요.</div>
+</div>
+
+<div class="legend">
+  <span><i class="sw" style="background:var(--safe)"></i>자막·UI 자리</span>
+  <span>→ 움직임 방향</span>
+  <span>┅ 180도 축</span>
+  <span><b style="color:var(--accent)">영상</b> 칩 = 영상으로 움직일 컷(5개)</span>
+</div>
+
+<div id="board"></div>
+
+<footer>글씨(“1시간만 반값!”, “반값 마감”, 타이머 숫자)는 이미지에 그리지 않고 편집에서 자막으로 얹어요. C03과 C16은 같은 구도로 찍어 반전을 키워요. C12와 C14는 같은 무표정 얼굴 한 장을 두 번 써요(쿨레쇼프).</footer>
+</div>
+
+<script>
+const BEATS={ki:["기","설정","19.8–30.9","--ki"],seung:["승","사건","30.9–53.6","--seung"],jeon:["전","전환","53.6–69.1","--jeon"],gyeol:["결","결말","69.1–76.6 + 끝","--gyeol"]};
+const SK="Rough pencil storyboard sketch, loose graphite lines on white paper, vertical 9:16 frame, black and white only, simple shapes, no shading detail, no text. ";
+const CUTS=[
+ {id:"C01",b:"ki",shot:"클로즈업",ang:"하이",t:"19.8–21.6",len:1.8,v:0,desc:"(인서트) 손에 꽉 쥔 새 헬스장 회원카드, 비닐도 안 뗐다",snd:"발걸음 박자",emo:"다짐",
+  el:[["box",14,72,52,34,"손"],["box",30,54,44,26,"회원카드"],["text",52,50,"비닐 그대로"]],
+  p:"Extreme close-up from a high angle: a hand tightly gripping a brand-new gym membership card still in its plastic wrap, card filling the center of the frame."},
+ {id:"C02",b:"ki",shot:"미디엄",ang:"로우",t:"21.6–25.0",len:3.4,v:1,desc:"땅을 쿵쿵 밟으며 비장하게 걷는다, 운동화가 크게",snd:"발소리 쿵쿵 + “clap, clap”",emo:"비장",
+  el:[["fig",42,26,96,"r"],["arrow",20,106,78,106,"→ 헬스장"],["text",22,122,"쿵"],["text",62,122,"쿵"]],
+  p:"Low-angle medium shot: a woman with a short bob stomping forward from left to right, big chunky sneakers in the foreground, determined posture, sidewalk at night-time city street."},
+ {id:"C03",b:"ki",shot:"풀",ang:"아이레벨",t:"25.0–28.4",len:3.4,v:0,desc:"건물 전경. 2층 헬스장 창, 1층 풍선 달린 새 치킨집. 펄킴은 왼쪽에 작게",snd:"“더 나오려는 걸 막아”",emo:"불안",
+  el:[["box",32,30,52,42,"2층 헬스장 창"],["box",32,72,52,46,"1층 치킨집"],["balloon",38,66],["balloon",78,66],["box",84,72,6,46,""],["text",70,126,"계단 입구"],["ground",120],["fig",14,94,26,"r"],["text",45,22,"천천히 줌인"]],
+  p:"Wide eye-level shot of a two-story building at night: a gym with large windows on the second floor, a newly opened fried-chicken shop with balloons on the ground floor, stair entrance at the far right; a small woman figure stands at the left edge looking at it."},
+ {id:"C04",b:"ki",shot:"바스트",ang:"아이레벨",t:"28.4–30.9",len:2.5,v:0,desc:"멈칫, 눈을 가늘게 뜨고 오른쪽(치킨집)을 본다",snd:"킁킁 효과음",emo:"경계",
+  el:[["face",36,62,18,"r"],["body",36,82,44],["arrow",58,58,86,58,"치킨집"]],
+  p:"Bust shot at eye level: a woman with a short bob on the left half of the frame, head turned toward the right edge, eyes narrowed suspiciously, empty space on the right."},
+ {id:"C05",b:"seung",shot:"클로즈업",ang:"아이레벨",t:"30.9–34.7",len:3.8,v:1,desc:"(인서트) 튀김기에서 막 올라온 황금빛 치킨, 김이 오른다",snd:"지글지글 + “Move my body”",emo:"유혹 ①",
+  el:[["box",10,78,70,30,"튀김 바구니"],["oval",30,74],["oval",46,72],["oval",60,75],["steam",30],["steam",46],["steam",60]],
+  p:"Close-up at eye level: a frying basket lifted out of oil, piled with fried chicken pieces, steam curling upward into the top of the frame."},
+ {id:"C06",b:"seung",shot:"미디엄",ang:"아이레벨",t:"34.7–38.7",len:4.0,v:0,desc:"몸은 냄새 쪽으로 기우는데 발은 땅에 박혀 버틴다",snd:"“땀방울도 반짝여”",emo:"버팀",
+  el:[["fig",36,30,90,"lean"],["wave",80,50],["wave",80,64],["text",70,40,"냄새"],["text",24,122,"발 고정"]],
+  p:"Medium shot at eye level: a woman leaning her upper body strongly to the right as if pulled by a smell, while her feet stay planted firmly on the ground at the left, comic pose; wavy smell lines come in from the right edge."},
+ {id:"C07",b:"seung",shot:"투샷",ang:"아이레벨",t:"38.7–42.6",len:3.9,v:0,desc:"시식 직원(오른쪽)이 이쑤시개에 꽂은 치킨을 내민다",snd:"“마음속 전쟁 시작돼”",emo:"흔들림 ②",
+  el:[["fig",22,40,76,"r"],["fig",70,40,76,"l"],["dashed",22,58,70,58,"180° 축"],["box",42,66,10,7,""],["text",47,82,"시식 치킨"],["text",70,36,"직원"],["text",22,36,"펄킴"]],
+  p:"Two-shot at eye level: the woman on the left facing right, a shop staff member on the right facing left, holding out a piece of chicken on a toothpick between them."},
+ {id:"C08",b:"seung",shot:"바스트",ang:"로우",t:"42.6–46.2",len:3.6,v:0,desc:"가방에서 닭가슴살 팩을 방패처럼 꺼내 든다",snd:"“샐러드에 닭가슴살”",emo:"방어",
+  el:[["face",32,56,16,"r"],["body",32,74,40],["box",52,44,26,32,"닭가슴살 팩"],["arrow",80,60,88,60,""]],
+  p:"Low-angle bust shot: the woman on the left raising a packaged chicken-breast pouch like a shield toward the right side of the frame, defensive stance."},
+ {id:"C09",b:"seung",shot:"미디엄",ang:"로우",t:"46.2–50.0",len:3.8,v:0,desc:"사장(오른쪽)이 확성기로 외친다. 자막 “1시간만 반값!”은 편집에서",snd:"확성기 + “한 입만은 위험한 말”",emo:"위기 ③",
+  el:[["fig",64,34,86,"l"],["mega",48,56],["text",64,30,"사장"],["box",10,18,70,12,"자막 자리(편집)"],["fig",4,70,50,"r"]],
+  p:"Low-angle medium shot: a shop owner on the right side shouting through a megaphone pointed to the left, the woman partly visible at the left edge; empty space in the upper area for a caption."},
+ {id:"C10",b:"seung",shot:"클로즈업",ang:"하이",t:"50.0–53.6",len:3.6,v:0,desc:"떨리는 손으로 지갑을 꺼낸다",snd:"“say goodbye”",emo:"무너짐",
+  el:[["box",18,78,40,28,"손"],["box",34,58,40,26,"지갑"],["shake",30],["shake",62]],
+  p:"High-angle close-up: a trembling hand pulling a wallet out of a shoulder bag, small motion lines around the hand."},
+ {id:"C11",b:"jeon",shot:"클로즈업",ang:"하이",t:"53.6–56.6",len:3.0,v:1,desc:"(인서트) 지갑에서 회원카드가 툭 떨어진다 (슬로모션)",snd:"음악 작아짐 + 툭",emo:"정적",
+  el:[["box",22,24,46,22,"열린 지갑"],["box",36,72,20,12,"카드"],["arrow",46,48,46,70,""],["ground",114],["text",46,124,"슬로모션"]],
+  p:"High-angle close-up: an open wallet at the top of the frame and a membership card falling straight down toward the pavement, motion trail, slow-motion feel."},
+ {id:"C12",b:"jeon",shot:"클로즈업",ang:"아이레벨",t:"56.6–59.1",len:2.5,v:0,desc:"펄킴의 무표정 얼굴 (C14에서 한 번 더 씀)",snd:"후렴 낮게",emo:"깨달음",
+  el:[["face",45,66,30,"f"],["text",45,112,"무표정"]],
+  p:"Frontal close-up at eye level: a woman with a short bob, completely neutral expressionless face, centered, plain background."},
+ {id:"C13",b:"jeon",shot:"클로즈업",ang:"하이",t:"59.1–61.5",len:2.4,v:0,desc:"(인서트) 손목시계 타이머를 누른다 (숫자는 편집 자막)",snd:"삑!",emo:"각성",
+  el:[["box",8,64,74,22,"손목"],["circle",45,75,16],["box",58,52,14,14,"손가락"],["text",45,104,"60:00 은 편집"]],
+  p:"High-angle close-up: a wrist with a digital sports watch in the center, a finger pressing the watch button, blank watch face."},
+ {id:"C14",b:"jeon",shot:"풀",ang:"사이드",t:"61.5–69.1",len:7.6,v:1,desc:"비트 드롭! 춤추듯 시식대를 돌파해 계단으로 질주. 뒤에서 직원이 치킨을 든 채 멍",snd:"댄스 브레이크 드롭",emo:"폭발 (팡 1)",
+  el:[["fig",26,46,62,"run"],["box",46,92,18,14,"시식대"],["fig",64,58,46,"l"],["stairs"],["arrow",8,40,84,40,"DROP!"],["ground",118]],
+  p:"Wide side shot: the woman sprinting dynamically from left to right past a small tasting table, a staff member behind holding a chicken piece and staring, staircase entrance at the right edge, strong motion lines."},
+ {id:"C15",b:"gyeol",shot:"클로즈업",ang:"하이",t:"69.1–71.3",len:2.2,v:0,desc:"(인서트 3장) 러닝머신 타이머 60:00 → 30:00 → 00:00",snd:"“퇴근길에 헬스장 갈까”",emo:"끈기",
+  el:[["box",14,24,62,24,"60:00"],["box",14,56,62,24,"30:00"],["box",14,88,62,24,"00:00"],["text",45,124,"숫자는 편집"]],
+  p:"High-angle close-up of a treadmill control panel with a blank display and buttons, centered."},
+ {id:"C16",b:"gyeol",shot:"풀",ang:"아이레벨",t:"71.3–74.3",len:3.0,v:1,desc:"C03과 같은 구도. 땀범벅으로 내려온 순간 치킨집 셔터가 쾅",snd:"쾅!",emo:"허탈",
+  el:[["box",32,30,52,42,"2층 헬스장 창"],["shutter",32,72,52,46],["box",84,72,6,46,""],["ground",120],["fig",72,94,26,"l"],["text",58,66,"쾅"]],
+  p:"Wide eye-level shot of the same two-story building, identical composition: the ground-floor chicken shop now has its metal shutter pulled down, the woman standing small near the stair entrance at the right, facing left toward the shutter."},
+ {id:"C17",b:"gyeol",shot:"바스트",ang:"아이레벨",t:"74.3–76.6",len:2.3,v:0,desc:"멍하다가 피식 웃으며 물 한 모금",snd:"“러닝 한 시간만 하자”",emo:"웃음 (팡 2)",
+  el:[["face",42,58,18,"smile"],["body",42,78,44],["box",58,46,10,26,"물병"]],
+  p:"Bust shot at eye level: a sweaty woman with a short bob sipping from a water bottle, small relieved smile, centered."},
+ {id:"끝",b:"gyeol",shot:"—",ang:"—",t:"76.6–79.6",len:3,v:0,desc:"MAIDOL 끝 장면 (로고 · 내 이야기로 노래 만들기 · MAIDOL 검색)",snd:"—",emo:"—",
+  el:[["box",15,56,60,30,"MAIDOL"],["text",45,98,"끝 장면"]],p:null}
+];
+const NS="http://www.w3.org/2000/svg";
+function E(tag,a,parent){const e=document.createElementNS(NS,tag);let css="";
+  for(const k in a){const v=String(a[k]);if(v.includes("var("))css+=`${k}:${v};`;else e.setAttribute(k,v)}
+  if(css)e.setAttribute("style",css);parent&&parent.appendChild(e);return e}
+function txt(g,x,y,s,size){const t=E("text",{x,y,"text-anchor":"middle","font-size":size||7,fill:"var(--pencil)","font-family":"var(--f-hand)"},g);t.textContent=s}
+function fig(g,x,y,h,dir){
+  const r=h*0.11, st={stroke:"var(--ink)","stroke-width":1.3,fill:"none","stroke-linecap":"round"};
+  const lean=dir==="lean"?h*0.22:0, run=dir==="run";
+  const hx=x+lean, hy=y+r, neck=y+2*r, hip=y+h*0.58, foot=y+h;
+  E("circle",{cx:hx,cy:hy,r,...st},g);
+  E("line",{x1:hx,y1:neck,x2:x,y2:hip,...st},g);
+  if(run){E("line",{x1:x,y1:hip,x2:x+h*.25,y2:foot,...st},g);E("line",{x1:x,y1:hip,x2:x-h*.22,y2:foot-h*.1,...st},g);
+    E("line",{x1:hx,y1:neck+h*.08,x2:hx+h*.22,y2:neck-h*.02,...st},g);E("line",{x1:hx,y1:neck+h*.08,x2:hx-h*.2,y2:neck+h*.18,...st},g);return}
+  E("line",{x1:x,y1:hip,x2:x-h*.1,y2:foot,...st},g);E("line",{x1:x,y1:hip,x2:x+h*.1,y2:foot,...st},g);
+  E("line",{x1:(hx+x)/2,y1:neck+h*.06,x2:(hx+x)/2-h*.14,y2:hip-h*.02,...st},g);E("line",{x1:(hx+x)/2,y1:neck+h*.06,x2:(hx+x)/2+h*.14,y2:hip-h*.02,...st},g);
+  const d=dir==="l"?-1:1; if(dir==="r"||dir==="l"||dir==="lean")E("line",{x1:hx+d*r*.4,y1:hy,x2:hx+d*r*1.1,y2:hy,...st},g);
+}
+function face(g,x,y,r,mode){
+  const st={stroke:"var(--ink)","stroke-width":1.3,fill:"none","stroke-linecap":"round"};
+  E("path",{d:`M${x-r*1.05} ${y+r*.6} Q${x-r*1.1} ${y-r*1.2} ${x} ${y-r*1.05} Q${x+r*1.1} ${y-r*1.2} ${x+r*1.05} ${y+r*.6}`,...st},g);
+  E("circle",{cx:x,cy:y,r:r*.85,...st},g);
+  const off=mode==="r"?r*.3:0, ey=y-r*.1;
+  if(mode==="r"){E("line",{x1:x-r*.2+off,y1:ey,x2:x+off,y2:ey,...st},g);E("line",{x1:x+r*.3+off,y1:ey,x2:x+r*.5+off,y2:ey,...st},g)}
+  else{E("circle",{cx:x-r*.3,cy:ey,r:r*.06,fill:"var(--ink)"},g);E("circle",{cx:x+r*.3,cy:ey,r:r*.06,fill:"var(--ink)"},g)}
+  if(mode==="smile")E("path",{d:`M${x-r*.25} ${y+r*.35} Q${x} ${y+r*.5} ${x+r*.25} ${y+r*.35}`,...st},g);
+  else E("line",{x1:x-r*.2+off,y1:y+r*.4,x2:x+r*.2+off,y2:y+r*.4,...st},g);
+}
+function draw(cut){
+  const s=E("svg",{viewBox:"0 0 90 160",role:"img","aria-label":cut.id+" 러프 콘티"});
+  E("rect",{x:0,y:0,width:90,height:14.4,fill:"var(--safe)"},s);E("rect",{x:0,y:128,width:90,height:32,fill:"var(--safe)"},s);
+  const g=E("g",{},s), st={stroke:"var(--ink)","stroke-width":1.2,fill:"none","stroke-linecap":"round"};
+  for(const [t,...a] of cut.el){
+    if(t==="box"){E("rect",{x:a[0],y:a[1],width:a[2],height:a[3],rx:1.5,...st},g);if(a[4])txt(g,a[0]+a[2]/2,a[1]+a[3]/2+2.5,a[4],a[4].length>5?6:7.5)}
+    else if(t==="text")txt(g,a[0],a[1],a[2],8);
+    else if(t==="fig")fig(g,a[0],a[1],a[2],a[3]);
+    else if(t==="face")face(g,a[0],a[1],a[2],a[3]);
+    else if(t==="body")E("path",{d:`M${a[0]-a[2]/2} ${a[1]+28} Q${a[0]-a[2]/2} ${a[1]} ${a[0]} ${a[1]} Q${a[0]+a[2]/2} ${a[1]} ${a[0]+a[2]/2} ${a[1]+28}`,...st},g);
+    else if(t==="arrow"){E("line",{x1:a[0],y1:a[1],x2:a[2],y2:a[3],stroke:"var(--accent)","stroke-width":1.6,"stroke-linecap":"round"},g);
+      const ang=Math.atan2(a[3]-a[1],a[2]-a[0]),L=4;E("path",{d:`M${a[2]-L*Math.cos(ang-0.5)} ${a[3]-L*Math.sin(ang-0.5)} L${a[2]} ${a[3]} L${a[2]-L*Math.cos(ang+0.5)} ${a[3]-L*Math.sin(ang+0.5)}`,stroke:"var(--accent)","stroke-width":1.6,fill:"none"},g);
+      if(a[4]){const t2=E("text",{x:(a[0]+a[2])/2,y:Math.min(a[1],a[3])-2.5,"text-anchor":"middle","font-size":7.5,fill:"var(--accent)","font-family":"var(--f-hand)"},g);t2.textContent=a[4]}}
+    else if(t==="dashed"){E("line",{x1:a[0],y1:a[1],x2:a[2],y2:a[3],stroke:"var(--accent)","stroke-width":1,"stroke-dasharray":"3 2"},g);const t2=E("text",{x:(a[0]+a[2])/2,y:a[1]-2,"text-anchor":"middle","font-size":6.5,fill:"var(--accent)","font-family":"var(--f-hand)"},g);t2.textContent=a[4]}
+    else if(t==="ground")E("line",{x1:2,y1:a[0],x2:88,y2:a[0],...st,"stroke-width":.9},g);
+    else if(t==="balloon"){E("circle",{cx:a[0],cy:a[1]-6,r:3.5,...st},g);E("line",{x1:a[0],y1:a[1]-2.5,x2:a[0],y2:a[1]+4,...st,"stroke-width":.7},g)}
+    else if(t==="oval")E("ellipse",{cx:a[0],cy:a[1],rx:7,ry:4.5,...st},g);
+    else if(t==="steam")E("path",{d:`M${a[0]} 66 q-3 -6 0 -12 q3 -6 0 -12 q-3 -6 0 -12`,...st,"stroke-width":.8},g);
+    else if(t==="wave")E("path",{d:`M${a[0]} ${a[1]} q-4 -3 -8 0 q-4 3 -8 0 q-4 -3 -8 0`,...st,"stroke-width":.9},g);
+    else if(t==="mega")E("path",{d:`M${a[0]+12} ${a[1]-3} L${a[0]} ${a[1]-9} L${a[0]} ${a[1]+9} L${a[0]+12} ${a[1]+3} Z`,...st},g);
+    else if(t==="shake"){E("path",{d:`M${a[0]} 70 l-3 3 l3 3 l-3 3`,...st,"stroke-width":.8},g)}
+    else if(t==="circle")E("circle",{cx:a[0],cy:a[1],r:a[2],...st},g);
+    else if(t==="stairs")E("path",{d:"M70 118 L70 108 L76 108 L76 98 L82 98 L82 88 L88 88",...st},g);
+    else if(t==="shutter"){E("rect",{x:a[0],y:a[1],width:a[2],height:a[3],...st},g);for(let yy=a[1]+5;yy<a[1]+a[3];yy+=5)E("line",{x1:a[0]+1,y1:yy,x2:a[0]+a[2]-1,y2:yy,...st,"stroke-width":.6},g);txt(g,a[0]+a[2]/2,a[1]+a[3]+0,"",7)}
+  }
+  return s;
+}
+const board=document.getElementById("board");
+for(const key of Object.keys(BEATS)){
+  const [k,name,range,col]=BEATS[key];
+  const sec=document.createElement("section");sec.className="beat";
+  sec.innerHTML=`<h2><span class="tag" style="background:var(${col})"></span>${k} · ${name}<small>${range}</small></h2>`;
+  const cards=document.createElement("div");cards.className="cards";
+  for(const c of CUTS.filter(x=>x.b===key)){
+    const card=document.createElement("article");card.className="card";card.style.setProperty("--bc",`var(${col})`);
+    const fr=document.createElement("div");fr.className="frame";fr.appendChild(draw(c));
+    const m=document.createElement("div");m.className="meta";
+    m.innerHTML=`<div class="row1"><span class="cid">${c.id}</span><span class="chip">${c.shot}</span><span class="chip">${c.ang}</span><span class="chip ${c.v?"vid":""}">${c.v?"영상":"정지"}</span></div>
+      <div class="time">${c.t}초 · ${c.len}초</div><p class="desc">${c.desc}</p>
+      <p class="kv"><b>소리</b> ${c.snd} · <b>감정</b> ${c.emo}</p>`;
+    if(c.p){const d=document.createElement("details");const full=SK+c.p;
+      d.innerHTML=`<summary>러프 콘티 그리기 프롬프트</summary><div class="prompt"></div><button class="copy" type="button">복사</button>`;
+      d.querySelector(".prompt").textContent=full;
+      d.querySelector(".copy").addEventListener("click",ev=>{const b=ev.currentTarget;
+        const done=()=>{b.textContent="복사됨";setTimeout(()=>b.textContent="복사",1500)};
+        try{navigator.clipboard.writeText(full).then(done,()=>{sel(d)})}catch(e){sel(d)}});
+      m.appendChild(d)}
+    card.append(fr,m);cards.appendChild(card)}
+  sec.appendChild(cards);board.appendChild(sec)}
+function sel(d){const r=document.createRange();r.selectNodeContents(d.querySelector(".prompt"));const s=getSelection();s.removeAllRanges();s.addRange(r)}
+</script>
