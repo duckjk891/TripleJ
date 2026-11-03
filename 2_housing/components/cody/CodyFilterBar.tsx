@@ -242,7 +242,11 @@ export default function CodyFilterBar({
                 <TouchableOpacity
                   key={f.key}
                   style={[s.swatchChip, active && s.chipActive]}
-                  onPress={() => updateView({ colors: toggleIn(view.colors, f.key) })}
+                  onPress={() => {
+                    // v3.425(대표 11-03): 색을 고르면 패널을 닫아 바로 결과가 보이게(여러 색은 다시 열어 추가)
+                    updateView({ colors: toggleIn(view.colors, f.key) });
+                    setPanel(null);
+                  }}
                 >
                   {f.key === MULTI ? (
                     <View style={[s.swatch, s.swatchMulti]}>
