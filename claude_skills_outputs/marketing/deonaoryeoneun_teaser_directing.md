@@ -1,7 +1,7 @@
 # 「더 나오려는 것을 막는 것일뿐」 1분 이내 티저: 구간·5컷 디렉팅 프롬프트 (2026-11-03)
 
 **곡 정보**
-- 아티스트: 펄킴 (실사로 다시 만드는 중이라 나중에 넣음)
+- 아티스트: 펄킴 (11-03 새로 만든 실사 아티스트, character aeb6984229274c29ab3018b831ff4893)
 - 장르: 하우스, 밝고 경쾌한 분위기, 160 BPM
 - 길이: 3분 21초
 - 연령 등급: 전체
@@ -41,10 +41,12 @@
 
 ## 2. 공통 문구 (모든 컷 앞에 붙임)
 
-**인물 고정**: 아티스트가 나오면 `[ ]` 칸만 채워요. 캐릭터 시트도 참고 이미지로 꼭 같이 넣어요.
+**인물 고정**: 실사 펄킴 캐릭터 시트를 참고 이미지로 꼭 같이 넣어요. 옷은 시트 그대로, 모든 컷에서 한 벌만 입어요. 운동 장면도 이 옷으로 하면 돼서 오히려 자연스러워요.
+
+펄킴 시트 요약: 검은 단발(턱선 길이, 가르마 옆으로), 맑은 피부, 순한 미소 / 검은 반팔 티(등에 큰 데이지 꽃 그림) / 검은 무릎 버뮤다 반바지(왼쪽 다리에 흰 소용돌이·꽃 그림) / 검은 양말 + 검은·은색 운동화
 ```
-The same Korean woman in every frame, in her 30s, [HAIR: 예) shoulder-length dark brown hair in a high ponytail], [FACE: 예) bright friendly face, natural makeup], cheerful and self-confident.
-Outfit consistent within each scene: [WORKOUT OUTFIT: 예) lavender sports top, black leggings, white running shoes] / [OFFICE OUTFIT: 예) beige knit cardigan, wide slacks].
+The same Korean woman in every frame, in her 30s, straight black chin-length bob haircut with a soft side part, fair clear skin, natural makeup, warm gentle smile, cheerful and self-confident.
+Outfit (identical in every frame): oversized black short-sleeve crew-neck T-shirt with a large white-and-pastel daisy flower graphic on the back, loose black knee-length bermuda shorts with a white swirl-and-small-flowers print on the left leg, black crew socks, chunky black-and-silver sneakers.
 ```
 
 **화면 고정**
@@ -55,7 +57,7 @@ Keep the top 9% and bottom 20% of the frame free of faces and key objects; subje
 
 **빼는 것 (네거티브)**
 ```
-body shaming, exaggerated belly, measuring tape around waist close-up, sad or tired expression, distorted hands, extra fingers, text, letters, logos, brand packaging, watermark, cartoon, anime
+body shaming, exaggerated belly, measuring tape around waist close-up, sad or tired expression, long hair, ponytail, different outfit, distorted hands, extra fingers, text, letters, brand logos, brand packaging, watermark, cartoon, anime
 ```
 
 > 이 곡은 "빼는 게 아니라 더 나오는 걸 막는 것", "숫자보다 내가 나를 안 놓는 것"처럼 **웃으며 버티는 응원**이 메시지예요. 그래서 배를 강조하거나 몸매를 비교하는 장면은 넣지 않았어요. 이런 장면은 이미지 안전 기준에 걸리기도 쉬워요. 개그는 **음식 유혹과 표정**으로 풀었어요.
@@ -67,20 +69,20 @@ body shaming, exaggerated belly, measuring tape around waist close-up, sad or ti
 ### 안 ① 「30대 직장인의 하루, 실사 공감 코미디」 (추천)
 - **콘셉트**: 출근 계단부터 점심 유혹, 퇴근길 헬스장까지 하루를 따라가요. 누구나 "내 얘기네" 하게 만드는 생활 공감이 핵심이에요.
 - **색감**: 밝은 아침 햇살 → 점심의 하얀 사무실 빛 → 저녁 노을과 헬스장 조명
-- **잘 맞는 이유**: 가장 무난해요. 아티스트 실사와도 바로 어울려요.
+- **잘 맞는 이유**: 가장 무난해요. 펄킴의 편한 검은 반팔·반바지 차림이 출근길과 운동 장면에 모두 어울려요.
 
 **컷 1 · 19.8–23.1 · 계단 (한 걸음씩 박자 맞춰 / clap, clap)**
 - 장면: 엘리베이터 앞에 줄 선 사람들을 지나쳐 혼자 비상계단을 올라요. 숨은 차지만 박수 치듯 손뼉을 치며 웃어요.
 - 카메라: 계단 위에서 아래를 보는 구도
 ```
-Office building stairwell in bright morning light; the woman climbs the stairs two at a time in office clothes and sneakers, slightly out of breath but laughing, clapping her hands to the beat. Through the glass door behind, a crowd waits at the elevator. High angle looking down the stairs, sunlight streaming through a window.
+Office building stairwell in bright morning light; the woman climbs the stairs two at a time in her black T-shirt, shorts and chunky sneakers, slightly out of breath but laughing, clapping her hands to the beat. Through the glass door behind, a crowd waits at the elevator. High angle looking down the stairs, sunlight streaming through a window.
 ```
 
 **컷 2 · 23.1–38.6 · 뱃살이 빠지는 게 아냐 / 더 나오려는 걸 막아 (제목)**
 - 장면: 아침 한강 공원을 운동복 차림으로 달려요. 자전거 길 옆에서 카메라를 향해 엄지를 들며 활짝 웃어요.
 - 카메라: 앞에서 함께 뛰는 느낌, 미디엄 샷
 ```
-The woman jogging along a riverside park path in Seoul on a bright morning, workout outfit, ponytail swinging, big confident grin, giving a thumbs-up toward the camera mid-stride. Medium tracking shot from the front, golden morning backlight, joggers and cyclists softly blurred behind.
+The woman jogging along a riverside park path in Seoul on a bright morning, black T-shirt and bermuda shorts, bob hair bouncing, big confident grin, giving a thumbs-up toward the camera mid-stride. Medium tracking shot from the front, golden morning backlight, joggers and cyclists softly blurred behind.
 ```
 
 **컷 3 · 38.7–53.6 · 점심 메뉴 앞의 마음속 전쟁 / 빵 유혹**
@@ -101,7 +103,7 @@ Office rooftop garden at midday, blue sky; the woman and two coworkers break int
 - 장면: 밤 헬스장의 러닝머신이에요. 창밖으로 도시 야경이 보여요. 피곤한 얼굴이지만 이어폰을 꽂고 웃으며 속도 버튼을 눌러요.
 - 카메라: 러닝머신 옆에서 창밖 야경과 함께
 ```
-Evening gym with floor-to-ceiling windows overlooking city lights; the woman on a treadmill in her workout outfit with earphones, a little tired but smiling with determination as she presses the speed-up button. Side medium shot, warm gym lights against the blue night city, reflections on the glass.
+Evening gym with floor-to-ceiling windows overlooking city lights; the woman on a treadmill in her black T-shirt and shorts with earphones, a little tired but smiling with determination as she presses the speed-up button. Side medium shot, warm gym lights against the blue night city, reflections on the glass.
 ```
 
 ---
@@ -118,7 +120,7 @@ Minimal studio set with a solid sunflower-yellow backdrop and a clean white stai
 
 **컷 2 · 후렴(제목):** 하늘색 배경이에요. 두 손을 앞으로 내밀어 "막아!" 하는 손바닥 포즈를 하고, 장난스러운 표정을 지어요.
 ```
-Solid sky-blue backdrop studio; the woman in a workout outfit strikes a bold "stop!" pose with both palms pushed toward the camera, one knee up, playful wink, ponytail flying. Medium-full shot, high-key lighting, glossy floor, pop music video look.
+Solid sky-blue backdrop studio; the woman in her black T-shirt and bermuda shorts strikes a bold "stop!" pose with both palms pushed toward the camera, one knee up, playful wink, bob hair flying. Medium-full shot, high-key lighting, glossy floor, pop music video look.
 ```
 
 **컷 3 · 점심 전쟁:** 민트색 배경이에요. 사람만 한 크기의 샐러드 그릇과 떡볶이 접시 사이에서 고민하는 몸짓을 해요.
@@ -150,7 +152,7 @@ Cinematic shot: an elevator door opening with tempting golden light spilling out
 
 **컷 2 · 더 나오려는 걸 막아 (제목):** 날아오는 치킨 조각과 감자튀김을 손바닥으로 막는 슬로모션이에요. 얼굴은 자신만만해요.
 ```
-Slow-motion action shot: pieces of fried chicken and french fries flying toward the woman, who blocks them with one raised palm like a martial-arts master, confident smirk, ponytail swinging. Frozen-motion crumbs in the air, dramatic rim light, cinematic action-comedy.
+Slow-motion action shot: pieces of fried chicken and french fries flying toward the woman, who blocks them with one raised palm like a martial-arts master, confident smirk, bob hair swinging. Frozen-motion crumbs in the air, dramatic rim light, cinematic action-comedy.
 ```
 
 **컷 3 · 빵 유혹:** 사무실 탕비실이에요. 동료가 빵 상자를 내밀자 진주가 물병을 칼처럼 들어 막아요.
@@ -165,7 +167,7 @@ The woman dancing triumphantly in the office lounge, sweat glistening, arms up i
 
 **컷 5 · 러닝 한 시간만 하자:** 밤거리 치킨집 간판 불빛 앞을 지나 헬스장 쪽으로 달려가요. 곁눈질은 하지만 발은 멈추지 않아요.
 ```
-Night street scene: the woman in workout clothes jogs past a glowing fried-chicken restaurant window (no readable signage), glancing sideways at it with longing, but her feet keep running toward a brightly lit gym at the end of the street. Wide tracking shot, neon reflections on wet pavement, cinematic night grade.
+Night street scene: the woman in her black T-shirt and shorts jogs past a glowing fried-chicken restaurant window (no readable signage), glancing sideways at it with longing, but her feet keep running toward a brightly lit gym at the end of the street. Wide tracking shot, neon reflections on wet pavement, cinematic night grade.
 ```
 
 ---
