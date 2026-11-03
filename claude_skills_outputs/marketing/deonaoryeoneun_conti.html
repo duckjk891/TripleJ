@@ -35,6 +35,10 @@ header .sub{color:var(--pencil);margin:4px 0 0;font-size:14px}
 .lock{background:var(--sheet);border:1.5px solid var(--accent);border-radius:4px;padding:16px 18px;display:grid;gap:8px}
 .lock h2{margin:0;font-size:17px;font-family:var(--f-display)}
 .lock p{margin:0;font-size:13.5px;color:var(--pencil)}
+.refs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(130px,100%),1fr));gap:10px}
+.refs figure{margin:0;display:grid;gap:4px;min-width:0}
+.refs img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:4px;border:1px solid var(--faint)}
+.refs figcaption{font-size:12px;color:var(--pencil)}
 .beatbar{display:flex;height:34px;border-radius:4px;overflow:hidden;font-size:12px;font-weight:600;color:#fff}
 .beatbar div{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;padding:0 4px}
 .beat{display:grid;gap:14px}
@@ -88,7 +92,7 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
   <div class="rule"><h3>180도 규칙</h3>펄킴은 늘 <b>왼쪽 → 오른쪽</b>(헬스장 계단 쪽)으로 움직여요. 치킨집 사람들은 늘 <b>화면 오른쪽</b>. 카메라는 거리 쪽에서만 찍어요.</div>
   <div class="rule"><h3>시간과 빛</h3><b>여름 저녁 7시 반</b> 해 질 녘(남색·주황 하늘, 치킨집 노란 불빛)에서 시작해, 러닝 뒤 <b>밤 8시 반</b>(가로등·헬스장 창 불빛)으로 끝나요. C03과 C16은 하늘색만 달라요.</div>
   <div class="rule"><h3>자막·UI 자리</h3>콘티 칸의 <b>옅은 보라 띠</b>는 위 9%(숏폼 아이콘)와 아래 20%(가사 자막) 자리예요. 얼굴과 중요한 물건은 띠 밖에 두세요.</div>
-  <div class="rule"><h3>소품 고정</h3>시트 착장에 <b>작은 검은 크로스백</b>과 <b>왼손목 검은 스마트워치</b>를 더해요. 모든 컷에서 같은 설명으로 넣어 모양이 바뀌지 않게 해요. 지갑·닭가슴살은 크로스백에서, 타이머는 스마트워치로.</div>
+  <div class="rule"><h3>소품 고정 (PPL)</h3>시트 착장에 <b>데상트 미디엄 하디 슬링백(검정)</b>과 <b>왼손목 그라파이트 스마트워치</b>를 더해요. 제품 사진 2장도 참고 이미지로 함께 넣어요. 지갑·닭가슴살은 슬링백에서, 타이머는 스마트워치로.</div>
 </div>
 
 <section class="lock" aria-labelledby="lockh">
@@ -96,6 +100,18 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
   <p>펄킴이 나오는 모든 컷 프롬프트 맨 앞에 이미 들어 있어요. 따로 쓸 때는 아래를 복사해요. 캐릭터 시트(또는 앞·뒤·얼굴 3장)를 참고 이미지로 함께 넣어 주세요.</p>
   <div class="prompt" id="lockText"></div>
   <div><button class="copy" type="button" id="lockCopy">복사</button></div>
+</section>
+
+<section class="lock" aria-labelledby="refh">
+  <h2 id="refh">참고 이미지 5장</h2>
+  <p>컷마다 함께 넣어요. 사진을 길게 누르면 저장할 수 있어요. 손·가방·시계가 크게 나오는 컷(C08·C10·C13)은 제품 사진을 꼭 넣어 주세요.</p>
+  <div class="refs">
+    <figure><img src="refs/1_front.jpg" alt="펄킴 앞모습"><figcaption>펄킴 앞모습</figcaption></figure>
+    <figure><img src="refs/2_back.jpg" alt="펄킴 뒷모습"><figcaption>펄킴 뒷모습</figcaption></figure>
+    <figure><img src="refs/3_face.jpg" alt="펄킴 얼굴"><figcaption>펄킴 얼굴</figcaption></figure>
+    <figure><img src="refs/4_bag_descente_sling.jpg" alt="데상트 미디엄 하디 슬링백"><figcaption>데상트 미디엄 하디 슬링백 (SR123UBG11)</figcaption></figure>
+    <figure><img src="refs/5_smartwatch_graphite.jpg" alt="그라파이트 스마트워치"><figcaption>스마트워치 (그라파이트)</figcaption></figure>
+  </div>
 </section>
 
 <div class="legend">
@@ -113,8 +129,8 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
 <script>
 const BEATS={ki:["기","설정","19.8–30.9","--ki"],seung:["승","사건","30.9–53.6","--seung"],jeon:["전","전환","53.6–69.1","--jeon"],gyeol:["결","결말","69.1–76.6 + 끝","--gyeol"]};
 const SK="Rough pencil storyboard sketch, loose graphite lines on white paper, vertical 9:16 frame, black and white only, simple shapes, no shading detail, no text. ";
-const REF="Use the reference images only for her face, hairstyle and outfit. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
-const CHAR="CHARACTER LOCK — the same woman as in the reference images in every image: a Korean woman in her 30s with a straight black chin-length bob and a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as shown in the character sheet — the same black T-shirt, black knee-length bermuda shorts, black crew socks and chunky black-and-silver sneakers, no changes. She also always has the same two accessories in every image: a small black nylon crossbody bag worn across her body with a thin black strap, and a black sports smartwatch on her left wrist with a blank dark screen. Nothing else added (no jacket, no hat, no jewelry). The T-shirt front is plain black; the daisy graphic is only on the back, and the swirl print is only on the back of the left shorts leg.";
+const REF="Use the reference images only for her face, hairstyle, outfit, sling bag and smartwatch. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
+const CHAR="CHARACTER LOCK — the same woman as in the reference images in every image: a Korean woman in her 30s with a straight black chin-length bob and a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as shown in the character sheet — the same black T-shirt, black knee-length bermuda shorts, black crew socks and chunky black-and-silver sneakers, no changes. She also always has the same two accessories in every image: a black DESCENTE medium sling bag exactly like the bag reference image (matte black nylon, rounded tall rectangular body, side zipper, adjustable black strap with a black plastic buckle, small silver DESCENTE arrow logo and silver DESCENTE lettering on the front), worn over one shoulder with the bag resting on her chest; and a round graphite dark-gray smartwatch exactly like the watch reference image (brushed metal bezel, two side buttons, dark gray sport band) on her left wrist, its screen showing a simple black watch face. Nothing else added (no jacket, no hat, no jewelry). The T-shirt front is plain black; the daisy graphic is only on the back, and the swirl print is only on the back of the left shorts leg.";
 const BLD="The building: a two-story building on a Seoul neighborhood street — the second floor is a gym with large bright windows showing treadmills, the ground floor is a newly opened fried-chicken shop with warm yellow light and a cluster of balloons at its entrance, and the stair entrance to the gym is at the far right of the building. No readable signage anywhere.";
 const TOD={
  dusk:"Time: a summer evening around 7:30 pm at dusk — deep blue and orange sky, streetlights just turning on, the fried-chicken shop's warm yellow light glowing brightest on the street.",
@@ -122,7 +138,7 @@ const TOD={
  gym:"Time and place: inside the second-floor gym at night — cool white fluorescent light, large windows showing the dark city outside.",
  night:"Time: a summer night around 8:30 pm — dark navy sky, only streetlights and the gym's lit windows remain, the street is quiet."};
 const STYLE="Vertical 9:16 photorealistic cinematic still, natural film color, 35mm film look, shallow depth of field. Top 9% and bottom 20% of the frame kept free of faces and key objects.";
-const AV_P="Avoid: long hair, ponytail, different hairstyle, different face, different outfit, daisy or any graphic on the front of the T-shirt, print on the front of the shorts, a different bag, backpack, tote bag, a different watch, jacket, hoodie, long pants, leggings, skirt, sandals, white sneakers, hat, jewelry, visible shoe logo, other people wearing the same outfit, body shaming, exaggerated belly, distorted hands, extra fingers, text, letters, captions, numbers on screens, brand logos, readable signage, brand packaging, watermark, cartoon, anime, illustration, oversaturated.";
+const AV_P="Avoid: long hair, ponytail, different hairstyle, different face, different outfit, daisy or any graphic on the front of the T-shirt, print on the front of the shorts, a different bag, backpack, tote bag, crossbody purse, a different watch, square watch, jacket, hoodie, long pants, leggings, skirt, sandals, white sneakers, hat, jewelry, visible shoe logo, other people wearing the same outfit, body shaming, exaggerated belly, distorted hands, extra fingers, text, letters, captions, numbers on screens, other brand logos, readable signage, brand packaging, watermark, cartoon, anime, illustration, oversaturated.";
 const AV_N="Avoid: people's faces, text, letters, numbers on screens, captions, brand logos, readable signage, brand packaging, watermark, cartoon, anime, illustration, oversaturated.";
 const CUTS=[
  {id:"C01",b:"ki",shot:"클로즈업",ang:"하이",t:"19.8–21.6",len:1.8,v:0,desc:"(인서트) 손에 꽉 쥔 새 헬스장 회원카드, 비닐도 안 뗐다",snd:"발걸음 박자",emo:"다짐",
@@ -153,18 +169,18 @@ const CUTS=[
   el:[["fig",22,40,76,"r"],["fig",70,40,76,"l"],["dashed",22,58,70,58,"180° 축"],["box",42,66,10,7,""],["text",47,82,"시식 치킨"],["text",70,36,"직원"],["text",22,36,"펄킴"]],
   p:"Two-shot at eye level: the woman on the left facing right, a shop staff member on the right facing left, holding out a piece of chicken on a toothpick between them.",
   per:1,tod:"dusk",f:["Two-shot at eye level from the sidewalk side: she stands on the left of the frame facing right; on the right a cheerful young shop staff member in a red apron and white cap faces left and holds out a piece of fried chicken on a toothpick toward her; a small tasting table with a tray of samples at the shop entrance between them."]},
- {id:"C08",b:"seung",shot:"바스트",ang:"로우",t:"42.6–46.2",len:3.6,v:0,desc:"크로스백에서 닭가슴살 팩을 꺼내 방패처럼 든다",snd:"“샐러드에 닭가슴살”",emo:"방어",
+ {id:"C08",b:"seung",shot:"바스트",ang:"로우",t:"42.6–46.2",len:3.6,v:0,desc:"슬링백에서 닭가슴살 팩을 꺼내 방패처럼 든다",snd:"“샐러드에 닭가슴살”",emo:"방어",
   el:[["face",32,56,16,"r"],["body",32,74,40],["box",52,44,26,32,"닭가슴살 팩"],["arrow",80,60,88,60,""]],
   p:"Low-angle bust shot: the woman on the left raising a packaged chicken-breast pouch like a shield toward the right side of the frame, defensive stance.",
-  per:1,tod:"dusk",f:["Low-angle bust shot: she stands on the left and holds up a sealed plain silver chicken-breast pouch, just pulled from her black crossbody bag, toward the right like a shield, eyes locked on the chicken to the right, a playful defensive stance."]},
+  per:1,tod:"dusk",f:["Low-angle bust shot: she stands on the left and holds up a sealed plain silver chicken-breast pouch, just pulled from her black DESCENTE sling bag, toward the right like a shield, eyes locked on the chicken to the right, a playful defensive stance."]},
  {id:"C09",b:"seung",shot:"미디엄",ang:"로우",t:"46.2–50.0",len:3.8,v:0,desc:"사장(오른쪽)이 확성기로 외친다. 자막 “1시간만 반값!”은 편집에서",snd:"확성기 + “한 입만은 위험한 말”",emo:"위기 ③",
   el:[["fig",64,34,86,"l"],["mega",48,56],["text",64,30,"사장"],["box",10,18,70,12,"자막 자리(편집)"],["fig",4,70,50,"r"]],
   p:"Low-angle medium shot: a shop owner on the right side shouting through a megaphone pointed to the left, the woman partly visible at the left edge; empty space in the upper area for a caption.",
   per:1,tod:"dusk",bld:1,f:["Low-angle medium shot: the chicken shop owner, a cheerful middle-aged man in a red apron, stands on the right at the shop entrance shouting through a megaphone pointed to the left; she is partly visible at the left edge, flinching; balloons above the entrance; clear empty sky space in the upper middle of the frame for a caption."]},
- {id:"C10",b:"seung",shot:"클로즈업",ang:"하이",t:"50.0–53.6",len:3.6,v:0,desc:"떨리는 손으로 크로스백에서 지갑을 꺼낸다",snd:"“say goodbye”",emo:"무너짐",
+ {id:"C10",b:"seung",shot:"클로즈업",ang:"하이",t:"50.0–53.6",len:3.6,v:0,desc:"떨리는 손으로 슬링백에서 지갑을 꺼낸다",snd:"“say goodbye”",emo:"무너짐",
   el:[["box",18,78,40,28,"손"],["box",34,58,40,26,"지갑"],["shake",30],["shake",62]],
-  p:"High-angle close-up: a trembling hand pulling a wallet out of a small crossbody bag, small motion lines around the hand.",
-  per:1,tod:"dusk",f:["High-angle close-up: her trembling hand slowly pulls a plain black wallet out of her small black nylon crossbody bag, the black smartwatch visible on her left wrist, slight motion blur on the fingers, warm shop light on the hand."]},
+  p:"High-angle close-up: a trembling hand pulling a wallet out of a sling bag, small motion lines around the hand.",
+  per:1,tod:"dusk",f:["High-angle close-up: her trembling hand slowly pulls a plain black wallet out of her black DESCENTE sling bag on her chest, the graphite smartwatch visible on her left wrist, slight motion blur on the fingers, warm shop light on the hand."]},
  {id:"C11",b:"jeon",shot:"클로즈업",ang:"하이",t:"53.6–56.6",len:3.0,v:1,desc:"(인서트) 지갑에서 회원카드가 툭 떨어진다 (슬로모션)",snd:"음악 작아짐 + 툭",emo:"정적",
   el:[["box",22,24,46,22,"열린 지갑"],["box",36,72,20,12,"카드"],["arrow",46,48,46,70,""],["ground",114],["text",46,124,"슬로모션"]],
   p:"High-angle close-up: an open wallet at the top of the frame and a membership card falling straight down toward the pavement, motion trail, slow-motion feel.",
@@ -176,7 +192,7 @@ const CUTS=[
  {id:"C13",b:"jeon",shot:"클로즈업",ang:"하이",t:"59.1–61.5",len:2.4,v:0,desc:"(인서트) 스마트워치 타이머를 누른다 (숫자는 편집 자막)",snd:"삑!",emo:"각성",
   el:[["box",8,64,74,22,"왼손목"],["circle",45,75,14],["box",54,50,14,14,"손가락"],["text",45,104,"60:00 은 편집"]],
   p:"High-angle close-up: a wrist with a smartwatch in the center, a finger pressing the watch, blank watch face.",
-  per:1,tod:"dusk2",f:["High-angle close-up: her left wrist with the black sports smartwatch in the center of the frame, the index finger of her right hand firmly pressing the watch face as if starting a timer, the watch screen glowing with a blank dark interface and no readable numbers, her black T-shirt sleeve at the edge."]},
+  per:1,tod:"dusk2",f:["High-angle close-up: her left wrist with the round graphite smartwatch in the center of the frame, the index finger of her right hand firmly pressing the watch face as if starting a timer, the watch screen glowing with a blank dark interface and no readable numbers, her black T-shirt sleeve at the edge."]},
  {id:"C14",b:"jeon",shot:"풀",ang:"사이드",t:"61.5–69.1",len:7.6,v:1,desc:"비트 드롭! 춤추듯 시식대를 돌파해 계단으로 질주. 뒤에서 직원이 치킨을 든 채 멍",snd:"댄스 브레이크 드롭",emo:"폭발 (팡 1)",
   el:[["fig",26,46,62,"run"],["box",46,92,18,14,"시식대"],["fig",64,58,46,"l"],["stairs"],["arrow",8,40,84,40,"DROP!"],["ground",118]],
   p:"Wide side shot: the woman sprinting dynamically from left to right past a small tasting table, a staff member behind holding a chicken piece and staring, staircase entrance at the right edge, strong motion lines.",
