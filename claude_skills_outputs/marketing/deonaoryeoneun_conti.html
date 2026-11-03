@@ -29,9 +29,12 @@ header h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,4vw,
 header .sub{color:var(--pencil);margin:4px 0 0;font-size:14px}
 .logline{background:var(--sheet);border-left:4px solid var(--accent);padding:16px 18px;border-radius:4px;font-size:16px;max-width:70ch}
 .logline b{color:var(--accent)}
-.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:12px}
 .rule{background:var(--sheet);padding:14px 16px;border-radius:4px;font-size:14px;min-width:0}
 .rule h3{margin:0 0 4px;font-size:13px;letter-spacing:.06em;color:var(--pencil);font-weight:600}
+.lock{background:var(--sheet);border:1.5px solid var(--accent);border-radius:4px;padding:16px 18px;display:grid;gap:8px}
+.lock h2{margin:0;font-size:17px;font-family:var(--f-display)}
+.lock p{margin:0;font-size:13.5px;color:var(--pencil)}
 .beatbar{display:flex;height:34px;border-radius:4px;overflow:hidden;font-size:12px;font-weight:600;color:#fff}
 .beatbar div{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;padding:0 4px}
 .beat{display:grid;gap:14px}
@@ -39,8 +42,8 @@ header .sub{color:var(--pencil);margin:4px 0 0;font-size:14px}
 .beat>h2 small{font-family:var(--f-mono);font-size:12px;color:var(--pencil);font-weight:500}
 .beat>h2 .tag{display:inline-block;width:12px;height:12px;border-radius:2px;align-self:center}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:14px}
-@media (max-width:420px){.cards{grid-template-columns:1fr}}
-.card{background:var(--sheet);border-radius:4px;padding:14px;display:grid;grid-template-columns:118px 1fr;gap:14px;min-width:0;border-top:3px solid var(--bc)}
+.card{background:var(--sheet);border-radius:4px;padding:14px;display:grid;grid-template-columns:118px minmax(0,1fr);gap:14px;min-width:0;border-top:3px solid var(--bc)}
+@media (max-width:380px){.card{grid-template-columns:96px minmax(0,1fr)}.frame{width:96px}}
 .frame{width:118px;max-width:100%;aspect-ratio:9/16;background:var(--sheet);border:1.5px solid var(--ink);border-radius:2px}
 .frame svg{display:block;width:100%;height:100%}
 .meta{min-width:0;display:grid;gap:6px;align-content:start}
@@ -54,8 +57,10 @@ header .sub{color:var(--pencil);margin:4px 0 0;font-size:14px}
 .kv b{color:var(--ink);font-weight:600}
 details{font-size:12.5px}
 summary{cursor:pointer;color:var(--accent);font-weight:600}
+details.final summary{color:var(--ink)}
 summary:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .prompt{margin:8px 0 0;background:var(--paper);padding:10px;border-radius:4px;font-family:var(--f-mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.plabel{margin:10px 0 0;font-weight:600;font-size:12px}
 .copy{margin-top:6px;font:inherit;font-size:12px;padding:4px 10px;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--pencil)}
 .legend span{display:inline-flex;gap:6px;align-items:center}
@@ -66,7 +71,7 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
 <div class="wrap">
 <header>
   <h1>반값 치킨 · 러프 콘티</h1>
-  <p class="sub">「더 나오려는 것을 막는 것일뿐」 1분 티저 · 펄킴 · 19.8초 → 76.6초 + 끝 장면 3초 = 59.8초</p>
+  <p class="sub">「더 나오려는 것을 막는 것일뿐」 1분 티저 · 펄킴 · 여름 저녁 7시 반 → 밤 8시 반 · 19.8초 → 76.6초 + 끝 장면 3초 = 59.8초</p>
 </header>
 
 <div class="logline">헬스장 등록 한 달째 한 번도 안 간 <b>펄킴이</b>, 오늘만큼은 꼭 <b>러닝 한 시간</b>을 하려는데, 헬스장 1층에 새로 연 치킨집이 <b>“오픈 기념, 딱 1시간만 반값!”</b>을 외치고 있다.</div>
@@ -81,9 +86,17 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
 
 <div class="rules">
   <div class="rule"><h3>180도 규칙</h3>펄킴은 늘 <b>왼쪽 → 오른쪽</b>(헬스장 계단 쪽)으로 움직여요. 치킨집 사람들은 늘 <b>화면 오른쪽</b>. 카메라는 거리 쪽에서만 찍어요.</div>
+  <div class="rule"><h3>시간과 빛</h3><b>여름 저녁 7시 반</b> 해 질 녘(남색·주황 하늘, 치킨집 노란 불빛)에서 시작해, 러닝 뒤 <b>밤 8시 반</b>(가로등·헬스장 창 불빛)으로 끝나요. C03과 C16은 하늘색만 달라요.</div>
   <div class="rule"><h3>자막·UI 자리</h3>콘티 칸의 <b>옅은 보라 띠</b>는 위 9%(숏폼 아이콘)와 아래 20%(가사 자막) 자리예요. 얼굴과 중요한 물건은 띠 밖에 두세요.</div>
-  <div class="rule"><h3>쓰는 법</h3>콘티로 <b>위치와 프레임</b>을 먼저 정해요. 칸마다 “러프 콘티 그리기 프롬프트”로 연필 스케치를 뽑을 수 있어요. 완성 이미지는 같은 구도에 빛·색·재질만 입혀요.</div>
+  <div class="rule"><h3>소품 정리</h3>시트에 없는 물건은 안 씀. 지갑·닭가슴살은 <b>반바지 주머니</b>에서, 타이머는 손목시계 대신 <b>휴대폰</b>으로 바꿨어요.</div>
 </div>
+
+<section class="lock" aria-labelledby="lockh">
+  <h2 id="lockh">펄킴 인물 고정 프롬프트</h2>
+  <p>펄킴이 나오는 모든 컷 프롬프트 맨 앞에 이미 들어 있어요. 따로 쓸 때는 아래를 복사해요. 캐릭터 시트(또는 앞·뒤·얼굴 3장)를 참고 이미지로 함께 넣어 주세요.</p>
+  <div class="prompt" id="lockText"></div>
+  <div><button class="copy" type="button" id="lockCopy">복사</button></div>
+</section>
 
 <div class="legend">
   <span><i class="sw" style="background:var(--safe)"></i>자막·UI 자리</span>
@@ -94,67 +107,107 @@ footer{font-size:13px;color:var(--pencil);max-width:70ch}
 
 <div id="board"></div>
 
-<footer>글씨(“1시간만 반값!”, “반값 마감”, 타이머 숫자)는 이미지에 그리지 않고 편집에서 자막으로 얹어요. C03과 C16은 같은 구도로 찍어 반전을 키워요. C12와 C14는 같은 무표정 얼굴 한 장을 두 번 써요(쿨레쇼프).</footer>
+<footer>글씨(“1시간만 반값!”, “반값 마감”, 타이머 숫자)는 이미지에 그리지 않고 편집에서 자막으로 얹어요. C03과 C16은 같은 구도로 찍어 반전을 키워요. C12와 C14 사이에 같은 무표정 얼굴 한 장을 다시 쓸 수 있어요(쿨레쇼프). 힉스필드에서는 비율을 9:16으로 고르고, 컷마다 새로 시작해 주세요.</footer>
 </div>
 
 <script>
 const BEATS={ki:["기","설정","19.8–30.9","--ki"],seung:["승","사건","30.9–53.6","--seung"],jeon:["전","전환","53.6–69.1","--jeon"],gyeol:["결","결말","69.1–76.6 + 끝","--gyeol"]};
 const SK="Rough pencil storyboard sketch, loose graphite lines on white paper, vertical 9:16 frame, black and white only, simple shapes, no shading detail, no text. ";
+const REF="Use the reference images only for her face, hairstyle and outfit. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
+const CHAR="CHARACTER LOCK — the same woman as in the reference images in every image: a Korean woman in her 30s with a straight black chin-length bob and a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as shown in the character sheet — the same black T-shirt, black knee-length bermuda shorts, black crew socks and chunky black-and-silver sneakers, no changes, nothing added (no bag, no jacket, no hat, no jewelry, no watch). The T-shirt front is plain black; the daisy graphic is only on the back, and the swirl print is only on the back of the left shorts leg.";
+const BLD="The building: a two-story building on a Seoul neighborhood street — the second floor is a gym with large bright windows showing treadmills, the ground floor is a newly opened fried-chicken shop with warm yellow light and a cluster of balloons at its entrance, and the stair entrance to the gym is at the far right of the building. No readable signage anywhere.";
+const TOD={
+ dusk:"Time: a summer evening around 7:30 pm at dusk — deep blue and orange sky, streetlights just turning on, the fried-chicken shop's warm yellow light glowing brightest on the street.",
+ dusk2:"Time: just after sunset on a summer evening — the sky darkening to deep navy, the chicken shop's warm lights now strong against the blue.",
+ gym:"Time and place: inside the second-floor gym at night — cool white fluorescent light, large windows showing the dark city outside.",
+ night:"Time: a summer night around 8:30 pm — dark navy sky, only streetlights and the gym's lit windows remain, the street is quiet."};
+const STYLE="Vertical 9:16 photorealistic cinematic still, natural film color, 35mm film look, shallow depth of field. Top 9% and bottom 20% of the frame kept free of faces and key objects.";
+const AV_P="Avoid: long hair, ponytail, different hairstyle, different face, different outfit, daisy or any graphic on the front of the T-shirt, print on the front of the shorts, bag, backpack, wristwatch, jacket, hoodie, long pants, leggings, skirt, sandals, white sneakers, hat, jewelry, visible shoe logo, other people wearing the same outfit, body shaming, exaggerated belly, distorted hands, extra fingers, text, letters, captions, numbers on screens, brand logos, readable signage, brand packaging, watermark, cartoon, anime, illustration, oversaturated.";
+const AV_N="Avoid: people's faces, text, letters, numbers on screens, captions, brand logos, readable signage, brand packaging, watermark, cartoon, anime, illustration, oversaturated.";
 const CUTS=[
  {id:"C01",b:"ki",shot:"클로즈업",ang:"하이",t:"19.8–21.6",len:1.8,v:0,desc:"(인서트) 손에 꽉 쥔 새 헬스장 회원카드, 비닐도 안 뗐다",snd:"발걸음 박자",emo:"다짐",
   el:[["box",14,72,52,34,"손"],["box",30,54,44,26,"회원카드"],["text",52,50,"비닐 그대로"]],
-  p:"Extreme close-up from a high angle: a hand tightly gripping a brand-new gym membership card still in its plastic wrap, card filling the center of the frame."},
+  p:"Extreme close-up from a high angle: a hand tightly gripping a brand-new gym membership card still in its plastic wrap, card filling the center of the frame.",
+  per:1,tod:"dusk",f:["Extreme close-up from a high angle: her hand tightly grips a brand-new blank white gym membership card still sealed in clear plastic wrap, the card filling the center of the frame, the edge of her black T-shirt sleeve visible; the dusk sidewalk softly blurred below."]},
  {id:"C02",b:"ki",shot:"미디엄",ang:"로우",t:"21.6–25.0",len:3.4,v:1,desc:"땅을 쿵쿵 밟으며 비장하게 걷는다, 운동화가 크게",snd:"발소리 쿵쿵 + “clap, clap”",emo:"비장",
   el:[["fig",42,26,96,"r"],["arrow",20,106,78,106,"→ 헬스장"],["text",22,122,"쿵"],["text",62,122,"쿵"]],
-  p:"Low-angle medium shot: a woman with a short bob stomping forward from left to right, big chunky sneakers in the foreground, determined posture, sidewalk at night-time city street."},
+  p:"Low-angle medium shot: a woman with a short bob stomping forward from left to right, big chunky sneakers in the foreground, determined posture, sidewalk at a city street.",
+  per:1,tod:"dusk",f:["Low-angle medium shot from the front-side: she stomps forward from left to right along the sidewalk with a determined face, one chunky black-and-silver sneaker large in the foreground mid-step, fists clenched; warm shop lights blurred in the background."]},
  {id:"C03",b:"ki",shot:"풀",ang:"아이레벨",t:"25.0–28.4",len:3.4,v:0,desc:"건물 전경. 2층 헬스장 창, 1층 풍선 달린 새 치킨집. 펄킴은 왼쪽에 작게",snd:"“더 나오려는 걸 막아”",emo:"불안",
   el:[["box",32,30,52,42,"2층 헬스장 창"],["box",32,72,52,46,"1층 치킨집"],["balloon",38,66],["balloon",78,66],["box",84,72,6,46,""],["text",70,126,"계단 입구"],["ground",120],["fig",14,94,26,"r"],["text",45,22,"천천히 줌인"]],
-  p:"Wide eye-level shot of a two-story building at night: a gym with large windows on the second floor, a newly opened fried-chicken shop with balloons on the ground floor, stair entrance at the far right; a small woman figure stands at the left edge looking at it."},
+  p:"Wide eye-level shot of a two-story building: a gym with large windows on the second floor, a newly opened fried-chicken shop with balloons on the ground floor, stair entrance at the far right; a small woman figure stands at the left edge looking at it.",
+  per:1,tod:"dusk",bld:1,f:["Wide eye-level shot of the whole building from across the sidewalk, the building filling the center and right of the frame. She stands small at the left edge on the sidewalk, facing right toward the building, seen from the side."]},
  {id:"C04",b:"ki",shot:"바스트",ang:"아이레벨",t:"28.4–30.9",len:2.5,v:0,desc:"멈칫, 눈을 가늘게 뜨고 오른쪽(치킨집)을 본다",snd:"킁킁 효과음",emo:"경계",
   el:[["face",36,62,18,"r"],["body",36,82,44],["arrow",58,58,86,58,"치킨집"]],
-  p:"Bust shot at eye level: a woman with a short bob on the left half of the frame, head turned toward the right edge, eyes narrowed suspiciously, empty space on the right."},
+  p:"Bust shot at eye level: a woman with a short bob on the left half of the frame, head turned toward the right edge, eyes narrowed suspiciously, empty space on the right.",
+  per:1,tod:"dusk",f:["Bust shot at eye level, seen from the front: she stands on the left half of the frame, head turned toward the right, eyes narrowed suspiciously, nose lifted as if sniffing the air; warm yellow light from the chicken shop falls on her face from the right; empty space on the right side."]},
  {id:"C05",b:"seung",shot:"클로즈업",ang:"아이레벨",t:"30.9–34.7",len:3.8,v:1,desc:"(인서트) 튀김기에서 막 올라온 황금빛 치킨, 김이 오른다",snd:"지글지글 + “Move my body”",emo:"유혹 ①",
   el:[["box",10,78,70,30,"튀김 바구니"],["oval",30,74],["oval",46,72],["oval",60,75],["steam",30],["steam",46],["steam",60]],
-  p:"Close-up at eye level: a frying basket lifted out of oil, piled with fried chicken pieces, steam curling upward into the top of the frame."},
+  p:"Close-up at eye level: a frying basket lifted out of oil, piled with fried chicken pieces, steam curling upward into the top of the frame.",
+  per:0,tod:"dusk",f:["Close-up at eye level at the chicken shop's front counter: a frying basket being lifted out of hot oil by a gloved hand, piled with golden crispy fried chicken pieces, steam curling upward toward the top of the frame, warm yellow shop light, oil glistening. No person's face visible."]},
  {id:"C06",b:"seung",shot:"미디엄",ang:"아이레벨",t:"34.7–38.7",len:4.0,v:0,desc:"몸은 냄새 쪽으로 기우는데 발은 땅에 박혀 버틴다",snd:"“땀방울도 반짝여”",emo:"버팀",
   el:[["fig",36,30,90,"lean"],["wave",80,50],["wave",80,64],["text",70,40,"냄새"],["text",24,122,"발 고정"]],
-  p:"Medium shot at eye level: a woman leaning her upper body strongly to the right as if pulled by a smell, while her feet stay planted firmly on the ground at the left, comic pose; wavy smell lines come in from the right edge."},
+  p:"Medium shot at eye level: a woman leaning her upper body strongly to the right as if pulled by a smell, while her feet stay planted firmly on the ground at the left, comic pose; wavy smell lines come in from the right edge.",
+  per:1,tod:"dusk",f:["Medium full shot at eye level, seen from the front: she leans her upper body strongly to the right toward the chicken shop as if pulled by the smell, while both sneakers stay planted firmly on the sidewalk on the left, a comic tug-of-war pose, a faint wisp of steam drifting in from the right edge."]},
  {id:"C07",b:"seung",shot:"투샷",ang:"아이레벨",t:"38.7–42.6",len:3.9,v:0,desc:"시식 직원(오른쪽)이 이쑤시개에 꽂은 치킨을 내민다",snd:"“마음속 전쟁 시작돼”",emo:"흔들림 ②",
   el:[["fig",22,40,76,"r"],["fig",70,40,76,"l"],["dashed",22,58,70,58,"180° 축"],["box",42,66,10,7,""],["text",47,82,"시식 치킨"],["text",70,36,"직원"],["text",22,36,"펄킴"]],
-  p:"Two-shot at eye level: the woman on the left facing right, a shop staff member on the right facing left, holding out a piece of chicken on a toothpick between them."},
- {id:"C08",b:"seung",shot:"바스트",ang:"로우",t:"42.6–46.2",len:3.6,v:0,desc:"가방에서 닭가슴살 팩을 방패처럼 꺼내 든다",snd:"“샐러드에 닭가슴살”",emo:"방어",
+  p:"Two-shot at eye level: the woman on the left facing right, a shop staff member on the right facing left, holding out a piece of chicken on a toothpick between them.",
+  per:1,tod:"dusk",f:["Two-shot at eye level from the sidewalk side: she stands on the left of the frame facing right; on the right a cheerful young shop staff member in a red apron and white cap faces left and holds out a piece of fried chicken on a toothpick toward her; a small tasting table with a tray of samples at the shop entrance between them."]},
+ {id:"C08",b:"seung",shot:"바스트",ang:"로우",t:"42.6–46.2",len:3.6,v:0,desc:"반바지 주머니에서 닭가슴살 팩을 꺼내 방패처럼 든다",snd:"“샐러드에 닭가슴살”",emo:"방어",
   el:[["face",32,56,16,"r"],["body",32,74,40],["box",52,44,26,32,"닭가슴살 팩"],["arrow",80,60,88,60,""]],
-  p:"Low-angle bust shot: the woman on the left raising a packaged chicken-breast pouch like a shield toward the right side of the frame, defensive stance."},
+  p:"Low-angle bust shot: the woman on the left raising a packaged chicken-breast pouch like a shield toward the right side of the frame, defensive stance.",
+  per:1,tod:"dusk",f:["Low-angle bust shot: she stands on the left and holds up a sealed plain silver chicken-breast pouch, just pulled from her shorts pocket, toward the right like a shield, eyes locked on the chicken to the right, a playful defensive stance."]},
  {id:"C09",b:"seung",shot:"미디엄",ang:"로우",t:"46.2–50.0",len:3.8,v:0,desc:"사장(오른쪽)이 확성기로 외친다. 자막 “1시간만 반값!”은 편집에서",snd:"확성기 + “한 입만은 위험한 말”",emo:"위기 ③",
   el:[["fig",64,34,86,"l"],["mega",48,56],["text",64,30,"사장"],["box",10,18,70,12,"자막 자리(편집)"],["fig",4,70,50,"r"]],
-  p:"Low-angle medium shot: a shop owner on the right side shouting through a megaphone pointed to the left, the woman partly visible at the left edge; empty space in the upper area for a caption."},
- {id:"C10",b:"seung",shot:"클로즈업",ang:"하이",t:"50.0–53.6",len:3.6,v:0,desc:"떨리는 손으로 지갑을 꺼낸다",snd:"“say goodbye”",emo:"무너짐",
+  p:"Low-angle medium shot: a shop owner on the right side shouting through a megaphone pointed to the left, the woman partly visible at the left edge; empty space in the upper area for a caption.",
+  per:1,tod:"dusk",bld:1,f:["Low-angle medium shot: the chicken shop owner, a cheerful middle-aged man in a red apron, stands on the right at the shop entrance shouting through a megaphone pointed to the left; she is partly visible at the left edge, flinching; balloons above the entrance; clear empty sky space in the upper middle of the frame for a caption."]},
+ {id:"C10",b:"seung",shot:"클로즈업",ang:"하이",t:"50.0–53.6",len:3.6,v:0,desc:"떨리는 손으로 반바지 주머니에서 지갑을 꺼낸다",snd:"“say goodbye”",emo:"무너짐",
   el:[["box",18,78,40,28,"손"],["box",34,58,40,26,"지갑"],["shake",30],["shake",62]],
-  p:"High-angle close-up: a trembling hand pulling a wallet out of a shoulder bag, small motion lines around the hand."},
+  p:"High-angle close-up: a trembling hand pulling a wallet out of a shorts pocket, small motion lines around the hand.",
+  per:1,tod:"dusk",f:["High-angle close-up: her trembling hand slowly pulls a plain black wallet out of the front pocket of her black bermuda shorts, slight motion blur on the fingers, warm shop light on the hand."]},
  {id:"C11",b:"jeon",shot:"클로즈업",ang:"하이",t:"53.6–56.6",len:3.0,v:1,desc:"(인서트) 지갑에서 회원카드가 툭 떨어진다 (슬로모션)",snd:"음악 작아짐 + 툭",emo:"정적",
   el:[["box",22,24,46,22,"열린 지갑"],["box",36,72,20,12,"카드"],["arrow",46,48,46,70,""],["ground",114],["text",46,124,"슬로모션"]],
-  p:"High-angle close-up: an open wallet at the top of the frame and a membership card falling straight down toward the pavement, motion trail, slow-motion feel."},
- {id:"C12",b:"jeon",shot:"클로즈업",ang:"아이레벨",t:"56.6–59.1",len:2.5,v:0,desc:"펄킴의 무표정 얼굴 (C14에서 한 번 더 씀)",snd:"후렴 낮게",emo:"깨달음",
+  p:"High-angle close-up: an open wallet at the top of the frame and a membership card falling straight down toward the pavement, motion trail, slow-motion feel.",
+  per:1,tod:"dusk2",f:["High-angle close-up: an open black wallet in her hand at the top of the frame; the blank white membership card in clear plastic slips out and falls straight down toward the sidewalk pavement, frozen mid-air, slow-motion feel, a soft glint of shop light on the plastic."]},
+ {id:"C12",b:"jeon",shot:"클로즈업",ang:"아이레벨",t:"56.6–59.1",len:2.5,v:0,desc:"펄킴의 무표정 얼굴 (쿨레쇼프: 떨어진 카드 다음에 붙임)",snd:"후렴 낮게",emo:"깨달음",
   el:[["face",45,66,30,"f"],["text",45,112,"무표정"]],
-  p:"Frontal close-up at eye level: a woman with a short bob, completely neutral expressionless face, centered, plain background."},
- {id:"C13",b:"jeon",shot:"클로즈업",ang:"하이",t:"59.1–61.5",len:2.4,v:0,desc:"(인서트) 손목시계 타이머를 누른다 (숫자는 편집 자막)",snd:"삑!",emo:"각성",
-  el:[["box",8,64,74,22,"손목"],["circle",45,75,16],["box",58,52,14,14,"손가락"],["text",45,104,"60:00 은 편집"]],
-  p:"High-angle close-up: a wrist with a digital sports watch in the center, a finger pressing the watch button, blank watch face."},
+  p:"Frontal close-up at eye level: a woman with a short bob, completely neutral expressionless face, centered, plain background.",
+  per:1,tod:"dusk2",f:["Frontal close-up at eye level: her completely neutral, expressionless face, eyes looking straight ahead, mouth closed, centered in the frame; the darkening street and warm shop lights softly blurred behind."]},
+ {id:"C13",b:"jeon",shot:"클로즈업",ang:"하이",t:"59.1–61.5",len:2.4,v:0,desc:"(인서트) 휴대폰 스톱워치를 누른다 (숫자는 편집 자막)",snd:"삑!",emo:"각성",
+  el:[["box",28,40,34,62,"휴대폰"],["box",50,82,16,14,"엄지"],["text",45,116,"60:00 은 편집"]],
+  p:"High-angle close-up: a hand holding a smartphone, thumb tapping the screen, blank screen.",
+  per:1,tod:"dusk2",f:["High-angle close-up: she holds a smartphone in one hand and firmly taps the screen with her thumb as if starting a stopwatch, the screen glowing with a blank dark interface and no readable numbers, her black T-shirt sleeve at the edge."]},
  {id:"C14",b:"jeon",shot:"풀",ang:"사이드",t:"61.5–69.1",len:7.6,v:1,desc:"비트 드롭! 춤추듯 시식대를 돌파해 계단으로 질주. 뒤에서 직원이 치킨을 든 채 멍",snd:"댄스 브레이크 드롭",emo:"폭발 (팡 1)",
   el:[["fig",26,46,62,"run"],["box",46,92,18,14,"시식대"],["fig",64,58,46,"l"],["stairs"],["arrow",8,40,84,40,"DROP!"],["ground",118]],
-  p:"Wide side shot: the woman sprinting dynamically from left to right past a small tasting table, a staff member behind holding a chicken piece and staring, staircase entrance at the right edge, strong motion lines."},
- {id:"C15",b:"gyeol",shot:"클로즈업",ang:"하이",t:"69.1–71.3",len:2.2,v:0,desc:"(인서트 3장) 러닝머신 타이머 60:00 → 30:00 → 00:00",snd:"“퇴근길에 헬스장 갈까”",emo:"끈기",
-  el:[["box",14,24,62,24,"60:00"],["box",14,56,62,24,"30:00"],["box",14,88,62,24,"00:00"],["text",45,124,"숫자는 편집"]],
-  p:"High-angle close-up of a treadmill control panel with a blank display and buttons, centered."},
+  p:"Wide side shot: the woman sprinting dynamically from left to right past a small tasting table, a staff member behind holding a chicken piece and staring, staircase entrance at the right edge, strong motion lines.",
+  per:1,tod:"dusk2",bld:1,f:["Wide side shot: she sprints dynamically from left to right past the small tasting table in front of the chicken shop, arms pumping, toward the gym stair entrance at the right edge; behind her the staff member in the red apron freezes, holding the toothpick chicken and staring in surprise; motion blur on the background."]},
+ {id:"C15",b:"gyeol",shot:"클로즈업",ang:"하이",t:"69.1–71.3",len:2.2,v:0,desc:"(인서트 3장) 러닝머신 타이머 60:00 → 30:00 → 00:00 (숫자는 편집)",snd:"“퇴근길에 헬스장 갈까”",emo:"끈기",
+  el:[["box",14,24,62,24,"① 출발"],["box",14,56,62,24,"② 땀"],["box",14,88,62,24,"③ 정지"],["text",45,124,"숫자는 편집"]],
+  p:"High-angle close-up of a treadmill control panel with a blank display and buttons, centered.",
+  per:1,tod:"gym",f:[
+   "① High-angle close-up: her chunky black-and-silver sneakers start running on a treadmill belt, the treadmill control panel at the top of the frame with a blank display.",
+   "② High-angle close-up: drops of sweat falling onto the treadmill control panel with a blank display, her hands gripping the side rails, black T-shirt sleeves visible.",
+   "③ High-angle close-up: her sweaty hand pressing the stop button on the treadmill control panel, blank display, a sense of finishing."]},
  {id:"C16",b:"gyeol",shot:"풀",ang:"아이레벨",t:"71.3–74.3",len:3.0,v:1,desc:"C03과 같은 구도. 땀범벅으로 내려온 순간 치킨집 셔터가 쾅",snd:"쾅!",emo:"허탈",
   el:[["box",32,30,52,42,"2층 헬스장 창"],["shutter",32,72,52,46],["box",84,72,6,46,""],["ground",120],["fig",72,94,26,"l"],["text",58,66,"쾅"]],
-  p:"Wide eye-level shot of the same two-story building, identical composition: the ground-floor chicken shop now has its metal shutter pulled down, the woman standing small near the stair entrance at the right, facing left toward the shutter."},
+  p:"Wide eye-level shot of the same two-story building, identical composition: the ground-floor chicken shop now has its metal shutter pulled down, the woman standing small near the stair entrance at the right, facing left toward the shutter.",
+  per:1,tod:"night",bld:1,f:["Wide eye-level shot of the whole building from across the sidewalk, identical composition to the earlier wide shot: the ground-floor chicken shop's metal roll-down shutter is pulled down shut, the balloons drooping; she stands small near the gym stair entrance at the right, drenched in sweat, facing left toward the shutter, frozen."]},
  {id:"C17",b:"gyeol",shot:"바스트",ang:"아이레벨",t:"74.3–76.6",len:2.3,v:0,desc:"멍하다가 피식 웃으며 물 한 모금",snd:"“러닝 한 시간만 하자”",emo:"웃음 (팡 2)",
   el:[["face",42,58,18,"smile"],["body",42,78,44],["box",58,46,10,26,"물병"]],
-  p:"Bust shot at eye level: a sweaty woman with a short bob sipping from a water bottle, small relieved smile, centered."},
+  p:"Bust shot at eye level: a sweaty woman with a short bob sipping from a water bottle, small relieved smile, centered.",
+  per:1,tod:"night",f:["Bust shot at eye level: sweaty with damp hair, she sips from a clear plain water bottle with a small relieved smirk, centered; a streetlight and the gym's lit windows softly blurred behind her."]},
  {id:"끝",b:"gyeol",shot:"—",ang:"—",t:"76.6–79.6",len:3,v:0,desc:"MAIDOL 끝 장면 (로고 · 내 이야기로 노래 만들기 · MAIDOL 검색)",snd:"—",emo:"—",
-  el:[["box",15,56,60,30,"MAIDOL"],["text",45,98,"끝 장면"]],p:null}
+  el:[["box",15,56,60,30,"MAIDOL"],["text",45,98,"끝 장면"]],p:null,f:null}
 ];
+function build(c,scene){
+  const parts=[];
+  if(c.per)parts.push(REF,CHAR);
+  parts.push(STYLE+" "+scene);
+  if(c.bld)parts.push(BLD);
+  parts.push(TOD[c.tod]);
+  parts.push(c.per?AV_P:AV_N);
+  return parts.join("\n\n");
+}
 const NS="http://www.w3.org/2000/svg";
 function E(tag,a,parent){const e=document.createElementNS(NS,tag);let css="";
   for(const k in a){const v=String(a[k]);if(v.includes("var("))css+=`${k}:${v};`;else e.setAttribute(k,v)}
@@ -202,13 +255,23 @@ function draw(cut){
     else if(t==="steam")E("path",{d:`M${a[0]} 66 q-3 -6 0 -12 q3 -6 0 -12 q-3 -6 0 -12`,...st,"stroke-width":.8},g);
     else if(t==="wave")E("path",{d:`M${a[0]} ${a[1]} q-4 -3 -8 0 q-4 3 -8 0 q-4 -3 -8 0`,...st,"stroke-width":.9},g);
     else if(t==="mega")E("path",{d:`M${a[0]+12} ${a[1]-3} L${a[0]} ${a[1]-9} L${a[0]} ${a[1]+9} L${a[0]+12} ${a[1]+3} Z`,...st},g);
-    else if(t==="shake"){E("path",{d:`M${a[0]} 70 l-3 3 l3 3 l-3 3`,...st,"stroke-width":.8},g)}
+    else if(t==="shake")E("path",{d:`M${a[0]} 70 l-3 3 l3 3 l-3 3`,...st,"stroke-width":.8},g);
     else if(t==="circle")E("circle",{cx:a[0],cy:a[1],r:a[2],...st},g);
     else if(t==="stairs")E("path",{d:"M70 118 L70 108 L76 108 L76 98 L82 98 L82 88 L88 88",...st},g);
-    else if(t==="shutter"){E("rect",{x:a[0],y:a[1],width:a[2],height:a[3],...st},g);for(let yy=a[1]+5;yy<a[1]+a[3];yy+=5)E("line",{x1:a[0]+1,y1:yy,x2:a[0]+a[2]-1,y2:yy,...st,"stroke-width":.6},g);txt(g,a[0]+a[2]/2,a[1]+a[3]+0,"",7)}
+    else if(t==="shutter"){E("rect",{x:a[0],y:a[1],width:a[2],height:a[3],...st},g);for(let yy=a[1]+5;yy<a[1]+a[3];yy+=5)E("line",{x1:a[0]+1,y1:yy,x2:a[0]+a[2]-1,y2:yy,...st,"stroke-width":.6},g)}
   }
   return s;
 }
+function sel(el){try{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}catch(e){}}
+function copyBtn(btn,text,el){btn.addEventListener("click",()=>{const done=()=>{btn.textContent="복사됨";setTimeout(()=>btn.textContent="복사",1500)};
+  try{navigator.clipboard.writeText(text).then(done,()=>sel(el))}catch(e){sel(el)}})}
+function promptBlock(parent,label,text){
+  if(label){const l=document.createElement("p");l.className="plabel";l.textContent=label;parent.appendChild(l)}
+  const pre=document.createElement("div");pre.className="prompt";pre.textContent=text;parent.appendChild(pre);
+  const b=document.createElement("button");b.className="copy";b.type="button";b.textContent="복사";parent.appendChild(b);copyBtn(b,text,pre)}
+const lockFull=REF+"\n\n"+CHAR;
+document.getElementById("lockText").textContent=lockFull;
+copyBtn(document.getElementById("lockCopy"),lockFull,document.getElementById("lockText"));
 const board=document.getElementById("board");
 for(const key of Object.keys(BEATS)){
   const [k,name,range,col]=BEATS[key];
@@ -222,14 +285,12 @@ for(const key of Object.keys(BEATS)){
     m.innerHTML=`<div class="row1"><span class="cid">${c.id}</span><span class="chip">${c.shot}</span><span class="chip">${c.ang}</span><span class="chip ${c.v?"vid":""}">${c.v?"영상":"정지"}</span></div>
       <div class="time">${c.t}초 · ${c.len}초</div><p class="desc">${c.desc}</p>
       <p class="kv"><b>소리</b> ${c.snd} · <b>감정</b> ${c.emo}</p>`;
-    if(c.p){const d=document.createElement("details");const full=SK+c.p;
-      d.innerHTML=`<summary>러프 콘티 그리기 프롬프트</summary><div class="prompt"></div><button class="copy" type="button">복사</button>`;
-      d.querySelector(".prompt").textContent=full;
-      d.querySelector(".copy").addEventListener("click",ev=>{const b=ev.currentTarget;
-        const done=()=>{b.textContent="복사됨";setTimeout(()=>b.textContent="복사",1500)};
-        try{navigator.clipboard.writeText(full).then(done,()=>{sel(d)})}catch(e){sel(d)}});
+    if(c.f){const d=document.createElement("details");d.className="final";
+      d.innerHTML=`<summary>완성 이미지 프롬프트${c.f.length>1?" ("+c.f.length+"장)":""}${c.per?" · 펄킴 고정 포함":" · 인물 없음"}</summary>`;
+      c.f.forEach((sc,i)=>promptBlock(d,c.f.length>1?`${i+1}번째 장`:null,build(c,sc)));
       m.appendChild(d)}
+    if(c.p){const d=document.createElement("details");
+      d.innerHTML=`<summary>러프 콘티 그리기 프롬프트</summary>`;promptBlock(d,null,SK+c.p);m.appendChild(d)}
     card.append(fr,m);cards.appendChild(card)}
   sec.appendChild(cards);board.appendChild(sec)}
-function sel(d){const r=document.createRange();r.selectNodeContents(d.querySelector(".prompt"));const s=getSelection();s.removeAllRanges();s.addRange(r)}
 </script>
