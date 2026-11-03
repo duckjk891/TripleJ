@@ -81,7 +81,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 
 <section class="lock" aria-labelledby="refh">
   <h2 id="refh">참고 이미지</h2>
-  <p>컷마다 나오는 인물의 참고 이미지를 넣어요. 사진을 길게 누르면 저장돼요. 펄킴 컷 = 펄킴 3장 + 흰 시계, 근육 팀 컷 = 근육 팀 전신.</p>
+  <p>컷마다 나오는 인물의 참고 이미지를 넣어요. 사진을 길게 누르면 저장돼요. 펄킴 컷 = 펄킴 3장 + 흰 시계, 근육 팀 컷 = 근육 팀 전신, 치킨집 컷 = 치킨집 팀.</p>
   <div class="refs">
     <figure><img src="refs/v2_1_front.jpg" alt="펄킴 앞모습"><figcaption>펄킴 앞 (새 착장)</figcaption></figure>
     <figure><img src="refs/v2_2_back.jpg" alt="펄킴 뒷모습"><figcaption>펄킴 뒤 (MOVE 그림)</figcaption></figure>
@@ -89,6 +89,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
     <figure><img src="refs/6_smartwatch_white.jpg" alt="흰색 스마트워치"><figcaption>흰 스마트워치 (왼손목)</figcaption></figure>
     <figure><img src="refs/7_muscle_team_full.jpg" alt="근육 팀 전신"><figcaption>근육 팀 전신 (기준)</figcaption></figure>
     <figure><img src="refs/8_muscle_team_selfie.jpg" alt="근육 팀 셀카"><figcaption>근육 팀 얼굴 (보조)</figcaption></figure>
+    <figure><img src="refs/9_chicken_team.jpg" alt="치킨집 팀"><figcaption>치킨집 팀 (직원·사장)</figcaption></figure>
   </div>
 </section>
 
@@ -110,8 +111,8 @@ const PLACE={A:"A 건물 앞 인도",B:"B 치킨집 입구",C:"C 2층 헬스장 
 const REF="Use the reference images only for the people's faces, hairstyles, outfits and accessories. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
 const PK="CHARACTER LOCK — PEARL KIM: the same Korean woman in her 30s as in the character sheet: straight black chin-length bob with a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as in the character sheet: a violet-purple short-sleeve crew-neck T-shirt (the front is plain; a light-blue and white graphic is only on the back), loose lavender athletic shorts, white crew socks and white-and-gray running shoes, and an ivory drawstring shoulder bag with a small pink rose print on her right shoulder. She also wears a round white smartwatch with a silver bezel, white sport band and black watch face on her left wrist, exactly like the watch reference image. Nothing else added (no jacket, no hat, no jewelry).";
 const MT="MUSCLE TEAM LOCK — the same four Korean men in their late 20s as in the muscle-team reference image, very muscular bodybuilder physiques, cheerful and comically over-confident. Each always keeps his own look: M1 medium-length wavy black hair swept back and a wide smile, white socks with two black stripes; M2 short neat black hair, mischievous smirk, black watch on his left wrist; M3 the tallest and biggest, short black hair, white over-ear headphones; M4 side-parted black hair, playful pout, one white wireless earbud, plain black wrist wrap on his right wrist. All four always wear the same plain neon-lime stringer tank tops with no logo, plain black athletic shorts, white crew socks and plain white sneakers with no logos. Never shirtless.";
-const CT="CHICKEN SHOP TEAM: the young staff member wears a red apron over a white T-shirt and a white cap; the shop owner is a cheerful middle-aged man in a red apron over a white T-shirt.";
-const BLD="The building: a two-story building on a Seoul neighborhood street — the second floor is a gym with large open windows and bright white light, the ground floor is a newly opened fried-chicken shop with warm yellow light and a cluster of balloons at its entrance, and the gym's stair entrance is at the far right of the building. No readable signage anywhere.";
+const CT="CHICKEN SHOP TEAM LOCK — the same two Korean men as in the chicken-team reference image. The young staff member in his early 20s: short black hair, bright eager smile, white cap, white T-shirt, plain bright-red apron, black pants, white sneakers, usually holding a small metal tray of fried chicken samples on toothpicks. The shop owner in his 50s: slightly round build, short wavy graying hair, big cheerful grin, white T-shirt, plain bright-red apron, black pants, white sneakers, usually holding a red-and-white megaphone. Aprons have no text or logo.";
+const BLD="The building: a two-story building on a Seoul neighborhood street — the second floor is a gym with large open windows and bright white light, the ground floor is a newly opened fried-chicken shop with a red storefront frame, warm yellow light inside and clusters of red and white balloons on both sides of its entrance, and the gym's stair entrance is at the far right of the building. No readable signage anywhere.";
 const TOD={
  dusk:"Time: a summer evening around 7:30 pm at dusk — muted deep-blue and orange sky, streetlights just turning on, the chicken shop's warm yellow light glowing brightest on the street. Slightly desaturated, cinematic.",
  dusk2:"Time: just after sunset on a summer evening — the sky darkening to deep navy, the chicken shop's warm lights now strong against the blue.",
