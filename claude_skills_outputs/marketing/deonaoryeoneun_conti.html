@@ -41,10 +41,10 @@ h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,4vw,38px);m
 .part>h2{margin:0;font-family:var(--f-display);font-size:20px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .part>h2 small{font-family:var(--f-mono);font-size:12px;color:var(--pencil);font-weight:500}
 .part>h2 .tag{display:inline-block;width:12px;height:12px;border-radius:2px;align-self:center}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(360px,100%),1fr));gap:14px}
-.card{background:var(--sheet);border-radius:4px;padding:14px;display:grid;grid-template-columns:112px minmax(0,1fr);gap:14px;min-width:0;border-top:3px solid var(--bc)}
-@media (max-width:380px){.card{grid-template-columns:90px minmax(0,1fr)}}
-.frame{width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:2px;border:1px solid var(--faint);background:#888}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(440px,100%),1fr));gap:14px}
+.card{background:var(--sheet);border-radius:4px;padding:14px;display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;min-width:0;border-top:3px solid var(--bc)}
+@media (max-width:520px){.card{grid-template-columns:minmax(0,1fr)}}
+.frame{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:2px;border:1px solid var(--faint);background:#888}
 .meta{min-width:0;display:grid;gap:5px;align-content:start}
 .row1{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .cid{font-family:var(--f-mono);font-weight:500;font-size:15px}
@@ -120,14 +120,14 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
   <p>펄킴 3장, 직원·사장 4장을 먼저 만들어요. 근육 팀 8장은 단체 컷에서 얼굴이 섞일 때 만들어도 돼요.</p>
   <div id="prodPeople"></div>
   <h3 class="step">4. 컷에 입히기</h3>
-  <p>힉스필드 비율을 9:16으로 두고, 아래 컷 카드의 “넣을 이미지” 순서대로 넣어요. 장소판이 꼭 첫 번째예요. C05, C08, C03 세 컷을 먼저 시험해요. 표정 시트는 해당 칸만 잘라서 넣어요. 옷은 현실 컷이 검은 옷, 상상·드롭 컷이 보라 옷이에요.</p>
+  <p>힉스필드 비율을 16:9로 두고, 아래 컷 카드의 “넣을 이미지” 순서대로 넣어요. 장소판이 꼭 첫 번째예요. C05, C08, C03 세 컷을 먼저 시험해요. 표정 시트는 해당 칸만 잘라서 넣어요. 옷은 현실 컷이 검은 옷, 상상·드롭 컷이 보라 옷이에요.</p>
   <h3 class="step">5. 재생성으로 다듬기</h3>
   <div id="prodFix"></div>
 </section>
 
 <div id="board"></div>
 
-<footer>힉스필드: 컷마다 새로 시작 · 참고 이미지 첨부 · 비율 9:16. 얼굴이 섞이면 인물 수가 적은 컷부터 만들고, 잘 나온 컷을 다음 컷의 참고 이미지로 함께 넣어요. 영상 6컷(C01·C18·C22·C23·C26·C29)은 이미지가 나온 뒤 영상 프롬프트를 따로 써요.</footer>
+<footer>힉스필드: 컷마다 새로 시작 · 참고 이미지 첨부 · 비율 16:9. 얼굴이 섞이면 인물 수가 적은 컷부터 만들고, 잘 나온 컷을 다음 컷의 참고 이미지로 함께 넣어요. 영상 6컷(C01·C18·C22·C23·C26·C29)은 이미지가 나온 뒤 영상 프롬프트를 따로 써요.</footer>
 </div>
 
 <script>
@@ -151,7 +151,7 @@ const TOD={
  imag:"Imagination scene: a seamless solid-color studio backdrop and floor, flat bright saturated pop colors, playful exaggerated comedy.",
  gym:"Time and place: inside the second-floor gym at night — bright, even high-key white light with clean saturated colors, large windows showing the glowing city outside.",
  night:"Time: a summer night around 8:45 pm — deep electric navy sky, saturated orange streetlights and the gym's bright white window light, the street is quiet."};
-const STYLE="Vertical 9:16 photorealistic cinematic still in a bold pop music-video style: vivid saturated colors, punchy contrast, shallow depth of field. Top 9% and bottom 20% of the frame kept free of faces and key objects.";
+const STYLE="Widescreen 16:9 photorealistic cinematic still in a bold pop music-video style: vivid saturated colors, punchy contrast, shallow depth of field. Bottom 12% of the frame kept free of faces and key objects for lyrics.";
 const AV="Avoid: different faces, merged faces, extra people, long hair, ponytail, different outfit, black T-shirt, sling bag, backpack, a different watch, square watch, jacket, a hat on Pearl Kim, jewelry, shirtless men, different tank top color, Nike logo, swoosh, brand logos, readable signage, text, letters, captions, numbers on screens, distorted hands, extra fingers, body shaming, exaggerated belly, watermark, anime, illustration.";
 const AV_BLACK=AV.replace("black T-shirt, sling bag, backpack,","purple T-shirt, lavender shorts, white shoes, rose-print bag, a different bag, backpack,").replace("Nike logo, swoosh, brand logos,","logos on other people's clothes,");
 // p: 파트, who: 등장(P=펄킴, M=근육팀, S=직원, B=사장), bld: 건물 문구, tod: 시간대
