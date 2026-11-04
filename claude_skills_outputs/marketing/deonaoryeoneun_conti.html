@@ -110,7 +110,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 <section class="lock" aria-labelledby="prodh">
   <h2 id="prodh">이미지 제작 순서</h2>
   <p>장소를 먼저 만들고, 인물을 입힌 뒤, 재생성으로 다듬어요. 강의 자료의 공간·전신·얼굴 각도 프롬프트 형식을 그대로 썼어요. 캐스팅 시트는 인물이 이미 정해져서 건너뛰어요.</p>
-  <h3 class="step">1. 장소 기본판 6장 · 16:9 와이드</h3>
+  <h3 class="step">1. 장소 기본판 7장 · 16:9 와이드</h3>
   <p>전경을 먼저 확정하고 나머지를 만들어요. 넓게 만든 뒤 컷에서 세로로 좁혀요.</p>
   <div id="prodLoc"></div>
   <h3 class="step">2. 빛 변경 6장</h3>
@@ -194,6 +194,7 @@ function plate(c){const place=c[7],tod=c[8];
   if(tod==="imag")return "";
   if(tod==="gym")return "E_헬스장";
   const t={dusk:"해질녘",dusk2:"직후",drop:"드롭",night:"밤"}[tod];
+  if(["C01","C02","C02b"].includes(c[0]))return "A_멀리";
   return (place.includes("건물")?"전경":place[0])+"_"+t}
 const LOC_OUT="[OUTPUT]\nPhotorealistic location photo, landscape 16:9. Natural exposure. The place is empty, no people.\nNo readable text on signs, no labels.";
 const SAME="Use the attached image as the same building and street. Keep the street layout exactly the same: one narrow straight road of plain dark asphalt with no lane markings runs left to right in front of the buildings, and the sidewalk runs left to right between the road and the buildings. No other road, no side street.\n\n";
@@ -217,7 +218,7 @@ Mood: ordinary, lively, inviting
 From across the street, facing the building straight on, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
- {name:"A_해질녘 (건물 앞 인도)",use:"C01·C02·C04·C05·C06 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+ {name:"A_해질녘 (건물 앞 인도)",use:"C04·C05·C06 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
 Setting: Outdoor
 Type: the sidewalk just to the left of the chicken shop, seen from across the road
 ${SEOUL}
@@ -232,6 +233,23 @@ Mood: ordinary, quiet, slightly tempting
 
 [CAMERA]
 From across the road, about 12 m to the left of the chicken shop, facing the buildings straight on, turned slightly to the right, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"A_멀리 (치킨집에서 먼 인도)",use:"C01·C02·C02b · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+Setting: Outdoor
+Type: the same sidewalk, about 30 m to the left of the chicken shop, seen from across the road
+${SEOUL}
+Scale: about 25 m of sidewalk
+Layout: left, neighborhood shops facing the road; center, an empty sidewalk where a person can walk; right, more neighborhood shops continuing along the same sidewalk, with the chicken shop's red storefront only as a small warm glow far away at the right edge of the frame; foreground, the road
+Key elements: neighborhood shop fronts with no readable signs, a streetlight, street trees along the curb
+Surfaces: gray paving-stone sidewalk, shop walls and glass, a narrow neighborhood road of plain dark asphalt with no lane markings
+Color palette: deep blue, orange, warm yellow
+Wear: lightly used, clean
+${DUSK}
+Mood: ordinary, quiet, everyday
+
+[CAMERA]
+From across the road, about 30 m to the left of the chicken shop, facing the buildings straight on, turned slightly to the right, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
  {name:"B_해질녘 (치킨집 입구)",use:"C08·C10·C11·C13~C17 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
