@@ -195,9 +195,7 @@ const SAME="Use the attached image as the same building and street.\n\n";
 const SEOUL="Region and era: a Seoul residential neighborhood street, present day";
 const DUSK="Light and time: summer evening around 7:30 pm at dusk, clear sky, warm yellow light from the chicken shop, bright white light from the gym, streetlights just turning on";
 const LOCS=[
- {name:"전경_해질녘 (제일 먼저)",use:"C03 · 넣을 이미지: 치킨집 팀 사진",text:`Use the attached image only for the storefront design. Do not include its people.
-
-[LOCATION]
+ {name:"전경_해질녘 (제일 먼저)",use:"C03 · 넣을 이미지: 없음",text:`[LOCATION]
 Setting: Outdoor
 Type: a two-story building with a newly opened fried-chicken shop on the ground floor and a gym on the second floor
 ${SEOUL}
@@ -231,9 +229,7 @@ Mood: ordinary, quiet, slightly tempting
 On the sidewalk to the left of the building, looking along the sidewalk toward the shop, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
- {name:"B_해질녘 (치킨집 입구)",use:"C08·C10·C11·C13~C17 · 넣을 이미지: 전경_해질녘 + 치킨집 팀 사진",text:`Use the first attached image as the same building and street. Use the second attached image only for the storefront design. Do not include its people.
-
-[LOCATION]
+ {name:"B_해질녘 (치킨집 입구)",use:"C08·C10·C11·C13~C17 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
 Setting: Outdoor
 Type: the entrance of the newly opened fried-chicken shop
 ${SEOUL}
