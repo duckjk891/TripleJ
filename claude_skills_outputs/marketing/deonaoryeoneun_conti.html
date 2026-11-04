@@ -110,7 +110,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 <section class="lock" aria-labelledby="prodh">
   <h2 id="prodh">이미지 제작 순서</h2>
   <p>장소를 먼저 만들고, 인물을 입힌 뒤, 재생성으로 다듬어요. 강의 자료의 공간·전신·얼굴 각도 프롬프트 형식을 그대로 썼어요. 캐스팅 시트는 인물이 이미 정해져서 건너뛰어요.</p>
-  <h3 class="step">1. 장소 기본판 7장 · 16:9 와이드</h3>
+  <h3 class="step">1. 장소 기본판 8장 · 16:9 와이드</h3>
   <p>전경을 먼저 확정하고 나머지를 만들어요. 넓게 만든 뒤 컷에서 세로로 좁혀요.</p>
   <div id="prodLoc"></div>
   <h3 class="step">2. 빛 변경 6장</h3>
@@ -156,9 +156,9 @@ const AV="Avoid: different faces, merged faces, extra people, long hair, ponytai
 const AV_BLACK=AV.replace("black T-shirt, sling bag, backpack,","purple T-shirt, lavender shorts, white shoes, rose-print bag, a different bag, backpack,").replace("Nike logo, swoosh, brand logos,","logos on other people's clothes,");
 // p: 파트, who: 등장(P=펄킴, M=근육팀, S=직원, B=사장), bld: 건물 문구, tod: 시간대
 const CUTS=[
- ["C01","a","인물",19.8,20.7,"풀","로우","A","dusk",1,"P","퇴근길에 지쳐서 터덜터덜 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 검은 옷 실루엣","","Long telephoto side view from across the road, with the street compressed flat behind her so that she seems to walk without getting anywhere: she is seen in profile, trudging along the sidewalk from the left side of the frame toward the right side of the frame, toward the small warm glow of the chicken shop far away at the right; her face, chest and toes all point to the right, never toward the camera; tired after work, shoulders slumped, head slightly lowered, feet dragging in time with the beat, with a worn-out face; she is on the sidewalk on the chicken shop side of the road; neighborhood shops behind her."],
- ["C01b","a","인물",20.7,21.5,"바스트","망원","A","dusk",0,"P","줌인, 휴 하고 한숨 쉬는 지친 얼굴","한 걸음씩 박자 맞춰","남색·마젠타 하늘, 얼굴에 노을빛","","Telephoto bust shot from across the road, the same side view as the previous shot but much closer: still walking toward the right side of the frame, she lets out a long tired sigh through slightly pursed lips, cheeks a little puffed, eyelids heavy, shoulders dropping; a tiny puff of breath leaves her lips toward the right; she is worn out but likable, not sad; neighborhood shops softly blurred behind her."],
- ["C02","a","목표",21.5,22.3,"바스트","아이레벨","A","dusk",0,"P","걷다가 멈춰 서서 폰 화면을 봄","clap, clap","노을 역광, 폰 빛이 얼굴에","","Eye-level bust shot on the same sidewalk, a little closer to the chicken shop than before, its red storefront still some distance away behind her at the right: she has stopped walking, her body turned three-quarters toward the right side of the frame, and she holds a plain black smartphone with no logo in both hands at chest height, looking down at it with tired eyes that are just starting to widen; the back of the phone faces the camera and the screen faces her, and its cold light comes from below and lights her face from underneath like a comic horror moment; sunset backlight."],
+ ["C01","a","인물",19.8,20.7,"풀","로우","A","dusk",1,"P","퇴근길에 지쳐서 터덜터덜 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 검은 옷 실루엣","","Long telephoto shot from the left corner of the chicken shop, looking back along the sidewalk so that she seems to walk without getting anywhere: tired after work, she trudges along the sidewalk toward the camera, shoulders slumped, head slightly lowered, feet dragging in time with the beat, with a worn-out face. The red corner of the chicken shop and its balloons sit large and out of focus at the right edge of the frame; the sidewalk runs straight away from the camera in the center, and the road is only at the left edge of the frame, beyond the curb. She stays in the middle of the raised sidewalk, at least 2 meters from the curb, and never steps on the road."],
+ ["C01b","a","인물",20.7,21.5,"바스트","망원","A","dusk",0,"P","줌인, 휴 하고 한숨 쉬는 지친 얼굴","한 걸음씩 박자 맞춰","남색·마젠타 하늘, 얼굴에 노을빛","","Telephoto bust shot from the left corner of the chicken shop, on the same line as the previous shot but much closer: still walking along the sidewalk toward the camera, she lets out a long tired sigh through slightly pursed lips, cheeks a little puffed, eyelids heavy, shoulders dropping; a tiny puff of breath leaves her lips; she is worn out but likable, not sad; the sidewalk and neighborhood shops softly blurred behind her. She stays on the raised sidewalk."],
+ ["C02","a","목표",21.5,22.3,"바스트","아이레벨","A","dusk",0,"P","걷다가 멈춰 서서 폰 화면을 봄","clap, clap","노을 역광, 폰 빛이 얼굴에","","Eye-level bust shot from the left corner of the chicken shop, on the same line as the previous shots: she has stopped walking in the middle of the sidewalk, facing the camera, and she holds a plain black smartphone with no logo in both hands at chest height, looking down at it with tired eyes that are just starting to widen; the back of the phone faces the camera and the screen faces her, and its cold light comes from below and lights her face from underneath like a comic horror moment; sunset backlight."],
  ["C02b","a","인서트",22.3,23.1,"클로즈업","시점","A","dusk",0,"P","펄킴 시점으로 보는 폰 화면 (출석률 0%는 편집 화면)","clap, clap","폰 화면이 가장 밝게","","First-person point-of-view close-up, as seen through her own eyes looking down at her phone: her two hands enter from the bottom of the frame and hold a plain black smartphone upright, with the top edge of the phone pointing to the top of the frame and the screen facing the viewer the right way up, filling most of the frame; a plain bright blank white display with no text, numbers or icons; we see the backs of her thumbs and her white smartwatch on her left wrist; her face is not visible; the sidewalk softly blurred beyond the phone."],
  ["C03","a","목표",23.1,25.0,"풀","아이레벨","A→건물","dusk",0,"PMb","건물 전경. 펄킴이 건물을 올려다보고, 2층 창가의 근육 팀이 손짓","뱃살이 빠지는 게 아냐","2층 흰 형광·라임 vs 1층 노란 불빛","","Eye-level wide shot of the whole building from across the street: behind the large glass second-floor gym windows the four muscle-team men wave down enthusiastically in unison; on the ground floor the chicken shop glows warm yellow with balloons; she stands small on the sidewalk right at the left corner of the chicken shop, facing right and looking up at the gym."],
  ["C04","a","인물",25.0,26.8,"미디엄","로우","A","dusk",0,"P","배를 내려다보며 손바닥으로 꾹 누름, “더 나오지 마!”","더 나오려는 걸 막아","노란 가게 불빛을 등진 검은 옷","","Low-angle medium shot on the sidewalk at the left corner of the chicken shop: she stops, looks down at her own waist and presses one palm firmly flat against the front of her black T-shirt just above the waistband, as if telling her stomach to stay in, with a small determined nod; her body looks normal and slim, with no visible belly; warm yellow shop light behind her."],
@@ -195,7 +195,8 @@ function plate(c){const place=c[7],tod=c[8];
   if(tod==="imag")return "";
   if(tod==="gym")return "E_헬스장";
   const t={dusk:"해질녘",dusk2:"직후",drop:"드롭",night:"밤"}[tod];
-  if(["C01","C01b","C02","C02b"].includes(c[0]))return "A_멀리";
+  if(["C01","C01b","C02"].includes(c[0]))return "A_모서리";
+  if(c[0]==="C02b")return "A_멀리";
   return (place.includes("건물")?"전경":place[0])+"_"+t}
 const LOC_OUT="[OUTPUT]\nPhotorealistic location photo, landscape 16:9. Natural exposure. The place is empty, no people.\nNo readable text on signs, no labels.";
 const SAME="Use the attached image as the same building and street. Keep the street layout exactly the same: one narrow straight road of plain dark asphalt with no lane markings runs left to right in front of the buildings, and the sidewalk runs left to right between the road and the buildings. No other road, no side street.\n\n";
@@ -236,7 +237,7 @@ Mood: ordinary, quiet, slightly tempting
 From across the road, about 12 m to the left of the chicken shop, facing the buildings straight on, turned slightly to the right, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
- {name:"A_멀리 (치킨집에서 먼 인도)",use:"C01·C02·C02b · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+ {name:"A_멀리 (치킨집에서 먼 인도)",use:"C02b · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
 Setting: Outdoor
 Type: the same sidewalk, about 30 m to the left of the chicken shop, seen from across the road
 ${SEOUL}
@@ -251,6 +252,25 @@ Mood: ordinary, quiet, everyday
 
 [CAMERA]
 From across the road, about 30 m to the left of the chicken shop, facing the buildings straight on, turned slightly to the right, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"A_모서리 (치킨집 모서리에서 본 인도)",use:"C01·C01b·C02 · 넣을 이미지: 전경_해질녘",text:`Use the attached image as the same building and street. Keep the same chicken shop, sidewalk and plain dark asphalt road with no lane markings. No other road, no side street.
+
+[LOCATION]
+Setting: Outdoor
+Type: the sidewalk seen from the left corner of the chicken shop, looking back along the street
+${SEOUL}
+Scale: about 30 m of sidewalk
+Layout: right, the red corner of the chicken shop and its red and white balloons large and out of focus at the edge of the frame, then neighborhood shops along the sidewalk; center, the wide empty sidewalk running straight away from the camera, where a person can walk; left, only a narrow strip of curb and road at the edge of the frame; back, the street continuing into the distance
+Key elements: the red shop corner, balloons, street trees along the curb, streetlights
+Surfaces: gray paving-stone sidewalk, shop walls and glass
+Color palette: deep blue, orange, warm yellow
+Wear: lightly used, clean
+${DUSK}
+Mood: ordinary, quiet, everyday
+
+[CAMERA]
+On the sidewalk at the left corner of the chicken shop, close to the shop wall, looking back along the sidewalk away from the shop, camera at 1.5 m height, 85mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
  {name:"B_해질녘 (치킨집 입구)",use:"C08·C10·C11·C13~C17 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
