@@ -242,7 +242,8 @@ for (cid, t0, t1, shot, ang, lyric, kind, cast, (cloc, ctgt, lens), sky) in CUTS
     if "PK" in cast and kind != "상상" and cid not in ("C23", "C24", "C25", "C26"):  # 현실=검은 옷, 상상·드롭=보라 옷
         cast = dict(cast); cast["PKB"] = cast.pop("PK")
     if cid in STREET:
-        cast = {**cast, **EXTRAS}
+        ex = {k: v for k, v in EXTRAS.items() if k in ("X1",)} if cid in ("C01", "C02") else EXTRAS  # 모서리 시선은 앞을 가리지 않게
+        cast = {**cast, **ex}
     cam_data = bpy.data.cameras.new(f"{cid}_cam"); cam_data.lens = lens; cam_data.sensor_fit = "VERTICAL"; cam_data.sensor_height = 36  # 세로판과 같은 세로 화각 유지
     cam = bpy.data.objects.new(f"{cid}_카메라", cam_data); sc.collection.objects.link(cam)
     cam.location = cloc
