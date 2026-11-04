@@ -108,7 +108,8 @@ box("상상3_라임반", (-84, 1.5, 4), (8, 0.1, 10), M["bgL"]); box("상상3_�
 box("상상3_바닥", (-80, -3, -0.05), (16, 10, 0.1), M["ground"])
 giant = sph("거대치킨다리", PARK, 0.7, M["chicken"], scale=(1, 0.8, 1.8))
 small_ch = sph("시식치킨", PARK, 0.05, M["chicken"])
-card = box("회원카드", PARK, (0.09, 0.005, 0.055), M["white"])
+phone = box("폰", PARK, (0.085, 0.012, 0.17), M["white"])
+phone_flat = box("폰_눕힘", PARK, (0.085, 0.17, 0.012), M["white"])
 
 # ── 마네킹 ────────────────────────────────────────────────────────────────
 # 앞(얼굴)은 -y. rotz: 0=카메라 쪽, 90=오른쪽, -90=왼쪽, 180=건물 쪽
@@ -134,6 +135,7 @@ def person(name, top, bottom, h=1.62, bulk=1.0, cap=None, hair=True):
 
 ACT = {}
 ACT["PK"] = person("펄킴", M["purple"], M["lav"], 1.62)
+ACT["PKB"] = person("펄킴_검은옷", M["dark"], M["dark"], 1.62)
 for i in range(1, 5):
     ACT[f"M{i}"] = person(f"근육{i}", M["lime"], M["dark"], 1.82, bulk=1.45, hair=False)
 ACT["STAFF"] = person("시식직원", M["red"], M["dark"], 1.72, cap=M["white"])
@@ -147,6 +149,7 @@ POSE = {
  "chest": (-70, -30, -70, 30), "wipe": (-150, -40, 0, -8), "flex": (0, 135, 0, -135),
  "point": (-120, 0, 0, -8), "run": (-40, 0, 40, 0), "toast": (-130, 0, 0, -8),
  "watch": (-70, -20, -80, 30), "wallet": (-45, -10, -45, 10),
+ "phone": (-150, 20, 0, -8), "reach": (0, 8, -85, 20), "phoneflat": (-60, -10, -70, 25),
 }
 FACE = {"cam": 0, "R": 90, "L": -90, "back": 180}
 
@@ -173,7 +176,7 @@ M_WIN = [(2.0, 0.6, 3.3), (3.5, 0.6, 3.3), (5.0, 0.6, 3.3), (6.5, 0.6, 3.3)]
 CUTS = [
  # id, t0, t1, 샷, 앵글, 가사, 현실/상상, 배우 배치, 카메라, 하늘
  ("C01",19.8,21.6,"풀","로우","한 걸음씩 박자 맞춰","현실",{"PK":dict(loc=(-4,-2.2,0),face="R",pose="run",to=(-2.2,-2.2,0))},((0.6,-6.0,0.35),(-3,-2.2,0.9),24),DUSK),
- ("C02",21.6,23.1,"바스트","아이레벨","clap, clap","현실",{"PK":dict(loc=(-2,-2.2,0),pose="fwdR")},((-2,-4.3,1.42),(-2,-2.2,1.35),50),DUSK),
+ ("C02",21.6,23.1,"바스트","아이레벨","clap, clap","현실",{"PK":dict(loc=(-2,-2.2,0)),"_phone":(-2.2,-2.45,1.46)},((-2,-4.3,1.42),(-2,-2.2,1.35),50),DUSK),
  ("C03",23.1,25.0,"풀","아이레벨","뱃살이 빠지는 게 아냐","현실",{"PK":dict(loc=(-0.4,-2.6,0),face="R"),**{f"M{i+1}":dict(loc=M_WIN[i],pose="wave") for i in range(4)}},((3.8,-15,1.6),(3.8,0,3.1),24),DUSK),
  ("C04",25.0,26.8,"미디엄","로우","더 나오려는 걸 막아","현실",{"PK":dict(loc=(1.0,-2.3,0),pose="stop")},((1.0,-5.0,0.55),(1.0,-2.3,1.3),32),DUSK),
  ("C05",26.8,28.6,"바스트","아이레벨","그래도 난 웃으며 뛰어","현실",{"PK":dict(loc=(1.5,-2.3,0),face="R")},((1.1,-4.3,1.45),(1.5,-2.3,1.4),50),DUSK),
@@ -188,8 +191,8 @@ CUTS = [
  ("C14",44.5,46.2,"미디엄","로우","떡볶이는 다음 주로","현실",{"PK":dict(loc=(4.0,-2.0,0),face="R",tilt=-10),"BOSS":dict(loc=(5.1,-1.6,0),face="L",pose="fwdR")},((4.4,-5.0,0.6),(4.7,-1.7,1.5),32),DUSK),
  ("C15",46.2,48.0,"미디엄","아이레벨","친구가 빵을 내밀어","현실",{"PK":dict(loc=(4.0,-2.1,0),face="R",tilt=-25),"STAFF":dict(loc=(4.9,-2.0,0),face="L",pose="fwdR"),"BOSS":dict(loc=(4.8,-1.2,0),face="L",pose="fwdR")},((4.2,-5.2,1.3),(4.35,-1.8,1.25),35),DUSK),
  ("C16",48.0,50.0,"익스트림 클로즈업","아이레벨","한 입만은 위험한 말","현실",{"PK":dict(loc=(4.0,-2.0,0),face="R"),"_small":(4.17,-2.0,1.47)},((4.08,-2.55,1.5),(4.08,-2.0,1.48),100),DUSK),
- ("C17",50.0,52.0,"바스트","하이","그래도 난 물을 들어","현실",{"PK":dict(loc=(4.0,-2.0,0),pose="wallet")},((4.0,-3.5,2.3),(4.0,-2.0,1.1),45),DUSK),
- ("C18",52.0,53.6,"클로즈업","하이","say goodbye","현실",{"PK":dict(loc=(4.0,-2.0,0),pose="wallet"),"_card":((4.0,-2.3,1.0),(4.0,-2.3,0.03))},((4.0,-2.75,1.75),(4.0,-2.2,0.45),50),DUSK2),
+ ("C17",50.0,52.0,"바스트","하이","그래도 난 물을 들어","현실",{"PK":dict(loc=(4.0,-2.0,0),pose="reach"),"_small":(4.33,-2.4,1.15)},((4.0,-3.5,2.3),(4.0,-2.0,1.1),45),DUSK),
+ ("C18",52.0,53.6,"클로즈업","하이","say goodbye","현실",{"PK":dict(loc=(4.0,-2.0,0),pose="phoneflat"),"_phoneflat":(4.0,-2.4,1.02)},((4.0,-2.75,1.75),(4.0,-2.3,0.95),50),DUSK2),
  ("C19",53.6,55.3,"클로즈업","아이레벨","뱃살이 빠지는 게 아냐","현실",{"PK":dict(loc=(4.0,-2.0,0))},((4.0,-3.05,1.5),(4.0,-2.0,1.48),85),DUSK2),
  ("C20",55.3,57.2,"미디엄","로우","더 나오려는 걸 막아","현실",{**{f"M{i+1}":dict(loc=(3.5+i*1.0,0.6,3.3),pose="point") for i in range(4)}},((5.0,-4.5,1.0),(5.0,0.3,4.2),28),DUSK2),
  ("C21",57.2,59.0,"바스트","아이레벨","그래도 난 웃으며 뛰어","현실",{"PK":dict(loc=(4.2,-2.0,0),pose="watch")},((4.2,-3.65,1.45),(4.2,-2.0,1.35),50),DUSK2),
@@ -210,6 +213,8 @@ cams = {}
 MOVES = set()   # (오브젝트 이름, 시작 프레임): 컷 안에서 움직이는 구간
 for (cid, t0, t1, shot, ang, lyric, kind, cast, (cloc, ctgt, lens), sky) in CUTS:
     f0, f1 = F(t0), F(t1)
+    if "PK" in cast and kind != "상상" and cid not in ("C23", "C24", "C25", "C26"):  # 현실=검은 옷, 상상·드롭=보라 옷
+        cast = dict(cast); cast["PKB"] = cast.pop("PK")
     cam_data = bpy.data.cameras.new(f"{cid}_cam"); cam_data.lens = lens; cam_data.sensor_fit = "AUTO"
     cam = bpy.data.objects.new(f"{cid}_카메라", cam_data); sc.collection.objects.link(cam)
     cam.location = cloc
@@ -227,8 +232,7 @@ for (cid, t0, t1, shot, ang, lyric, kind, cast, (cloc, ctgt, lens), sky) in CUTS
         else:
             key_actor(key, f0)
     key_obj(giant, f0, cast.get("_giant")); key_obj(small_ch, f0, cast.get("_small"))
-    c = cast.get("_card"); key_obj(card, f0, c[0] if c else None)
-    if c: key_obj(card, f1 - 1, c[1]); MOVES.add((card.name, f0))
+    key_obj(phone, f0, cast.get("_phone")); key_obj(phone_flat, f0, cast.get("_phoneflat"))
     s = cast.get("_shutter"); key_obj(shutter, f0, s[0] if s else None)
     if s and s[1]: key_obj(shutter, f1 - 1, s[1]); MOVES.add((shutter.name, f0))
 
