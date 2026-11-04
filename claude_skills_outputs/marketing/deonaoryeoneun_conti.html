@@ -191,7 +191,7 @@ function plate(c){const place=c[7],tod=c[8];
   const t={dusk:"해질녘",dusk2:"직후",drop:"드롭",night:"밤"}[tod];
   return (place.includes("건물")?"전경":place[0])+"_"+t}
 const LOC_OUT="[OUTPUT]\nPhotorealistic location photo, landscape 16:9. Natural exposure. The place is empty, no people.\nNo readable text on signs, no labels.";
-const SAME="Use the attached image as the same building and street. Keep the street layout exactly the same: one straight road runs left to right in front of the buildings, and the sidewalk runs left to right between the road and the buildings. No other road, no side street.\n\n";
+const SAME="Use the attached image as the same building and street. Keep the street layout exactly the same: one narrow straight road of plain dark asphalt with no lane markings runs left to right in front of the buildings, and the sidewalk runs left to right between the road and the buildings. No other road, no side street.\n\n";
 const SEOUL="Region and era: a Seoul residential neighborhood street, present day";
 const DUSK="Light and time: summer evening around 7:30 pm at dusk, clear sky, warm yellow light from the chicken shop, bright white light from the gym, streetlights just turning on";
 const LOCS=[
@@ -202,7 +202,7 @@ ${SEOUL}
 Scale: small building, about 15 m wide
 Layout: left, a wide sidewalk and neighborhood shops; center, the chicken shop entrance with an empty space in front of it; right, the gym's stair entrance at the far right of the building; back, low neighboring buildings
 Key elements: red storefront frame, clusters of red and white balloons on both sides of the entrance, large open second-floor windows showing treadmills
-Surfaces: gray paving-stone sidewalk, light gray building walls
+Surfaces: gray paving-stone sidewalk, light gray building walls, a narrow neighborhood road of plain dark asphalt with no lane markings
 Color palette: deep blue, warm yellow, red
 Wear: the shop is brand-new, the street is lightly used
 ${DUSK}
