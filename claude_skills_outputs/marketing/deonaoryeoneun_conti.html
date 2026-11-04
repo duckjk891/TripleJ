@@ -67,7 +67,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 <div class="wrap">
 <header>
   <h1>반값 치킨 · 러프 콘티</h1>
-  <p class="sub">「더 나오려는 것을 막는 것일뿐」 1분 티저 · 펄킴 + 근육 팀 · 30컷(가사 한 줄 = 컷 하나) · 19.8초 → 76.6초 + 끝 장면 3초 = 59.8초</p>
+  <p class="sub">「더 나오려는 것을 막는 것일뿐」 1분 티저 · 펄킴 + 근육 팀 · 31컷(가사 한 줄 = 컷 하나, C02b 인서트 추가) · 19.8초 → 76.6초 + 끝 장면 3초 = 59.8초</p>
 </header>
 
 <div class="logline"><span class="tagI">(인물)</span> 헬스장 등록 한 달째 한 번도 안 간 펄킴이, <span class="tagG">(목표)</span> 오늘만큼은 꼭 러닝 한 시간을 하려는데, <span class="tagO">(장애물)</span> 헬스장 1층에 새로 연 치킨집이 “오픈 기념, 딱 1시간만 반값!”을 외치고 있다.</div>
@@ -78,7 +78,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
   <div class="box"><h3>장소</h3>A 건물 앞 인도 · B 1층 치킨집 입구(시식대) · C 2층 헬스장 창가 · D 오른쪽 계단 입구 · E 헬스장 안 · F 상상 공간(단색 배경)</div>
   <div class="box"><h3>시간대·색감</h3>현실 = 채도 낮은 해 질 녘(남색·주황 하늘, 치킨집 노란 불빛) → 해 진 직후(남색) → 드롭 이후 보라·라임 원색 조명 → 헬스장 흰 형광 → 밤(짙은 남색, 가로등 주황). 상상 = 쨍한 단색(라임·빨강).</div>
   <div class="box"><h3>과장</h3>상상 3컷 + 현실 컷의 코믹 효과(음식 김, 하트 눈, 잔상, 후광, 먹구름, 충격파, 풍선 펑, 헹가래). <b>C19 무표정, C21·C28 시계 컷은 과장 없음.</b></div>
-  <div class="box"><h3>이야기 장치</h3>C02 앱 출석률 0% → C18 근육몬 알림 “회원님, 출석률이 아직도 0%예요.” → C20 근육 팀이 창가에서 가리킴 → C28 출석 1일 달성(3%).</div>
+  <div class="box"><h3>이야기 장치</h3>C02 폰을 보며 결의 → C02b 출석률 0% 화면 → C18 근육몬 알림 “회원님, 출석률이 아직도 0%예요.” → C20 근육 팀이 창가에서 가리킴 → C28 출석 1일 달성(3%).</div>
   <div class="box"><h3>글씨는 편집에서</h3>“1시간만 반값!”, “반값 마감”, 타이머 숫자, 앱 출석률, 근육몬 알림은 이미지에 그리지 않고 편집으로. 콘티 그림은 블렌더 프리비즈 화면이에요.</div>
 </div>
 
@@ -95,7 +95,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
     <figure><img src="refs/4_bag_descente_sling.jpg" alt="데상트 미디움 하디 슬링백"><figcaption>데상트 슬링백 (검은 옷·현실)</figcaption></figure>
     <figure><img src="refs/6_smartwatch_white.jpg" alt="흰색 스마트워치"><figcaption>흰 스마트워치 (왼손목)</figcaption></figure>
     <figure><img src="refs/muscle_team_4.jpg" alt="근육 팀 4인 시트"><figcaption>근육 팀 4인 시트 (왼쪽부터 M1~M4)</figcaption></figure>
-    <figure><img src="refs/app_C02_attendance_0.png" alt="앱 출석률 0퍼센트 화면"><figcaption>C02 앱 화면 (편집용)</figcaption></figure>
+    <figure><img src="refs/app_C02_attendance_0.png" alt="앱 출석률 0퍼센트 화면"><figcaption>C02b 앱 화면 (편집용)</figcaption></figure>
     <figure><img src="refs/app_C18_notification.png" alt="근육몬 알림 화면"><figcaption>C18 알림 화면 (편집용)</figcaption></figure>
     <figure><img src="refs/app_C28_attendance_1day.png" alt="출석 1일 달성 화면"><figcaption>C28 앱 화면 (편집용)</figcaption></figure>
     <figure><img src="refs/8_muscle_team_selfie.jpg" alt="근육 팀 셀카"><figcaption>근육 팀 얼굴 (보조)</figcaption></figure>
@@ -156,8 +156,9 @@ const AV="Avoid: different faces, merged faces, extra people, long hair, ponytai
 const AV_BLACK=AV.replace("black T-shirt, sling bag, backpack,","purple T-shirt, lavender shorts, white shoes, rose-print bag, a different bag, backpack,").replace("Nike logo, swoosh, brand logos,","logos on other people's clothes,");
 // p: 파트, who: 등장(P=펄킴, M=근육팀, S=직원, B=사장), bld: 건물 문구, tod: 시간대
 const CUTS=[
- ["C01","a","인물",19.8,21.6,"풀","로우","A","dusk",1,"P","쿵쿵 밟으며 비장하게 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 검은 옷 실루엣","발 디딜 때마다 땅이 울리고 비둘기가 놀라 날아감","Low-angle full shot from the sidewalk: she stomps forward from left to right with a fierce determined face, one black running shoe slamming down in the foreground, a small burst of dust where her foot lands and a few startled pigeons flapping away; neighborhood shops blurred behind."],
- ["C02","a","목표",21.6,23.1,"바스트","아이레벨","A","dusk",0,"P","헬스장 앱의 출석률 0% 화면을 내려다보며 결의","clap, clap","노을 역광, 폰 화면에 하이라이트","","Eye-level bust shot: she holds a plain black smartphone with no logo in both hands at chest height and looks down at it, pressing her lips together with quiet resolve; the phone is tilted so its screen partly faces the camera, showing a plain bright blank white display with no text, numbers or icons, and it lights her face softly; her face and the phone both sharp; sunset backlight."],
+ ["C01","a","인물",19.8,21.2,"풀","로우","A","dusk",1,"P","쿵쿵 밟으며 비장하게 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 검은 옷 실루엣","발 디딜 때마다 땅이 울리고 비둘기가 놀라 날아감","Low-angle full shot from the sidewalk: she stomps forward from left to right with a fierce determined face, one black running shoe slamming down in the foreground, a small burst of dust where her foot lands and a few startled pigeons flapping away; neighborhood shops blurred behind."],
+ ["C02","a","목표",21.2,22.2,"바스트","아이레벨","A","dusk",0,"P","폰 화면을 내려다보며 입술을 꾹 다물고 결의","clap, clap","노을 역광, 폰 빛이 얼굴에","","Eye-level bust shot: she holds a plain black smartphone with no logo in both hands at chest height and looks down at it, pressing her lips together with quiet resolve; the back of the phone faces the camera and the screen faces her, its soft light on her face; sunset backlight."],
+ ["C02b","a","인서트",22.2,23.1,"클로즈업","시점","A","dusk",0,"P","펄킴 시점으로 보는 폰 화면 (출석률 0%는 편집 화면)","clap, clap","폰 화면이 가장 밝게","","Point-of-view close-up from her own eyes: her two hands hold a plain black smartphone with no logo in the center of the frame, the screen facing the camera and filling most of the frame, a plain bright blank white display with no text, numbers or icons; her white smartwatch visible on her left wrist; the sidewalk softly blurred below."],
  ["C03","a","목표",23.1,25.0,"풀","아이레벨","A→건물","dusk",0,"PMb","건물 전경. 2층 창가의 근육 팀이 일제히 손짓, 1층엔 치킨집","뱃살이 빠지는 게 아냐","2층 흰 형광·라임 vs 1층 노란 불빛","","Eye-level wide shot of the whole building from across the street: behind the large glass second-floor gym windows the four muscle-team men wave down enthusiastically in unison; on the ground floor the chicken shop glows warm yellow with balloons; she stands small at the left edge of the sidewalk, facing right toward the building."],
  ["C04","a","인물",25.0,26.8,"미디엄","로우","A","dusk",0,"P","배를 내려다보며 손바닥으로 꾹 누름, “더 나오지 마!”","더 나오려는 걸 막아","노란 가게 불빛을 등진 검은 옷","","Low-angle medium shot: she stops, looks down at her own waist and presses one palm firmly flat against the front of her black T-shirt just above the waistband, as if telling her stomach to stay in, with a small determined nod; her body looks normal and slim, with no visible belly; warm yellow shop light behind her."],
  ["C05","b","장애물",26.8,28.6,"바스트","아이레벨","A","dusk",0,"P","걷다가 멈칫, 코를 킁킁","그래도 난 웃으며 뛰어","얼굴 오른쪽에 노란 불빛","흰 김이 날아와 코로 스며듦","Eye-level bust shot: she freezes mid-step, nose lifted and sniffing; a soft translucent wisp of white steam flows in from off-screen at the right edge of the frame, widest at the right edge and tapering to a thin point that stops just in front of her nose, being drawn toward her as she breathes in; nothing comes out of her nose or mouth, and the steam has no yellow or golden color; warm yellow light on the right side of her face."],
