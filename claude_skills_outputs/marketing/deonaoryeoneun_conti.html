@@ -35,6 +35,8 @@ h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,4vw,38px);m
 .refs figure{margin:0;display:grid;gap:4px;min-width:0}
 .refs img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:4px;border:1px solid var(--faint)}
 .refs figcaption{font-size:12px;color:var(--pencil)}
+.step{margin:12px 0 0;font-size:15px;font-family:var(--f-display)}
+.lock details p{margin-top:4px}
 .part{display:grid;gap:14px}
 .part>h2{margin:0;font-family:var(--f-display);font-size:20px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .part>h2 small{font-family:var(--f-mono);font-size:12px;color:var(--pencil);font-weight:500}
@@ -71,7 +73,7 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 <div class="logline"><span class="tagI">(인물)</span> 헬스장 등록 한 달째 한 번도 안 간 펄킴이, <span class="tagG">(목표)</span> 오늘만큼은 꼭 러닝 한 시간을 하려는데, <span class="tagO">(장애물)</span> 헬스장 1층에 새로 연 치킨집이 “오픈 기념, 딱 1시간만 반값!”을 외치고 있다.</div>
 
 <div class="grid3">
-  <div class="box"><h3>세 팀 (색)</h3><b style="color:var(--accent)">펄킴 = 보라</b> · <b style="color:var(--lime)">목표 팀 = 근육 팀 4명, 형광 라임</b> · <b style="color:var(--red)">장애물 팀 = 치킨집 직원·사장, 빨간 앞치마</b></div>
+  <div class="box"><h3>세 팀 (색)</h3><b style="color:var(--accent)">펄킴 = 현실 검정, 상상·드롭 보라</b> · <b style="color:var(--lime)">목표 팀 = 근육 팀 4명, 형광 라임</b> · <b style="color:var(--red)">장애물 팀 = 치킨집 직원·사장, 빨간 앞치마</b></div>
   <div class="box"><h3>180도</h3>펄킴·근육 팀은 <b>왼쪽 → 오른쪽</b>(헬스장 계단 쪽). 치킨집 사람들은 늘 <b>화면 오른쪽</b>. 카메라는 거리 쪽에서만.</div>
   <div class="box"><h3>장소</h3>A 건물 앞 인도 · B 1층 치킨집 입구(시식대) · C 2층 헬스장 창가 · D 오른쪽 계단 입구 · E 헬스장 안 · F 상상 공간(단색 배경)</div>
   <div class="box"><h3>시간대·색감</h3>현실 = 채도 낮은 해 질 녘(남색·주황 하늘, 치킨집 노란 불빛) → 해 진 직후(남색) → 드롭 이후 보라·라임 원색 조명 → 헬스장 흰 형광 → 밤(짙은 남색, 가로등 주황). 상상 = 쨍한 단색(라임·빨강).</div>
@@ -81,11 +83,14 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
 
 <section class="lock" aria-labelledby="refh">
   <h2 id="refh">참고 이미지</h2>
-  <p>컷마다 나오는 인물의 참고 이미지를 넣어요. 사진을 길게 누르면 저장돼요. 펄킴 컷 = 펄킴 3장 + 흰 시계, 근육 팀 컷 = 근육 팀 전신, 치킨집 컷 = 치킨집 팀.</p>
+  <p>컷마다 나오는 인물의 참고 이미지를 넣어요. 사진을 길게 누르면 저장돼요. 펄킴 현실 컷 = 검은 옷 3장 + 흰 시계, 상상·드롭 컷 = 보라 옷 3장 + 흰 시계, 근육 팀 컷 = 근육 팀 전신, 치킨집 컷 = 치킨집 팀.</p>
   <div class="refs">
-    <figure><img src="refs/v2_1_front.jpg" alt="펄킴 앞모습"><figcaption>펄킴 앞 (새 착장)</figcaption></figure>
-    <figure><img src="refs/v2_2_back.jpg" alt="펄킴 뒷모습"><figcaption>펄킴 뒤 (MOVE 그림)</figcaption></figure>
-    <figure><img src="refs/v2_3_face.jpg" alt="펄킴 얼굴"><figcaption>펄킴 얼굴</figcaption></figure>
+    <figure><img src="refs/1_front.jpg" alt="펄킴 검은 옷 앞모습"><figcaption>펄킴 앞 (검은 옷·현실)</figcaption></figure>
+    <figure><img src="refs/2_back.jpg" alt="펄킴 검은 옷 뒷모습"><figcaption>펄킴 뒤 (검은 옷·현실)</figcaption></figure>
+    <figure><img src="refs/3_face.jpg" alt="펄킴 얼굴, 검은 옷"><figcaption>펄킴 얼굴 (검은 옷·현실)</figcaption></figure>
+    <figure><img src="refs/v2_1_front.jpg" alt="펄킴 보라 옷 앞모습"><figcaption>펄킴 앞 (보라 옷·상상·드롭)</figcaption></figure>
+    <figure><img src="refs/v2_2_back.jpg" alt="펄킴 뒷모습"><figcaption>펄킴 뒤 (보라 옷·상상·드롭)</figcaption></figure>
+    <figure><img src="refs/v2_3_face.jpg" alt="펄킴 얼굴"><figcaption>펄킴 얼굴 (보라 옷·상상·드롭)</figcaption></figure>
     <figure><img src="refs/6_smartwatch_white.jpg" alt="흰색 스마트워치"><figcaption>흰 스마트워치 (왼손목)</figcaption></figure>
     <figure><img src="refs/7_muscle_team_full.jpg" alt="근육 팀 전신"><figcaption>근육 팀 전신 (기준)</figcaption></figure>
     <figure><img src="refs/8_muscle_team_selfie.jpg" alt="근육 팀 셀카"><figcaption>근육 팀 얼굴 (보조)</figcaption></figure>
@@ -93,8 +98,27 @@ footer{font-size:13px;color:var(--pencil);max-width:72ch}
   </div>
 </section>
 
-<section class="lock"><h2>펄킴 고정 프롬프트</h2><p>펄킴이 나오는 컷의 완성 프롬프트에 이미 들어 있어요.</p><div class="prompt" id="pkLock"></div><div><button class="copy" type="button" data-src="pkLock">복사</button></div></section>
+<section class="lock"><h2>펄킴 고정 프롬프트 · 현실 (검은 옷)</h2><p>C01~C06, C08, C10, C11, C13~C21, C27~C30 컷의 완성 프롬프트에 들어 있어요.</p><div class="prompt" id="pkLock"></div><div><button class="copy" type="button" data-src="pkLock">복사</button></div></section>
+<section class="lock"><h2>펄킴 고정 프롬프트 · 상상·드롭 (보라 옷)</h2><p>상상 C07, C09, C12와 드롭 C23~C26 컷에 들어 있어요. C22가 근육 팀만 나와서 갈아입는 장면 없이 넘어가요.</p><div class="prompt" id="pkLock2"></div><div><button class="copy" type="button" data-src="pkLock2">복사</button></div></section>
 <section class="lock"><h2>근육 팀 고정 프롬프트</h2><p>근육 팀이 나오는 9컷(C03·C07·C12·C20·C22~C27·C30)에 들어 있어요.</p><div class="prompt" id="mtLock"></div><div><button class="copy" type="button" data-src="mtLock">복사</button></div></section>
+
+<section class="lock" aria-labelledby="prodh">
+  <h2 id="prodh">이미지 제작 순서</h2>
+  <p>장소를 먼저 만들고, 인물을 입힌 뒤, 재생성으로 다듬어요. 강의 자료의 공간·전신·얼굴 각도 프롬프트 형식을 그대로 썼어요. 캐스팅 시트는 인물이 이미 정해져서 건너뛰어요.</p>
+  <h3 class="step">1. 장소 기본판 6장 · 16:9 와이드</h3>
+  <p>전경을 먼저 확정하고 나머지를 만들어요. 넓게 만든 뒤 컷에서 세로로 좁혀요.</p>
+  <div id="prodLoc"></div>
+  <h3 class="step">2. 빛 변경 6장</h3>
+  <p>기본판을 넣고 재생성으로 빛만 바꿔요. 파일 이름은 아래 이름 그대로 두면 컷 카드와 맞아요.</p>
+  <div id="prodLight"></div>
+  <h3 class="step">3. 인물 시트</h3>
+  <p>펄킴 3장, 직원·사장 4장을 먼저 만들어요. 근육 팀 8장은 단체 컷에서 얼굴이 섞일 때 만들어도 돼요.</p>
+  <div id="prodPeople"></div>
+  <h3 class="step">4. 컷에 입히기</h3>
+  <p>힉스필드 비율을 9:16으로 두고, 아래 컷 카드의 “넣을 이미지” 순서대로 넣어요. 장소판이 꼭 첫 번째예요. C05, C08, C03 세 컷을 먼저 시험해요. 표정 시트는 해당 칸만 잘라서 넣어요. 옷은 현실 컷이 검은 옷, 상상·드롭 컷이 보라 옷이에요.</p>
+  <h3 class="step">5. 재생성으로 다듬기</h3>
+  <div id="prodFix"></div>
+</section>
 
 <div id="board"></div>
 
@@ -109,7 +133,9 @@ const PARTS={
  d:["결과 + 펀치 · “반값 마감”","결 69.1–76.6 + 끝","--goal"]};
 const PLACE={A:"A 건물 앞 인도",B:"B 치킨집 입구",C:"C 2층 헬스장 창가",D:"D 계단 입구",E:"E 헬스장 안",F:"F 상상 공간"};
 const REF="Use the reference images only for the people's faces, hairstyles, outfits and accessories. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
-const PK="CHARACTER LOCK — PEARL KIM: the same Korean woman in her 30s as in the character sheet: straight black chin-length bob with a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as in the character sheet: a violet-purple short-sleeve crew-neck T-shirt (the front is plain; a light-blue and white graphic is only on the back), loose lavender athletic shorts, white crew socks and white-and-gray running shoes, and an ivory drawstring shoulder bag with a small pink rose print on her right shoulder. She also wears a round white smartwatch with a silver bezel, white sport band and black watch face on her left wrist, exactly like the watch reference image. Nothing else added (no jacket, no hat, no jewelry).";
+const PK_BLACK="CHARACTER LOCK — PEARL KIM: the same Korean woman in her 30s as in the character sheet: straight black chin-length bob with a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as in the black-outfit character sheet: an oversized black short-sleeve crew-neck T-shirt (the front is plain; the large daisy graphic is only on the back), long loose black shorts with the white spiral print only on the back of one leg, black crew socks and the same black running shoes as in the sheet. She also wears a round white smartwatch with a silver bezel, white sport band and black watch face on her left wrist, exactly like the watch reference image. Nothing else added (no bag, no jacket, no hat, no jewelry).";
+const PK_PURPLE="CHARACTER LOCK — PEARL KIM: the same Korean woman in her 30s as in the character sheet: straight black chin-length bob with a soft side part, fair clear skin, natural makeup. Keep her outfit exactly as in the character sheet: a violet-purple short-sleeve crew-neck T-shirt (the front is plain; a light-blue and white graphic is only on the back), loose lavender athletic shorts, white crew socks and white-and-gray running shoes, and an ivory drawstring shoulder bag with a small pink rose print on her right shoulder. She also wears a round white smartwatch with a silver bezel, white sport band and black watch face on her left wrist, exactly like the watch reference image. Nothing else added (no jacket, no hat, no jewelry).";
+const isPurple=c=>c[8]==="imag"||c[8]==="drop";
 const MT="MUSCLE TEAM LOCK — the same four Korean men in their late 20s as in the muscle-team reference image, very muscular bodybuilder physiques, cheerful and comically over-confident. Each always keeps his own look: M1 medium-length wavy black hair swept back and a wide smile, white socks with two black stripes; M2 short neat black hair, mischievous smirk, black watch on his left wrist; M3 the tallest and biggest, short black hair, white over-ear headphones; M4 side-parted black hair, playful pout, one white wireless earbud, plain black wrist wrap on his right wrist. All four always wear the same plain neon-lime stringer tank tops with no logo, plain black athletic shorts, white crew socks and plain white sneakers with no logos. Never shirtless.";
 const CT="CHICKEN SHOP TEAM LOCK — the same two Korean men as in the chicken-team reference image. The young staff member in his early 20s: short black hair, bright eager smile, white cap, white T-shirt, plain bright-red apron, black pants, white sneakers, usually holding a small metal tray of fried chicken samples on toothpicks. The shop owner in his 50s: slightly round build, short wavy graying hair, big cheerful grin, white T-shirt, plain bright-red apron, black pants, white sneakers, usually holding a red-and-white megaphone. Aprons have no text or logo.";
 const BLD="The building: a two-story building on a Seoul neighborhood street — the second floor is a gym with large open windows and bright white light, the ground floor is a newly opened fried-chicken shop with a red storefront frame, warm yellow light inside and clusters of red and white balloons on both sides of its entrance, and the gym's stair entrance is at the far right of the building. No readable signage anywhere.";
@@ -122,56 +148,254 @@ const TOD={
  night:"Time: a summer night around 8:45 pm — dark navy sky, only orange streetlights and the gym's white window light remain, the street is quiet."};
 const STYLE="Vertical 9:16 photorealistic cinematic still, 35mm film look, shallow depth of field. Top 9% and bottom 20% of the frame kept free of faces and key objects.";
 const AV="Avoid: different faces, merged faces, extra people, long hair, ponytail, different outfit, black T-shirt, sling bag, backpack, a different watch, square watch, jacket, a hat on Pearl Kim, jewelry, shirtless men, different tank top color, Nike logo, swoosh, brand logos, readable signage, text, letters, captions, numbers on screens, distorted hands, extra fingers, body shaming, exaggerated belly, watermark, anime, illustration.";
+const AV_BLACK=AV.replace("black T-shirt, sling bag, backpack,","purple T-shirt, lavender shorts, white shoes, shoulder bag, sling bag, backpack,").replace("Nike logo, swoosh, brand logos,","logos on other people's clothes,");
 // p: 파트, who: 등장(P=펄킴, M=근육팀, S=직원, B=사장), bld: 건물 문구, tod: 시간대
 const CUTS=[
- ["C01","a","인물",19.8,21.6,"풀","로우","A","dusk",1,"P","쿵쿵 밟으며 비장하게 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 보라 옷이 또렷","발 디딜 때마다 땅이 울리고 비둘기가 놀라 날아감","Low-angle full shot from the sidewalk: she stomps forward from left to right with a fierce determined face, one white running shoe slamming down in the foreground, a small burst of dust where her foot lands and a few startled pigeons flapping away; neighborhood shops blurred behind."],
+ ["C01","a","인물",19.8,21.6,"풀","로우","A","dusk",1,"P","쿵쿵 밟으며 비장하게 걷는 펄킴 (왼쪽→오른쪽)","한 걸음씩 박자 맞춰","남색·주황 하늘, 검은 옷 실루엣","발 디딜 때마다 땅이 울리고 비둘기가 놀라 날아감","Low-angle full shot from the sidewalk: she stomps forward from left to right with a fierce determined face, one black running shoe slamming down in the foreground, a small burst of dust where her foot lands and a few startled pigeons flapping away; neighborhood shops blurred behind."],
  ["C02","a","목표",21.6,23.1,"바스트","아이레벨","A","dusk",0,"P","비닐도 안 뗀 회원카드를 카메라 앞으로 쭉 내밀며 결의","clap, clap","노을 역광, 카드에 하이라이트","","Eye-level bust shot: she thrusts a brand-new blank white gym membership card, still sealed in clear plastic, straight toward the camera with a fierce vow-like expression; the card large in the foreground, her face sharp behind it; sunset backlight."],
  ["C03","a","목표",23.1,25.0,"풀","아이레벨","A→건물","dusk",0,"PMb","건물 전경. 2층 창가의 근육 팀이 일제히 손짓, 1층엔 치킨집","뱃살이 빠지는 게 아냐","2층 흰 형광·라임 vs 1층 노란 불빛","","Eye-level wide shot of the whole building from across the street: in the open second-floor gym windows the four muscle-team men wave down enthusiastically in unison; on the ground floor the chicken shop glows warm yellow with balloons; she stands small at the left edge of the sidewalk, facing right toward the building."],
- ["C04","a","인물",25.0,26.8,"미디엄","로우","A","dusk",0,"P","손바닥을 앞으로 “막아!” 포즈, 뒤로 치킨집 풍선","더 나오려는 걸 막아","노란 가게 불빛을 등진 보라","손바닥 바람에 풍선이 뒤로 확 젖혀짐","Low-angle medium shot: she thrusts one palm toward the camera in a bold 'stop!' pose, and a comic gust of wind from her palm blows the chicken shop balloons behind her sideways; warm yellow shop light behind her, her purple T-shirt crisp against it."],
+ ["C04","a","인물",25.0,26.8,"미디엄","로우","A","dusk",0,"P","손바닥을 앞으로 “막아!” 포즈, 뒤로 치킨집 풍선","더 나오려는 걸 막아","노란 가게 불빛을 등진 검은 옷","손바닥 바람에 풍선이 뒤로 확 젖혀짐","Low-angle medium shot: she thrusts one palm toward the camera in a bold 'stop!' pose, and a comic gust of wind from her palm blows the chicken shop balloons behind her sideways; warm yellow shop light behind her, her black T-shirt crisp against it."],
  ["C05","b","장애물",26.8,28.6,"바스트","아이레벨","A","dusk",0,"P","걷다가 멈칫, 코를 킁킁","그래도 난 웃으며 뛰어","얼굴 오른쪽에 노란 불빛","노란 냄새 줄기가 날아와 코를 끌어당김","Eye-level bust shot: she freezes mid-step, nose lifted and sniffing; a visible wavy golden ribbon of smell floats in from the right side of the frame and curls toward her nose, a comic smell trail in a photoreal scene; warm yellow light on the right side of her face."],
  ["C06","b","장애물",28.6,30.9,"클로즈업","아이레벨","A","dusk",0,"P","눈만 슬쩍 치킨집 쪽으로","바이오 리듬, feel so light","눈동자에 노란 불빛","눈동자에 치킨 모양 하트가 비침","Eye-level close-up: only her eyes slide toward the right, a tiny glowing fried-chicken-shaped heart reflected in her pupils; warm yellow light on her face, the rest of the frame soft and dusky."],
  ["C07","b","목표",30.9,32.8,"풀","아이레벨","F","imag",0,"PM","[상상] 근육 팀이 뒤에서 one two 팔 흔들기, 펄킴은 어리둥절","Move my body, one two","라임 단색","근육이 반짝반짝","Imagination scene on a seamless solid lime-green backdrop and floor: the four muscle-team men stand in a line behind her pumping their arms in a synchronized 'one, two' cheer with over-the-top enthusiasm, little sparkles around their muscles; she stands in front, confused, blinking at the camera. Eye-level full shot."],
  ["C08","b","장애물",32.8,34.7,"투샷","아이레벨","B","dusk",0,"PS","시식 직원(오른쪽)이 치킨을 내밀고, 펄킴은 침을 꿀꺽","땀방울도 반짝여","빨간 앞치마 + 노란 불빛","","Eye-level two-shot at the chicken shop entrance: she stands on the left facing right; on the right the young staff member holds out a piece of fried chicken on a toothpick toward her; she gulps hard, eyes fixed on the chicken; a small tasting table with sample trays between them, warm yellow shop light."],
  ["C09","b","장애물",34.7,36.6,"풀","로우","F","imag",0,"P","[상상] 사람만 한 치킨 다리가 펄킴을 껴안음, 황홀한 표정","오늘의 나, good mood","빨강 단색, 황금빛 치킨","","Imagination scene on a seamless solid bright-red backdrop and floor: a giant fried chicken drumstick as tall as a person wraps around her in a hug; she melts into it with an exaggerated blissful face, eyes closed; golden crispy texture. Low-angle full shot."],
  ["C10","b","인물",36.6,38.7,"클로즈업","아이레벨","B","dusk",0,"P","고개를 세차게 도리도리, 정신 차리기","다시 한 번 one two","현실 색으로 확 돌아옴","잔상 3개","Eye-level close-up: she shakes her head violently to snap out of it, motion-blur afterimages of her face repeated three times across the frame, comic intensity; back to the muted dusk colors of the street."],
- ["C11","b","장애물",38.7,40.6,"미디엄","아이레벨","B","dusk",0,"P","치킨집 메뉴 사진판 앞, 어깨 너머로 보기","점심 메뉴 앞에 서면","노란 메뉴판이 화면 가득","","Eye-level medium over-the-shoulder shot from behind her: she stands in front of the chicken shop's glowing menu board of chicken photos with no readable text, the warm yellow board filling the frame, her shoulder, bob haircut and the back graphic of her purple T-shirt in the foreground left."],
+ ["C11","b","장애물",38.7,40.6,"미디엄","아이레벨","B","dusk",0,"P","치킨집 메뉴 사진판 앞, 어깨 너머로 보기","점심 메뉴 앞에 서면","노란 메뉴판이 화면 가득","","Eye-level medium over-the-shoulder shot from behind her: she stands in front of the chicken shop's glowing menu board of chicken photos with no readable text, the warm yellow board filling the frame, her shoulder, bob haircut and the large daisy graphic on the back of her black T-shirt in the foreground left."],
  ["C12","b","갈등",40.6,42.6,"풀","아이레벨","F","imag",0,"PMSB","[상상] 화면 반반. 근육 팀 vs 치킨 팀이 펄킴 양팔을 잡고 줄다리기","마음속 전쟁 시작돼","왼쪽 라임 / 오른쪽 빨강","","Imagination scene with the frame split exactly in half: the left half is a solid lime-green backdrop where the four muscle-team men pull her left arm, the right half is a solid red backdrop where the chicken shop staff member and owner pull her right arm; a comic tug-of-war with her stretched in the middle. Eye-level full shot."],
- ["C13","b","인물",42.6,44.5,"바스트","로우","B","dusk",0,"P","숄더백에서 닭가슴살 팩을 꺼내 방패처럼","샐러드에 닭가슴살","은색 팩에 불빛 반짝","영웅 자세","Low-angle bust shot: she whips a sealed plain silver chicken-breast pouch out of her rose-print shoulder bag and holds it up toward the right like a shield, eyes narrowed, dramatic hero stance, warm shop light glinting on the pouch."],
+ ["C13","b","인물",42.6,44.5,"바스트","로우","B","dusk",0,"P","반바지 주머니에서 닭가슴살 팩을 꺼내 방패처럼","샐러드에 닭가슴살","은색 팩에 불빛 반짝","영웅 자세","Low-angle bust shot: she whips a sealed plain silver chicken-breast pouch out of her shorts pocket and holds it up toward the right like a shield, eyes narrowed, dramatic hero stance, warm shop light glinting on the pouch."],
  ["C14","b","장애물",44.5,46.2,"미디엄","로우","B","dusk",0,"PBb","사장(오른쪽)의 확성기에 움찔. 자막 “1시간만 반값!”","떡볶이는 다음 주로","빨간 앞치마, 하늘 여백(자막 자리)","확성기 바람에 머리카락이 뒤로 쏠림","Low-angle medium shot: on the right the shop owner shouts through a megaphone pointed to the left; the blast blows her bob hair straight back as she flinches at the left edge of the frame; balloons above the entrance; clear empty sky space in the upper middle of the frame for a caption."],
- ["C15","b","장애물",46.2,48.0,"미디엄","아이레벨","B","dusk",0,"PSB","직원과 사장이 치킨을 들이밀고, 펄킴은 몸을 뒤로 확 젖힘","친구가 빵을 내밀어","빨강 둘이 보라를 몰아붙임","총알 피하는 영화처럼 거의 눕다시피","Eye-level medium shot: from the right, the staff member and the owner both shove fried chicken toward her; she bends backward almost horizontally to dodge, like a slow-motion bullet-dodging movie scene, arms flailing; warm yellow light."],
+ ["C15","b","장애물",46.2,48.0,"미디엄","아이레벨","B","dusk",0,"PSB","직원과 사장이 치킨을 들이밀고, 펄킴은 몸을 뒤로 확 젖힘","친구가 빵을 내밀어","빨강 둘이 검은 옷을 몰아붙임","총알 피하는 영화처럼 거의 눕다시피","Eye-level medium shot: from the right, the staff member and the owner both shove fried chicken toward her; she bends backward almost horizontally to dodge, like a slow-motion bullet-dodging movie scene, arms flailing; warm yellow light."],
  ["C16","b","갈등",48.0,50.0,"익스트림 CU","아이레벨","B","dusk",0,"P","입 앞 1cm의 치킨, 눈 질끈","한 입만은 위험한 말","황금빛 치킨이 화면 절반","치킨 뒤 후광 + 천사 합창 효과음","Eye-level extreme close-up: a glistening piece of fried chicken hovers 1 cm from her lips, glowing with a heavenly golden halo and soft light rays; her eyes squeezed shut, trembling with temptation."],
- ["C17","b","갈등",50.0,52.0,"바스트","하이","B","dusk",0,"P","떨리는 손으로 숄더백에서 지갑을 꺼냄, 체념","그래도 난 물을 들어","위에서 내려다봐 작아 보이게, 어두운 톤","머리 위에만 작은 먹구름","High-angle bust shot: with a trembling hand she pulls a plain wallet out of her rose-print shoulder bag, a defeated face, a tiny dark rain cloud hovering only above her head; the dusk street dim around her."],
+ ["C17","b","갈등",50.0,52.0,"바스트","하이","B","dusk",0,"P","떨리는 손으로 반바지 주머니에서 지갑을 꺼냄, 체념","그래도 난 물을 들어","위에서 내려다봐 작아 보이게, 어두운 톤","머리 위에만 작은 먹구름","High-angle bust shot: with a trembling hand she pulls a plain wallet out of her shorts pocket, a defeated face, a tiny dark rain cloud hovering only above her head; the dusk street dim around her."],
  ["C18","b","전환",52.0,53.6,"클로즈업","하이","B 바닥","dusk2",1,"P","지갑에서 회원카드가 툭 (슬로모션)","say goodbye","하늘이 남색, 카드만 흰빛","","High-angle close-up: an open wallet in her hand at the top of the frame; a blank white membership card in clear plastic slips out and falls toward the pavement, frozen mid-air in slow motion, a soft glint of light on the plastic; her white smartwatch visible on her left wrist."],
  ["C19","c","인물",53.6,55.3,"클로즈업","아이레벨","B","dusk2",0,"P","무표정 얼굴 (쿨레쇼프: 카드 다음이라 “깨달음”)","뱃살이 빠지는 게 아냐","남색 배경, 얼굴만 밝게","(과장 없음)","Frontal close-up at eye level: her completely neutral, expressionless face, eyes looking straight ahead, mouth closed, centered; the darkened navy street and warm shop lights softly blurred behind. Calm and still."],
  ["C20","c","목표",55.3,57.2,"미디엄","로우","C","dusk2",0,"Mb","2층 창문을 열고 근육 팀이 일제히 펄킴을 가리킴","더 나오려는 걸 막아","흰 형광 창 + 라임","","Low-angle medium shot from the sidewalk up at the second-floor gym: the four muscle-team men throw open the windows and all point down at the camera at once with fierce encouraging faces, bright white gym light behind them, the dark navy evening sky above."],
- ["C21","c","목표",57.2,59.0,"바스트","아이레벨","B","dusk2",0,"P","씨익 웃으며 흰 스마트워치 타이머를 누름","그래도 난 웃으며 뛰어","흰 시계가 보라 옷 위에서 또렷","(과장 없음)","Eye-level bust shot: she smirks with new resolve and presses the white smartwatch on her left wrist with her right index finger as if starting a timer, the watch clearly visible against her purple T-shirt, blank black watch face."],
+ ["C21","c","목표",57.2,59.0,"바스트","아이레벨","B","dusk2",0,"P","씨익 웃으며 흰 스마트워치 타이머를 누름","그래도 난 웃으며 뛰어","흰 시계가 검은 옷 위에서 또렷","(과장 없음)","Eye-level bust shot: she smirks with new resolve and presses the white smartwatch on her left wrist with her right index finger as if starting a timer, the watch clearly visible against her black T-shirt, blank black watch face."],
  ["C22","c","목표",59.0,61.5,"풀","로우","D","dusk2",1,"M","근육 팀이 계단에서 우르르 뛰어 내려옴","삼십대의 리듬, feel so light","계단 흰 불빛 + 라임","","Low-angle full shot at the gym's stair entrance: the four muscle-team men charge down the stairs and burst out onto the sidewalk all at once, comically eager, white stairwell light behind them, slight motion blur."],
- ["C23","c","해결",61.5,63.4,"풀","아이레벨","B 앞 인도","drop",1,"PM","드롭! 펄킴 가운데, 뒤에 근육 팀. 가슴 쿵쿵","두근두근 심박수 올라","보라·라임 원색 조명이 켜짐","가슴에서 충격파 원 + 근육 반짝","Eye-level full shot on the sidewalk in front of the chicken shop: she stands in the center front, the four muscle-team men in a row behind her; all five pound their chests with their fists in sync; comic circular shockwave rings ripple out from each chest and the men's muscles gleam."],
+ ["C23","c","해결",61.5,63.4,"풀","아이레벨","B 앞 인도","drop",1,"PM","드롭! 펄킴 가운데, 뒤에 근육 팀. 가슴 쿵쿵","두근두근 심박수 올라","보라 옷으로 전환, 보라·라임 원색 조명이 켜짐","가슴에서 충격파 원 + 근육 반짝","Eye-level full shot on the sidewalk in front of the chicken shop: she stands in the center front, the four muscle-team men in a row behind her; all five pound their chests with their fists in sync; comic circular shockwave rings ripple out from each chest and the men's muscles gleam."],
  ["C24","c","해결",63.4,65.3,"미디엄","아이레벨","B 앞 인도","drop",0,"PM","다 같이 손등으로 이마 땀 쓱","온몸에서 땀이 흘러","원색 조명, 땀방울 반짝","땀방울이 반짝이며 튐","Eye-level medium shot: she and the four muscle-team men all wipe sweat from their foreheads with the backs of their hands in one synchronized move, sparkling sweat drops flying."],
  ["C25","c","장애물 패배",65.3,66.8,"풀","하이","B 앞 인도","drop",0,"PMSB","어깨 털고 허리 돌리기, 뒤에서 직원·사장이 입 떡","어깨 털고 허리 돌려","원색 속 빨강 둘만 굳어 있음","직원 손에서 치킨이 툭 떨어짐","High-angle full shot: she and the four men shake their shoulders and swing their hips in a big synchronized dance move in the center; behind them on the right the staff member and the owner stand frozen with jaws dropped, a piece of chicken slipping from the staff member's hand."],
  ["C26","c","해결",66.8,69.1,"풀","사이드","B→D","drop",1,"PMb","이두근 포즈로 치킨집 앞을 행진 (왼쪽→오른쪽)","나를 위해 흔들어봐","보라·라임 행렬이 노란 가게를 지나감","승리의 퍼레이드","Side full shot: she leads the four muscle-team men marching from left to right past the glowing chicken shop toward the gym stair entrance, all striking bicep-flex poses mid-stride like a victory parade, motion energy."],
  ["C27","d","목표 달성",69.1,71.3,"와이드","아이레벨","E","gym",0,"PM","러닝머신에서 펄킴과 근육 팀이 나란히 달리기","퇴근길에 헬스장 갈까","차가운 흰 형광, 창밖 야경","","Eye-level wide shot inside the second-floor gym: she runs on the center treadmill with the four muscle-team men running on treadmills on both sides, all in a row facing the camera, determined and sweating; large windows behind them show the night city."],
  ["C28","d","목표 달성",71.3,73.0,"클로즈업","아이레벨","E","gym",0,"P","땀범벅인데 웃으며 스마트워치 확인 (00:00은 자막)","갓생살까 현생살까","흰 형광, 땀 하이라이트","(과장 없음)","Eye-level close-up: drenched in sweat but grinning, she raises her left wrist and checks the white smartwatch, blank black screen; cool white gym light."],
  ["C29","d","장애물 반전",73.0,74.4,"풀","아이레벨","A→건물","night",1,"Pb","C03과 같은 구도. 치킨집 셔터 쾅","피곤함도 잠깐 접고","짙은 남색 + 가로등 주황, 노란 불빛이 꺼짐","셔터 충격에 풍선이 펑","Eye-level wide shot of the whole building from across the street, identical composition to the earlier wide shot of the building: the chicken shop's metal roll-down shutter slams shut and a balloon pops with a comic burst; the warm yellow light is gone; she stands small near the gym stair entrance at the right, drenched in sweat, facing left toward the shutter, frozen."],
- ["C30","d","펀치",74.4,76.6,"미디엄","아이레벨","A","night",0,"PM","근육 팀이 물병 건배, 피식 웃으며 건배 → 헹가래","러닝 한 시간만 하자","가로등 주황 + 2층 흰 불빛, 보라·라임","펄킴을 번쩍 들어 헹가래","Eye-level medium shot on the sidewalk: the four muscle-team men raise water bottles in a toast to her, she breaks into a wry little smile and clinks her bottle with theirs, and the men begin lifting her up in a celebratory toss; orange streetlight and the gym's white window light behind."]
+ ["C30","d","펀치",74.4,76.6,"미디엄","아이레벨","A","night",0,"PM","근육 팀이 물병 건배, 피식 웃으며 건배 → 헹가래","러닝 한 시간만 하자","가로등 주황 + 2층 흰 불빛, 검정·라임","펄킴을 번쩍 들어 헹가래","Eye-level medium shot on the sidewalk: the four muscle-team men raise water bottles in a toast to her, she breaks into a wry little smile and clinks her bottle with theirs, and the men begin lifting her up in a celebratory toss; orange streetlight and the gym's white window light behind."]
 ];
+const REFL="Use the first attached image as the exact location. Keep the place, light and colors the same. Use the other attached images only for the people's faces, hairstyles, outfits and accessories. Place the people naturally in this location with matching light, shadows and scale. Create one single cinematic scene, not a character sheet, no split panels, no gray studio background.";
+const EXPR={C01:"1-1",C02:"1-1",C04:"1-1",C27:"1-1",C05:"1-2",C06:"1-3",C07:"1-4",C08:"1-5",C09:"1-6",C10:"1-7",C13:"1-8",C14:"2-1",C15:"2-2",C16:"2-3",C17:"2-4",C19:"2-5",C21:"2-6",C23:"2-7",C24:"2-7",C25:"2-7",C26:"2-7",C28:"2-7",C30:"2-8"};
+function plate(c){const place=c[7],tod=c[8];
+  if(tod==="imag")return "";
+  if(tod==="gym")return "E_헬스장";
+  const t={dusk:"해질녘",dusk2:"직후",drop:"드롭",night:"밤"}[tod];
+  return (place.includes("건물")?"전경":place[0])+"_"+t}
+const LOC_OUT="[OUTPUT]\nPhotorealistic location photo, landscape 16:9. Natural exposure. The place is empty, no people.\nNo readable text on signs, no labels.";
+const SAME="Use the attached image as the same building and street.\n\n";
+const SEOUL="Region and era: a Seoul residential neighborhood street, present day";
+const DUSK="Light and time: summer evening around 7:30 pm at dusk, clear sky, warm yellow light from the chicken shop, bright white light from the gym, streetlights just turning on";
+const LOCS=[
+ {name:"전경_해질녘 (제일 먼저)",use:"C03 · 넣을 이미지: 치킨집 팀 사진",text:`Use the attached image only for the storefront design. Do not include its people.
+
+[LOCATION]
+Setting: Outdoor
+Type: a two-story building with a newly opened fried-chicken shop on the ground floor and a gym on the second floor
+${SEOUL}
+Scale: small building, about 15 m wide
+Layout: left, a wide sidewalk and neighborhood shops; center, the chicken shop entrance with an empty space in front of it; right, the gym's stair entrance at the far right of the building; back, low neighboring buildings
+Key elements: red storefront frame, clusters of red and white balloons on both sides of the entrance, large open second-floor windows showing treadmills
+Surfaces: gray paving-stone sidewalk, light gray building walls
+Color palette: deep blue, warm yellow, red
+Wear: the shop is brand-new, the street is lightly used
+${DUSK}
+Mood: ordinary, lively, inviting
+
+[CAMERA]
+From across the street, facing the building straight on, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"A_해질녘 (건물 앞 인도)",use:"C01·C02·C04·C05·C06 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+Setting: Outdoor
+Type: the sidewalk leading to the building
+${SEOUL}
+Scale: about 20 m of sidewalk
+Layout: left, neighborhood shops; center, an empty sidewalk where a person can stand; right, the chicken shop's red storefront and balloons; back, the street continuing past the building
+Key elements: a streetlight, red and white balloons, the warm glow of the shop
+Surfaces: gray paving-stone sidewalk, shop walls and glass
+Color palette: deep blue, orange, warm yellow
+Wear: lightly used, clean
+${DUSK}
+Mood: ordinary, quiet, slightly tempting
+
+[CAMERA]
+On the sidewalk to the left of the building, looking along the sidewalk toward the shop, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"B_해질녘 (치킨집 입구)",use:"C08·C10·C11·C13~C17 · 넣을 이미지: 전경_해질녘 + 치킨집 팀 사진",text:`Use the first attached image as the same building and street. Use the second attached image only for the storefront design. Do not include its people.
+
+[LOCATION]
+Setting: Outdoor
+Type: the entrance of the newly opened fried-chicken shop
+${SEOUL}
+Scale: storefront about 8 m wide
+Layout: left, the open sidewalk; center, an empty space in front of the entrance with a small tasting table and metal sample trays; right, the glass door and a glowing menu board of chicken photos; back, the bright shop interior
+Key elements: small tasting table, menu board of chicken photos, red and white balloons on both sides of the entrance
+Surfaces: gray paving-stone sidewalk, red storefront frame, glass
+Color palette: warm yellow, red, deep blue
+Wear: brand-new, spotless
+${DUSK}
+Mood: warm, tempting, festive
+
+[CAMERA]
+On the sidewalk facing the entrance from 4 m away, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"C_해질녘 (2층 창가)",use:"빛 변경용 기본판 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+Setting: Outdoor
+Type: the second-floor gym windows seen from the sidewalk below
+${SEOUL}
+Scale: three large windows, about 10 m wide
+Layout: left, the top of the balloon clusters; center, large open windows with empty space where people can lean out; right, the building's plain wall; back, the bright gym interior
+Key elements: large open windows, treadmills inside, top edge of the red storefront
+Surfaces: light gray building walls, window frames
+Color palette: deep blue, cool white, red
+Wear: lightly used
+${DUSK}
+Mood: bright, encouraging
+
+[CAMERA]
+On the sidewalk below the windows, looking up, camera at 1.5 m height, 24mm lens look, level horizon.
+
+${LOC_OUT}`},
+ {name:"D_해질녘 (계단 입구)",use:"빛 변경용 기본판 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+Setting: Outdoor
+Type: the gym's stair entrance at the far right of the building
+${SEOUL}
+Scale: narrow entrance, about 3 m wide
+Layout: left, the end of the red storefront and balloons; center, an empty sidewalk in front of the stairs where people can land; right, the building corner; back, white-lit stairs going up to the gym
+Key elements: straight stairs with a handrail, open entrance, white stairwell light
+Surfaces: gray paving-stone sidewalk, concrete stairs, light gray walls
+Color palette: deep blue, cool white, red
+Wear: lightly used
+${DUSK}
+Mood: inviting, energetic
+
+[CAMERA]
+On the sidewalk facing the stair entrance from 5 m away, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`},
+ {name:"E_헬스장 (2층 안)",use:"C27·C28 · 넣을 이미지: 없음",text:`[LOCATION]
+Setting: Indoor
+Type: a neighborhood gym on the second floor
+Region and era: Seoul, present day
+Scale: about 12 m wide
+Layout: left, weight machines; center, a row of five treadmills facing the camera with empty space around them; right, dumbbell racks; back, large windows showing the dark city
+Key elements: five treadmills with blank screens, dumbbell racks, large windows
+Surfaces: black rubber floor, white walls
+Color palette: cool white, black, dark navy
+Wear: well used, clean
+Light and time: night, clear, bright cool white fluorescent ceiling lights, city lights through the windows
+Mood: clean, energetic, tiring
+
+[CAMERA]
+In front of the treadmills, facing them straight on, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
+
+${LOC_OUT}`}];
+const RELIGHT=[["전경_밤","전경_해질녘","C29","night"],["A_밤","A_해질녘","C30","night"],["B_직후","B_해질녘","C18·C19·C21","dusk2"],["B_드롭","B_해질녘","C23~C26","drop"],["C_직후","C_해질녘","C20","dusk2"],["D_직후","D_해질녘","C22","dusk2"]]
+ .map(([name,from,use,t])=>({name,use:`${use} · 넣을 이미지: ${from}`,text:`Keep the place, camera position and composition exactly the same. The place stays empty, no people, no readable text.\nChange only the light and time.\n${TOD[t]}`}));
+const ONE="SELECTED CANDIDATE: 1\nThe attached images show this ONE person.";
+const FOUR=n=>`SELECTED CANDIDATE: ${n}\nThe attached image has four men: 1 = far left, 2 = second from left, 3 = third from left, 4 = far right.`;
+const TWO=n=>`SELECTED CANDIDATE: ${n}\nThe attached image has two men: 1 = left, 2 = right.`;
+const fullBody=(sel,others,body,outfit)=>`${sel}
+Use only the selected candidate. Ignore the ${others}. Keep the face and hair exactly the same.
+
+Body: ${body}.
+Outfit: ${outfit}. No logos or text on the clothes.
+
+Full-body sheet of this ONE person, 3 panels in a row, landscape 16:9, thin white gutters.
+Left to right: front view / side view / back view.
+Standing naturally, arms relaxed slightly away from the body.
+Camera at chest height, 50mm lens look. Soft even daylight, plain light-gray background. Neutral expression.
+Same height and scale in all three panels, feet on the same line. No text or labels.`;
+const headTurn=(sel,keep,top)=>`${sel}
+${keep}Keep the face, hair and skin details exactly the same.
+
+Head turnaround sheet of this ONE person, 2 rows of 4 panels, landscape 16:9, thin white gutters.
+Top row: front / three-quarter showing the left side of the face / profile showing the left side of the face / back of the head.
+Bottom row: three-quarter showing the right side of the face / profile showing the right side of the face / chin slightly raised / chin slightly lowered.
+Head and shoulders, camera at eye level, 85mm lens look. Soft even daylight, plain light-gray background, ${top}. Neutral expression.
+Same head size and eye height in all panels. No text or labels.`;
+const exprSheet=(top,bottom)=>`Use the attached images. Keep the face, hair and skin details exactly the same in every panel.
+
+Facial expression sheet of this ONE person, 2 rows of 4 panels, landscape 16:9, thin white gutters.
+Top row, left to right:
+${top}
+Bottom row, left to right:
+${bottom}
+
+Head and shoulders, facing the camera straight on, camera at eye level, 85mm lens look. Soft even daylight, plain light-gray background, plain white T-shirt.
+Same head size and eye height in all panels. No text or labels.`;
+const LIME="plain neon-lime stringer tank top, plain black athletic shorts";
+const WHITES="white crew socks and plain white sneakers";
+const onlyMen="Use only the selected candidate. Ignore the other three people. ";
+const onlyTwo="Use only the selected candidate. Ignore the other person. ";
+const PEOPLE=[
+ {name:"펄킴 얼굴 각도",use:"전신은 기존 시트 2종 사용 · 넣을 이미지: 펄킴 얼굴 + 앞",text:headTurn(ONE,"","plain white T-shirt")},
+ {name:"펄킴 표정 1 (C01~C13)",use:"넣을 이미지: 펄킴 얼굴 + 앞 · 비율 16:9",text:exprSheet(`1. Fierce determination: brows lowered and drawn together, eyelids tightened, eyes locked on the lens, lips pressed together.
+2. Sniffing: nose lifted and slightly wrinkled, nostrils flared, eyelids half lowered, lips closed.
+3. Sideways glance: head still, both eyes turned toward the right side of the frame, inner brows slightly raised, lips closed.
+4. Confused: one brow raised, eyes wide open, lips slightly parted.`,`5. Gulping: eyes wide and fixed forward, lips pressed together, throat tensed as she swallows.
+6. Bliss: eyes closed, brows relaxed and lifted, cheeks raised, soft open-mouth smile.
+7. Snapping out of it: eyes squeezed shut, nose wrinkled, lips pressed tightly together.
+8. Hero stare: eyes narrowed, brows slightly lowered, lips closed and firm.`)},
+ {name:"펄킴 표정 2 (C14~C30)",use:"넣을 이미지: 펄킴 얼굴 + 앞 · 비율 16:9",text:exprSheet(`1. Flinching: eyes half squeezed shut, brows raised and drawn together, lip corners stretched sideways, teeth slightly showing.
+2. Shocked: brows raised high, upper eyelids raised, jaw dropped wide.
+3. Resisting temptation: eyes squeezed shut, inner brows raised and drawn together, lips tightly pressed.
+4. Defeated: inner brows raised and drawn together, upper eyelids drooping, lip corners pulled down, lips closed.`,`5. Neutral: all face muscles relaxed, lips closed, eyes looking into the lens.
+6. Smirk: one lip corner pulled up, lips closed, eyes slightly narrowed, cheek slightly raised.
+7. Big confident grin: cheeks raised, eye corners crinkled, mouth open, upper teeth showing.
+8. Wry little smile: lip corners pulled up slightly, lips closed, brows relaxed.`)},
+ {name:"직원 전신",use:"넣을 이미지: 치킨집 팀 사진",text:fullBody(TWO(1),"other person","about 175 cm, slim, narrow shoulders, stands upright and leans forward eagerly","white cap, white T-shirt and plain bright-red apron, black pants, white sneakers")},
+ {name:"직원 얼굴 각도",use:"넣을 이미지: 치킨집 팀 사진",text:headTurn(TWO(1),onlyTwo,"white cap and plain white T-shirt")},
+ {name:"사장 전신",use:"넣을 이미지: 치킨집 팀 사진",text:fullBody(TWO(2),"other person","about 170 cm, sturdy and slightly round, slightly rounded shoulders, stands with his chest pushed out proudly","white T-shirt and plain bright-red apron, black pants, white sneakers")},
+ {name:"사장 얼굴 각도",use:"넣을 이미지: 치킨집 팀 사진",text:headTurn(TWO(2),onlyTwo,"plain white T-shirt")},
+ ...[[1,"M1","about 180 cm, very muscular, broad shoulders, chest out",LIME+", white socks with two black stripes and plain white sneakers","the same plain neon-lime stringer tank top"],
+     [2,"M2","about 176 cm, very muscular, broad shoulders, relaxed stance",LIME+", "+WHITES+", black watch on his left wrist","the same plain neon-lime stringer tank top"],
+     [3,"M3","about 188 cm, the tallest and biggest, very muscular, very broad shoulders, stands tall",LIME+", "+WHITES+", white over-ear headphones","the same plain neon-lime stringer tank top and white over-ear headphones"],
+     [4,"M4","about 182 cm, very muscular, broad shoulders, playful stance",LIME+", "+WHITES+", one white wireless earbud, plain black wrist wrap on his right wrist","the same plain neon-lime stringer tank top and one white wireless earbud"]]
+  .flatMap(([n,m,body,outfit,top])=>[
+   {name:`${m} 전신`,use:"넣을 이미지: 근육 팀 전신",text:fullBody(FOUR(n),"other three people",body,outfit)},
+   {name:`${m} 얼굴 각도`,use:"넣을 이미지: 근육 팀 전신",text:headTurn(FOUR(n),onlyMen,top)}])];
+const FIX=[
+ {name:"재생성 문구",use:"구도 → 광원 → 표정 순서로 한 번에 하나만",text:"Keep the same people, faces, outfits, location and everything else exactly the same.\nChange only: [바꿀 것 하나]."},
+ {name:"구도 바꾸는 예",use:"[바꿀 것 하나] 자리에 넣어요",text:"the camera position. Move the camera lower and closer, keep her in the left third of the frame."},
+ {name:"광원 바꾸는 예",use:"[바꿀 것 하나] 자리에 넣어요",text:"the light. Make the warm yellow shop light stronger on the right side of her face."}];
+function renderProd(id,items){const box=document.getElementById(id);
+  for(const it of items){const d=document.createElement("details");
+    const s=document.createElement("summary");s.textContent=it.name;
+    const u=document.createElement("p");u.textContent=it.use;
+    const pre=document.createElement("div");pre.className="prompt";pre.textContent=it.text;
+    const b=document.createElement("button");b.className="copy";b.type="button";b.textContent="복사";bindCopy(b,()=>pre.textContent,pre);
+    d.append(s,u,pre,b);box.appendChild(d)}}
 function build(c){
   const [id,p,role,t0,t1,shot,ang,place,tod,vid,who,desc,lyric,color,exag,scene]=c;
-  const parts=[REF];
-  if(who.includes("P"))parts.push(PK);
+  const pl=plate(c);
+  const parts=[pl?REFL:REF];
+  if(who.includes("P"))parts.push(isPurple(c)?PK_PURPLE:PK_BLACK);
   if(who.includes("M"))parts.push(MT);
   if(who.includes("S")||who.includes("B"))parts.push(CT);
   parts.push(STYLE+" "+scene);
-  if(who.includes("b"))parts.push(BLD);
-  parts.push(TOD[tod]); parts.push(AV);
+  if(who.includes("b")&&!pl)parts.push(BLD);
+  parts.push(TOD[tod]); parts.push(who.includes("P")&&!isPurple(c)?AV_BLACK:AV);
   return parts.join("\n\n");
 }
 function sel(el){try{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}catch(e){}}
 function bindCopy(btn,getText,el){btn.addEventListener("click",()=>{const t=getText();const ok=()=>{btn.textContent="복사됨";setTimeout(()=>btn.textContent="복사",1500)};
   try{navigator.clipboard.writeText(t).then(ok,()=>sel(el))}catch(e){sel(el)}})}
-document.getElementById("pkLock").textContent=REF+"\n\n"+PK;
+document.getElementById("pkLock").textContent=PK_BLACK;
+document.getElementById("pkLock2").textContent=PK_PURPLE;
 document.getElementById("mtLock").textContent=MT;
 document.querySelectorAll("button[data-src]").forEach(b=>{const el=document.getElementById(b.dataset.src);bindCopy(b,()=>el.textContent,el)});
+renderProd("prodLoc",LOCS);renderProd("prodLight",RELIGHT);renderProd("prodPeople",PEOPLE);renderProd("prodFix",FIX);
 const board=document.getElementById("board");
 for(const key of Object.keys(PARTS)){
   const [name,range,col]=PARTS[key];
@@ -189,6 +413,7 @@ for(const key of Object.keys(PARTS)){
       <p class="desc">${desc}</p>
       <p class="kv"><b>장소</b> ${PLACE[place[0]]||place}${place.length>1&&!PLACE[place]?" ("+place+")":""} · <b>시간</b> ${tl}</p>
       <p class="kv"><b>색감</b> ${color} · <b>가사</b> ${lyric}</p>
+      <p class="kv"><b>넣을 이미지</b> ${[plate(c)&&"장소판 "+plate(c),EXPR[id]&&"표정 "+EXPR[id],who.includes("P")&&(isPurple(c)?"펄킴 보라 옷":"펄킴 검은 옷")+" + 흰 시계",who.includes("M")&&"근육 팀",(who.includes("S")||who.includes("B"))&&"치킨집 팀"].filter(Boolean).join(" → ")}</p>
       ${exag?`<p class="exag">과장: ${exag}</p>`:""}`;
     const d=document.createElement("details");
     d.innerHTML=`<summary>완성 이미지 프롬프트</summary>`;
