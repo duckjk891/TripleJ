@@ -6,7 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import type { WishItem } from '../../stores/wishlistStore';
 import { colors } from '../../theme/colors';
-import { ACCESSORY_SUBCATS, type AdItem, type Cat } from '../../utils/codyCatalog';
+import { ACCESSORY_SUBCATS, type Cat } from '../../utils/codyCatalog';
 import { pickerStyles as styles } from './codyShared';
 
 interface Props {
@@ -18,7 +18,6 @@ interface Props {
   wishItemsForCat: WishItem[];
   pickerCat: Cat | null;
   accessoryMode: boolean;
-  selected: Partial<Record<Cat, AdItem>>;
   switchAccessorySub: (sub: Cat) => void;
 }
 
@@ -31,7 +30,6 @@ export default function CodyPickerTabs({
   wishItemsForCat,
   pickerCat,
   accessoryMode,
-  selected,
   switchAccessorySub,
 }: Props) {
   return (
@@ -61,12 +59,11 @@ export default function CodyPickerTabs({
         </TouchableOpacity>
       </View>
 
-      {/* v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방] — 각 1개씩 동시 선택 */}
+      {/* v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방] — 각 1개씩 동시 선택. v3.429(대표 11-05): 버튼에 고른 제품 이름은 넣지 않는다 */}
       {accessoryMode && (
         <View style={styles.subcatRow}>
           {ACCESSORY_SUBCATS.map((sub) => {
             const active = pickerCat === sub;
-            const picked = selected[sub];
             return (
               <TouchableOpacity
                 key={sub}
@@ -75,7 +72,6 @@ export default function CodyPickerTabs({
               >
                 <AppText style={[styles.subcatSegText, active && styles.subcatSegTextActive]}>
                   {sub}
-                  {picked ? ` · ${picked.name}` : ''}
                 </AppText>
               </TouchableOpacity>
             );

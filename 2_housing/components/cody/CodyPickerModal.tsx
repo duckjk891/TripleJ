@@ -264,7 +264,6 @@ export default function CodyPickerModal({
             wishItemsForCat={wishItemsForCat}
             pickerCat={pickerCat}
             accessoryMode={accessoryMode}
-            selected={selected}
             switchAccessorySub={switchAccessorySub}
           />
 
