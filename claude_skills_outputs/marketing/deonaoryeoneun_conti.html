@@ -171,7 +171,7 @@ const CUTS=[
  ["C10","b","인물",36.6,38.7,"투샷","아이레벨","B","dusk",1,"PS","C08과 같은 구도. 치킨집 앞 직원이 내민 치킨을 향해 고개를 세차게 도리도리, 정신 차리기 (C08을 먼저 뽑고 그 이미지를 넣기)","다시 한 번 one two","현실 색으로 확 돌아옴","머리카락이 휙휙","Eye-level two-shot in the same framing as the previous shot: she stands on the left facing right; on the right the young staff member stands in front of the chicken shop and holds out a piece of fried chicken on a toothpick toward her; she shakes her head violently to snap out of it, eyes squeezed shut, her hair swinging; back to the muted dusk colors of the street."],
  ["C11","b","장애물",38.7,40.6,"미디엄","아이레벨","B","dusk",0,"P","치킨집 메뉴 사진판 앞, 어깨 너머로 보기. 오른쪽에 시식 손님들","점심 메뉴 앞에 서면","노란 메뉴판이 화면 가득","","Eye-level medium over-the-shoulder shot from behind her: she stands in front of the chicken shop's glowing menu board of chicken photos with no readable text, the warm yellow board filling most of the frame, her shoulder, bob haircut and the large daisy graphic on the back of her black T-shirt in the foreground left."],
  ["C12","b","갈등",40.6,42.6,"풀","아이레벨","F","imag",0,"PMSB","[상상] 화면 반반. 근육 팀 vs 치킨 팀이 펄킴 양팔을 잡고 줄다리기","마음속 전쟁 시작돼","왼쪽 라임 / 오른쪽 빨강","","Imagination scene with the frame split exactly in half: the left half is a solid lime-green backdrop where the four muscle-team men pull her left arm, the right half is a solid red backdrop where the chicken shop staff member and owner pull her right arm; a comic tug-of-war with her stretched in the middle. Eye-level full shot."],
- ["C13","b","인물",42.6,44.5,"바스트","로우","A","dusk",0,"P","슬링백에서 닭가슴살 팩을 꺼내 화면 오른쪽 치킨집 쪽으로 방패처럼 내밀기 (배경에 치킨집 없음)","샐러드에 닭가슴살","라임색 팩에 불빛 반짝","영웅 자세","Low-angle bust shot from the side: she whips a sealed chicken-breast pack out of her black sling bag and thrusts it out to the right like a shield, with her arm stretched toward the chicken shop, which is outside the frame on the right. Her body and face are turned to the right in a three-quarter profile, and her narrowed eyes look off to the right, not at the camera. Dramatic hero stance, with the warm yellow glow of the unseen shop falling on her face and glinting on the pack from the right. The pack is a flat, square vacuum-sealed plastic food pack about the size of her hand, bright lime green with a large clear window in the middle, and one whole pale cooked chicken breast is clearly visible through the window. The pack has no words, no logo and no mascot."],
+ ["C13","b","인물",42.6,44.5,"바스트","로우","B","dusk",0,"P","치킨집 앞. 슬링백에서 닭가슴살 팩을 꺼내 화면 오른쪽 치킨집을 향해 방패처럼 내밀기","샐러드에 닭가슴살","라임색 팩에 불빛 반짝","영웅 자세","Low-angle bust shot from the side: she whips a sealed chicken-breast pack out of her black sling bag and thrusts it out to the right like a shield, with her arm stretched toward the chicken shop on the right side of the frame. Her body and face are turned to the right in a three-quarter profile, and her narrowed eyes look at the shop, not at the camera. Dramatic hero stance, with the warm yellow glow of the shop falling on her face and glinting on the pack from the right. The pack is a flat, square vacuum-sealed plastic food pack about the size of her hand, bright lime green with a large clear window in the middle, and one whole pale cooked chicken breast is clearly visible through the window. The pack has no words, no logo and no mascot."],
  ["C14","b","장애물",44.5,46.2,"미디엄","로우","B","dusk",0,"PBb","사장(오른쪽)의 확성기에 움찔. 자막 “1시간만 반값!”","떡볶이는 다음 주로","빨간 앞치마, 하늘 여백(자막 자리)","확성기 바람에 머리카락이 뒤로 쏠림","Low-angle medium shot: on the right the shop owner shouts through a megaphone pointed to the left; the blast blows her bob hair straight back as she flinches at the left edge of the frame; balloons above the entrance; clear empty sky space in the upper middle of the frame for a caption."],
  ["C15","b","장애물",46.2,48.0,"미디엄","아이레벨","B","dusk",0,"PSB","직원과 사장이 치킨을 들이밀고, 펄킴은 몸을 뒤로 확 젖힘","친구가 빵을 내밀어","빨강 둘이 검은 옷을 몰아붙임","총알 피하는 영화처럼 거의 눕다시피","Eye-level medium shot: from the right, the staff member and the owner both shove fried chicken toward her; she bends backward almost horizontally to dodge, like a slow-motion bullet-dodging movie scene, arms flailing; warm yellow light."],
  ["C16","b","갈등",48.0,50.0,"익스트림 CU","아이레벨","B","dusk",0,"P","입 앞 1cm의 치킨, 눈 질끈","한 입만은 위험한 말","황금빛 치킨이 화면 절반","치킨 뒤 후광 + 천사 합창 효과음","Eye-level extreme close-up: a glistening piece of fried chicken hovers 1 cm from her lips, glowing with a heavenly golden halo and soft light rays; one half of her face is lit warm yellow by the shop and the other half falls into deep navy shadow; her eyes squeezed shut, trembling with temptation."],
@@ -199,7 +199,6 @@ function plate(c){const place=c[7],tod=c[8];
   if(["C01","C01b","C02","C04"].includes(c[0]))return "A_모서리";
   if(c[0]==="C02b")return "A_바닥";
   if(c[0]==="C03")return "전경_시선";
-  if(c[0]==="C13")return "A_멀리";
   if(c[0]==="C05a")return "C05b 완성 이미지";
   if(c[0]==="C10")return "C08 완성 이미지";
   return (place.includes("건물")?"전경":place[0])+"_"+t}
@@ -265,7 +264,7 @@ Mood: ordinary, quiet, slightly tempting
 From across the road, about 12 m to the left of the chicken shop, facing the buildings straight on, turned slightly to the right, camera at 1.5 m height, 24mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
- {name:"A_멀리 (치킨집에서 먼 인도)",use:"C13 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+ {name:"A_멀리 (치킨집에서 먼 인도)",use:"지금은 안 씀 (C02b 배경이 바닥으로 바뀜)",text:SAME+`[LOCATION]
 Setting: Outdoor
 Type: the same sidewalk, about 30 m to the left of the chicken shop, seen from across the road
 ${SEOUL}
@@ -316,7 +315,7 @@ Mood: ordinary, quiet, everyday
 On the sidewalk beside the red corner, close to the wall, looking back along the sidewalk, camera at 1.5 m height, 85mm lens look, level horizon, vertical lines straight.
 
 ${LOC_OUT}`},
- {name:"B_해질녘 (치킨집 입구)",use:"C08·C11·C14~C17 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
+ {name:"B_해질녘 (치킨집 입구)",use:"C08·C11·C13~C17 · 넣을 이미지: 전경_해질녘",text:SAME+`[LOCATION]
 Setting: Outdoor
 Type: the entrance of the newly opened fried-chicken shop
 ${SEOUL}
