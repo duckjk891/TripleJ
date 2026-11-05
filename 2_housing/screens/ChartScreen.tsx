@@ -12,6 +12,7 @@ import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { playTrackNow } from '../services/playback';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -251,6 +252,9 @@ export default function ChartScreen() {
       if (__DEV__) console.info('[ChartScreen] [AlbumNav] 앨범 소속 곡 탭 → AlbumDetail', { trackId: track.id, albumId: track.album_id });
       // v3.220 ①: AlbumDetail = 탭 형제(숨김 탭) — from 명시로 origin 복귀(매 진입 전체 파라미터 전달)
       navigation.navigate('AlbumDetail', { albumId: String(track.album_id), from: 'Chart' });
+      // v3.427(대표 11-05): 앨범 화면으로 가면서 누른 곡도 재생(미니플레이어) — 이전엔 이동만 하고 재생이 안 됐다
+      if (usePlayerStore.getState().shuffle) usePlayerStore.getState().toggleShuffle();
+      void playTrackNow(track);
       return;
     }
     // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
