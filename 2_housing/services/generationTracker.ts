@@ -697,7 +697,7 @@ export async function finalizeArtistJob(
     return 'saved';
   } catch (err: any) {
     const status = err?.response?.status;
-    const code = err?.response?.data?.error;
+    const code = err?.response?.data?.code || err?.response?.data?.error;
     console.warn('[GenTracker] finalize 저장 실패 — done 유지(재시도 가능)', { jobId, status, code });
     if (status === 409 && code === 'slot_limit_exceeded') {
       showSlotDialog(err);

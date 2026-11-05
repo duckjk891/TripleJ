@@ -307,7 +307,7 @@ export function mapCharacterJob(raw: any): CharacterJobSnapshot | null {
 export function parseGenerationInProgress(err: any): CharacterJobSnapshot | null {
   if (err?.response?.status !== 409) return null;
   const data = err?.response?.data;
-  if (data?.error !== 'generation_in_progress') return null;
+  if ((data?.code || data?.error) !== 'generation_in_progress') return null;
   const snap = mapCharacterJob({ ...data, status: 'processing' });
   return snap;
 }
