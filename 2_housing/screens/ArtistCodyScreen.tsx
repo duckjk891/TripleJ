@@ -1252,7 +1252,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         staleIds={staleIds}
         isLoggedIn={isLoggedIn}
         closePicker={closePicker}
-        switchAccessorySub={switchAccessorySub}
         jumpToCategory={jumpToCategory}
         pickItem={pickItem}
         handleWishToggle={handleWishToggle}
