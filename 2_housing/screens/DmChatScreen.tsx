@@ -140,6 +140,8 @@ export default function DmChatScreen() {
   const editingIdRef = useRef<string | null>(null);
   editingIdRef.current = editingMsg?.id ?? null;
   const listRef = useRef<FlatList>(null);
+  // v3.430(지유님 10-31·11-03): 글이 그려지는 동안 맨 아래를 따라간다 — 0.08초 뒤 한 번만 내리면 긴 대화는 끝까지 못 갔다. 직접 스크롤하면 멈춤
+  const stickBottomRef = useRef(true);
 
   const isPendingReceived = conv?.status === 'pending' && user && String(conv?.requester_id) !== String(user.id);
   const isPendingSent = conv?.status === 'pending' && user && String(conv?.requester_id) === String(user.id);
@@ -188,6 +190,7 @@ export default function DmChatScreen() {
 
   useEffect(() => {
     // 새 메시지 도착 시 하단으로
+    stickBottomRef.current = true;
     if (messages.length) setTimeout(() => listRef.current?.scrollToEnd?.({ animated: false }), 80);
   }, [messages.length]);
 
@@ -546,6 +549,9 @@ export default function DmChatScreen() {
           renderItem={renderMsg}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}
           style={{ flex: 1 }}
+          initialNumToRender={100}
+          onContentSizeChange={() => { if (stickBottomRef.current) listRef.current?.scrollToEnd?.({ animated: false }); }}
+          onScrollBeginDrag={() => { stickBottomRef.current = false; }}
         />
       )}
 
