@@ -602,10 +602,11 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           : typeof detail === 'string' ? detail : null;
         // v3.76(MAIDOL v158/v139): 별 부족(402)·생성 제한(403) 전용 안내
         const status = err?.response?.status;
+        const errCode = err.response?.data?.code || err.response?.data?.error; // v3.426 서버 코드는 code 에 남음
         // v3.118: 아티스트 디렉터 피로 429(director_fatigue — 슬롯/⭐ 차감 전 거절, 무과금)
         // → 실패 화면 미진입, Map 복귀 후 동일 휴식 다이얼로그(⭐/광고권 스킵). 입력은
         // store에 보존 — 해제 후 "이어서 만들기"로 재개 (409 슬롯 패턴과 동일 흐름).
-        if (status === 429 && err.response?.data?.error === 'director_fatigue') {
+        if (status === 429 && errCode === 'director_fatigue') {
           const gateRemain = Math.max(0, Math.floor(err.response?.data?.cooldown_remaining_sec ?? 0));
           console.log('[ArtistLoading] [fatigue:artist] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
           let fatigueStatus: FatigueStatus | null = null;
@@ -634,7 +635,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
         // v3.154: 얼굴 인증 필요(403 face_verification_required — ⭐ 차감 전 거절)
         // → 얼굴 인증 화면으로 진입. 인증 완료 시 FaceVerify가 ArtistLoading을 replace해
         // 같은 taskStore 입력으로 생성을 자동 재개한다.
-        if (status === 403 && err.response?.data?.error === 'face_verification_required') {
+        if (status === 403 && errCode === 'face_verification_required') {
           console.info('[ArtistLoading] 얼굴 인증 필요 — FaceVerify 진입 (무과금)');
           // v3.283: 인증이 실패·취소돼 돌아가도 아티스트 만들기에 "이어서 만들기"가 뜨도록 재개 표식을 남긴다
           // (기존엔 표식이 없어 처음 흐름으로 다시 들어가며 고른 옷이 초기화됐다 — 10-05 DDui). 성공 재개 시 위에서 정리.
@@ -643,7 +644,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           return;
         }
         // v3.103(B-1): 슬롯 초과(409 slot_limit_exceeded — ⭐ 차감 전 거절) → 확장 제안 다이얼로그
-        if (status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+        if (status === 409 && errCode === 'slot_limit_exceeded') {
           const used = err.response?.data?.used;
           const max = err.response?.data?.max;
           // v3.230 A5-6: 슬롯 확장 비용 = /points/costs(extra_slot) — 하드코딩 제거
@@ -680,13 +681,13 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
           return;
         }
         let msg: string;
-        if (status === 409 && err.response?.data?.error === 'original_owner_mismatch') {
+        if (status === 409 && errCode === 'original_owner_mismatch') {
           // v3.281 [61]: 서버 가드 — 보낸 얼굴 원본이 대상 아티스트 것이 아님(⭐ 차감 전 거절)
           console.warn('[ArtistLoading] 409 original_owner_mismatch — 대상 아티스트 원본 불일치(무과금)', { mode });
           msg = err.response?.data?.message || '이 아티스트의 사진이 아니에요. 아티스트 화면에서 다시 시도해주세요.';
         } else if (status === 402) {
           msg = `스타가 부족해요. 캐릭터 시트 생성에는 ⭐${getPointCostSync('character')}개가 필요합니다.`;
-        } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
+        } else if (status === 403 && errCode === 'generation_restricted') {
           msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
         } else {
           msg = !err?.response && (mode === 'sheet' || mode === 'outfit')
