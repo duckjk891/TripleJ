@@ -42,6 +42,7 @@ import {
   cloneValidatePhrase,
   listVoiceSamples,
   renameVoiceSample,
+  deleteVoiceSample,
   sampleUsageText,
   type VoiceSample,
 } from '../services/voiceService';
@@ -409,6 +410,27 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       console.error('[VoiceCloneWizard] 보관함 샘플 들어 보기 실패:', err?.message);
       showAlert('들어 보기', '샘플을 재생할 수 없어요. 잠시 후 다시 시도해 주세요.');
     }
+  };
+
+  // v3.427 보관함 샘플 삭제(지유님 의견·대표 11-05) — 확인 뒤 서버 삭제, 이미 만든 목소리는 그대로
+  const handleSampleDelete = (s: VoiceSample) => {
+    showAlert('샘플 삭제', `'${s.display_name || s.voice_name || '이름 없는 샘플'}' 샘플을 지울까요?\n지우면 되돌릴 수 없어요. 이미 만든 목소리는 그대로 쓸 수 있어요.`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (previewSampleKey === s.object_name) await stopPreview();
+            await deleteVoiceSample(s.object_name);
+            setVoiceSamples((prev) => prev.filter((x) => x.object_name !== s.object_name));
+            setSelectedSample((prev) => (prev && prev.object_name === s.object_name ? null : prev));
+          } catch (err: any) {
+            showAlert('샘플 삭제', err?.message || '샘플을 지우지 못했어요. 잠시 후 다시 시도해 주세요.');
+          }
+        },
+      },
+    ]);
   };
 
   // v3.423 보관함 샘플 이름 바꾸기(빈 값 = 원래 이름)
@@ -1030,6 +1052,13 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                           </View>
                           {meta ? <AppText style={styles.sampleMeta} numberOfLines={2}>{meta}</AppText> : null}
                         </View>
+                        <TouchableOpacity
+                          onPress={() => handleSampleDelete(s)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="샘플 삭제"
+                        >
+                          <AppText style={styles.sampleEdit}>🗑️</AppText>
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     );
                   })}

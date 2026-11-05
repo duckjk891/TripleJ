@@ -132,6 +132,17 @@ export const renameVoiceSample = async (objectName: string, label: string): Prom
   }
 };
 
+/** v3.427 POST /voice-clone/samples/delete — 보관함 샘플 삭제(이미 만든 목소리는 남음, 학습 중이면 409) */
+export const deleteVoiceSample = async (objectName: string): Promise<void> => {
+  try {
+    await api.post('/voice-clone/samples/delete', { object_name: objectName });
+    if (__DEV__) console.info('[voiceService] deleteVoiceSample ok');
+  } catch (err: any) {
+    console.error('[voiceService] deleteVoiceSample 실패:', err?.response?.status, err?.message);
+    throw err;
+  }
+};
+
 /** v3.423 샘플을 어디에 썼는지 한 줄 — 아티스트 우선, 없으면 목소리 이름 */
 export function sampleUsageText(s: VoiceSample): string {
   const used = s.used_by || [];
