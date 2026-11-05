@@ -142,7 +142,7 @@ export function interpretNicknameError(status: number | undefined, data: any): N
   if (status === 409 || data?.error === 'nickname_taken') {
     return { code: 'taken', message: NICKNAME_TAKEN_MESSAGE };
   }
-  if (status === 400 && data?.error === 'nickname_invalid') {
+  if (status === 400 && (data?.code || data?.error) === 'nickname_invalid') {
     const reason = data?.reason as NicknameInvalidReason | undefined;
     const mapped = reason && reason in NICKNAME_MESSAGES ? NICKNAME_MESSAGES[reason] : null;
     return { code: 'invalid', message: serverMsg || mapped || NICKNAME_MESSAGES.empty };

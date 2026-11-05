@@ -17,6 +17,7 @@ import { Audio } from 'expo-av';
 import { pauseGlobalPlaybackFor } from '../services/playback';
 import { restorePlaybackAudioModeAfterRecording } from '../services/audioMode';
 import { AppText } from '../components/ui';
+import AppModal from '../components/AppModal';
 import { showAlert } from '../utils/appAlert';
 import { confirmStarSpend } from '../utils/starSpendConfirm';
 import { getPointCostSync } from '../services/pointCosts';
@@ -40,6 +41,8 @@ import {
   verifyVoiceClone,
   cloneValidatePhrase,
   listVoiceSamples,
+  renameVoiceSample,
+  sampleUsageText,
   type VoiceSample,
 } from '../services/voiceService';
 // v3.254: 작곡 복귀 시 새 클론 자동 연결 — ArtistResultScreen v3.103(B-3)과 동일 계약
@@ -157,6 +160,11 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   // 미리듣기
   const soundRef = useRef<Audio.Sound | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  // v3.423 보관함 샘플 들어 보기(어느 샘플인지) · 이름 바꾸기 창
+  const [previewSampleKey, setPreviewSampleKey] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<VoiceSample | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
 
   const pollCancelRef = useRef(false);
 
@@ -367,6 +375,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     const sound = soundRef.current;
     soundRef.current = null;
     setPreviewing(false);
+    setPreviewSampleKey(null);
     if (sound) {
       try {
         await sound.stopAsync();
@@ -374,6 +383,54 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       try {
         await sound.unloadAsync();
       } catch {}
+    }
+  };
+
+  // v3.423 보관함 샘플 들어 보기 — 같은 샘플을 다시 누르면 멈춤, 다른 샘플이면 바꿔 재생
+  const handleSamplePreview = async (s: VoiceSample) => {
+    const playingThis = previewSampleKey === s.object_name;
+    if (previewing) await stopPreview();
+    if (playingThis) return;
+    if (!s.preview_url) {
+      showAlert('들어 보기', '이 샘플은 지금 들어 볼 수 없어요. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
+    try {
+      await pauseGlobalPlaybackFor('voiceclone-preview');
+      const { sound } = await Audio.Sound.createAsync({ uri: s.preview_url }, { shouldPlay: true });
+      soundRef.current = sound;
+      setPreviewing(true);
+      setPreviewSampleKey(s.object_name);
+      if (__DEV__) console.info('[VoiceCloneWizard] 보관함 샘플 들어 보기', s.object_name);
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) stopPreview();
+      });
+    } catch (err: any) {
+      console.error('[VoiceCloneWizard] 보관함 샘플 들어 보기 실패:', err?.message);
+      showAlert('들어 보기', '샘플을 재생할 수 없어요. 잠시 후 다시 시도해 주세요.');
+    }
+  };
+
+  // v3.423 보관함 샘플 이름 바꾸기(빈 값 = 원래 이름)
+  const openRename = (s: VoiceSample) => {
+    setRenameTarget(s);
+    setRenameText(s.label || s.display_name || s.voice_name || '');
+  };
+  const saveRename = async () => {
+    if (!renameTarget || renameSaving) return;
+    setRenameSaving(true);
+    try {
+      const res = await renameVoiceSample(renameTarget.object_name, renameText.trim());
+      setVoiceSamples((prev) => prev.map((x) => (x.object_name === renameTarget.object_name
+        ? { ...x, label: res.label, display_name: res.display_name } : x)));
+      setSelectedSample((prev) => (prev && prev.object_name === renameTarget.object_name
+        ? { ...prev, label: res.label, display_name: res.display_name } : prev));
+      setRenameTarget(null);
+    } catch (err: any) {
+      console.error('[VoiceCloneWizard] 샘플 이름 바꾸기 실패', { status: err?.response?.status });
+      showAlert('이름 바꾸기', '이름을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setRenameSaving(false);
     }
   };
 
@@ -922,10 +979,18 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                   </AppText>
                   {voiceSamples.slice(0, 5).map((s) => {
                     const selected = selectedSample?.object_name === s.object_name;
+                    const playing = previewSampleKey === s.object_name;
+                    const usage = sampleUsageText(s);
+                    const meta = [
+                      s.duration_s > 0 ? formatDuration(Math.round(s.duration_s)) : '',
+                      s.created_at ? String(s.created_at).slice(5, 10).replace('-', '.') : '',
+                      usage,
+                    ].filter(Boolean).join(' · ');
                     return (
                       <TouchableOpacity
                         key={s.object_name}
-                        style={[styles.chip, { marginBottom: 6 }, selected && styles.chipSelected]}
+                        style={[styles.sampleRow, selected && styles.chipSelected]}
+                        activeOpacity={0.8}
                         onPress={() => {
                           if (selected) {
                             setSelectedSample(null);
@@ -941,11 +1006,30 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                           if (__DEV__) console.info('[VoiceCloneWizard] 보관함 샘플 선택', s.object_name);
                         }}
                       >
-                        <AppText style={[styles.chipText, selected && styles.chipTextSelected]}>
-                          {selected ? '✓ ' : ''}🎵 {s.voice_name || '이름 없는 샘플'}
-                          {s.duration_s > 0 ? ` · ${formatDuration(Math.round(s.duration_s))}` : ''}
-                          {s.created_at ? ` · ${String(s.created_at).slice(0, 10)}` : ''}
-                        </AppText>
+                        {/* v3.423: ▶ 들어 보기 · 이름(✏️ 바꾸기) · 길이·날짜·어느 아티스트에 썼는지 */}
+                        <TouchableOpacity
+                          style={[styles.samplePlay, playing && styles.samplePlayOn]}
+                          onPress={() => { void handleSamplePreview(s); }}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          accessibilityLabel={playing ? '샘플 멈추기' : '샘플 들어 보기'}
+                        >
+                          <AppText style={styles.samplePlayIcon}>{playing ? '■' : '▶'}</AppText>
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.sampleNameRow}>
+                            <AppText style={[styles.sampleName, selected && styles.chipTextSelected]} numberOfLines={1}>
+                              {selected ? '✓ ' : ''}{s.display_name || s.voice_name || '이름 없는 샘플'}
+                            </AppText>
+                            <TouchableOpacity
+                              onPress={() => openRename(s)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityLabel="샘플 이름 바꾸기"
+                            >
+                              <AppText style={styles.sampleEdit}>✏️</AppText>
+                            </TouchableOpacity>
+                          </View>
+                          {meta ? <AppText style={styles.sampleMeta} numberOfLines={2}>{meta}</AppText> : null}
+                        </View>
                       </TouchableOpacity>
                     );
                   })}
@@ -1145,6 +1229,35 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           )}
         </ScrollView>
       )}
+
+      {/* v3.423 보관함 샘플 이름 바꾸기(앱 내 다이얼로그 — 시스템 Alert 금지) */}
+      <AppModal visible={!!renameTarget} transparent animationType="fade" onRequestClose={() => setRenameTarget(null)}>
+        <View style={styles.renameBackdrop}>
+          <View style={styles.renameCard}>
+            <AppText style={styles.renameTitle}>샘플 이름 바꾸기</AppText>
+            <AppText style={styles.renameHint}>나중에 고르기 쉽게 이름을 붙여 주세요. 비우면 원래 이름으로 돌아가요.</AppText>
+            <TextInput
+              style={styles.renameInput}
+              value={renameText}
+              onChangeText={setRenameText}
+              placeholder={renameTarget?.voice_name || '예: 내맘 발라드 녹음'}
+              placeholderTextColor={colors.text.muted}
+              maxLength={30}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={() => { void saveRename(); }}
+            />
+            <View style={styles.renameButtons}>
+              <TouchableOpacity style={styles.renameBtn} onPress={() => setRenameTarget(null)} disabled={renameSaving}>
+                <AppText style={styles.renameBtnText}>취소</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.renameBtn, styles.renameBtnPrimary]} onPress={() => { void saveRename(); }} disabled={renameSaving}>
+                <AppText style={[styles.renameBtnText, styles.renameBtnTextPrimary]}>{renameSaving ? '저장 중…' : '저장'}</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </AppModal>
     </View>
   );
 }
@@ -1261,6 +1374,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
+  // v3.423 보관함 샘플 줄
+  sampleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6,
+    backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,
+    borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10,
+  },
+  samplePlay: {
+    width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.bg.surface2,
+  },
+  samplePlayOn: { backgroundColor: colors.accent.primary },
+  samplePlayIcon: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  sampleNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sampleName: { color: colors.text.primary, fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  sampleEdit: { fontSize: 13 },
+  sampleMeta: { color: colors.text.muted, fontSize: 12, marginTop: 2, lineHeight: 16 },
+  renameBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 28 },
+  renameCard: { backgroundColor: colors.bg.surface1, borderRadius: 18, padding: 18 },
+  renameTitle: { color: colors.text.primary, fontSize: 16, fontWeight: '700', marginBottom: 4 },
+  renameHint: { color: colors.text.muted, fontSize: 12, marginBottom: 12 },
+  renameInput: {
+    backgroundColor: colors.bg.surface2, borderRadius: 10, borderWidth: 1, borderColor: colors.border.subtle,
+    color: colors.text.primary, fontSize: 15, paddingHorizontal: 12, paddingVertical: 10,
+  },
+  renameButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 14 },
+  renameBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  renameBtnPrimary: { backgroundColor: colors.accent.primary },
+  renameBtnText: { color: colors.text.secondary, fontSize: 14, fontWeight: '600' },
+  renameBtnTextPrimary: { color: '#fff' },
   chipSelected: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
   chipText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
   chipTextSelected: { color: colors.accent.primary },

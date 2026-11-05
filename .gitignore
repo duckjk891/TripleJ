@@ -67,3 +67,8 @@ htmlcov/
 
 # 네이버 검수 캡처(개인정보 마스킹본) — 로컬 전용
 claude_skills_outputs/integrations/naver_review/
+
+# 프리비즈 대용량(노래·렌더 결과)은 git 제외
+claude_skills_outputs/marketing/previz/*.mp3
+claude_skills_outputs/marketing/previz/*.mp4
+claude_skills_outputs/marketing/previz/stills/

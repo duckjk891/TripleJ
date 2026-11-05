@@ -87,7 +87,7 @@ export async function getGuestDeviceId(): Promise<string> {
 /** 서버 거절 코드 판별(429 본문 error) — guest_ip_cap 은 v3.277 작곡 체험 전용 */
 export function guestDenyCode(err: any): 'guest_trial_used' | 'guest_daily_cap' | 'guest_ip_cap' | null {
   if (err?.response?.status !== 429) return null;
-  const code = err?.response?.data?.error;
+  const code = err?.response?.data?.code || err?.response?.data?.error;
   return code === 'guest_trial_used' || code === 'guest_daily_cap' || code === 'guest_ip_cap' ? code : null;
 }
 
@@ -284,7 +284,7 @@ export function claimGuestCompose(genId: string): Promise<GuestClaimResult> {
       return already ? 'already' : 'claimed';
     } catch (err: any) {
       const st = err?.response?.status;
-      const code = err?.response?.data?.error;
+      const code = err?.response?.data?.code || err?.response?.data?.error;
       console.warn('[GuestCompose] claim 실패', { genId, status: st ?? null, code: code ?? null });
       if (st === 409 && code === 'guest_compose_not_ready') return 'not_ready';
       if (st === 404 || st === 409) {

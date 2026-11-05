@@ -91,6 +91,9 @@ api.interceptors.response.use(
       if (error.response && data && typeof data === 'object') {
         if (!rawErr || isTechnicalMessage(rawErr)) {
           if (rawErr) console.error('[FriendlyError] 서버 원문(사용자 비노출)', { url, status, raw: String(rawErr).slice(0, 300) });
+          // v3.426(김수석님 11-02): 문구만 바꾸고 서버 코드(face_verification_required 등)는 code 로 남긴다 —
+          // v3.326 뒤로 화면 분기가 코드를 못 봐 얼굴 인증 이동 대신 '권한이 없어요'가 떴다.
+          if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(rawErr) && !data.code) data.code = rawErr;
           data.error = friendlyText('', { status });
           if (typeof data.detail !== 'string' || isTechnicalMessage(data.detail)) data.detail = data.error;
         }

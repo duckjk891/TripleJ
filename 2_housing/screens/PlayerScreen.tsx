@@ -59,7 +59,7 @@ import TrackComments from '../components/common/TrackComments';
 import { useIsChild } from '../utils/kidsMode';
 import { trackEvent } from '../utils/screenAnalytics';
 import { normalizeShareId } from '../utils/trackLink';
-import { openAppStoreFromWeb, webMobileOs } from '../utils/storeLinks'; // v3.418 명함 QR
+import { CARD_QR_APP_INSTALL, openAppStoreFromWeb, webMobileOs } from '../utils/storeLinks'; // v3.418 명함 QR
 // v3.256 [MakeLike]: v3.237 공유 CTA 목적지 배선 공용화(동작 불변) — 시트 '이 곡 느낌으로 만들기'와 같은 집
 import { navigateShareCtaDestination } from '../utils/makeLike';
 import { resolveStylingView, STYLING_TEXT } from '../utils/playerStyling';
@@ -305,7 +305,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const shareLinkId = normalizeShareId(route.params?.shareId);
   // v3.418 [CardQR] 명함 QR 진입 — CTA '내 이야기로 노래 만들기', 휴대폰 웹이면 누를 때 앱 설치(안드로이드 = 앱 있으면 실행)
   const fromCard = viaShare && route.params?.fromCard === true;
-  const cardStoreOs = fromCard ? webMobileOs() : null;
+  const cardStoreOs = fromCard && CARD_QR_APP_INSTALL ? webMobileOs() : null; // v3.424: 스위치 OFF = 웹앱에서 이어서
   const shareCtaLabel = fromCard ? '내 이야기로 노래 만들기' : '나도 이런 곡 만들기';
   // v3.418c: 명함 QR(휴대폰 웹) — 재생 화면 15초 뒤 설치 팝업 1회. 다른 곡으로 넘어가 CTA 가 사라지면 취소
   useEffect(() => {

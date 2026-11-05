@@ -5,8 +5,9 @@
 //   묶음은 같은 시트 안에서 하위 목록으로 바뀌고, ‹ 또는 웹 뒤로 가기로 첫 목록에 돌아온다.
 //   남의 곡 = 아이콘 줄 + 공유하기 › + 이 곡 느낌으로 만들기. 파일 받기는 내 곡만, 곡 관리는 manageItems 를 넘긴 화면(마이페이지)만.
 import { useEffect, useState } from 'react';
-import { ScrollView, View, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { ScrollView, View, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import AppModal from './AppModal'; // v3.401 iOS 창 겹침·팝업 무반응 방지(공용 AppModal)
+import { waitModalTurn } from '../utils/modalTurn';
 import { showAlert } from '../utils/appAlert';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,6 +102,13 @@ export default function TrackActionSheet({
 
   const anyTrack = track as any;
   const isOwn = !!track && (shareOwn ?? (!!user && anyTrack?.uploader_id != null && String(anyTrack.uploader_id) === String(user.id)));
+
+  // v3.426(DDui님 10-30): 아이폰은 시트가 내려가는 도중 화면을 옮기면 막힌다 — 닫힘이 끝난 뒤 실행(최대 1.5초)
+  const afterSheetClosed = (fn: () => void) => {
+    onClose();
+    if (Platform.OS === 'ios') void waitModalTurn('track-menu-next', 9, 1500).promise.then(fn);
+    else fn();
+  };
 
   const goPage = (p: Page) => {
     console.info('[TrackMenu] 하위 목록', { page: p, id: track?.id, own: isOwn });
@@ -205,10 +213,9 @@ export default function TrackActionSheet({
   const handleShareDoodle = (t: RowTrack) => {
     if (!requireLoginModal('track_menu_doodle')) return;
     console.info('[TrackMenu] 공유 — 낙서장', { id: t.id });
-    onClose();
-    gateShare(t, (st) => {
+    afterSheetClosed(() => gateShare(t, (st) => {
       navigation.navigate('FeedCompose', { attachTrackId: String(st.id), attachTrack: lightTrack(st) });
-    });
+    }));
   };
 
   // 크루에 공유 = 내 크루 고르기 → 그 크루 게시판 글쓰기(크루 채팅은 곡 첨부가 없어 게시판으로)
@@ -228,20 +235,18 @@ export default function TrackActionSheet({
 
   const handleShareCrew = (t: RowTrack, club: Club) => {
     console.info('[TrackMenu] 공유 — 크루', { id: t.id, clubId: club.id });
-    onClose();
-    gateShare(t, (st) => {
+    afterSheetClosed(() => gateShare(t, (st) => {
       navigation.navigate('FeedCompose', { kind: 'club', clubId: String(club.id), attachTrackId: String(st.id), attachTrack: lightTrack(st) });
-    });
+    }));
   };
 
   // 영상 디렉터 열기(내 곡) — Studio 스택 [Map, VideoDirector] 적재(v3.222 initial:false 관행)
   const openVideoDirector = (t: RowTrack, initialFormat?: 'sns') => {
     console.info('[TrackMenu] 영상 디렉터', { id: t.id, initialFormat: initialFormat ?? null });
-    onClose();
-    navigation.navigate('MainTabs', {
+    afterSheetClosed(() => navigation.navigate('MainTabs', {
       screen: 'Studio',
       params: { screen: 'VideoDirector', initial: false, params: { initialTrackId: String(t.id), menuNonce: Date.now(), ...(initialFormat ? { initialFormat } : {}) } },
-    });
+    }));
   };
 
   // SNS에 공유 — 내 곡: 영상 디렉터를 'SNS용 세로'로 바로 / 남의 곡: 세로 영상 바로 만들기(쇼츠·릴스·틱톡)
@@ -359,7 +364,7 @@ export default function TrackActionSheet({
             <Row icon="edit-3" label="낙서장에 공유" hint="곡을 붙여 낙서 쓰기" onPress={() => handleShareDoodle(t)} />
             <Row icon="users" label="크루에 공유" hint="내 크루 게시판에 글 쓰기" chevron onPress={() => { void openCrewPicker(); }} />
             <Row icon="smartphone" label="SNS에 공유" hint="세로 영상 · 쇼츠·릴스·틱톡" onPress={() => handleShareSns(t)} />
-            <Row icon="message-circle" label="카카오톡으로 공유" hint="공유 문구 + 곡 링크" onPress={closeThen(handleShareKakao)} />
+            <Row icon="message-circle" label="카카오톡으로 공유" hint="공유 문구 + 곡 링크" onPress={() => afterSheetClosed(() => handleShareKakao(t))} />
           </>
         );
       case 'crew':

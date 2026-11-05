@@ -3,6 +3,11 @@ import { Platform } from 'react-native';
 
 export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.maidol.app';
 export const APP_STORE_URL = 'https://apps.apple.com/kr/app/id6820885751';
+/**
+ * v3.424 명함 QR 휴대폰 방문자를 앱 설치(스토어)로 보낼지. false = 웹앱 안에서 그대로 이어서 만들기(PC 와 같은 흐름).
+ * 대표 11-02: 안드로이드 1.3.3 업데이트가 아직 안 나가서 우선 웹앱으로. 앱 업데이트가 다 나가면 true 로 되돌린다.
+ */
+export const CARD_QR_APP_INSTALL = false;
 /** 안드로이드 크롬 — 앱이 있으면 앱 실행, 없으면 Play(browser_fallback_url) */
 export const ANDROID_APP_INTENT_URL =
   `intent://#Intent;scheme=aidol;package=com.maidol.app;S.browser_fallback_url=${encodeURIComponent(PLAY_STORE_URL)};end`;
