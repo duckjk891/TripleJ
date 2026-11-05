@@ -1,5 +1,5 @@
 // v3.227(D·E): 꾸미기 아이템 선택 모달.
-// 구성(위→아래): 헤더 · E 선택 스트립 · [전체 | 내 위시리스트] 탭 ·
+// 구성(위→아래): 헤더 · E 선택 스트립 · [전체 | 내 위시리스트] 탭 · 악세서리 [모자 | 가방] 서브탭 ·
 //   (전체) 필터 바(보기 전환·대분류·성별/색상/가격/브랜드) + 브랜드 모아보기/펼쳐보기 그리드 · (위시) 위시 그리드.
 // 피커 state(카테고리·탭·보기/필터·성별 토글·아이템·로딩)와 open/pick/close/jump 핸들러는 화면이 소유하고
 // props로 받는다(피커를 닫아도 카테고리별 보기·필터 유지 — PLAN D). 여기서는 파생 계산만 한다.
@@ -57,6 +57,7 @@ interface Props {
   staleIds: Set<string>;
   isLoggedIn: boolean;
   closePicker: () => void;
+  switchAccessorySub: (sub: Cat) => void;
   jumpToCategory: (cat: Cat) => void;
   pickItem: (item: AdItem) => void;
   /** v3.278: 선택 해제(스트립 × 버튼) */
@@ -88,6 +89,7 @@ export default function CodyPickerModal({
   staleIds,
   isLoggedIn,
   closePicker,
+  switchAccessorySub,
   jumpToCategory,
   pickItem,
   onClearItem,
@@ -208,7 +210,7 @@ export default function CodyPickerModal({
         <View style={[styles.modalBox, { paddingBottom: insets.bottom }]}>
           <View style={styles.modalHeader}>
             <AppText style={styles.modalTitle}>
-              {pickerCat ? `${pickerCat} 고르기` : ''}
+              {accessoryMode ? '악세서리 고르기' : pickerCat ? `${pickerCat} 고르기` : ''}
             </AppText>
             <TouchableOpacity onPress={closePicker}>
               <AppText style={styles.modalClose}>✕</AppText>
@@ -261,6 +263,8 @@ export default function CodyPickerModal({
             wishListError={wishListError}
             wishItemsForCat={wishItemsForCat}
             pickerCat={pickerCat}
+            accessoryMode={accessoryMode}
+            switchAccessorySub={switchAccessorySub}
           />
 
           {pickerTab === 'all' && (

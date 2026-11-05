@@ -151,6 +151,25 @@ export const pickerStyles = StyleSheet.create({
   pickerTabText: { color: colors.text.muted, fontSize: 13, fontWeight: '600' },
   pickerTabTextActive: { color: colors.text.primary, fontWeight: '700' },
 
+  // v3.206: 악세서리 하위 구분 세그먼트 [모자 | 가방]
+  subcatRow: {
+    flexDirection: 'row', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
+  },
+  subcatSeg: {
+    flex: 1, alignItems: 'center',
+    paddingVertical: 8, borderRadius: 10,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  subcatSegActive: {
+    backgroundColor: colors.bg.surface2,
+    borderColor: colors.accent.primary,
+  },
+  subcatSegText: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  subcatSegTextActive: { color: colors.text.primary, fontWeight: '800' },
+
   // v3.205(⑤): 성별 필터 토글 칩 (탭 행 우측)
   genderChip: {
     alignSelf: 'center', marginRight: 10,
