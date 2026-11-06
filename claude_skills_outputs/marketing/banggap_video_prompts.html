@@ -1,0 +1,207 @@
+<title>반값 치킨 영상 프롬프트</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;800&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one work card per generated clip, read top to bottom in song order. Same family as the cut image page. */
+:root{--paper:#f1f0ee;--sheet:#fff;--ink:#23211f;--soft:#625d57;--line:#d8d4cf;--accent:#c8332b;--done:#2f7d4f;--on:#fff;
+--real:#a8660c;--imag:#5f8a00;--drop:#7a3fd0;--gym:#2f73b5;
+--display:"Gothic A1","Apple SD Gothic Neo","Noto Sans KR",sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#191817;--sheet:#242220;--ink:#ece9e5;--soft:#b0aaa3;--line:#3f3b37;--accent:#f0776b;--done:#6fc794;--on:#191817;--real:#e0a650;--imag:#a9d44f;--drop:#b794f0;--gym:#7fb6ea;color-scheme:dark}}
+:root[data-theme="dark"]{--paper:#191817;--sheet:#242220;--ink:#ece9e5;--soft:#b0aaa3;--line:#3f3b37;--accent:#f0776b;--done:#6fc794;--on:#191817;--real:#e0a650;--imag:#a9d44f;--drop:#b794f0;--gym:#7fb6ea;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--display);line-height:1.6;font-size:15px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 56px}
+.wrap{max-width:860px;margin:0 auto;display:grid;gap:18px;min-width:0}
+h1{margin:0;font-size:clamp(26px,5vw,34px);font-weight:800;text-wrap:balance}
+h2{margin:0;font-size:18px;text-wrap:balance}
+.how{background:var(--sheet);border-left:4px solid var(--accent);padding:14px 16px;display:grid;gap:6px}
+.how h2{font-size:15px}.how ol,.how ul{margin:0;padding-left:20px;display:grid;gap:3px}.how p{margin:0;color:var(--soft);font-size:13.5px}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+.bar b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+.clip{background:var(--sheet);padding:14px;display:grid;gap:8px;min-width:0}
+.clip.isdone{opacity:.62}
+.top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.id{font-family:var(--mono);font-weight:500;font-size:17px}
+.tag{font-size:12px;padding:1px 8px;border:1px solid var(--line);color:var(--soft);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tag.first{background:var(--accent);border-color:var(--accent);color:var(--on);font-weight:600}
+.kind{font-size:12px;font-weight:800;white-space:nowrap}
+.k-real{color:var(--real)}.k-imag{color:var(--imag)}.k-drop{color:var(--drop)}.k-gym{color:var(--gym)}
+.desc{margin:0;font-weight:600}
+.att{margin:0;padding-left:0;list-style:none;font-size:14px;display:grid;gap:1px}
+.att b{font-family:var(--mono);font-weight:500;font-size:12.5px;color:var(--soft);margin-right:6px}
+.lab{font-size:12px;color:var(--soft);margin:0}
+.note{margin:0;font-size:13.5px;color:var(--soft)}
+.acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-weight:600;background:var(--accent);color:var(--on);border:0;padding:8px 16px;cursor:pointer}
+button:focus-visible,summary:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+label{display:inline-flex;gap:6px;align-items:center;font-size:13.5px;color:var(--done);cursor:pointer}
+details{font-size:13px}summary{cursor:pointer;color:var(--soft)}
+.prompt{margin-top:8px;background:var(--paper);padding:10px;font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.tbl{overflow-x:auto;background:var(--sheet)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:13.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--soft);font-weight:600}
+td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+td:last-child{white-space:nowrap;color:var(--soft)}
+</style>
+<div class="wrap">
+<h1>반값 치킨 영상 프롬프트</h1>
+<section class="how"><h2>쓰는 법</h2>
+<ol><li>모델은 Seedance / Omni Reference, 비율 16:9, 화질은 480p 초안으로 고릅니다.</li>
+<li>“넣을 이미지”를 적힌 순서대로 넣습니다. 첫 장면 이미지가 @Image1이고, 이어지는 컷 이미지는 레퍼런스입니다.</li>
+<li>“프롬프트 복사”를 눌러 붙여 넣고, 카드에 적힌 길이로 뽑습니다.</li>
+<li>뽑은 뒤 앞은 두고 뒤를 잘라 곡 시간에 맞춥니다. 소리는 편집에서 원곡으로 덮습니다.</li></ol>
+<p>V06을 먼저 뽑아 봅니다. 두 컷짜리라 싸고, 첫 장면 이미지와 레퍼런스가 제대로 듣는지 바로 보입니다. 시작 이미지 칸이 따로 있으면 그 칸에 @Image1을 넣고, 번호가 밀리지 않는지 이 클립에서 확인합니다.</p></section>
+<section class="how"><h2>이 영상의 규칙</h2>
+<ul><li><b>상상으로 들어갈 때는 휘익, 나올 때는 탁.</b> 유혹에 끌려 들어갈 때는 오른쪽 휩팬이나 크래시 줌으로 빨려 들어가고, 현실로 돌아올 때는 움직임 없이 박자에 맞춰 바로 끊습니다.</li>
+<li><b>현실과 상상은 다른 클립으로 뽑습니다.</b> 조명과 옷이 달라서 한 번에 뽑으면 섞입니다.</li>
+<li><b>색의 약속.</b> 노란빛은 유혹, 라임은 목표입니다. 상상은 쨍한 단색, 드롭과 헬스장은 그림자 없는 하이 키입니다.</li>
+<li><b>렌즈.</b> 지친 퇴근길은 망원으로 제자리걸음처럼, 근육 팀과 드롭은 광각으로 튀어나오게 합니다.</li>
+<li><b>빛.</b> C02는 폰 빛이 아래에서 얼굴을 비추고, C16은 얼굴 반은 노랑 반은 남색으로 갈등을 보여 주고, C09는 소프트 포커스로 몽환적으로 만듭니다.</li>
+<li><b>방향.</b> 펄킴은 왼쪽에서 오른쪽을 봅니다. 휩팬도 전부 오른쪽으로 갑니다.</li></ul></section>
+<div class="bar"><span>완료 <b id="count">0 / 11</b></span></div>
+<div id="list" class="wrap"></div>
+<h2>전환표</h2>
+<div class="tbl"><table><thead><tr><th>컷</th><th>전환</th><th>하는 방법</th><th>어디서</th></tr></thead><tbody id="trans"></tbody></table></div>
+<section class="how"><h2>편집에서 넣을 것</h2>
+<ul><li><b>폰 화면:</b> C02b 출석률 0%, C18 근육몬 알림, C28 출석 1일을 빈 흰 화면 위에 얹습니다.</li>
+<li><b>자막:</b> C14 “1시간만 반값!”은 하늘 여백에 넣습니다.</li>
+<li><b>색 번쩍임:</b> 전환표에 적힌 곳에 2~4프레임 단색을 넣습니다.</li>
+<li><b>끝 장면:</b> MAIDOL 끝 장면 3초는 영상 생성으로 만들지 않고 편집에서 붙입니다.</li></ul></section>
+</div>
+<script>
+const STYLE="STYLE: bright pop music video, playful comedy rhythm, vivid saturated colors, punchy contrast, snappy camera moves, photorealistic people.";
+const STYLE_IMAG="STYLE: bright pop music video, a flat solid-color imagination world, high-key light with almost no shadows, vivid saturated colors, snappy comic timing, photorealistic people.";
+const RULES="RULES: Nobody sings or lip-syncs. No on-screen text, captions, logos or readable signs. Faces, hair and outfits stay exactly the same as in the reference images. Faces stay natural and not exaggerated; the comedy comes from timing and effects. No afterimages, no ghost faces, no new people, no extra arms or hands.\nAudio: no music, no singing, no voices.";
+const STREET="Pearl Kim stays on the gray sidewalk and never steps on the road. She is on the left of the frame and faces right, and the chicken shop is on the right.";
+const BLACK=n=>`PEARL KIM: exactly as @Image${n}: black oversized T-shirt, long black shorts, black shoes, black sling bag across her chest, round white smartwatch on her left wrist.`;
+const PURPLE=n=>`PEARL KIM: exactly as @Image${n}: violet-purple T-shirt and the same outfit as that sheet. She wears no bag.`;
+const NOBAG=n=>`PEARL KIM: exactly as @Image${n}: black oversized T-shirt, long black shorts, black shoes, round white smartwatch on her left wrist. She wears no bag, because she is working out.`;
+const MEN=n=>`MUSCLE TEAM: exactly as @Image${n}: the same four men, always exactly four, never five.`;
+const STAFF=n=>`STAFF MEMBER: exactly as @Image${n}: white cap, white T-shirt, plain red apron.`;
+const OWNER=n=>`SHOP OWNER: exactly as @Image${n}: white T-shirt, plain red apron, red-and-white megaphone.`;
+const FIRST="Begin exactly on @Image1 as the first frame.";
+const P=(...a)=>a.join("\n\n");
+const CLIPS=[
+{id:"V01",kind:"현실",k:"real",cuts:"C01 · C01b · C02 · C02b · C03",t:"19.8–25.0",len:"5.2초",gen:"6초",desc:"지친 퇴근길에서 출석률 0%를 보고, 어깨너머로 건물이 처음 나옵니다.",
+att:["C01 완성 이미지 (첫 장면)","C01b 완성 이미지","C02 완성 이미지","C02b 완성 이미지","C03 완성 이미지","펄킴 검은 옷 전신 시트"],
+prompt:P(`Five shots, 6 seconds, the tired opening of a bright comedy pop music video. ${FIRST} Each later shot matches its reference image in framing, people, place, light and colors.`,
+`CHARACTER\n${BLACK(6)}`,
+`SETTING\nA Seoul neighborhood street at summer dusk under a magenta, orange and electric-blue sky: gray paving sidewalk and a narrow dark asphalt road. The chicken shop stays hidden until Shot 5.`,
+`[Shot 1] 0-0.9s — matches @Image1. Long telephoto lens, camera still. She trudges toward the camera with dragging feet and slumped shoulders, and the compressed street makes her seem to walk without getting anywhere.\nHard cut.\n[Shot 2] 0.9-1.7s — matches @Image2. A quick snap zoom settles on her drained face as she keeps walking. Her lips stay closed and she blinks once, slowly.\nHard cut.\n[Shot 3] 1.7-2.5s — matches @Image3. She stops and looks down at her phone. The phone's cold glow lights her face from below.\nHard cut.\n[Shot 4] 2.5-3.3s — matches @Image4. First-person view of the phone in her hands. The screen stays a plain blank white display. Her hands sink a little in disappointment.\nHard cut.\n[Shot 5] 3.3-6s — matches @Image5. Wide lens, low angle, over her shoulder. The camera pushes in slowly as she tilts her head up. In the second-floor gym windows the four men wave at her from behind the closed glass.`,
+STYLE,RULES)},
+{id:"V02",kind:"현실",k:"real",cuts:"C04 · C05a · C05b · C06",t:"25.0–30.9",len:"5.9초",gen:"7초",desc:"뱃살을 쥐고 결심하고, 쿵쿵 걷다 치킨 냄새에 멈춰 곁눈질합니다. 끝은 오른쪽 휩팬입니다.",
+att:["C04 완성 이미지 (첫 장면)","C05a 완성 이미지","C05b 완성 이미지","C06 완성 이미지","펄킴 검은 옷 전신 시트"],
+prompt:P(`Three shots, 7 seconds, comic determination that turns into temptation. ${FIRST} Each later shot matches its reference images in framing, people, place, light and colors.`,
+`CHARACTER\n${BLACK(5)}`,
+`SETTING\nThe same gray sidewalk at summer dusk, with a magenta, orange and electric-blue sky. ${STREET}`,
+`[Shot 1] 0-1.8s — matches @Image1. Waist-height camera, nearly still. Over her T-shirt she squeezes the sides of her waist firmly with both hands, twice, then gives one small determined nod.\nHard cut.\n[Shot 2] 1.8-3.6s — one continuous move from @Image2 to @Image3. The camera stays low on her foot as it stomps down, dust bursts and a pigeon flaps away. Then the camera tilts up fast along her body and stops on her upper body. She freezes, lifts her nose and sniffs twice while a thin wisp of white steam drifts in from the right.\nHard cut.\n[Shot 3] 3.6-6s — matches @Image4. Close-up, camera still. Only her eyes slide toward the right, and warm yellow light slowly grows on her face.\n[End] 6-7s — the camera whips fast to the right into full motion blur.`,
+STYLE,RULES)},
+{id:"V03",kind:"상상",k:"imag",cuts:"C07",t:"30.9–32.8",len:"1.9초",gen:"가장 짧게",edit:"2배속으로 줄여서 씁니다.",desc:"라임 단색 세계. 근육 팀이 one two 팔을 흔듭니다.",
+att:["C07 완성 이미지 (첫 장면)","펄킴 보라 옷 전신 시트","근육 팀 얼굴+전신 시트"],
+prompt:P(`One shot, 4 seconds, an imagination scene in a pop music video. ${FIRST}`,
+`CHARACTERS\n${PURPLE(2)}\n${MEN(3)}`,
+`SETTING\nA seamless solid lime-green backdrop and floor, the same as @Image1.`,
+`[Shot 1] 0-4s — eye-level full shot. The camera lands with a small bounce. The four men pump their arms in a sharp synchronized one-two cheer, two times, with little sparkles around their muscles. She stands in front, puzzled, and blinks. On the last beat the camera punches in slightly.`,
+STYLE_IMAG,RULES)},
+{id:"V04",kind:"현실",k:"real",cuts:"C08",t:"32.8–34.7",len:"1.9초",gen:"가장 짧게",edit:"2배속으로 줄여서 씁니다.",desc:"직원이 치킨을 내밀고 침을 꿀꺽. 끝은 치킨으로 크래시 줌입니다.",
+att:["C08 완성 이미지 (첫 장면)","펄킴 검은 옷 전신 시트","직원 전신 시트"],
+prompt:P(`One shot, 4 seconds, temptation in front of a chicken shop. ${FIRST}`,
+`CHARACTERS\n${BLACK(2)}\n${STAFF(3)}`,
+`SETTING\nThe same chicken shop entrance at dusk, with the tasting table, the customers and the warm yellow light of @Image1. ${STREET}`,
+`[Shot 1] 0-3s — eye-level two-shot, camera nearly still. The staff member holds out a piece of fried chicken on a toothpick with a bright smile. Her eyes stay fixed on the chicken and she swallows once, quietly.\n[End] 3-4s — a fast crash zoom into the chicken until its golden crust fills the whole frame.`,
+STYLE,RULES)},
+{id:"V05",kind:"상상",k:"imag",cuts:"C09",t:"34.7–36.6",len:"1.9초",gen:"가장 짧게",edit:"그대로 쓰거나 1.5배속. 끝은 흰색 번쩍임으로 끊습니다.",desc:"빨강 단색 세계. 대왕 치킨을 껴안고, 튀김 조각이 슬로모션으로 터져 떠다닙니다.",
+att:["C09 완성 이미지 (첫 장면)","펄킴 보라 옷 전신 시트"],
+prompt:P(`One shot, 4 seconds, a dreamy imagination scene in a pop music video. ${FIRST}`,
+`CHARACTER\n${PURPLE(2)}`,
+`SETTING\nA seamless solid bright-red backdrop and floor, the same as @Image1.`,
+`[Shot 1] 0-4s — soft focus with a dreamy glow, slow motion, slow push-in. She hugs the giant drumstick and sways gently with a soft blissful face and closed eyes. Behind the drumstick, crispy bits and pieces of fried chicken burst outward and float. Her near arm stays fully visible across the front of the drumstick, and her far arm stays hidden behind it.`,
+STYLE_IMAG,RULES)},
+{id:"V06",kind:"현실",k:"real",first:true,cuts:"C10 · C11",t:"36.6–40.6",len:"4.0초",gen:"5초",desc:"직원 앞에서 도리도리로 정신을 차리고, 메뉴판을 봅니다. 끝은 메뉴판으로 크래시 줌입니다.",
+att:["C10 완성 이미지 (첫 장면)","C11 완성 이미지","펄킴 검은 옷 전신 시트","직원 전신 시트"],
+prompt:P(`Two shots, 5 seconds, she snaps out of it and then gets tempted again. ${FIRST} Shot 2 matches @Image2 in framing, people, place, light and colors.`,
+`CHARACTERS\n${BLACK(3)}\n${STAFF(4)}`,
+`SETTING\nThe same chicken shop entrance at dusk, with the tasting table, the customers and the warm yellow light. ${STREET}`,
+`[Shot 1] 0-2.1s — matches @Image1. Camera still. Facing the staff member on the right, she shakes her head quickly from side to side with her eyes squeezed shut, and her hair whips with each turn. She stops, still facing right, and opens her eyes. The staff member stays in front of the shop, keeps smiling and keeps holding out the chicken. She never looks at the camera.\nHard cut.\n[Shot 2] 2.1-4s — matches @Image2. Over her shoulder, the camera pushes in slowly toward the glowing menu board. The customers on the right keep sampling chicken.\n[End] 4-5s — a fast crash zoom into the menu board until warm yellow light fills the whole frame.`,
+STYLE,RULES)},
+{id:"V07",kind:"상상",k:"imag",cuts:"C12",t:"40.6–42.6",len:"2.0초",gen:"가장 짧게",edit:"2배속으로 줄여서 씁니다.",desc:"화면 반반. 근육 팀과 치킨 팀이 펄킴 양팔을 잡고 줄다리기합니다.",
+att:["C12 완성 이미지 (첫 장면)","펄킴 보라 옷 전신 시트","근육 팀 얼굴+전신 시트","직원 전신 시트","사장 전신 시트"],
+prompt:P(`One shot, 4 seconds, a comic tug-of-war imagination scene. ${FIRST}`,
+`CHARACTERS\n${PURPLE(2)}\n${MEN(3)}\n${STAFF(4)}\n${OWNER(5)}`,
+`SETTING\nThe frame stays split exactly in half with the same two solid colors as @Image1.`,
+`[Shot 1] 0-4s — eye-level full shot, camera locked with a small shake on each pull. The two teams yank her arms in turn, left, right, left, right, each pull quicker than the last, and she lurches from side to side in the middle. On the last pull both sides heave at once and the camera punches in on her.`,
+STYLE_IMAG,RULES)},
+{id:"V08",kind:"현실",k:"real",cuts:"C13 · C14 · C16",t:"42.6–52.0",len:"9.4초",gen:"10초",desc:"닭가슴살 방패, 확성기에 “오?”, 입 앞까지 온 치킨. 끝은 아래로 휩틸트입니다.",
+att:["C13 완성 이미지 (첫 장면)","C14 완성 이미지","C16 완성 이미지","펄킴 검은 옷 전신 시트","직원 전신 시트","사장 전신 시트"],
+prompt:P(`Three shots, 10 seconds, the temptation grows in front of the chicken shop. ${FIRST} Each later shot matches its reference image in framing, people, place, light and colors.`,
+`CHARACTERS\n${BLACK(4)}\n${STAFF(5)}\n${OWNER(6)}`,
+`SETTING\nThe chicken shop entrance at dusk under a magenta, orange and electric-blue sky, with the tasting table, customers, balloons and warm yellow light. ${STREET}`,
+`[Shot 1] 0-1.9s — matches @Image1. Low angle. She whips the sealed lime-green pack out of her bag and thrusts it toward the shop like a shield, in a hero stance. The camera punches in once as light glints on the pack.\nHard cut.\n[Shot 2] 1.9-5.4s — matches @Image2. Low angle, slow push-in. The owner shouts through the megaphone with no sound, and the blast blows her hair back. She turns toward him with a small pleased look of interest, her brows lifting. The staff member stands beside him, smiling with his tray. The sky stays empty for a caption added later.\nHard cut.\n[Shot 3] 5.4-9.4s — matches @Image3. Close-up from the side with a telephoto lens, and the background melts away. The staff member's arm slowly brings the glowing chicken closer to her lips while the golden halo grows brighter. Her eyes stay squeezed shut and she holds back, trembling a little. The side of her face toward the shop is warm yellow and the other side falls into deep blue.\n[End] 9.4-10s — her head dips and the camera whips down into motion blur.`,
+STYLE,RULES)},
+{id:"V09",kind:"현실",k:"real",cuts:"C18 · C20 · C21",t:"52.0–61.5",len:"9.5초",gen:"10초",desc:"근육몬 알림, 창 안의 근육 팀이 가리킴, 씨익 웃으며 타이머. 손가락끼리 이어 붙입니다.",
+att:["C18 완성 이미지 (첫 장면)","C20 완성 이미지","C21 완성 이미지","펄킴 검은 옷 전신 시트","근육 팀 얼굴+전신 시트"],
+prompt:P(`Three shots, 10 seconds, the turning point just after sunset. ${FIRST} Each later shot matches its reference image in framing, people, place, light and colors.`,
+`CHARACTERS\n${BLACK(4)}\n${MEN(5)}`,
+`SETTING\nThe same building just after sunset, with a deep navy sky and the shop's yellow lights glowing against it. The second-floor gym windows are bright white. The windows are fixed and closed.`,
+`[Shot 1] 0-1.6s — matches @Image1. First-person view of the phone, with a small buzz in her hands. The screen stays a plain blank white display and its light glows on her fingers. The table and the sneakers on the ground do not move.\n[Move] 1.6-1.9s — the camera whips up into motion blur.\nHard cut.\n[Shot 2] 1.9-5.2s — matches @Image2. Wide lens, low angle up at the second floor. All four men raise an arm together and point straight down at the camera, then hold it with encouraging faces while the camera pushes in on their fingers. They stay fully behind the closed glass, and no hand or arm comes through it.\nHard cut on the pointing fingers.\n[Shot 3] 5.2-9.5s — matches @Image3. Eye-level, a slow arc around her. Her face slowly changes into a smirk of new resolve. She raises her left wrist, and at the very end she presses the white watch with her right index finger. A tiny lime-green spark flashes from the watch at the moment of the press. ${STREET}`,
+STYLE,RULES)},
+{id:"V10",kind:"드롭",k:"drop",cuts:"C23 · C26",t:"61.5–69.1",len:"7.6초",gen:"8초",desc:"드롭. 보라·라임 조명, 가슴 쿵쿵과 이마 땀 쓱, 어깨 털고 이두근 행진. 끝은 오른쪽 휩팬입니다.",
+att:["C23 완성 이미지 (첫 장면)","C26 완성 이미지","펄킴 보라 옷 전신 시트","근육 팀 얼굴+전신 시트"],
+prompt:P(`Two shots, 8 seconds, the big drop of the pop music video. ${FIRST} Shot 2 matches @Image2 in framing, people, place, light and colors.`,
+`CHARACTERS\n${PURPLE(3)}\n${MEN(4)}`,
+`SETTING\nThe sidewalk in front of the chicken shop, lit by saturated purple and lime-green stage light, high-key with almost no shadows.`,
+`[Shot 1] 0-3.8s — matches @Image1. Very wide-angle lens, eye level. She and the four men pound their chests with their fists in sync, twice, and comic circular shockwave rings ripple out from each chest while their muscles gleam. Then all five wipe their foreheads with the backs of their hands in one synchronized move, and sparkling sweat drops fly toward the lens.\nHard cut.\n[Shot 2] 3.8-7.6s — matches @Image2. The camera tracks sideways with them. She leads the four men marching from left to right, shaking their shoulders and swinging their hips on the beat, then striking bicep-flex poses mid-stride like a victory parade.\n[End] 7.6-8s — the camera whips right into motion blur.`,
+STYLE,RULES)},
+{id:"V11",kind:"헬스장",k:"gym",cuts:"C27 · C28 · C28b · C30",t:"69.1–76.6",len:"7.5초",gen:"8초",desc:"러닝머신, 출석 1일 폰, 땀범벅 웃음, 건배와 헹가래. 끝에 다 같이 카메라를 보고 멈춥니다.",
+att:["C27 완성 이미지 (첫 장면)","C28 완성 이미지","C28b 완성 이미지","C30 완성 이미지","펄킴 검은 옷 전신 시트","근육 팀 얼굴+전신 시트"],
+prompt:P(`Four shots, 8 seconds, the happy ending inside the gym. ${FIRST} Each later shot matches its reference image in framing, people, place, light and colors.`,
+`CHARACTERS\n${NOBAG(5)}\n${MEN(6)}`,
+`SETTING\nThe second-floor gym at night, with bright, even high-key white light. A row of treadmills faces the large windows, and the night city glows outside.`,
+`[Shot 1] 0-1.8s — matches @Image1. Diagonal front view of the treadmill row. All five run toward the right of the frame in rhythm, determined and sweating, with their faces clearly visible. The camera drifts forward slightly.\nHard cut.\n[Shot 2] 1.8-3.2s — matches @Image2. First-person view of the phone held low in her left hand on the stopped treadmill. The screen stays a plain blank white display. Only the white band of the watch shows on her wrist.\nHard cut.\n[Shot 3] 3.2-4.4s — matches @Image3. Side view from the waist up. Drenched in sweat, she looks down at the phone and a big bright smile spreads across her face.\nHard cut.\n[Shot 4] 4.4-8s — matches @Image4. She and the four men clink their water bottles in the middle, looking at each other, slightly damp from the workout. Then the four men lift her up and toss her gently into the air, a cheerful celebration. At the top of the toss everyone turns and looks into the camera, laughing, and the image holds on that moment.`,
+STYLE,RULES)}
+];
+const TRANS=[
+["C01→C02b","빠른 끊기","박자마다 끊습니다. C01b는 스냅 줌으로 들어갑니다.","프롬프트"],
+["C05a→C05b","틸트 업","발에서 상체까지 카메라가 빠르게 올라갑니다.","프롬프트"],
+["C06→C07","오른쪽 휩팬 + 라임","곁눈질 방향으로 휙 돌고, 2프레임 라임 단색 뒤 상상으로 들어갑니다.","프롬프트 + 편집"],
+["C07→C08","탁 끊기","마지막 박수 박자에서 현실로 바로 끊습니다.","편집"],
+["C08→C09","크래시 줌 + 빨강","치킨 튀김옷으로 빨려 들어가고, 2프레임 빨강 단색 뒤 상상으로 들어갑니다.","프롬프트 + 편집"],
+["C09→C10","흰색 번쩍임","튀김이 터지는 순간 2프레임 흰색으로 끊고 도리도리로 돌아옵니다.","편집"],
+["C11→C12","크래시 줌 + 노랑","메뉴판으로 빨려 들어가고, 노란빛에서 줄다리기로 넘어갑니다.","프롬프트 + 편집"],
+["C12→C13","탁 끊기","양쪽이 확 당기는 순간 닭가슴살을 내미는 동작으로 끊습니다.","편집"],
+["C16→C18","아래로 휩틸트","고개가 떨어지며 아래로 휙 내려가 폰에 닿습니다.","프롬프트"],
+["C18→C20","위로 휩틸트","폰에서 2층 창까지 휙 올라갑니다.","프롬프트"],
+["C20→C21","손가락 매치 컷","근육 팀이 가리키는 손가락에서 펄킴 쪽으로 끊습니다.","프롬프트"],
+["C21→C23","드롭 번쩍임","시계를 누르는 순간 4프레임 흰색, 드롭 첫 박에 보라·라임 조명이 켜집니다.","편집"],
+["C26→C27","오른쪽 휩팬","행진 방향으로 휙 돌고, 흰 헬스장 러닝머신으로 이어집니다.","프롬프트 + 편집"],
+["C30→끝 장면","정지 후 끊기","카메라를 보는 순간에서 멈추고 MAIDOL 끝 장면으로 넘어갑니다.","프롬프트 + 편집"]
+];
+const KEY="banggap-video-done";
+let done={};try{done=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+const list=document.getElementById("list"),count=document.getElementById("count");
+function save(){try{localStorage.setItem(KEY,JSON.stringify(done))}catch(e){}
+  count.textContent=Object.values(done).filter(Boolean).length+" / "+CLIPS.length}
+function selectText(el){try{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}catch(e){}}
+const mk=(tag,cl,tx)=>{const e=document.createElement(tag);if(cl)e.className=cl;if(tx!==undefined)e.textContent=tx;return e};
+for(const c of CLIPS){
+  const a=mk("article","clip"+(done[c.id]?" isdone":""));
+  const top=mk("div","top");top.append(mk("span","id",c.id),mk("span","kind k-"+c.k,c.kind));
+  if(c.first)top.append(mk("span","tag first","먼저 시험"));
+  top.append(mk("span","tag",c.cuts),mk("span","tag",c.t+"초"),mk("span","tag","쓰는 길이 "+c.len),mk("span","tag","뽑는 길이 "+c.gen));
+  const o=mk("ol","att");c.att.forEach((x,i)=>{const li=mk("li");li.append(mk("b","","@Image"+(i+1)),document.createTextNode(x));o.appendChild(li)});
+  const det=mk("details");const pr=mk("div","prompt",c.prompt);det.append(mk("summary","","프롬프트 보기"),pr);
+  const btn=mk("button","","프롬프트 복사");btn.type="button";
+  btn.addEventListener("click",()=>{const ok=()=>{btn.textContent="복사됨";setTimeout(()=>btn.textContent="프롬프트 복사",1500)};
+    const fail=()=>{det.open=true;selectText(pr);btn.textContent="길게 눌러 복사"};
+    try{navigator.clipboard.writeText(c.prompt).then(ok,fail)}catch(e){fail()}});
+  const lb=mk("label");const cb=mk("input");cb.type="checkbox";cb.id="done-"+c.id;cb.checked=!!done[c.id];
+  cb.addEventListener("change",()=>{done[c.id]=cb.checked;a.classList.toggle("isdone",cb.checked);save()});
+  lb.append(cb,document.createTextNode("완료"));
+  const acts=mk("div","acts");acts.append(btn,lb);
+  a.append(top,mk("p","desc",c.desc),mk("p","lab","넣을 이미지"),o);
+  if(c.edit)a.append(mk("p","note","편집: "+c.edit));
+  a.append(acts,det);list.appendChild(a)}
+const tb=document.getElementById("trans");
+for(const r of TRANS){const tr=mk("tr");r.forEach(x=>tr.appendChild(mk("td","",x)));tb.appendChild(tr)}
+save();
+</script>
