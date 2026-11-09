@@ -50,12 +50,15 @@ mkdir -p ~/Desktop && tar -xzf gov_grant_monitor.tar.gz -C ~/Desktop
 
 ```bash
 S=/mnt/<USB 드라이브 문자>/maidol_secrets
-cp $S/repo/*.p8 $S/repo/asc.env ~/TripleJ/2_housing/credentials/
+mkdir -p ~/TripleJ/2_housing/credentials
 cp $S/repo/google-services.json ~/TripleJ/2_housing/
+cp $S/repo/*.p8 $S/repo/*.env $S/repo/*.txt ~/TripleJ/2_housing/credentials/
 mkdir -p ~/.ssh ~/.aws && cp $S/ssh/* ~/.ssh/ && cp $S/aws/* ~/.aws/
 chmod 700 ~/.ssh && chmod 600 ~/.ssh/maidol_ec2 ~/.ssh/id_ed25519 ~/.aws/credentials
 cp $S/gov_grant_monitor/.env ~/Desktop/gov_grant_monitor/
 ```
+
+`credentials/` 에는 asc.env, .p8 키 3개, danal.txt, naver.txt 가 들어갑니다. USB의 `._` 로 시작하는 파일은 맥이 만든 숨김 파일이라 옮기지 않습니다.
 
 다 옮긴 뒤 **USB의 `maidol_secrets` 폴더는 지웁니다.** 맥의 원본은 이전이 끝날 때까지 둡니다.
 
