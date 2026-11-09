@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""반값 치킨 티저 영상 클립을 Higgsfield API(Seedance reference-to-video)로 뽑는 로컬 제작 스크립트.
+"""반값 치킨 티저 영상 클립을 Higgsfield API(기본 Kling 4.0 reference-to-video)로 뽑는 로컬 제작 스크립트.
 
 프롬프트 원본은 ../banggap_video_prompts.html 의 CLIPS 배열이며, 실행할 때마다 HTML에서 다시 읽는다.
 표준 라이브러리만 쓴다. WSL에서: python3 hf_clips.py <명령>
@@ -33,10 +33,18 @@ RUNS = HERE / "runs"
 JOBS = RUNS / "jobs.json"
 UPLOADS = RUNS / "uploads.json"
 API = "https://api.higgsfield.ai"
+# 이름: (엔드포인트, 이미지 최대 장수, 프롬프트 이미지 표기, 가능 화질, 추가 필드)
 MODELS = {
-    "seedance-2.0": ("bytedance/seedance-2.0/reference-to-video", 9),
-    "seedance-2.5": ("bytedance/seedance-2.5/reference-to-video", 30),
+    "kling-4.0": ("kling-video/v4.0/reference-to-video", 10, "@image_{n}", ("720p", "1080p"),
+                  {"aspect_ratio": "16:9"}),
+    "seedance-2.0": ("bytedance/seedance-2.0/reference-to-video", 9, "@Image{n}", ("480p", "720p", "1080p"),
+                     {"aspect_ratio": "16:9", "generate_audio": False}),
+    "seedance-2.5": ("bytedance/seedance-2.5/reference-to-video", 30, "@Image{n}", ("480p", "720p", "1080p"),
+                     {"aspect_ratio": "16:9", "generate_audio": False}),
 }
+DEFAULT_MODEL = "kling-4.0"
+# open.higgsfield.ai 공개 단가(USD/초, 입력 영상 없음, 2026-11-09 30% 할인 적용가). 견적 API 실패 시에만 씀.
+LIST_PRICE = {("kling-4.0", "720p"): 0.1099, ("kling-4.0", "1080p"): 0.1645}
 TERMINAL = {"completed", "failed", "nsfw", "canceled"}
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -122,24 +130,21 @@ def resolve_image(label: str):
 def build_request(clip, resolution, model):
     """시작 프레임을 image_urls[0](@Image1)로 넣고 레퍼런스는 @Image2부터. 프롬프트 번호도 하나씩 민다.
     Higgsfield reference-to-video에는 첫 프레임 전용 칸이 없어서(image_url과 같이 못 씀) 이렇게 맞춘다."""
+    _, limit, tag, resolutions, extra = MODELS[model]
+    if resolution not in resolutions:
+        raise SystemExit(f"{model}은 {', '.join(resolutions)}만 됩니다 (--res)")
     labels = [clip["start"]] + clip["refs"]
-    prompt = re.sub(r"@Image(\d+)", lambda m: f"@Image{int(m.group(1)) + 1}", clip["prompt"])
+    t = lambda n: tag.format(n=n)
+    prompt = re.sub(r"@Image(\d+)", lambda m: t(int(m.group(1)) + 1), clip["prompt"])
     prompt = prompt.replace(
         "Begin exactly on the start frame image.",
-        "@Image1 is the start frame: the very first frame of the video is exactly @Image1.")
-    prompt = re.sub(r"the start frame(?! image)(?!: )", "the start frame (@Image1)", prompt)
-    limit = MODELS[model][1]
+        f"{t(1)} is the start frame: the very first frame of the video is exactly {t(1)}.")
+    prompt = re.sub(r"the start frame(?! image)(?!: )", f"the start frame ({t(1)})", prompt)
     if len(labels) > limit:
         raise SystemExit(f"{clip['id']}: 이미지 {len(labels)}장 > {model} 한도 {limit}장")
     return {
         "labels": labels,
-        "body": {
-            "prompt": prompt,
-            "duration": clip["duration"],
-            "resolution": resolution,
-            "aspect_ratio": "16:9",
-            "generate_audio": False,
-        },
+        "body": dict({"prompt": prompt, "duration": clip["duration"], "resolution": resolution}, **extra),
     }
 
 
@@ -249,7 +254,10 @@ def estimate(auth, clip, a, urls=None):
     r = build_request(clip, a.res, a.model)
     body = dict(r["body"], image_urls=urls or [f"https://example.com/ref{i}.jpg" for i in range(len(r["labels"]))])
     st, res = http("POST", f"{API}/estimate/{MODELS[a.model][0]}", auth, body)
-    if st >= 300:
+    if st >= 300 or res.get("usd") is None:
+        rate = LIST_PRICE.get((a.model, a.res))
+        if rate:  # 견적 API가 안 되면 2026-11-09 공개 단가(30% 할인가)로 계산
+            return round(rate * body["duration"], 3), f"공개 단가 ${rate}/s 기준 (견적 API {st})"
         return None, f"{st} {res}"
     return res.get("usd"), res
 
@@ -362,8 +370,9 @@ def main():
         p.set_defaults(fn=fn)
         if name in ("show", "estimate", "run"):
             p.add_argument("clips", nargs="*", help="V06 V01 … 또는 all")
-            p.add_argument("--res", default="480p", choices=["480p", "720p", "1080p"])
-            p.add_argument("--model", default="seedance-2.0", choices=list(MODELS))
+            p.add_argument("--res", default="720p", choices=["480p", "720p", "1080p"],
+                           help="초안 720p(Kling 4.0 최저), 최종 1080p")
+            p.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODELS))
         if name == "run":
             p.add_argument("--yes", action="store_true", help="견적 확인 후 실제 생성(과금)")
             p.add_argument("--no-wait", action="store_true", help="제출만 하고 나중에 poll")
