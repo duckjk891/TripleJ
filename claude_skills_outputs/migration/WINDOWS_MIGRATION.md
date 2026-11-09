@@ -15,7 +15,10 @@ bash ~/TripleJ/claude_skills_outputs/migration/mac_bundle.sh --usb /Volumes/USB�
 |---|---|---|
 | `~/maidol_migration/repo_extra.tar.gz` | GitHub에 없는 파일 (scratchpad, 에셋, 서버 스테이징, 수정된 .blend) | USB 또는 클라우드 드라이브 |
 | `~/maidol_migration/local_branches.bundle` | GitHub에 없는 로컬 브랜치 13개 | 위와 같음 |
-| `~/maidol_migration/claude_config.tar.gz` | Claude 메모리, team-dev, 스킬, 예약 작업 3개, 올린 자료 | 위와 같음 |
+| `~/maidol_migration/claude_config.tar.gz` | Claude 메모리, team-dev(commands), teams, 스킬 15개, 예약 작업 3개, 올린 자료 | 위와 같음 |
+| `~/maidol_migration/team_agent.tar.gz` | `팀 에이전트` 폴더 원본 (team-dev.md, teams, 스킬 동기화 메모) | 위와 같음 |
+| `~/maidol_migration/claude_sessions.tar.gz` | 지난 Claude 세션 대화 기록 전체 (보관용) | 위와 같음 |
+| `~/maidol_migration/repo_claude_local.tar.gz` | 레포의 `.claude/settings.local.json`(허용 목록), `launch.json`(미리보기 서버) | 위와 같음 |
 | `~/maidol_migration/gov_grant_monitor.tar.gz` | 지원사업 모니터 (.env·.venv 제외) | 위와 같음 |
 | USB `maidol_secrets/` | 앱스토어 키(asc.env·.p8 3개), google-services.json, SSH 키, AWS 인증, 모니터 .env | **USB로만** |
 
@@ -64,10 +67,14 @@ cp $S/gov_grant_monitor/.env ~/Desktop/gov_grant_monitor/
 
 ## 5. Claude 설정
 
-1. `claude_config.tar.gz` 를 새 PC의 `.claude` 폴더에 풉니다.
+1. `claude_config.tar.gz` 를 새 PC의 `.claude` 폴더에 풉니다. team-dev 가 들어 있는 `commands`, `teams` 가 실제 폴더로 풀립니다.
+   - 맥처럼 OneDrive로 맞추려면 `팀 에이전트` 메모(`클로드skills동기화.txt`)대로 `commands`·`teams` 를 OneDrive 폴더로 옮기고 바로가기를 겁니다.
+   - `tar -xzf repo_claude_local.tar.gz -C ~/TripleJ` 로 레포의 허용 목록과 미리보기 설정도 넣습니다.
+   - 플러그인(claude-plugins-official)은 앱에서 다시 설치합니다. Anthropic 기본 스킬은 계정에 붙어 있어 따로 옮기지 않습니다.
 2. Claude로 `~/TripleJ` 를 한 번 엽니다. `.claude/projects/` 아래에 새 경로 이름의 폴더가 생깁니다.
 3. 압축에서 나온 `projects/-Users-pearl-TripleJ/memory/` 안의 파일을 그 새 폴더의 `memory/` 로 옮깁니다. 메모리는 폴더 경로에 묶여 있어서, 이걸 해야 이어집니다.
-4. 데스크톱 앱이 WSL 폴더를 여는 방식에 따라 `.claude` 위치가 윈도우 쪽일 수도 있습니다. 첫 실행 때 같이 확인합니다.
+4. 지난 세션은 새 PC 앱 목록에 이어서 뜨지 않습니다. 대화 기록은 `claude_sessions.tar.gz` 에 보관용으로 들어 있고, 이어 갈 내용은 메모리와 GitHub 문서에 있습니다.
+5. 데스크톱 앱이 WSL 폴더를 여는 방식에 따라 `.claude` 위치가 윈도우 쪽일 수도 있습니다. 첫 실행 때 같이 확인합니다.
 
 ## 6. 예약 작업 3개 다시 만들기
 

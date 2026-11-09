@@ -40,7 +40,13 @@ fi
 rm -rf "$OUT"; mkdir -p "$OUT" || exit 1
 tar -czf "$OUT/repo_extra.tar.gz" -C "$REPO" -T "$LIST" || exit 1
 [ -n "$BR" ] && { git bundle create "$OUT/local_branches.bundle" $BR || exit 1; echo "$BR" > "$OUT/local_branches.txt"; }
-tar -czf "$OUT/claude_config.tar.gz" -C "$HOME/.claude" commands skills scheduled-tasks settings.json uploads projects/-Users-pearl-TripleJ/memory || exit 1
+# commands·teams 는 "팀 에이전트" 폴더로 가는 바로가기라 -h 로 실제 파일을 담음
+tar -czhf "$OUT/claude_config.tar.gz" -C "$HOME/.claude" commands teams skills scheduled-tasks settings.json uploads projects/-Users-pearl-TripleJ/memory || exit 1
+tar -czf "$OUT/team_agent.tar.gz" -C "$HOME" --exclude='.DS_Store' "팀 에이전트" || exit 1
+tar -czf "$OUT/repo_claude_local.tar.gz" -C "$REPO" .claude/settings.local.json .claude/launch.json || exit 1
+# 지난 세션 대화 기록 (보관용, 새 PC에서 이어 열리지는 않음)
+tar -czf "$OUT/claude_sessions.tar.gz" -C "$HOME/.claude" projects history.jsonl || exit 1
+[ -d "$HOME/Claude/Artifacts" ] && tar -czf "$OUT/claude_local_artifacts.tar.gz" -C "$HOME/Claude" Artifacts
 [ -d "$GRANT" ] && tar -czf "$OUT/gov_grant_monitor.tar.gz" -C "$HOME/Desktop" --exclude='.venv' --exclude='.env' --exclude='__pycache__' gov_grant_monitor
 cp "$REPO/claude_skills_outputs/migration/WINDOWS_MIGRATION.md" "$OUT/" 2>/dev/null
 ( cd "$OUT" && shasum -a 256 *.tar.gz *.bundle 2>/dev/null > SHA256SUMS.txt )
