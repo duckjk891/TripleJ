@@ -1,0 +1,5 @@
+.env
+out/
+runs/
+images/
+*.mp4

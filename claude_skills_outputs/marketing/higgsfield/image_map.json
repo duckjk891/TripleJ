@@ -1,0 +1,9 @@
+{
+  "_comment": "프롬프트 카드의 이미지 이름 → 파일 경로(이 폴더 기준). 확장자를 빼면 png/jpg/jpeg/webp 중 있는 것을 씀. 완성 컷 이미지는 images/cuts/C10.png 처럼 넣으면 됨.",
+  "_cut_pattern": "images/cuts/{cut}",
+  "펄킴 검은 옷 전신 시트": "../pearlkim_refs/sheet_black_full.jpg",
+  "펄킴 보라 옷 전신 시트": "../pearlkim_refs/sheet_purple_full.jpg",
+  "근육 팀 얼굴+전신 시트": "../pearlkim_refs/muscle_team_4_faces.jpg",
+  "직원 전신 시트": "images/sheets/staff",
+  "사장 전신 시트": "images/sheets/owner"
+}
