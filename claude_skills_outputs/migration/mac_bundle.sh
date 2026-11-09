@@ -26,7 +26,7 @@ fi
 cd "$REPO" || exit 1
 LIST=$(mktemp)
 # 1) GitHub에 없는 미추적 파일 + 수정된 파일 (node_modules·비밀 제외)
-{ git ls-files --others --exclude-standard; git diff --name-only; } | grep -v '/node_modules/' | grep -Ev "$SECRET_RE" | sort -u > "$LIST"
+{ git -c core.quotePath=false ls-files --others --exclude-standard; git -c core.quotePath=false diff --name-only; } | grep -v '/node_modules/' | grep -Ev "$SECRET_RE" | sort -u > "$LIST"
 # 2) GitHub에 없는 로컬 브랜치
 BR=$(for b in $(git for-each-ref --format='%(refname:short)' refs/heads); do git ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1 || echo "$b"; done)
 
@@ -37,7 +37,7 @@ if [ "${1:-}" = "--dry" ]; then
   rm -f "$LIST"; exit 0
 fi
 
-mkdir -p "$OUT" || exit 1
+rm -rf "$OUT"; mkdir -p "$OUT" || exit 1
 tar -czf "$OUT/repo_extra.tar.gz" -C "$REPO" -T "$LIST" || exit 1
 [ -n "$BR" ] && { git bundle create "$OUT/local_branches.bundle" $BR || exit 1; echo "$BR" > "$OUT/local_branches.txt"; }
 tar -czf "$OUT/claude_config.tar.gz" -C "$HOME/.claude" commands skills scheduled-tasks settings.json uploads projects/-Users-pearl-TripleJ/memory || exit 1
