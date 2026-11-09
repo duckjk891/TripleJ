@@ -250,6 +250,24 @@ def cmd_show(a):
         print(r["body"]["prompt"])
 
 
+def cmd_web(a):
+    """Higgsfield 웹 화면에 손(또는 브라우저 자동화)으로 넣을 때 쓰는 출력.
+    줄바꿈은 공백으로 바꾸고(웹 입력칸에서 Enter는 생성 버튼과 겹칠 수 있음), @image_N 앞뒤로 잘라 준다."""
+    clips = load_clips()
+    out = []
+    for c in pick(clips, a.clips):
+        r = build_request(c, a.res, a.model)
+        flat = re.sub(r"\b(CHARACTERS?|SETTING)\n", r"\1: ", r["body"]["prompt"])
+        flat = re.sub(r"\s*\n+\s*", " ", flat).replace("—", "-")
+        parts = re.split(r"@image_(\d+)", flat)
+        segs = [{"text": parts[0]}]
+        for i in range(1, len(parts), 2):
+            segs.append({"mention": int(parts[i])})
+            segs.append({"text": parts[i + 1]})
+        out.append({"id": c["id"], "duration": c["duration"], "labels": r["labels"], "segments": segs})
+    print(json.dumps(out, ensure_ascii=False, indent=1))
+
+
 def estimate(auth, clip, a, urls=None):
     r = build_request(clip, a.res, a.model)
     body = dict(r["body"], image_urls=urls or [f"https://example.com/ref{i}.jpg" for i in range(len(r["labels"]))])
@@ -365,10 +383,11 @@ def cmd_poll(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in [("list", cmd_list), ("show", cmd_show), ("estimate", cmd_estimate), ("run", cmd_run), ("poll", cmd_poll)]:
+    for name, fn in [("list", cmd_list), ("show", cmd_show), ("web", cmd_web), ("estimate", cmd_estimate),
+                     ("run", cmd_run), ("poll", cmd_poll)]:
         p = sub.add_parser(name)
         p.set_defaults(fn=fn)
-        if name in ("show", "estimate", "run"):
+        if name in ("show", "web", "estimate", "run"):
             p.add_argument("clips", nargs="*", help="V06 V01 … 또는 all")
             p.add_argument("--res", default="720p", choices=["480p", "720p", "1080p"],
                            help="초안 720p(Kling 4.0 최저), 최종 1080p")

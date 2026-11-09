@@ -75,7 +75,8 @@ const STYLE_IMAG="STYLE: bright pop music video, a flat solid-color imagination 
 const RULES="RULES: Nobody sings or lip-syncs. No on-screen text, captions, logos or readable signs. Faces, hair and outfits stay exactly the same as in the reference images. Faces stay natural and not exaggerated; the comedy comes from timing and effects. No afterimages, no ghost faces, no new people, no extra arms or hands.\nAudio: no music, no singing, no voices.";
 const STREET="Pearl Kim stays on the gray sidewalk and never steps on the road. She is on the left of the frame and faces right, and the chicken shop is on the right.";
 const BLACK=n=>`PEARL KIM: exactly as @Image${n}: black oversized T-shirt, long black shorts, black shoes, black sling bag across her chest, round white smartwatch on her left wrist.`;
-const PURPLE=n=>`PEARL KIM: exactly as @Image${n}: violet-purple T-shirt and the same outfit as that sheet. She wears no bag.`;
+const PURPLE=n=>`PEARL KIM: exactly as @Image${n}: violet-purple T-shirt and the same outfit as that sheet, with the small white shoulder bag exactly as in the start frame.`;
+const PURPLE_DANCE=n=>`PEARL KIM: exactly as @Image${n}: violet-purple T-shirt and the same outfit as that sheet. She wears no bag in this scene because she is dancing: no shoulder bag and no strap on her body.`;
 const NOBAG=n=>`PEARL KIM: exactly as @Image${n}: black oversized T-shirt, long black shorts, black shoes, round white smartwatch on her left wrist. She wears no bag, because she is working out.`;
 const MEN=n=>`MUSCLE TEAM: exactly as @Image${n}: the same four men, always exactly four, never five.`;
 const STAFF=n=>`STAFF MEMBER: exactly as @Image${n}: white cap, white T-shirt, plain red apron.`;
@@ -129,8 +130,8 @@ STYLE,RULES)},
 att:["C12 완성 이미지","펄킴 보라 옷 전신 시트","근육 팀 얼굴+전신 시트","직원 전신 시트","사장 전신 시트"],
 prompt:P(`One shot, 4 seconds, a comic tug-of-war imagination scene. ${FIRST}`,
 `CHARACTERS\n${PURPLE(1)}\n${MEN(2)}\n${STAFF(3)}\n${OWNER(4)}`,
-`SETTING\nThe frame stays split exactly in half with the same two solid colors as the start frame.`,
-`[Shot 1] 0-4s — eye-level full shot, camera locked with a small shake on each pull. The two teams yank her arms in turn, left, right, left, right, each pull quicker than the last, and she lurches from side to side in the middle. On the last pull both sides heave at once and the camera punches in on her.`,
+`SETTING\nThe frame is split between the same two solid colors as the start frame. The dividing line between the two colors is not fixed: it slides left and right with every pull, toward the team that is losing ground.`,
+`[Shot 1] 0-4s — eye-level full shot, camera locked with a small shake on each pull. The two teams are evenly matched and neither side wins. They yank her arms in turn, left, right, left, right, each pull quicker than the last, and she lurches from side to side in the middle while the color split swings back and forth with her. On the last pull both sides heave at once, the split stops exactly in the middle, and the camera punches in on her.`,
 STYLE_IMAG,RULES)},
 {id:"V08",kind:"현실",k:"real",cuts:"C13 · C14 · C16",t:"42.6–52.0",len:"9.4초",gen:"10초",desc:"닭가슴살 방패, 확성기에 “오?”, 입 앞까지 온 치킨. 끝은 아래로 휩틸트입니다.",
 att:["C13 완성 이미지","C14 완성 이미지","C16 완성 이미지","펄킴 검은 옷 전신 시트","직원 전신 시트","사장 전신 시트"],
@@ -149,7 +150,7 @@ STYLE,RULES)},
 {id:"V10",kind:"드롭",k:"drop",cuts:"C23 · C26",t:"61.5–69.1",len:"7.6초",gen:"8초",desc:"드롭. 보라·라임 조명, 가슴 쿵쿵과 이마 땀 쓱, 어깨 털고 이두근 행진. 끝은 오른쪽 휩팬입니다.",
 att:["C23 완성 이미지","C26 완성 이미지","펄킴 보라 옷 전신 시트","근육 팀 얼굴+전신 시트"],
 prompt:P(`Two shots, 8 seconds, the big drop of the pop music video. ${FIRST} Shot 2 matches @Image1 in framing, people, place, light and colors.`,
-`CHARACTERS\n${PURPLE(2)}\n${MEN(3)}`,
+`CHARACTERS\n${PURPLE_DANCE(2)}\n${MEN(3)}`,
 `SETTING\nThe sidewalk in front of the chicken shop, lit by saturated purple and lime-green stage light, high-key with almost no shadows.`,
 `[Shot 1] 0-3.8s — matches the start frame. Very wide-angle lens, eye level. She and the four men pound their chests with their fists in sync, twice, and comic circular shockwave rings ripple out from each chest while their muscles gleam. Then all five wipe their foreheads with the backs of their hands in one synchronized move, and sparkling sweat drops fly toward the lens.\nHard cut.\n[Shot 2] 3.8-7.6s — matches @Image1. The camera tracks sideways with them. She leads the four men marching from left to right, shaking their shoulders and swinging their hips on the beat, then striking bicep-flex poses mid-stride like a victory parade.\n[End] 7.6-8s — the camera whips right into motion blur.`,
 STYLE,RULES)},
