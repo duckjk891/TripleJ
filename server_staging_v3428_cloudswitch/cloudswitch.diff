@@ -1,0 +1,899 @@
+diff --git a/app/config.py b/app/config.py
+index 74d0f76..058a96d 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -125,6 +125,17 @@ class Settings(BaseSettings):
+     # Google Gemini (AI cover image generation)
+     google_api_key: str = ""
+ 
++    # v3.428 클라우드 결제 전환 스위치 — 기본값 = 현재 운영 경로(바꾸지 않으면 동작 동일). services/ai_providers.py
++    claude_provider: str = "anthropic"   # anthropic | vertex
++    gemini_provider: str = "aistudio"    # aistudio | vertex
++    openai_provider: str = "openai"      # openai | azure
++    gcp_project_id: str = "maidol-509006"
++    vertex_region: str = "global"
++    vertex_api_key: str = ""             # Vertex 익스프레스 API 키(Gemini REST)
++    vertex_gemini_model_map: str = ""    # "gemini-3-pro-image-preview=gemini-3-pro-image,..."
++    azure_openai_endpoint: str = ""      # https://<리소스>.openai.azure.com
++    azure_openai_api_key: str = ""
++
+     # Suno API
+     suno_api_key: str = ""
+     suno_api_url: str = "https://api.sunoapi.org"
+diff --git a/app/routes/character.py b/app/routes/character.py
+index f5c3c15..dc0a51e 100644
+--- a/app/routes/character.py
++++ b/app/routes/character.py
+@@ -22,6 +22,7 @@ from pydantic import BaseModel
+ 
+ from ..auth import JWT_ALGORITHM, JWT_SECRET, get_current_user
+ from ..config import settings
++from ..services.ai_providers import gemini_key, openai_configured
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ from ..services.face_search_service import (
+@@ -819,7 +820,7 @@ async def generate_sheet(
+             "[ModelPin] ignored client value mode=real recv=%s forced=%s user=%s",
+             _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
+         )
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -1056,7 +1057,7 @@ async def generate_sheet_cartoon(
+             "[ModelPin] ignored client value mode=cartoon recv=%s forced=%s user=%s",
+             _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
+         )
+-    if not settings.google_api_key:
++    if not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+@@ -1934,7 +1935,7 @@ async def generate_sheet_async(
+             "[ModelPin] ignored client value mode=real(async) recv=%s forced=%s user=%s",
+             _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
+         )
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -2218,7 +2219,7 @@ async def generate_sheet_cartoon_async(
+             "[ModelPin] ignored client value mode=cartoon(async) recv=%s forced=%s user=%s",
+             _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
+         )
+-    if not settings.google_api_key:
++    if not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+@@ -2719,12 +2720,12 @@ async def refine_sheet(
+                 (image_model or "")[:24], norm_image_model, str(current_user["id"])[:8],
+             )
+     # 키 가드 — 결정된 모델 것만
+-    if norm_image_model == "nb_pro" and not settings.google_api_key:
++    if norm_image_model == "nb_pro" and not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+         )
+-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
++    if norm_image_model == "gpt_image_2" and not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+diff --git a/app/routes/generate.py b/app/routes/generate.py
+index b402cda..e02ff66 100644
+--- a/app/routes/generate.py
++++ b/app/routes/generate.py
+@@ -25,6 +25,7 @@ from pydantic import BaseModel
+ 
+ from ..auth import get_current_user
+ from ..config import settings
++from ..services.ai_providers import make_openai_client, openai_configured
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ from ..services import gen_jobs as gj  # v3.228 — 요청 원장·중복 차단·멈춘 작업 환불
+@@ -542,7 +543,7 @@ async def translate_tags(
+     if not body.tags:
+         return {"translated": []}
+ 
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -551,7 +552,7 @@ async def translate_tags(
+     try:
+         from openai import AsyncOpenAI
+ 
+-        client = AsyncOpenAI(api_key=settings.openai_api_key)
++        client = make_openai_client()
+ 
+         translated = []
+         # v75 — flagship gpt-5 with reasoning enabled (replaces gpt-4o-mini).
+@@ -688,7 +689,7 @@ async def generate_lyrics_endpoint(
+     if not body.prompt.strip():
+         return JSONResponse(status_code=400, content={"error": "프롬프트를 입력해주세요."})
+ 
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -933,7 +934,7 @@ async def generate_lyrics_guest_endpoint(
+     if len(body.prompt) > GUEST_LYRICS_PROMPT_MAX:
+         return _guest_denied(400, "요청 내용이 너무 길어요.", device_tag, "prompt_too_long")
+ 
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return JSONResponse(status_code=503, content={"error": "OpenAI API 키가 설정되지 않았습니다."})
+ 
+     # 금칙어 — 성인 기준(child=False 명시: is_child_user DB 조회 없음, user_id 는 로그 앞 8자에만 쓰임).
+diff --git a/app/routes/mv.py b/app/routes/mv.py
+index b63a559..fb06bc7 100644
+--- a/app/routes/mv.py
++++ b/app/routes/mv.py
+@@ -16,6 +16,7 @@ from pydantic import BaseModel
+ 
+ from ..auth import get_current_user
+ from ..config import settings
++from ..services.ai_providers import gemini_key, openai_configured
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ from ..database.redis import get_redis
+@@ -442,12 +443,12 @@ async def create_mv(
+                 "[CreateMV] invalid cover_image_model=%r — storing as None",
+                 body.cover_image_model,
+             )
+-    if norm_image_model == "nb_pro" and not settings.google_api_key:
++    if norm_image_model == "nb_pro" and not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+         )
+-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
++    if norm_image_model == "gpt_image_2" and not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -3092,7 +3093,7 @@ async def list_video_models():
+             "provider": "Google",
+             "description": "고품질 8초 영상 생성 (Google Veo 3.1)",
+             "duration": "8초",
+-            "available": bool(settings.google_api_key),
++            "available": bool(gemini_key()),
+         },
+         {
+             "id": "kling",
+diff --git a/app/routes/reference_link.py b/app/routes/reference_link.py
+index 4338ce3..f32c4f2 100644
+--- a/app/routes/reference_link.py
++++ b/app/routes/reference_link.py
+@@ -25,6 +25,7 @@ from pydantic import BaseModel
+ 
+ from ..auth import get_current_user
+ from ..config import settings
++from ..services.ai_providers import make_openai_client, openai_configured
+ from ..database.redis import get_redis
+ 
+ logger = logging.getLogger(__name__)
+@@ -114,7 +115,7 @@ def _get_openai_client():
+     if _openai_client is None:
+         from openai import AsyncOpenAI
+ 
+-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=40.0)
++        _openai_client = make_openai_client(timeout=40.0)
+     return _openai_client
+ 
+ 
+@@ -151,7 +152,7 @@ def _parse_json_obj(raw: str) -> Optional[dict]:
+ 
+ async def _infer_style(title: str, author: str) -> Optional[dict]:
+     """제목+채널명 → {genre, mood, tempo_hint, style_text}. 실패 시 None(폴백)."""
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         return None
+     client = _get_openai_client()
+     model = settings.openai_model or "gpt-5.5"
+diff --git a/app/routes/upload.py b/app/routes/upload.py
+index c61e6ae..99c6299 100644
+--- a/app/routes/upload.py
++++ b/app/routes/upload.py
+@@ -15,6 +15,7 @@ from pydantic import BaseModel
+ 
+ from ..auth import get_current_user
+ from ..config import settings
++from ..services.ai_providers import gemini_key, openai_configured
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ from ..database.postgres import get_pg
+@@ -475,12 +476,12 @@ async def generate_cover(
+             status_code=400,
+             content={"error": "지원하지 않는 vocal_gender 입니다. (female, male, neutral)"},
+         )
+-    if norm_image_model == "nb_pro" and not settings.google_api_key:
++    if norm_image_model == "nb_pro" and not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+         )
+-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
++    if norm_image_model == "gpt_image_2" and not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -1295,12 +1296,12 @@ async def refine_cover(
+         )
+ 
+     # API 키 가드
+-    if image_model == "nb_pro" and not settings.google_api_key:
++    if image_model == "nb_pro" and not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+         )
+-    if image_model == "gpt_image_2" and not settings.openai_api_key:
++    if image_model == "gpt_image_2" and not openai_configured():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+@@ -1768,7 +1769,7 @@ async def generate_mv(
+ 
+     Returns a job_id for polling via /mv-status/{job_id}.
+     """
+-    if not settings.google_api_key:
++    if not gemini_key():
+         return JSONResponse(
+             status_code=503,
+             content={"error": "Google API 키가 설정되지 않았습니다."},
+diff --git a/app/services/age_rating.py b/app/services/age_rating.py
+index 8e1bf2e..28d5bd4 100644
+--- a/app/services/age_rating.py
++++ b/app/services/age_rating.py
+@@ -48,6 +48,7 @@ from bson import ObjectId
+ from fastapi.responses import JSONResponse
+ 
+ from ..config import settings
++from .ai_providers import claude_configured, make_anthropic_client
+ from . import kids_policy
+ 
+ logger = logging.getLogger(__name__)
+@@ -104,7 +105,7 @@ def filter_from() -> Optional[datetime]:
+ 
+ def classify_enabled(now: Optional[datetime] = None) -> bool:
+     start = classify_from()
+-    return bool(start and (now or datetime.now(timezone.utc)) >= start and settings.anthropic_api_key)
++    return bool(start and (now or datetime.now(timezone.utc)) >= start and claude_configured())
+ 
+ 
+ def filter_enabled() -> bool:
+@@ -329,7 +330,7 @@ def _get_client():
+     if _client is None:
+         import anthropic
+ 
+-        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=60.0, max_retries=2)
++        _client = make_anthropic_client(timeout=60.0, max_retries=2)
+     return _client
+ 
+ 
+diff --git a/app/services/ai_providers.py b/app/services/ai_providers.py
+new file mode 100644
+index 0000000..1c65f83
+--- /dev/null
++++ b/app/services/ai_providers.py
+@@ -0,0 +1,145 @@
++"""v3.428 클라우드 결제 전환 — AI 공급 경로 스위치 (옛 경로 / 새 경로).
++
++기본값은 모두 **지금 운영 경로**라서 환경변수를 바꾸지 않으면 동작이 이전과 같다.
++
++  CLAUDE_PROVIDER = anthropic | vertex   (vertex: GCP_PROJECT_ID·VERTEX_REGION, 인증=ADC 서비스 계정)
++  GEMINI_PROVIDER = aistudio  | vertex   (vertex: VERTEX_API_KEY 익스프레스 키, 모델 치환=VERTEX_GEMINI_MODEL_MAP)
++  OPENAI_PROVIDER = openai    | azure    (azure: AZURE_OPENAI_ENDPOINT·AZURE_OPENAI_API_KEY,
++                                          Azure 배포 이름을 지금 모델 이름과 똑같이 만든다)
++  임베딩 모델 = EMBEDDING_MODEL (기본 text-embedding-3-small, 1536차원 — 바꾸면 벡터 전부 재생성 필요)
++  fal = FAL_API_KEY 만 마켓플레이스 키로 교체 (코드 변경 없음)
++
++스위치는 컨테이너 기동 시 한 번 읽는다(서비스별 클라이언트가 싱글톤). 바꾼 뒤에는 재기동.
++"""
++import logging
++import re
++from typing import Dict, Optional
++
++from ..config import settings
++
++logger = logging.getLogger(__name__)
++
++_AISTUDIO_MODEL_URL = re.compile(
++    r"^https://generativelanguage\.googleapis\.com/v1beta/models/([^:/]+):([A-Za-z]+)$"
++)
++
++
++def _norm(v: Optional[str], default: str) -> str:
++    return (v or default).strip().lower()
++
++
++def claude_provider() -> str:
++    return _norm(settings.claude_provider, "anthropic")
++
++
++def gemini_provider() -> str:
++    return _norm(settings.gemini_provider, "aistudio")
++
++
++def openai_provider() -> str:
++    return _norm(settings.openai_provider, "openai")
++
++
++# ── Claude ────────────────────────────────────────────────────────────────────
++
++def make_anthropic_client(**kwargs):
++    """AsyncAnthropic(옛) 또는 AsyncAnthropicVertex(새). timeout·max_retries 등은 그대로 전달.
++
++    Vertex 에서도 모델 ID 는 그대로(claude-opus-4-6 등, 날짜 접미사 없음).
++    """
++    import anthropic
++
++    if claude_provider() == "vertex":
++        logger.info("[ai_providers] claude=vertex project=%s region=%s",
++                    settings.gcp_project_id, settings.vertex_region)
++        return anthropic.AsyncAnthropicVertex(
++            project_id=settings.gcp_project_id,
++            region=settings.vertex_region or "global",
++            **kwargs,
++        )
++    return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, **kwargs)
++
++
++# ── OpenAI ────────────────────────────────────────────────────────────────────
++
++def _azure_base() -> str:
++    return settings.azure_openai_endpoint.rstrip("/") + "/openai/v1/"
++
++
++def make_openai_client(**kwargs):
++    """AsyncOpenAI — 옛: api.openai.com / 새: Azure OpenAI v1 엔드포인트(같은 SDK, 같은 호출 형식)."""
++    from openai import AsyncOpenAI
++
++    if openai_provider() == "azure":
++        key = settings.azure_openai_api_key
++        return AsyncOpenAI(
++            api_key=key,
++            base_url=_azure_base(),
++            default_headers={"api-key": key},
++            **kwargs,
++        )
++    return AsyncOpenAI(api_key=settings.openai_api_key, **kwargs)
++
++
++def openai_images_url(kind: str) -> str:
++    """kind = generations | edits (openai_image.py 의 httpx 직접 호출용)."""
++    if openai_provider() == "azure":
++        return _azure_base() + "images/" + kind
++    return "https://api.openai.com/v1/images/" + kind
++
++
++def openai_auth_headers() -> Dict[str, str]:
++    if openai_provider() == "azure":
++        key = settings.azure_openai_api_key
++        return {"api-key": key, "Authorization": "Bearer {}".format(key)}
++    return {"Authorization": "Bearer {}".format(settings.openai_api_key)}
++
++
++def openai_configured() -> bool:
++    if openai_provider() == "azure":
++        return bool(settings.azure_openai_endpoint and settings.azure_openai_api_key)
++    return bool(settings.openai_api_key)
++
++
++# ── Gemini (REST) ─────────────────────────────────────────────────────────────
++
++def _gemini_model_map() -> Dict[str, str]:
++    out: Dict[str, str] = {}
++    for pair in (settings.vertex_gemini_model_map or "").split(","):
++        if "=" in pair:
++            a, b = pair.split("=", 1)
++            if a.strip() and b.strip():
++                out[a.strip()] = b.strip()
++    return out
++
++
++def gemini_url(url: str) -> str:
++    """AI Studio 모델 URL → (vertex 일 때) Vertex 익스프레스 URL. 그 외 URL·aistudio 는 그대로."""
++    if gemini_provider() != "vertex":
++        return url
++    m = _AISTUDIO_MODEL_URL.match(url)
++    if not m:
++        return url
++    model, method = m.group(1), m.group(2)
++    model = _gemini_model_map().get(model, model)
++    return "https://aiplatform.googleapis.com/v1/publishers/google/models/{}:{}".format(model, method)
++
++
++def gemini_key() -> str:
++    if gemini_provider() == "vertex":
++        return settings.vertex_api_key
++    return settings.google_api_key
++
++
++def gemini_params() -> Dict[str, str]:
++    return {"key": gemini_key()}
++
++
++def gemini_headers() -> Dict[str, str]:
++    return {"x-goog-api-key": gemini_key()}
++
++
++def claude_configured() -> bool:
++    if claude_provider() == "vertex":
++        return bool(settings.gcp_project_id)
++    return bool(settings.anthropic_api_key)
+diff --git a/app/services/character_generator.py b/app/services/character_generator.py
+index eef976f..3bff47d 100644
+--- a/app/services/character_generator.py
++++ b/app/services/character_generator.py
+@@ -21,6 +21,7 @@ import anthropic
+ import httpx
+ 
+ from ..config import settings
++from .ai_providers import claude_configured, gemini_params, gemini_url, make_anthropic_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -30,12 +31,12 @@ logger = logging.getLogger(__name__)
+ # v: gemini-2.5-flash(경량/구세대) → gemini-3.1-pro-preview(상위 비전 Pro) 업그레이드.
+ #    인물 사진의 외모 특징 추출 정밀도를 높여 정체성 반영 개선 목적.
+ #    (라이브 키 접근 200 확인. 구 gemini-3-pro-preview 는 404 폐기됨.)
+-GEMINI_TEXT_API_URL = (
++GEMINI_TEXT_API_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-3.1-pro-preview:generateContent"
+ )
+ 
+-GEMINI_IMAGE_API_URL = (
++GEMINI_IMAGE_API_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-3-pro-image-preview:generateContent"
+ )
+@@ -1045,9 +1046,7 @@ _claude_text_client: Optional[anthropic.AsyncAnthropic] = None
+ def _get_claude_text_client() -> anthropic.AsyncAnthropic:
+     global _claude_text_client
+     if _claude_text_client is None:
+-        _claude_text_client = anthropic.AsyncAnthropic(
+-            api_key=settings.anthropic_api_key
+-        )
++        _claude_text_client = make_anthropic_client()
+     return _claude_text_client
+ 
+ 
+@@ -1157,7 +1156,7 @@ async def _call_text_backend(prompt: str, image_parts: list) -> str:
+     2026-09-01 Gemini 503 실사고가 있어 동일 구조를 이식하되 폴백을 남긴다
+     (Gemini 경로는 v224 재시도 내장).
+     """
+-    if settings.anthropic_api_key:
++    if claude_configured():
+         try:
+             return await _call_claude_text(prompt, image_parts)
+         except Exception as e:  # noqa: BLE001 — 어떤 실패든 Gemini 로 폴백
+@@ -1196,7 +1195,7 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
+             async with httpx.AsyncClient(timeout=120.0) as client:
+                 resp = await client.post(
+                     GEMINI_TEXT_API_URL,
+-                    params={"key": settings.google_api_key},
++                    params=gemini_params(),
+                     json=payload,
+                 )
+             if resp.status_code == 200:
+@@ -1458,7 +1457,7 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
+             async with httpx.AsyncClient(timeout=180.0) as client:
+                 resp = await client.post(
+                     GEMINI_IMAGE_API_URL,
+-                    params={"key": settings.google_api_key},
++                    params=gemini_params(),
+                     json=payload,
+                 )
+             if resp.status_code == 200:
+diff --git a/app/services/cover_generator.py b/app/services/cover_generator.py
+index bc2cf3e..07c8928 100644
+--- a/app/services/cover_generator.py
++++ b/app/services/cover_generator.py
+@@ -13,11 +13,12 @@ from typing import Optional
+ import httpx
+ 
+ from ..config import settings
++from .ai_providers import gemini_params, gemini_url
+ from .location_prompt import anchor_clause
+ 
+ logger = logging.getLogger(__name__)
+ 
+-GEMINI_API_URL = (
++GEMINI_API_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-3-pro-image-preview:generateContent"
+ )
+@@ -443,7 +444,7 @@ async def generate_cover_image(
+     async with httpx.AsyncClient(timeout=120.0) as client:
+         resp = await client.post(
+             GEMINI_API_URL,
+-            params={"key": settings.google_api_key},
++            params=gemini_params(),
+             json=payload,
+         )
+ 
+@@ -556,7 +557,7 @@ async def _refine_with_gemini(
+             async with httpx.AsyncClient(timeout=120.0) as client:
+                 resp = await client.post(
+                     GEMINI_API_URL,
+-                    params={"key": settings.google_api_key},
++                    params=gemini_params(),
+                     json=payload,
+                 )
+             logger.info("[CoverRefine] gemini HTTP status=%d", resp.status_code)
+diff --git a/app/services/cs_worker.py b/app/services/cs_worker.py
+index 28fe2e7..9516be4 100644
+--- a/app/services/cs_worker.py
++++ b/app/services/cs_worker.py
+@@ -45,6 +45,7 @@ from bson import ObjectId
+ from bson.errors import InvalidId
+ 
+ from ..config import settings
++from .ai_providers import make_openai_client, openai_configured
+ from ..database.mongodb import get_mongo
+ from ..database.redis import get_redis
+ from . import cs_knowledge
+@@ -374,7 +375,7 @@ def _get_openai_client():
+     if _openai_client is None:
+         from openai import AsyncOpenAI
+ 
+-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=45.0)
++        _openai_client = make_openai_client(timeout=45.0)
+     return _openai_client
+ 
+ 
+@@ -384,7 +385,7 @@ def llm_model() -> str:
+ 
+ async def _openai_call(messages: List[dict]) -> Tuple[str, dict]:
+     """(본문, usage) — lyrics_generator/reference_link 관행(json_object·reasoning_effort·max_completion_tokens)."""
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         raise RuntimeError("openai_api_key missing")
+     client = _get_openai_client()
+     model = llm_model()
+diff --git a/app/services/embedding_service.py b/app/services/embedding_service.py
+index 8b0b513..33870d8 100644
+--- a/app/services/embedding_service.py
++++ b/app/services/embedding_service.py
+@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
+ from openai import AsyncOpenAI
+ 
+ from ..config import settings
++from .ai_providers import make_openai_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -76,7 +77,7 @@ async def embed_text(text: str) -> List[float]:
+     snippet = (text or "")[:_MAX_INPUT_CHARS]
+     logger.info("[embedding.embed] text_len=%d (truncated_from=%d)", len(snippet), len(text or ""))
+ 
+-    client = AsyncOpenAI(api_key=settings.openai_api_key)
++    client = make_openai_client()
+     try:
+         resp = await client.embeddings.create(model=settings.embedding_model, input=snippet)
+     except Exception as e:
+diff --git a/app/services/keyword_service.py b/app/services/keyword_service.py
+index 5b65de5..0dca741 100644
+--- a/app/services/keyword_service.py
++++ b/app/services/keyword_service.py
+@@ -25,6 +25,7 @@ from typing import List, Optional, Tuple
+ from openai import AsyncOpenAI
+ 
+ from ..config import settings
++from .ai_providers import make_openai_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -211,7 +212,7 @@ async def generate_search_keywords(doc: dict, track_id: Optional[str] = None) ->
+     model = settings.keyword_model
+     logger.info("[keywords] track_id=%s input_len=%d model=%s requesting", tid, len(user_message), model)
+ 
+-    client = AsyncOpenAI(api_key=settings.openai_api_key)
++    client = make_openai_client()
+     try:
+         resp = await client.chat.completions.create(
+             model=model,
+diff --git a/app/services/lyrics_generator.py b/app/services/lyrics_generator.py
+index 6f0aaa8..1f875d4 100644
+--- a/app/services/lyrics_generator.py
++++ b/app/services/lyrics_generator.py
+@@ -12,6 +12,7 @@ import anthropic
+ from openai import AsyncOpenAI
+ 
+ from ..config import settings
++from .ai_providers import make_anthropic_client, make_openai_client
+ from ..constants.categories import CATEGORIES, CATEGORY_SET
+ from .lyrics_directions import is_cue_tag_line  # v3.284 연출 태그 줄 판별(분량 통계)
+ 
+@@ -27,14 +28,14 @@ _anthropic_client = None
+ def _get_client() -> AsyncOpenAI:
+     global _client
+     if _client is None:
+-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
++        _client = make_openai_client()
+     return _client
+ 
+ 
+ def _get_anthropic_client():
+     global _anthropic_client
+     if _anthropic_client is None:
+-        _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
++        _anthropic_client = make_anthropic_client()
+     return _anthropic_client
+ 
+ 
+diff --git a/app/services/mv_assets.py b/app/services/mv_assets.py
+index 7644566..8ae8e88 100644
+--- a/app/services/mv_assets.py
++++ b/app/services/mv_assets.py
+@@ -12,12 +12,13 @@ from typing import Optional
+ import httpx
+ 
+ from ..config import settings
++from .ai_providers import gemini_params, gemini_url
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ 
+ logger = logging.getLogger(__name__)
+ 
+-GEMINI_IMAGE_API_URL = (
++GEMINI_IMAGE_API_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-3-pro-image-preview:generateContent"
+ )
+@@ -42,7 +43,7 @@ async def _gemini_generate_image(prompt: str, ref_images: list = None) -> bytes:
+     async with httpx.AsyncClient(timeout=180.0) as client:
+         resp = await client.post(
+             GEMINI_IMAGE_API_URL,
+-            params={"key": settings.google_api_key},
++            params=gemini_params(),
+             json=payload,
+         )
+     if resp.status_code != 200:
+diff --git a/app/services/mv_generator.py b/app/services/mv_generator.py
+index 1440cf7..b9e97d8 100644
+--- a/app/services/mv_generator.py
++++ b/app/services/mv_generator.py
+@@ -27,6 +27,7 @@ import anthropic
+ import httpx
+ 
+ from ..config import settings
++from .ai_providers import gemini_params, gemini_url, make_anthropic_client
+ from ..database.minio import get_minio
+ from ..database.mongodb import get_mongo
+ from .claude_cache import cached_system, log_cache_usage
+@@ -106,7 +107,7 @@ def sanitize_video_prompt(text: Optional[str]) -> str:
+ 
+ # ── API URLs ──────────────────────────────────────────────────────────────────
+ 
+-GEMINI_IMAGE_URL = (
++GEMINI_IMAGE_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-3-pro-image-preview:generateContent"
+ )
+@@ -120,12 +121,12 @@ VEO_OPERATION_URL = (
+     "https://generativelanguage.googleapis.com/v1beta/{}"
+ )
+ 
+-GEMINI_AUDIO_URL = (
++GEMINI_AUDIO_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-2.5-flash:generateContent"
+ )
+ 
+-GEMINI_VIDEO_PROMPT_URL = (
++GEMINI_VIDEO_PROMPT_URL = gemini_url(
+     "https://generativelanguage.googleapis.com/v1beta/models/"
+     "gemini-2.5-pro:generateContent"
+ )
+@@ -755,7 +756,7 @@ async def extract_character_description_from_cover(cover_bytes: Optional[bytes])
+         async with httpx.AsyncClient(timeout=60.0) as client:
+             resp = await client.post(
+                 GEMINI_VIDEO_PROMPT_URL,
+-                params={"key": settings.google_api_key},
++                params=gemini_params(),
+                 json=payload,
+             )
+         if resp.status_code != 200:
+@@ -940,7 +941,7 @@ async def generate_video_prompts_from_images(
+             async with httpx.AsyncClient(timeout=60.0) as client:
+                 resp = await client.post(
+                     GEMINI_VIDEO_PROMPT_URL,
+-                    params={"key": settings.google_api_key},
++                    params=gemini_params(),
+                     json=payload,
+                 )
+                 resp.raise_for_status()
+@@ -1013,7 +1014,7 @@ def _get_anthropic_client():
+     """Get or create the AsyncAnthropic client (singleton)."""
+     global _mv_anthropic_client
+     if _mv_anthropic_client is None:
+-        _mv_anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
++        _mv_anthropic_client = make_anthropic_client()
+     return _mv_anthropic_client
+ 
+ 
+@@ -1117,7 +1118,7 @@ async def analyze_music_structure(
+     async with httpx.AsyncClient(timeout=180.0) as client:
+         resp = await client.post(
+             GEMINI_AUDIO_URL,
+-            params={"key": settings.google_api_key},
++            params=gemini_params(),
+             json=payload,
+         )
+ 
+@@ -1127,7 +1128,7 @@ async def analyze_music_structure(
+         async with httpx.AsyncClient(timeout=180.0) as client:
+             resp = await client.post(
+                 GEMINI_AUDIO_URL,
+-                params={"key": settings.google_api_key},
++                params=gemini_params(),
+                 json=payload,
+             )
+ 
+@@ -1917,7 +1918,7 @@ async def _generate_brainstorm_gemini(
+         archetype_weights=archetype_weights,
+         user_event_seed=user_event_seed,
+     )
+-    url = (
++    url = gemini_url(
+         "https://generativelanguage.googleapis.com/v1beta/models/"
+         "gemini-2.5-pro:generateContent"
+     )
+@@ -1932,7 +1933,7 @@ async def _generate_brainstorm_gemini(
+     }
+     async with httpx.AsyncClient(timeout=120.0) as client:
+         resp = await client.post(
+-            url, params={"key": settings.google_api_key}, json=payload,
++            url, params=gemini_params(), json=payload,
+         )
+         resp.raise_for_status()
+         data = resp.json()
+@@ -3519,7 +3520,7 @@ async def _generate_scenario_gemini(
+         user_event_seed=user_event_seed,
+     )
+ 
+-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
++    url = gemini_url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent")
+ 
+     generation_config = {
+         "temperature": float(temperature),
+@@ -3539,7 +3540,7 @@ async def _generate_scenario_gemini(
+     async with httpx.AsyncClient(timeout=120.0) as client:
+         resp = await client.post(
+             url,
+-            params={"key": settings.google_api_key},
++            params=gemini_params(),
+             json=payload,
+         )
+         resp.raise_for_status()
+@@ -5290,7 +5291,7 @@ async def generate_scene_image(
+     async with httpx.AsyncClient(timeout=120.0) as client:
+         resp = await client.post(
+             GEMINI_IMAGE_URL,
+-            params={"key": settings.google_api_key},
++            params=gemini_params(),
+             json=payload,
+         )
+ 
+@@ -5301,7 +5302,7 @@ async def generate_scene_image(
+         async with httpx.AsyncClient(timeout=120.0) as client:
+             resp = await client.post(
+                 GEMINI_IMAGE_URL,
+-                params={"key": settings.google_api_key},
++                params=gemini_params(),
+                 json=payload,
+             )
+ 
+diff --git a/app/services/openai_image.py b/app/services/openai_image.py
+index 71d1cd3..d664451 100644
+--- a/app/services/openai_image.py
++++ b/app/services/openai_image.py
+@@ -18,6 +18,7 @@ from typing import Optional
+ import httpx
+ 
+ from ..config import settings
++from .ai_providers import openai_auth_headers, openai_configured, openai_images_url
+ from .watermark import embed_image_metadata
+ 
+ logger = logging.getLogger(__name__)
+@@ -29,8 +30,8 @@ logger = logging.getLogger(__name__)
+ #   요청 형식(model·prompt·size·quality·n) 변경 없이 동작. 롤백 = 이전 스냅샷 id 로 되돌림.
+ OPENAI_IMAGE_MODEL = "gpt-image-2.5-sunburst-2026-09-08"
+ 
+-OPENAI_GEN_URL = "https://api.openai.com/v1/images/generations"
+-OPENAI_EDIT_URL = "https://api.openai.com/v1/images/edits"
++OPENAI_GEN_URL = openai_images_url("generations")
++OPENAI_EDIT_URL = openai_images_url("edits")
+ 
+ # Multi-ref ceiling per OpenAI spec.
+ MAX_REF_IMAGES = 10
+@@ -130,7 +131,7 @@ async def _call_generations(
+ ) -> bytes:
+     """POST /v1/images/generations — text-to-image."""
+     headers = {
+-        "Authorization": "Bearer {}".format(settings.openai_api_key),
++        **openai_auth_headers(),
+         "Content-Type": "application/json",
+     }
+     payload = {
+@@ -160,7 +161,7 @@ async def _call_edits(
+ ) -> bytes:
+     """POST /v1/images/edits — text + multi-ref (multipart)."""
+     headers = {
+-        "Authorization": "Bearer {}".format(settings.openai_api_key),
++        **openai_auth_headers(),
+     }
+     # Use multipart/form-data with multiple image[] parts.
+     files = []
+@@ -232,7 +233,7 @@ async def generate_image(
+     The interface mirrors `_gemini_generate_image` in mv_assets so callers
+     can dispatch on `image_model` with a single-line branch.
+     """
+-    if not settings.openai_api_key:
++    if not openai_configured():
+         # Do not log the key. Just fail loudly.
+         raise ValueError("OPENAI_API_KEY is not configured")
+ 
+diff --git a/app/services/story_reader.py b/app/services/story_reader.py
+index 1c9585f..b63a9de 100644
+--- a/app/services/story_reader.py
++++ b/app/services/story_reader.py
+@@ -19,6 +19,7 @@ import time
+ from typing import Optional
+ 
+ from ..config import settings
++from .ai_providers import claude_configured, make_anthropic_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -66,7 +67,7 @@ def _get_client():
+     if _client is None:
+         import anthropic
+ 
+-        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=90.0, max_retries=1)
++        _client = make_anthropic_client(timeout=90.0, max_retries=1)
+     return _client
+ 
+ 
+@@ -291,7 +292,7 @@ def build_content(text: str, images: list, weather_label: Optional[str], diary_m
+ async def read_story(text: str, images: list, weather_label: Optional[str] = None, diary_mood: Optional[str] = None,
+                      diary_date: Optional[str] = None, child: bool = False) -> dict:
+     """{result, model, usage:{in,out,cache_read}, ms}. 거절 → StoryRefused, 형식 오류 2회 → StoryReadFailed."""
+-    if not settings.anthropic_api_key:
++    if not claude_configured():
+         raise StoryReadFailed("no anthropic key")
+     content = build_content(text, images, weather_label, diary_mood, diary_date, child)
+     kinds = [k for k, _, _ in images]
+diff --git a/app/services/translation.py b/app/services/translation.py
+index 960348d..1df0fb1 100644
+--- a/app/services/translation.py
++++ b/app/services/translation.py
+@@ -24,6 +24,7 @@ from typing import Optional
+ import anthropic
+ 
+ from app.config import settings
++from .ai_providers import make_anthropic_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -43,9 +44,7 @@ def _get_anthropic_client_for_translation() -> anthropic.AsyncAnthropic:
+     """모듈 로컬 싱글톤. settings.anthropic_api_key 사용."""
+     global _translation_anthropic_client
+     if _translation_anthropic_client is None:
+-        _translation_anthropic_client = anthropic.AsyncAnthropic(
+-            api_key=settings.anthropic_api_key,
+-        )
++        _translation_anthropic_client = make_anthropic_client()
+     return _translation_anthropic_client
+ 
+ 
