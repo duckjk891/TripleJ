@@ -37,6 +37,8 @@ segs, log = [], []
 # 첫 장면이 0초부터 바로 움직이고, C5 마지막 장면은 만화 칸 화면 직전(7.45s)에서 끊어요.
 NO_COVER = VER != "v1"
 SRC_OVERRIDE = {("C", 5, 3): (6.12, 7.45)} if NO_COVER else {}
+# 대표 11-11: L10 소파 V-업(몸이 공처럼 말림) → 따로 만든 4초 "벌떡 일어나기" 장면으로 교체
+FILE_OVERRIDE = {("C", 10, 2): ("C10sofa", 0.6, 3.4)}
 intro_n = fr(beats[START_I])
 intro = f"{SEG}/s00.mp4"
 if NO_COVER:
@@ -61,12 +63,16 @@ for clip in range(1, NCLIP + 1):
         # Kling's internal cuts land at ~2.04 / 4.04-4.08 / 6.04-6.08s: start past them
         a, b = shot * 2 + (0.0 if shot == 0 else 0.12), shot * 2 + 2.0
         a, b = SRC_OVERRIDE.get((KIND, clip, shot), (a, b))
+        src = f"{L}/{KIND}{clip}.mp4"
+        if (KIND, clip, shot) in FILE_OVERRIDE:
+            fo, a, b = FILE_OVERRIDE[(KIND, clip, shot)]
+            src = f"{L}/{fo}.mp4"
         n = fr(beats[bi + 4]) - fr(beats[bi])
         if NO_COVER and k == 1:
             n = fr(beats[bi + 4])   # first shot starts at 0.00 (covers the pickup)
         speed = (b - a) / (n / FPS)
         out = f"{SEG}/s{k:02d}.mp4"
-        run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a}", "-i", f"{L}/{KIND}{clip}.mp4",
+        run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a}", "-i", src,
              "-vf", f"setpts=(PTS-STARTPTS)/{speed:.5f},fps={FPS},scale=1280:720,setsar=1",
              "-frames:v", str(n), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", out])
         segs.append(out)
