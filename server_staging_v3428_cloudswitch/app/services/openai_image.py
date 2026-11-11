@@ -217,6 +217,19 @@ async def _call_edits(
     return await _decode_first_image(resp.json())
 
 
+def _is_capacity_error(err: Optional[Exception]) -> bool:
+    """429(한도)·5xx(서버)·시간 초과·연결 오류만 True. 안전 거절(400 등)은 False."""
+    if err is None:
+        return False
+    if isinstance(err, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    text = str(err)
+    for code in ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"):
+        if code in text:
+            return True
+    return False
+
+
 async def generate_image(
     prompt: str,
     ref_images: Optional[list] = None,
@@ -278,6 +291,18 @@ async def generate_image(
                 await asyncio.sleep(2.0)
                 continue
             break
+
+    # v3.428: 한도 초과(429)·서버 오류(5xx)·시간 초과일 때만 Gemini 이미지(트랙 1)로 예비 전환.
+    #   IMAGE_FALLBACK_GEMINI=true 일 때만 동작(기본 꺼짐 = 기존 동작 그대로). Azure 신규 구독 기본 한도(분당 2건) 대비.
+    #   안전 기준 거절(400 등)은 넘기지 않는다 — 모델 우회 금지 정책(v3.377).
+    if settings.image_fallback_gemini and _is_capacity_error(last_err):
+        try:
+            from .mv_assets import _gemini_generate_image
+            logger.warning("[OpenAIImage] fallback=gemini reason=%s refs=%d", type(last_err).__name__, len(refs))
+            result = await _gemini_generate_image(prompt, refs)
+            return embed_image_metadata(result)
+        except Exception as fe:  # noqa: BLE001
+            logger.error("[OpenAIImage] fallback=gemini failed: %s", type(fe).__name__)
 
     # All retries exhausted.
     msg = "OpenAI image generation failed after retry: {}".format(

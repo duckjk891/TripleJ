@@ -135,6 +135,7 @@ class Settings(BaseSettings):
     vertex_gemini_model_map: str = ""    # "gemini-3-pro-image-preview=gemini-3-pro-image,..."
     azure_openai_endpoint: str = ""      # https://<리소스>.openai.azure.com
     azure_openai_api_key: str = ""
+    image_fallback_gemini: bool = False  # GPT 이미지 429·5xx·시간초과 시 Gemini 이미지로 예비 전환
 
     # Suno API
     suno_api_key: str = ""
