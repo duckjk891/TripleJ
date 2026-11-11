@@ -31,10 +31,15 @@ def fr(t):
     return round(t * FPS)
 
 segs, log = [], []
-# intro: 0 -> beats[1]
+# v2 (대표 11-11): 앞 커버 정지·뒤 만화 칸(커버풍) 화면 빼기.
+# 첫 장면이 0초부터 바로 움직이고, C5 마지막 장면은 만화 칸 화면 직전(7.45s)에서 끊어요.
+NO_COVER = VER != "v1"
+SRC_OVERRIDE = {("C", 5, 3): (6.12, 7.45)} if NO_COVER else {}
 intro_n = fr(beats[START_I])
 intro = f"{SEG}/s00.mp4"
-if KIND == "C":
+if NO_COVER:
+    pass
+elif KIND == "C":
     run(["ffmpeg", "-v", "error", "-y", "-loop", "1", "-i", f"{OUT}/cover.png",
          "-vf", "scale=-2:720,pad=1280:720:(ow-iw)/2:0:color=white,setsar=1,fps=24",
          "-frames:v", str(intro_n), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", intro])
@@ -43,8 +48,9 @@ else:
     run(["ffmpeg", "-v", "error", "-y", "-i", f"{L}/R1.mp4", "-vf",
          f"trim=end_frame=1,loop={intro_n}:1:0,setpts=N/{FPS}/TB,scale=1280:720,setsar=1,fps=24",
          "-frames:v", str(intro_n), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", intro])
-segs.append(intro)
-log.append(f"intro 0.00-{beats[START_I]:.2f} ({intro_n} fr)")
+if not NO_COVER:
+    segs.append(intro)
+    log.append(f"intro 0.00-{beats[START_I]:.2f} ({intro_n} fr)")
 
 bi = START_I
 k = 1
@@ -52,7 +58,10 @@ for clip in range(1, 6):
     for shot in range(4):
         # Kling's internal cuts land at ~2.04 / 4.04-4.08 / 6.04-6.08s: start past them
         a, b = shot * 2 + (0.0 if shot == 0 else 0.12), shot * 2 + 2.0
+        a, b = SRC_OVERRIDE.get((KIND, clip, shot), (a, b))
         n = fr(beats[bi + 4]) - fr(beats[bi])
+        if NO_COVER and k == 1:
+            n = fr(beats[bi + 4])   # first shot starts at 0.00 (covers the pickup)
         speed = (b - a) / (n / FPS)
         out = f"{SEG}/s{k:02d}.mp4"
         run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a}", "-i", f"{L}/{KIND}{clip}.mp4",
