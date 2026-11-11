@@ -102,3 +102,24 @@
 ## 결정이 필요한 것
 1. 그림체: 커버와 같은 만화 그림체(추천) / 지금까지 영상처럼 실사.
 2. 화면 비율: 16:9(지금까지와 같음) / SNS 반복 재생용 9:16 세로.
+
+---
+
+## 생성 기록 (11-11)
+
+- 대표 결정: 시작 이미지 없이, **만화체 1벌 + 실사 1벌**, 16:9. "으아아아·막아" 같은 소리는 넣지 않아요(영상 소리는 버리고 노래만 깔아요, 프롬프트에도 무음 명시).
+- 반복 연결용 커버 전체 그림은 편집에서 실제 커버를 맨 앞·맨 뒤에 붙여요.
+- 설정: Kling 4.0 레퍼런스 모드, 720p, 8초, 16:9, 클립당 18크레딧.
+
+### 실사 L1~L5 (생성 완료 요청, 90크레딧)
+- 레퍼런스: @이미지 1 = 펄킴 검은 옷 3면 시트, @이미지 2 = 펄킴 얼굴 사진.
+- 공통 앞부분:
+  `Four shots, 8 seconds, a fast and funny workout montage for a bright pop music video, one shot every two seconds, each shot a hard cut. CHARACTER: PEARL KIM, a Korean woman in her 30s, exactly as @이미지 1: straight black chin-length bob, oversized black T-shirt with a large daisy graphic on the back, black knee-length bermuda shorts with a white swirl print, black socks, chunky black-and-silver sneakers, the same outfit in every shot. Her face is exactly @이미지 2. STYLE: photorealistic, bright cheerful commercial look, vivid colors, soft natural light, snappy camera moves, light comic touches such as glistening sweat drops.`
+- 공통 끝부분:
+  `RULES: She shows big comic effort faces and gestures but makes no sound. Nobody sings, talks, shouts or lip-syncs. No on-screen text, captions, letters, logos or speech bubbles. No other people. No extra arms or hands. Audio: completely silent, no music, no voices, no screams, no sound effects.`
+- 컷(각 2초): L1 침대에서 튀어나와 점핑잭 / 거울 앞 덤벨 컬 / 점프 스쿼트 / 줄넘기 · L2 플랭크하며 알람 두 번 / 스쿼트하며 물 / 치킨 상자 숨기고 제자리 뛰기 / 끈 묶고 버피 · L3 엘리베이터 외면 계단 질주 / 하이 니+엄지척 / 계단 런지 / 박수 푸시업 두 번 · L4 플랭크 덜덜 / 윗몸일으키기+멈춰 손바닥 / 러닝머신 웃으며 / 훌라후프 · L5 원투 펀치 / 배틀 로프 / 요가 나무 자세+윙크 / 운동 몽타주 후 두 주먹 들고 멈춤.
+
+### 만화체 L1~L5 (대기)
+- 레퍼런스: @이미지 1 = 곡 커버. 커버 업로드 때 Higgsfield '미디어 업로드 동의' 창이 떠서 대표 확인 후 진행해요.
+- 실사와 같은 컷에 앞부분만 바꿔요: `in exactly the hand-drawn Korean webtoon comic style of @이미지 1: clean bold line art, flat cel shading, bright pop colors, comic speed lines, sparkles and lightning effects. CHARACTER: the woman from @이미지 1, exactly as drawn there ...`
+- L4 러닝머신 컷은 커버 가운데 달리는 포즈, L5 마지막은 커버처럼 칸 배치로 빠지며 끝나요.
