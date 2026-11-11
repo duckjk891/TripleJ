@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from ..auth import get_current_user
 from ..config import settings
 from ..services.ai_providers import gemini_key, openai_configured
+from ..services.video_models import is_known_video_model, normalize_video_model
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
@@ -64,7 +65,7 @@ class CreateMVRequest(BaseModel):
     # v212: 아티스트 다중화 — include_my_character 시 사용할 아티스트 지정 (kind 무관).
     # 미지정이면 기존 variant 대표 해석 경로 (additive — 구 클라이언트 무영향).
     character_id: Optional[str] = None
-    video_model: Optional[str] = "veo"  # "veo", "kling", "seedance", or "grok" (v66)
+    video_model: Optional[str] = "seedance"  # v3.428: "seedance"(기본) | "kling" — 예전 "veo"·"grok" 은 seedance 로
     audio_generation_id: Optional[str] = None
     # v209: MV촬영실 — 이미 발매된 「내 트랙」(파일 업로드 트랙 포함)을 곡 소스로 지정.
     # 본인 소유(uploader_id) 검증 필수 — 실패 시 403. report_blinded 트랙 차단.
@@ -509,12 +510,12 @@ async def create_mv(
             return _track_err
 
     # Validate video model (must come before scene count calculation)
-    video_model = body.video_model or "veo"
-    if video_model not in ("veo", "kling", "seedance", "grok"):
+    if not is_known_video_model(body.video_model):
         return JSONResponse(
             status_code=400,
-            content={"error": "지원하지 않는 영상 모델입니다. (veo, kling, seedance, grok)"},
+            content={"error": "지원하지 않는 영상 모델입니다. (seedance, kling)"},
         )
+    video_model = normalize_video_model(body.video_model)
 
     # Validate scenario_style — only "drama" is implemented; others fall back with warning
     scenario_style = (body.scenario_style or "drama").strip().lower()
@@ -1070,7 +1071,7 @@ async def get_mv_job(
         "include_my_character": job.get("include_my_character", False),
         "scene_prompt": job.get("scene_prompt"),
         "character_object_name": job.get("character_object_name"),
-        "video_model": job.get("video_model", "veo"),
+        "video_model": normalize_video_model(job.get("video_model")),
         "music_sections": job.get("music_sections"),
         # v43: 자막 가용 여부 (Suno 트랙=True, 직접 업로드 트랙=False)
         "has_subtitles": bool(
@@ -2296,7 +2297,7 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                     lyrics_segment=scene.get("lyrics_segment", ""),
                     scene_number=scene.get("scene_number", 0),
                     model=job.get("video_prompt_model") or "gemini-2.5-pro",
-                    video_model=job.get("video_model", "veo"),
+                    video_model=normalize_video_model(job.get("video_model")),
                     has_character=bool(job.get("character_object_name")),
                 )
                 # Save it back to MongoDB
@@ -2321,7 +2322,7 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
         from datetime import timedelta
         import asyncio
 
-        video_model = job.get("video_model", "veo")
+        video_model = normalize_video_model(job.get("video_model"))
         scene_desc = scene.get("video_image_prompt") or scene.get("image_prompt") or scene.get("description", "")
 
         if video_model == "seedance":
@@ -2638,10 +2639,10 @@ async def generate_videos(
         )
 
     # Determine video_model: request override > job setting > default
-    video_model = body.video_model or job.get("video_model", "veo")
+    video_model = normalize_video_model(body.video_model or job.get("video_model"))
 
     # Update job's video_model if overridden
-    if body.video_model and body.video_model != job.get("video_model"):
+    if body.video_model and video_model != job.get("video_model"):
         await mongo.mv_jobs.update_one(
             {"_id": oid},
             {"$set": {"video_model": video_model, "updated_at": datetime.utcnow()}},
@@ -3088,12 +3089,12 @@ async def list_video_models():
     """List available video generation models."""
     models = [
         {
-            "id": "veo",
-            "name": "Veo 3.1",
-            "provider": "Google",
-            "description": "고품질 8초 영상 생성 (Google Veo 3.1)",
-            "duration": "8초",
-            "available": bool(gemini_key()),
+            "id": "seedance",
+            "name": "Seedance 2",
+            "provider": "fal",
+            "description": "이미지 기반 최대 15초 영상 생성 (Seedance 2)",
+            "duration": "10초",
+            "available": bool(settings.fal_api_key),
         },
         {
             "id": "kling",

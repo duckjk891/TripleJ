@@ -47,3 +47,11 @@ check("vertex gemini url+map", ap.gemini_url(U) == "https://aiplatform.googleapi
 check("vertex non-model url untouched", ap.gemini_url("https://generativelanguage.googleapis.com/v1beta/operations/x") .startswith("https://generativelanguage"))
 check("vertex key", ap.gemini_params() == {"key": "vk"})
 print("FAILS", fails)
+
+from app.services.video_models import normalize_video_model as nv, is_known_video_model as kv
+f2 = 0
+for inp, out in [(None,"seedance"),("","seedance"),("veo","seedance"),("grok","seedance"),("VEO","seedance"),("kling","kling"),("seedance","seedance"),(" Kling ","kling")]:
+    ok = nv(inp) == out; f2 += not ok; print(("PASS " if ok else "FAIL ") + "video %r -> %s" % (inp, nv(inp)))
+for inp, out in [(None,True),("veo",True),("grok",True),("kling",True),("sora",False)]:
+    ok = kv(inp) == out; f2 += not ok; print(("PASS " if ok else "FAIL ") + "known %r" % (inp,))
+print("VIDEO_FAILS", f2)

@@ -1769,6 +1769,11 @@ async def generate_mv(
 
     Returns a job_id for polling via /mv-status/{job_id}.
     """
+    # v3.428: 이 옛 경로는 Veo 전용이라 사용 중지(Veo 폐기). 쓰는 화면 없음 — MV 는 /api/mv/jobs 사용.
+    return JSONResponse(
+        status_code=410,
+        content={"error": "이 MV 생성 경로는 종료되었습니다. 새 MV 만들기를 이용해 주세요."},
+    )
     if not gemini_key():
         return JSONResponse(
             status_code=503,

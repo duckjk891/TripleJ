@@ -796,7 +796,7 @@ async def generate_video_prompts_from_images(
     lyrics_segment: str = "",
     scene_number: int = 1,
     model: str = "gemini-2.5-pro",
-    video_model: str = "veo",
+    video_model: str = "seedance",
     has_character: bool = False,
     duration: float = 5.0,
     scene_event: Optional[dict] = None,
@@ -4806,7 +4806,7 @@ def _get_video_image_prompt_guide(video_model: str) -> str:
 
 def _build_scene_prompt_messages(
     scenes_input, title, genre, mood, scenario, user_scene_prompt,
-    video_model="veo", asset_keys=None, location_name=None,
+    video_model="seedance", asset_keys=None, location_name=None,
     narrative=None, scenario_events=None, emotional_core=None,
     premise=None, character_states=None,
 ):
@@ -4921,7 +4921,7 @@ def _parse_scene_prompts_raw(raw: str) -> list:
 
 async def _generate_scene_prompts_openai(
     scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name=None,
-    video_model="veo", asset_keys=None, location_name=None,
+    video_model="seedance", asset_keys=None, location_name=None,
     narrative=None, scenario_events=None, emotional_core=None,
     premise=None, character_states=None,
 ):
@@ -4966,7 +4966,7 @@ async def _generate_scene_prompts_openai(
 
 async def _generate_scene_prompts_claude(
     scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name="claude-opus-4-6",
-    video_model="veo", asset_keys=None, location_name=None,
+    video_model="seedance", asset_keys=None, location_name=None,
     narrative=None, scenario_events=None, emotional_core=None,
     premise=None, character_states=None,
 ):
@@ -5041,7 +5041,7 @@ async def generate_scene_prompts_only(
     scenario: Optional[str] = None,
     user_scene_prompt: Optional[str] = None,
     models: list = None,
-    video_model: str = "veo",
+    video_model: str = "seedance",
     asset_keys: Optional[list] = None,
     location_name: Optional[str] = None,
     narrative: Optional[str] = None,
@@ -5348,6 +5348,8 @@ async def start_scene_video(
         lyrics_segment:     lipsync 가사
         scene_type:         drama | lipsync
     """
+    # v3.428: Veo 사용 중지(씨댄스·클링만). 호출 경로는 normalize_video_model 로 막혀 있고, 남은 호출이 있으면 즉시 실패.
+    raise RuntimeError("Veo 영상 생성은 사용 중지되었습니다 (v3.428).")
     desc_clean = (description or "").strip()
     camera_text = (video_prompt or "").strip()
 

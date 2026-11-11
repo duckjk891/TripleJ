@@ -21,8 +21,19 @@
 | EMBEDDING_MODEL | text-embedding-3-small | (원래부터 환경변수로 바꿀 수 있음. 바꾸면 track_embeddings 전부 재생성) |
 | FAL_API_KEY | 기존 키 | 마켓플레이스 키로 교체만 (코드 변경 없음) |
 
+## Veo 사용 중지 (11-11 대표 확정: 씨댄스·클링만)
+- 새 파일 `app/services/video_models.py` — MV 영상 모델 = seedance(기본) | kling
+- 예전 요청·저장된 작업의 "veo"·"grok"·빈 값 → seedance 로 바꿔 계속 동작(400 안 냄). 그 밖의 값은 400.
+- routes/mv.py·services/mv_pipeline.py 의 모델 결정 지점 전부 `normalize_video_model` 경유 → Veo 분기에 도달 불가
+- `start_scene_video`(Veo) 는 호출되면 즉시 실패
+- `GET /api/mv/models` 목록: Veo 대신 Seedance 2 + Kling
+- 옛 경로 `POST /api/upload/generate-mv`(Veo 전용 20씬 파이프라인, 쓰는 화면 없음 — 웹 api/index.js 에 정의만) → 410
+- 라우트→함수 매핑 변경 없음 확인(`routecheck.py`, 바뀐 라우트 파일 5개 SAME)
+- 웨딩 프론트(1_MV_wedding)는 기본값 'veo' 를 보내지만 서버가 seedance 로 바꿔 줌 — 프론트 수정은 선택
+- 그록(xAI)도 선택지에서 빠짐(xAI 키 정리 예정과 일치)
+
 ## 일부러 안 건드린 것
-- **Veo**: 남은 호출이 1곳이 아님. MV 영상 모델의 **기본값이 "veo"**(routes/mv.py, 웹 MV·웨딩 프리MV가 veo 전송). 삭제하면 기본 모델을 무엇으로 바꿀지 결정 필요 → AI Studio 옛 키 그대로 둠.
+- Veo 함수·프롬프트 본문(도달 불가 코드)은 남겨 둠 — 정리는 나중에
 - 관리자 점검(admin_health) — 옛 경로 확인용 그대로.
 - 재시도: Claude·OpenAI SDK 기본 재시도(2회) + Gemini 호출 대부분 자체 재시도 이미 있음. 예비 모델·이미지 트랙 교차 예비는 동작이 바뀌므로 별도 작업.
 
