@@ -91,25 +91,18 @@ for a, b in ((0.05, 1.95), (2.05, 3.95), (4.10, 6.20), (6.30, 8.0)):
     add(S("C16", a, b))
 for a, b in ((0.05, 1.95), (2.05, 3.95), (4.30, 6.20), (6.30, 8.0)):
     add(S("C17", a, b))
-# L18 struggle montage: 32 one-beat cuts, a "block it" shot on every bar's first beat
-MAKA = [K(4, 1), K(8, 1), S("C12", 2.05, 3.95), S("C16", 2.05, 3.95)] * 2
-POOL = [K(1, 0), K(3, 0), K(7, 2), K(9, 1), K(2, 3), K(11, 1), K(5, 0),
-        K(8, 2), K(3, 3), K(9, 2), S("C13", 0.05, 2.0), K(1, 2),
-        K(7, 0), K(11, 3), K(4, 2), S("C12", 4.05, 5.95), K(2, 0), K(5, 1),
-        K(9, 0), K(8, 3), K(11, 2), S("C13", 4.05, 5.95), K(4, 3), K(6, 1)]
-pi = 0
-for bar in range(8):
-    m = MAKA[bar]
-    mid = (m[1] + m[2]) / 2
-    add((m[0], mid - 0.35, mid + 0.35), 1)
-    for _ in range(3):
-        p = POOL[pi]; pi += 1
-        mid = (p[1] + p[2]) / 2
-        add((p[0], mid - 0.3, mid + 0.3), 1)
-# L19 quiet break again, night colors (8 bars)
-for s in (S("C14", 0.05, 1.80), S("C14", 1.90, 3.90), S("C14", 4.00, 5.90), S("C14", 6.25, 8.00),
-          S("C15", 0.05, 1.60), S("C15", 1.70, 4.30), S("C15", 4.40, 5.80), S("C15", 5.85, 7.90)):
-    add(s, 4, NIGHT)
+# 11-12: local speech recognition (faster-whisper, out/asr_large_v3_turbo.json) showed the song
+# really sings verse 4 + bridge + break again here, so the visuals follow those lines.
+# L18a 145.19-152.81 verse 4 again (주말 아침 몸무게 앞 ...) = the weekend-scale shots
+for a, b in ((0.05, 2.0), (2.15, 3.95), (4.05, 5.95), (6.05, 8.0)):
+    add(S("C13", a, b))
+# L18b 152.81-160.43 bridge again, one line per bar (완벽하지 않아도 돼 / 나는 계속 움직여 / 먹고 웃고 다시 뛰며 / 나다운 선을 그려)
+for a, b in ((0.05, 1.80), (1.90, 3.90), (4.00, 5.90), (6.25, 8.00)):
+    add(S("C14", a, b))
+# L19 160.43-175.65 break again, night colors, two bars per line
+#   잠깐 쉬어도 괜찮아 161.6 / 다시 켜보는 내 리듬 165.2 / 내 심장이 말하잖아 169.0 / 아직 끝난 게 아냐 172.5
+for s in (S("C15", 0.05, 1.60), S("C15", 1.70, 4.30), S("C15", 4.40, 5.80), S("C15", 5.85, 7.90)):
+    add(s, 8, NIGHT)
 # L20 chorus again = first chorus, L21 hook again = first hook
 clip_std(4)
 clip_std(5)
