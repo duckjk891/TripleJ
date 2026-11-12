@@ -1,7 +1,7 @@
 # 채팅 생성 지시서 — L6 「샐러드에 닭가슴살」 장면 다시 만들기 (2026-11-12)
 
 - 자리: L6 세 번째 장면, 노래 42.33–44.24초(약 1.9초). 편집에서 4초 클립 중 잘 나온 2초 정도만 잘라 써요.
-- 고칠 점: 지금 장면은 그릇에 닭가슴살이 안 보이고 콩 같은 것만 담겨 있어요. 앉아서 거의 움직이지 않아서 운동처럼 보이지도 않아요. → 닭가슴살이 또렷한 샐러드 + 확실한 러시안 트위스트 동작으로 바꿔요.
+- 고칠 점: 지금 장면은 그릇에 닭가슴살이 안 보이고 콩 같은 것만 담겨 있어요. 앉아서 거의 움직이지 않아서 운동처럼 보이지도 않아요. → 대표 결정(11-12): **스쿼트하며 닭가슴살을 샐러드에 올리는 장면**으로 바꿔요. 집게로 집기 → 스쿼트 → 일어나며 올리기를 3번 하고, 마지막에 완성된 그릇을 번쩍 들어요.
 - 규칙은 `cowork_seedance_brief_v2.md`와 같아요. MCP 도구로만 생성하고, `use_unlim: true`가 거절되면 크레딧으로 다시 보내지 말고 멈춰요. 첫 생성 전후 `balance`를 확인하고, 노래·음성 파일은 올리지 않아요.
 
 ## generate_video params
@@ -35,9 +35,9 @@ CHARACTER: the woman from the FIRST reference image (the cover), with exactly he
 
 MOTION: snappy, bouncy cartoon animation, quick anticipation and overshoot on every move, big comic expressions and effects, small camera shakes on the beat, nothing slow or floaty; the bounce is in the motion and effects only, her face and body proportions never change.
 
-[Shot] 0-4s - Medium-wide side-angle view on a bright exercise mat. She sits on the mat with her knees bent and both feet flat on the floor, leaning back a little, holding a big clear glass bowl with both hands in front of her chest. The bowl is clearly a fresh green salad: crisp lettuce, cherry tomatoes and cucumber, topped with thick slices of golden grilled chicken breast with grill marks that are easy to see. She does a Russian twist with the bowl: she twists her upper body fully to the left, then fully to the right, then left and right again, four quick twists on the beat, the bowl swinging from side to side. The salad and chicken slices stay in the bowl and bounce a little with each twist. Her face strains with effort, then breaks into a proud grin on the last twist, as sparkles burst around the chicken slices.
+[Shot] 0-4s - Medium-wide front view in a bright kitchen. On the counter in front of her sits one big clear glass bowl of fresh green salad (crisp lettuce, cherry tomatoes, cucumber), and next to it a small plate of thick golden grilled chicken breast slices with clear grill marks. Holding kitchen tongs in her right hand, she picks up one chicken slice, drops into a deep squat and springs back up, and on the way up she places the slice on top of the salad with a snappy little flourish. She does this three times on the beat: squat, up, place a slice; squat, up, place a slice; squat, up, place a slice. Each slice lands with a small comic sparkle. On the last beat she lifts the finished salad bowl high with both hands, the chicken slices clearly visible on top, and grins proudly as a burst of sparkles and stars explodes behind her.
 
-RULES: She shows big comic effort faces and gestures but makes no sound. Nobody sings, talks, shouts or lip-syncs. No other people. No extra arms or hands: exactly two arms, both hands always holding the one bowl. Only one bowl, no fork, no other food. No soft blur, no muted colors, no realistic lighting. Audio: completely silent, no music, no voices, no screams, no sound effects.
+RULES: She shows big comic effort faces and gestures but makes no sound. Nobody sings, talks, shouts or lip-syncs. No other people. No extra arms or hands: exactly two arms. Only one salad bowl, one small plate of chicken and one pair of tongs; no other food or utensils. The chicken slices go onto the salad, not into her mouth. No soft blur, no muted colors, no realistic lighting. Audio: completely silent, no music, no voices, no screams, no sound effects.
 
 ABSOLUTELY NO TEXT ANYWHERE: no letters, no words, no Korean or English characters, no numbers, no prices, no signs or signboards, no labels, no logos, no captions, no speech bubbles, no writing on any surface, screen, clothing, wall or object. Every sign, board, screen and label is blank or shows pictures only.
 ```
