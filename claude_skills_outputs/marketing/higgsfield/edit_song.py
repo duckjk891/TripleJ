@@ -116,7 +116,7 @@ clip_std(5)
 # L22 outro (10-second clip): shoes off, mirror high five, dance to bed, flop on bed -> song end
 # Outro lines are sung later than the bar grid (server lyric timeline):
 #   둠칫, 내일도 시작해 191.78 / 거울 속 나와 high five 194.22-195.98 / 느려도 난 계속 가 196.06 / 가볍게 웃으며 dance 197.97
-add(S("C22", 0.35, 2.30), 7)      # 190.91-194.25 shoes off + stretch (skip the zoom-out in the first 0.3s)
+add(S("C22shoes", 0.00, 4.00), 7) # 190.91-194.25 shoes off, step in, jump for joy (re-made 11-12: face clear, still camera)
 add(S("C22", 2.45, 3.40), 4)      # 194.25-196.15 mirror high five, the slap lands on the beat at ~195.2
 add(S("C22", 3.45, 6.20), 6)      # 196.15-199.00 dance steps to the bed ("느려도 난 계속 가 / 가볍게 웃으며 dance")
 TAIL = ("S:C22", 6.30, 8.30)      # 199.00-end flop on the bed (~0.9x, calm)

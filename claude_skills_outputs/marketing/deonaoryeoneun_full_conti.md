@@ -241,3 +241,4 @@
 - Seedance 9개를 Real-ESRGAN(realesr-animevideov3, 2배)으로 다시 업스케일해 1280x720으로 줄였어요(out/sd720esr/). 클립당 1~2.5분(Intel 내장 그래픽).
 - edit_song.py는 sd720esr/가 있으면 그걸 써요. 결과 out/song_comic_v3.mp4.
 - v2에서 아웃트로 거울 하이파이브를 가사(194.22~195.98초)에 맞췄어요(손이 195.2초 박자에 맞음).
+- v5(11-12): 아웃트로 첫 장면을 C22shoes(job 10c32d49-775b-4ebf-9ec1-6b945864ddcc, 고정 카메라·얼굴 또렷)로 교체. 운동화 벗기→걸어오기→기쁨 점프.
