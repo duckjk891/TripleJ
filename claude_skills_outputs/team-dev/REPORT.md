@@ -5056,3 +5056,9 @@ iOS 세션 요청(대표 10-27: 아이폰 6s 화면 끄고 재생 중 1분 뒤 �
 - 변경(8b8d937): utils/storeLinks `CARD_QR_APP_INSTALL = false` 스위치 — PlayerScreen 명함 진입(fromCard)의 15초 설치 팝업·CTA 스토어 이동을 끔. CTA '내 이야기로 노래 만들기' = PC 와 같은 흐름(비회원 가입 → 작업실, 회원 작업실).
 - 배포: 깨끗한 워크트리(origin/frontend) 빌드 → app.maidol.ai.kr. 실측(안드로이드 휴대폰 크기): maidol.ai.kr/c/{곡} → 재생 화면, 20초 지나도 설치 팝업 없음, CTA → 웹 회원가입(after=studio).
 - 되돌리기: 앱 업데이트(Play 1.3.3 출시 + OTA) 끝나면 스위치 true + 웹 배포.
+
+## 2026-11-12 운영 데이터 — 「더 나오려는 것을 막는 것일뿐」 MV 게시·자막 시간 보정·공지 (대표 지시)
+- 대표: "서버 자막 시간 고치고, 공지 작성하고, 뮤비에 대머리 김부장처럼 자막 입혀서 게시" (자막은 영상에 박지 않고 앱 MV 탭이 겹쳐 그림).
+- 자막 시간: 로컬 음성 인식(faster-whisper large-v3-turbo, 음원 외부 전송 없음)으로 대조 — 서버 타이밍은 반복(4절·브릿지·브레이크) 포함 거의 정확. generations 6aa11cd7 variants.0.timestamps 2곳만 보정: [98] 「내 심장이 말하잖아」 start 167.473→169.3, [74] 「아직 끝난 게 아냐」 end 129.979→123.9 (API 표시 169.00 / 123.60). 백업 EC2 /home/ubuntu/maidol/logs/mv_attach_6aa11e86_20261112.json.
+- MV: 만화체 전곡 편집 v6(Kling 4.0 + Seedance 2.5, Real-ESRGAN 업스케일) → 스트리밍본 1280×720 2.3Mbps faststart 61MB, images 버킷 mv/manual/6aa11e86…/mv_v1_web.mp4 + 원본 mv_v1_original.mp4, mv_jobs 6af575a6(source=admin_upload, attached_track_id) — 김부장(6ad087dc)과 같은 형태. 공개 API has_music_video=true·MV URL 206 확인.
+- 공지: lovvepearl 피드 6af5787d(글+곡+2:12 장면 사진, notice_pinned=True) — 김부장 MV 글과 같은 방식, 대표 승인 문구. /feeds/notices 첫 글 확인. 팔로워 알림 팬아웃은 하지 않음(직접 삽입).
