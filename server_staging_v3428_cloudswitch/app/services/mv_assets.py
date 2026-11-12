@@ -12,13 +12,13 @@ from typing import Optional
 import httpx
 
 from ..config import settings
-from .ai_providers import gemini_params, gemini_url
+from .ai_providers import gemini_post
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 
 logger = logging.getLogger(__name__)
 
-GEMINI_IMAGE_API_URL = gemini_url(
+GEMINI_IMAGE_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-3-pro-image-preview:generateContent"
 )
@@ -41,9 +41,9 @@ async def _gemini_generate_image(prompt: str, ref_images: list = None) -> bytes:
         "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
     }
     async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(
+        resp = await gemini_post(
+            client,
             GEMINI_IMAGE_API_URL,
-            params=gemini_params(),
             json=payload,
         )
     if resp.status_code != 200:

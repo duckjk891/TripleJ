@@ -13,12 +13,12 @@ from typing import Optional
 import httpx
 
 from ..config import settings
-from .ai_providers import gemini_params, gemini_url
+from .ai_providers import gemini_post
 from .location_prompt import anchor_clause
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_URL = gemini_url(
+GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-3-pro-image-preview:generateContent"
 )
@@ -442,9 +442,9 @@ async def generate_cover_image(
     }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
+        resp = await gemini_post(
+            client,
             GEMINI_API_URL,
-            params=gemini_params(),
             json=payload,
         )
 
@@ -555,9 +555,9 @@ async def _refine_with_gemini(
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
+                resp = await gemini_post(
+                    client,
                     GEMINI_API_URL,
-                    params=gemini_params(),
                     json=payload,
                 )
             logger.info("[CoverRefine] gemini HTTP status=%d", resp.status_code)

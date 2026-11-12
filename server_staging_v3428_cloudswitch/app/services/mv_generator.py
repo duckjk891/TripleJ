@@ -27,7 +27,7 @@ import anthropic
 import httpx
 
 from ..config import settings
-from .ai_providers import gemini_params, gemini_url, make_anthropic_client
+from .ai_providers import gemini_post, make_anthropic_client
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from .claude_cache import cached_system, log_cache_usage
@@ -107,7 +107,7 @@ def sanitize_video_prompt(text: Optional[str]) -> str:
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
 
-GEMINI_IMAGE_URL = gemini_url(
+GEMINI_IMAGE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-3-pro-image-preview:generateContent"
 )
@@ -121,12 +121,12 @@ VEO_OPERATION_URL = (
     "https://generativelanguage.googleapis.com/v1beta/{}"
 )
 
-GEMINI_AUDIO_URL = gemini_url(
+GEMINI_AUDIO_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.5-flash:generateContent"
 )
 
-GEMINI_VIDEO_PROMPT_URL = gemini_url(
+GEMINI_VIDEO_PROMPT_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.5-pro:generateContent"
 )
@@ -754,9 +754,9 @@ async def extract_character_description_from_cover(cover_bytes: Optional[bytes])
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 256},
         }
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
+            resp = await gemini_post(
+                client,
                 GEMINI_VIDEO_PROMPT_URL,
-                params=gemini_params(),
                 json=payload,
             )
         if resp.status_code != 200:
@@ -939,9 +939,9 @@ async def generate_video_prompts_from_images(
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
+                resp = await gemini_post(
+                    client,
                     GEMINI_VIDEO_PROMPT_URL,
-                    params=gemini_params(),
                     json=payload,
                 )
                 resp.raise_for_status()
@@ -1116,9 +1116,9 @@ async def analyze_music_structure(
     }
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(
+        resp = await gemini_post(
+            client,
             GEMINI_AUDIO_URL,
-            params=gemini_params(),
             json=payload,
         )
 
@@ -1126,9 +1126,9 @@ async def analyze_music_structure(
         logger.warning("Gemini audio analysis 429, waiting 30s before retry...")
         await asyncio.sleep(30)
         async with httpx.AsyncClient(timeout=180.0) as client:
-            resp = await client.post(
+            resp = await gemini_post(
+                client,
                 GEMINI_AUDIO_URL,
-                params=gemini_params(),
                 json=payload,
             )
 
@@ -1918,7 +1918,7 @@ async def _generate_brainstorm_gemini(
         archetype_weights=archetype_weights,
         user_event_seed=user_event_seed,
     )
-    url = gemini_url(
+    url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         "gemini-2.5-pro:generateContent"
     )
@@ -1932,8 +1932,8 @@ async def _generate_brainstorm_gemini(
         },
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            url, params=gemini_params(), json=payload,
+        resp = await gemini_post(
+            client, url, json=payload,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -3520,7 +3520,7 @@ async def _generate_scenario_gemini(
         user_event_seed=user_event_seed,
     )
 
-    url = gemini_url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent")
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
 
     generation_config = {
         "temperature": float(temperature),
@@ -3538,9 +3538,9 @@ async def _generate_scenario_gemini(
     }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
+        resp = await gemini_post(
+            client,
             url,
-            params=gemini_params(),
             json=payload,
         )
         resp.raise_for_status()
@@ -5289,9 +5289,9 @@ async def generate_scene_image(
     }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
+        resp = await gemini_post(
+            client,
             GEMINI_IMAGE_URL,
-            params=gemini_params(),
             json=payload,
         )
 
@@ -5300,9 +5300,9 @@ async def generate_scene_image(
         logger.warning("Gemini 429 rate limit, waiting 30s before retry...")
         await asyncio.sleep(30)
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
+            resp = await gemini_post(
+                client,
                 GEMINI_IMAGE_URL,
-                params=gemini_params(),
                 json=payload,
             )
 

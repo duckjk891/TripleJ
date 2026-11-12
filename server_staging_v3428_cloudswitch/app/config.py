@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""      # https://<리소스>.openai.azure.com
     azure_openai_api_key: str = ""
     image_fallback_gemini: bool = False  # GPT 이미지 429·5xx·시간초과 시 Gemini 이미지로 예비 전환
+    gemini_vertex_ratio: int = 0         # 0~100: Gemini 호출 중 Vertex 로 보낼 비율(GEMINI_PROVIDER=vertex 는 100)
+    gemini_aistudio_fallback: bool = True  # Vertex 429·5xx·시간초과 → AI Studio 1회 재시도(GOOGLE_API_KEY 있을 때만)
+    ai_429_alert_threshold: int = 10     # 공급자별 429 가 창 안에 이 건수 이상이면 경고 로그
+    ai_429_alert_window_sec: int = 300
+    ai_429_alert_email: str = ""         # (선택) 경고를 SES 메일로도. 비우면 로그만
 
     # Suno API
     suno_api_key: str = ""

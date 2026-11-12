@@ -21,7 +21,7 @@ import anthropic
 import httpx
 
 from ..config import settings
-from .ai_providers import claude_configured, gemini_params, gemini_url, make_anthropic_client
+from .ai_providers import claude_configured, gemini_post, make_anthropic_client
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 # v: gemini-2.5-flash(경량/구세대) → gemini-3.1-pro-preview(상위 비전 Pro) 업그레이드.
 #    인물 사진의 외모 특징 추출 정밀도를 높여 정체성 반영 개선 목적.
 #    (라이브 키 접근 200 확인. 구 gemini-3-pro-preview 는 404 폐기됨.)
-GEMINI_TEXT_API_URL = gemini_url(
+GEMINI_TEXT_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-3.1-pro-preview:generateContent"
 )
 
-GEMINI_IMAGE_API_URL = gemini_url(
+GEMINI_IMAGE_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-3-pro-image-preview:generateContent"
 )
@@ -1193,9 +1193,9 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
+                resp = await gemini_post(
+                    client,
                     GEMINI_TEXT_API_URL,
-                    params=gemini_params(),
                     json=payload,
                 )
             if resp.status_code == 200:
@@ -1455,9 +1455,9 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
-                resp = await client.post(
+                resp = await gemini_post(
+                    client,
                     GEMINI_IMAGE_API_URL,
-                    params=gemini_params(),
                     json=payload,
                 )
             if resp.status_code == 200:
