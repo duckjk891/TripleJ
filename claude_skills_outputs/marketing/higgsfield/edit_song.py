@@ -26,7 +26,11 @@ def src(tag):
     if tag.startswith("K"):
         return f"{OUT}/loop/C{tag[1:]}.mp4"
     kind, name = tag.split(":")
-    return f"{OUT}/sd720/{name}.mp4" if kind == "S" else f"{OUT}/loop/{name}.mp4"
+    if kind == "S":
+        # prefer the Real-ESRGAN (realesr-animevideov3 x2 -> 1280x720) version when it exists
+        esr = f"{OUT}/sd720esr/{name}.mp4"
+        return esr if os.path.exists(esr) else f"{OUT}/sd720/{name}.mp4"
+    return f"{OUT}/loop/{name}.mp4"
 
 
 def K(n, shot):
