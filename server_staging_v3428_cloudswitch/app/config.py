@@ -141,6 +141,15 @@ class Settings(BaseSettings):
     ai_429_alert_threshold: int = 10     # 공급자별 429 가 창 안에 이 건수 이상이면 경고 로그
     ai_429_alert_window_sec: int = 300
     ai_429_alert_email: str = ""         # (선택) 경고를 SES 메일로도. 비우면 로그만
+    gemini_retry_max: int = 0            # 자체 재시도 없는 Gemini 호출부의 추가 시도 횟수(0 = 지금 동작)
+    gemini_retry_base_sec: float = 1.0   # 지수 백오프 기본 대기
+    gemini_retry_max_wait_sec: float = 8.0  # 백오프 1회 최대 대기
+    gemini_model_fallback: bool = False  # 일시 오류 시 예비 모델 1회
+    gemini_fallback_models: str = "gemini-3.1-pro-preview=gemini-2.5-pro"
+    vertex_priority_paygo: bool = False  # 사용자 대기 Gemini 요청에 Priority PayGo 헤더(Vertex 일 때만)
+    claude_max_retries: int = -1         # -1 = SDK 기본(2회) 그대로, 호출부 지정값 우선
+    openai_max_retries: int = -1
+    vertex_claude_model_map: str = ""    # "claude-opus-4-6=<Vertex ID>,..." Vertex 표기가 다를 때만
 
     # Suno API
     suno_api_key: str = ""

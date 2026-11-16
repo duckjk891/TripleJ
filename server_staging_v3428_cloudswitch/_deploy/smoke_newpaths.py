@@ -101,6 +101,19 @@ async def main():
             return "via {}".format(host)
         await step("gemini text " + model, _g)
 
+    async def _prio():
+        # Priority PayGo 헤더가 익스프레스 API 키 경로에서도 먹히는지(ai_providers TODO) — 응답 trafficType 으로 판정
+        url = ap._vertex_url(GEMINI_TEXT.format("gemini-2.5-flash"))
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            resp = await c.post(url, params={"key": settings.vertex_api_key},
+                                headers={ap.PRIORITY_PAYGO_HEADER: "priority"},
+                                json={"contents": [{"parts": [{"text": "Reply OK."}]}],
+                                      "generationConfig": {"maxOutputTokens": 32}})
+        assert resp.status_code == 200, "HTTP {}".format(resp.status_code)
+        tt = (resp.json().get("usageMetadata") or {}).get("trafficType")
+        return "trafficType={} (ON_DEMAND_PRIORITY 면 VERTEX_PRIORITY_PAYGO 사용 가능)".format(tt)
+    await step("gemini priority paygo header", _prio)
+
     if not SKIP_IMAGES:
         async def _gimg():
             from app.services.mv_assets import _gemini_generate_image

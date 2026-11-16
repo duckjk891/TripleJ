@@ -12,6 +12,13 @@
   AI_429_ALERT_THRESHOLD / AI_429_ALERT_WINDOW_SEC
                                          공급자별 429 가 창(기본 300초) 안에 기준(기본 10건) 이상이면 경고 로그
   AI_429_ALERT_EMAIL                     (선택) 비어 있지 않으면 같은 경고를 SES 메일로도 보냄. 기본 = 로그만
+  GEMINI_RETRY_MAX = 0 / GEMINI_RETRY_BASE_SEC = 1 / GEMINI_RETRY_MAX_WAIT_SEC = 8
+                                         자체 재시도 없는 Gemini 호출부의 429·5xx·시간 초과 추가 시도(지수 백오프+지터)
+  GEMINI_MODEL_FALLBACK = false          켜면 GEMINI_FALLBACK_MODELS(기본 gemini-3.1-pro-preview=gemini-2.5-pro)로
+                                         일시 오류 시 예비 모델 1회
+  VERTEX_PRIORITY_PAYGO = false          켜면 사용자가 기다리는 Gemini 요청(캐릭터·커버)에 Priority PayGo 헤더(Vertex 일 때만)
+  CLAUDE_MAX_RETRIES / OPENAI_MAX_RETRIES = -1   SDK 재시도 횟수(-1 = SDK 기본 2회 그대로, 호출부 지정값 우선)
+  VERTEX_CLAUDE_MODEL_MAP = ""           Vertex 의 Claude 모델 ID 가 다르면 "옛=새,..." 로 치환
   임베딩 모델 = EMBEDDING_MODEL (기본 text-embedding-3-small, 1536차원 — 바꾸면 벡터 전부 재생성 필요)
   fal = FAL_API_KEY 만 마켓플레이스 키로 교체 (코드 변경 없음)
 
@@ -144,23 +151,76 @@ def _watch_429(client, provider: str):
     return client
 
 
+# ── SDK 공통 재시도 ───────────────────────────────────────────────────────────
+# Claude·OpenAI SDK 는 429·408·409·5xx·연결 오류에 지수 백오프+지터 재시도를 이미 한다(기본 2회,
+# 0.5초→최대 8초). 횟수만 환경변수로: CLAUDE_MAX_RETRIES / OPENAI_MAX_RETRIES (기본 -1 = 손대지 않음).
+# 호출부가 max_retries 를 직접 준 곳(낙서 읽기 1회·연령 분류 2회)은 그 값을 그대로 둔다.
+
+def _sdk_retry_kwargs(kwargs: dict, setting_name: str) -> dict:
+    try:
+        n = int(getattr(settings, setting_name, -1))
+    except (TypeError, ValueError):
+        n = -1
+    if n >= 0 and "max_retries" not in kwargs:
+        kwargs = dict(kwargs, max_retries=n)
+    return kwargs
+
+
 # ── Claude ────────────────────────────────────────────────────────────────────
+
+def _parse_map(raw: Optional[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for pair in (raw or "").split(","):
+        if "=" in pair:
+            a, b = pair.split("=", 1)
+            if a.strip() and b.strip():
+                out[a.strip()] = b.strip()
+    return out
+
+
+def _claude_vertex_model_map() -> Dict[str, str]:
+    return _parse_map(getattr(settings, "vertex_claude_model_map", ""))
+
+
+def _apply_claude_model_map(client):
+    """VERTEX_CLAUDE_MODEL_MAP("claude-opus-4-6=claude-opus-4-6@20260101,...")이 있으면
+    messages.create / stream / count_tokens 의 model= 만 바꿔 준다. 비어 있으면 아무것도 안 함."""
+    mapping = _claude_vertex_model_map()
+    if not mapping:
+        return client
+    res = client.messages  # SDK 는 cached_property → 같은 객체에 덮어쓰면 유지됨
+
+    def _wrap(orig):
+        def wrapped(*a, **kw):
+            m = kw.get("model")
+            if m in mapping:
+                kw["model"] = mapping[m]
+            return orig(*a, **kw)
+        return wrapped
+
+    for name in ("create", "stream", "count_tokens"):
+        orig = getattr(res, name, None)
+        if orig is not None:
+            setattr(res, name, _wrap(orig))
+    return client
+
 
 def make_anthropic_client(**kwargs):
     """AsyncAnthropic(옛) 또는 AsyncAnthropicVertex(새). timeout·max_retries 등은 그대로 전달.
 
-    Vertex 에서도 모델 ID 는 그대로(claude-opus-4-6 등, 날짜 접미사 없음).
+    Vertex 에서도 모델 ID 는 그대로(claude-opus-4-6 등). 표기가 다르면 VERTEX_CLAUDE_MODEL_MAP 으로 치환.
     """
     import anthropic
 
+    kwargs = _sdk_retry_kwargs(kwargs, "claude_max_retries")
     if claude_provider() == "vertex":
         logger.info("[ai_providers] claude=vertex project=%s region=%s",
                     settings.gcp_project_id, settings.vertex_region)
-        return _watch_429(anthropic.AsyncAnthropicVertex(
+        return _apply_claude_model_map(_watch_429(anthropic.AsyncAnthropicVertex(
             project_id=settings.gcp_project_id,
             region=settings.vertex_region or "global",
             **kwargs,
-        ), "claude-vertex")
+        ), "claude-vertex"))
     return _watch_429(anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, **kwargs),
                       "claude-anthropic")
 
@@ -175,6 +235,7 @@ def make_openai_client(**kwargs):
     """AsyncOpenAI — 옛: api.openai.com / 새: Azure OpenAI v1 엔드포인트(같은 SDK, 같은 호출 형식)."""
     from openai import AsyncOpenAI
 
+    kwargs = _sdk_retry_kwargs(kwargs, "openai_max_retries")
     if openai_provider() == "azure":
         key = settings.azure_openai_api_key
         return _watch_429(AsyncOpenAI(
@@ -209,13 +270,7 @@ def openai_configured() -> bool:
 # ── Gemini (REST) ─────────────────────────────────────────────────────────────
 
 def _gemini_model_map() -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    for pair in (settings.vertex_gemini_model_map or "").split(","):
-        if "=" in pair:
-            a, b = pair.split("=", 1)
-            if a.strip() and b.strip():
-                out[a.strip()] = b.strip()
-    return out
+    return _parse_map(settings.vertex_gemini_model_map)
 
 
 _GEMINI_TRANSIENT = (429, 500, 502, 503, 504)
@@ -255,18 +310,100 @@ def _aistudio_fallback_ok() -> bool:
     return bool(getattr(settings, "gemini_aistudio_fallback", True)) and bool(settings.google_api_key)
 
 
-async def gemini_post(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
-    """Gemini REST POST 한 번. url 은 AI Studio 모델 URL 을 그대로 넘긴다.
+# Priority PayGo (공식 문서 2026-11-16 확인): 요청 헤더 X-Vertex-AI-LLM-Shared-Request-Type: priority
+#   응답 본문 usageMetadata.trafficType = ON_DEMAND_PRIORITY(적용) / ON_DEMAND(표준으로 강등).
+#   TODO: 문서 예시는 서비스 계정(gcloud) 인증 + projects/.../locations/global 경로뿐 — 익스프레스 API 키
+#         (publishers/google/models/... 경로)에서도 먹히는지는 시험 컨테이너에서 trafficType 으로 확인할 것.
+PRIORITY_PAYGO_HEADER = "X-Vertex-AI-LLM-Shared-Request-Type"
+_sleep = asyncio.sleep  # 시험에서 바꿔 끼움
 
-    - 비율에 따라 이번 호출 경로를 고른다(0% = 예전과 똑같은 요청).
-    - Vertex 가 429·5xx·시간 초과면 AI Studio 로 딱 한 번 재시도(GOOGLE_API_KEY 있을 때만).
-    - 그 밖의 응답(200 안의 안전 차단, 400 등)은 그대로 돌려준다 — 모델·경로 우회 금지(v3.377).
-    호출부의 기존 재시도·오류 처리는 이 응답을 받아 예전처럼 동작한다.
+
+def _gemini_retry_max() -> int:
+    try:
+        return max(0, min(10, int(getattr(settings, "gemini_retry_max", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _backoff_delay(attempt: int) -> float:
+    """지수 백오프 + 지터(equal jitter): 상한 d=min(최대 대기, 기본×2^attempt), 실제 = d/2 + U(0, d/2)."""
+    try:
+        base = float(getattr(settings, "gemini_retry_base_sec", 1.0) or 1.0)
+        cap = float(getattr(settings, "gemini_retry_max_wait_sec", 8.0) or 8.0)
+    except (TypeError, ValueError):
+        base, cap = 1.0, 8.0
+    d = min(cap, base * (2 ** attempt))
+    return d / 2 + random.uniform(0, d / 2)
+
+
+def _fallback_model_url(url: str) -> Optional[str]:
+    """GEMINI_MODEL_FALLBACK 켜짐 + 이 URL 의 모델이 GEMINI_FALLBACK_MODELS 에 있으면 예비 모델 AI Studio URL."""
+    if not bool(getattr(settings, "gemini_model_fallback", False)):
+        return None
+    m = _AISTUDIO_MODEL_URL.match(url)
+    if not m:
+        return None
+    alt = _parse_map(getattr(settings, "gemini_fallback_models", "")).get(m.group(1))
+    if not alt or alt == m.group(1):
+        return None
+    return "https://generativelanguage.googleapis.com/v1beta/models/{}:{}".format(alt, m.group(2))
+
+
+async def gemini_post(client: httpx.AsyncClient, url: str, *, retry: bool = True, priority: bool = False,
+                      **kwargs) -> httpx.Response:
+    """Gemini REST POST. url 은 AI Studio 모델 URL 을 그대로 넘긴다.
+
+    한 번의 시도 = 경로 선택(비율) → Vertex 가 429·5xx·시간 초과면 AI Studio 1회(GEMINI_AISTUDIO_FALLBACK)
+                 → 그래도 일시 오류면 예비 모델 1회(GEMINI_MODEL_FALLBACK, 기본 꺼짐).
+    retry=True 인 호출부는 일시 오류(429·500·502·503·504·시간 초과)에 GEMINI_RETRY_MAX 번(기본 0)
+    지수 백오프+지터로 더 시도. **자체 재시도 루프가 있는 호출부는 retry=False** 로 이중 재시도를 막는다.
+    priority=True(사용자가 기다리는 요청)는 VERTEX_PRIORITY_PAYGO 가 켜져 있고 Vertex 로 갈 때만 헤더를 붙인다.
+    그 밖의 응답(200 안의 안전 차단, 400 등)은 그대로 — 재시도·모델·경로 우회 금지(v3.377).
     """
+    attempts = 1 + (_gemini_retry_max() if retry else 0)
+    for i in range(attempts):
+        last = i + 1 >= attempts
+        try:
+            resp = await _gemini_attempt(client, url, priority, kwargs)
+        except httpx.TimeoutException as e:
+            if last:
+                raise
+            delay = _backoff_delay(i)
+            logger.warning("[gemini] timeout(%s) — retry %d/%d in %.1fs", type(e).__name__, i + 1, attempts - 1, delay)
+            await _sleep(delay)
+            continue
+        if resp.status_code in _GEMINI_TRANSIENT and not last:
+            delay = _backoff_delay(i)
+            logger.warning("[gemini] HTTP %s — retry %d/%d in %.1fs", resp.status_code, i + 1, attempts - 1, delay)
+            await _sleep(delay)
+            continue
+        return resp
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+async def _gemini_attempt(client, url, priority, kwargs) -> httpx.Response:
+    alt = _fallback_model_url(url)
+    if alt is None:
+        return await _gemini_route_call(client, url, priority, kwargs)
+    try:
+        resp = await _gemini_route_call(client, url, priority, kwargs)
+    except httpx.TimeoutException as e:
+        logger.warning("[gemini] model timeout(%s) -> 예비 모델 %s", type(e).__name__, alt.rsplit("/", 1)[-1])
+        return await _gemini_route_call(client, alt, priority, kwargs)
+    if resp.status_code in _GEMINI_TRANSIENT:
+        logger.warning("[gemini] model HTTP %s -> 예비 모델 %s", resp.status_code, alt.rsplit("/", 1)[-1])
+        return await _gemini_route_call(client, alt, priority, kwargs)
+    return resp
+
+
+async def _gemini_route_call(client, url, priority, kwargs) -> httpx.Response:
     route = pick_gemini_route(url)
     if route == "vertex":
+        vkw = kwargs
+        if priority and bool(getattr(settings, "vertex_priority_paygo", False)):
+            vkw = dict(kwargs, headers={**(kwargs.get("headers") or {}), PRIORITY_PAYGO_HEADER: "priority"})
         try:
-            resp = await client.post(_vertex_url(url), params={"key": settings.vertex_api_key}, **kwargs)
+            resp = await client.post(_vertex_url(url), params={"key": settings.vertex_api_key}, **vkw)
         except httpx.TimeoutException as e:
             if _aistudio_fallback_ok():
                 logger.warning("[gemini] vertex timeout(%s) -> AI Studio 재시도", type(e).__name__)

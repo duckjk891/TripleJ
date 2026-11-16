@@ -3,7 +3,7 @@
 - 기준: 운영 컨테이너 maidol-app 의 v3.427 코드 스냅샷(11-10, 읽기 전용으로 내려받음). origin/backend 는 오래됨.
 - **아직 운영에 배포하지 않음.** 배포해도 환경변수를 안 바꾸면 지금과 똑같이 동작(기본값 = 옛 경로).
 - 전체 변경: `cloudswitch.diff` (21개 파일, 서버 기준 md5 는 `files.txt`)
-- 시험(네트워크 없음, `bash ~/cloudswitch/tools/run_tests.sh`): `behave_test.py` 14+13 · `fallback_test.py` 5 · `gemini_route_test.py` 33 · `routecheck.py` 라우트 파일 5개 SAME — 11-12 전부 PASS
+- 시험(네트워크 없음, `bash ~/cloudswitch/tools/run_tests.sh`): `behave_test.py` 14+13 · `fallback_test.py` 5 · `gemini_route_test.py` 33 · `retry_test.py` 45 · `routecheck.py` 라우트 파일 5개 SAME — 11-16 전부 PASS
 - **절차서**: 스위치 끈 채 사전 배포 `RUNBOOK_dark_deploy.md`(+`_deploy/deploy_v3428_dark.sh`·`rollback_v3428.sh`) / 키 생긴 뒤 새 경로 시험 컨테이너 `RUNBOOK_testcontainer.md`(+`_deploy/testcontainer_v3428.sh`·`smoke_newpaths.py`)
 - 스테이징 갱신: base 에서 고친 뒤 `bash ~/cloudswitch/tools/sync_staging.sh` (app/·diff·files.txt 재생성 + py_compile)
 
@@ -14,7 +14,8 @@
 - Gemini REST 9개 URL(호출 13곳: 캐릭터 2·커버 2·MV 8·MV 자산 1) → `gemini_post()` 한 함수 경유, 호출마다 비율 분배 + 예비 경로
 - "키 없음" 검사들 → 스위치 기준(새 경로에서 옛 키를 지워도 막히지 않게). 관리자 점검(admin_health)은 옛 경로 확인용으로 그대로 → 스위치 대상 4개(Claude·Gemini·OpenAI·이미지 예비)
 - 429 급증 알림(공급자별) — 아래
-- `config.py` 설정 14개 추가 (아래 표)
+- (11-16) 공통 재시도·Gemini 예비 모델·Priority PayGo 헤더·Claude 모델 ID 매핑·SDK 재시도 횟수 — 아래
+- `config.py` 설정 23개 추가 (아래 표)
 
 ## 스위치 (.env)
 | 변수 | 기본(옛) | 새 경로 |
@@ -26,6 +27,11 @@
 | OPENAI_PROVIDER | openai | azure (AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY) — Azure 배포 이름 = 지금 모델 이름 그대로 |
 | AI_429_ALERT_THRESHOLD / AI_429_ALERT_WINDOW_SEC | 10 / 300 | 공급자별 429 가 5분에 10건 이상이면 경고 로그 |
 | AI_429_ALERT_EMAIL | (비움) | 넣으면 같은 경고를 SES 메일로도(기본 = 로그만) |
+| GEMINI_RETRY_MAX / _BASE_SEC / _MAX_WAIT_SEC | 0 / 1 / 8 | 자체 재시도 없는 Gemini 호출부의 추가 시도(429·5xx·시간 초과, 지수 백오프+지터). 권장 2 |
+| GEMINI_MODEL_FALLBACK | false | true 면 GEMINI_FALLBACK_MODELS(기본 `gemini-3.1-pro-preview=gemini-2.5-pro`)로 일시 오류 시 예비 모델 1회 |
+| VERTEX_PRIORITY_PAYGO | false | true 면 캐릭터·커버 Gemini 요청이 Vertex 로 갈 때만 `X-Vertex-AI-LLM-Shared-Request-Type: priority` |
+| CLAUDE_MAX_RETRIES / OPENAI_MAX_RETRIES | -1 | SDK 재시도 횟수. -1 = SDK 기본 2회 그대로. 호출부가 직접 준 값(낙서 읽기 1·연령 분류 2)은 항상 우선 |
+| VERTEX_CLAUDE_MODEL_MAP | (비움) | Vertex 의 Claude 모델 ID 가 Anthropic 표기와 다르면 `옛=새,...` (Vertex 경로에서만 치환) |
 | EMBEDDING_MODEL | text-embedding-3-small | (원래부터 환경변수로 바꿀 수 있음. 바꾸면 track_embeddings 전부 재생성) |
 | FAL_API_KEY | 기존 키 | 마켓플레이스 키로 교체만 (코드 변경 없음) |
 
@@ -65,10 +71,19 @@
 - 확인: `docker logs --since 1h maidol-app 2>&1 | grep ai-429-alert`
 - 참고: GPT 이미지(openai_image.py, httpx 직접)는 집계 대상 아님(호출량 하루 최대 10건)
 
+## 공통 재시도 · 예비 모델 · Priority PayGo · Claude 모델 매핑 (11-16)
+- **Claude·OpenAI**: SDK 가 429·408·409·5xx·연결 오류에 지수 백오프+지터(0.5초→최대 8초)를 이미 함 → 새 코드는 횟수만 환경변수로(`CLAUDE_MAX_RETRIES`·`OPENAI_MAX_RETRIES`, 기본 -1=그대로). 400(안전 거절 포함)은 SDK 도 재시도 안 함
+- **Gemini**: `gemini_post(..., retry=True)` 가 공통 헬퍼. 한 번의 시도 = 경로(비율) → Vertex 일시 오류면 AI Studio 1회 → 그래도 일시 오류면 예비 모델 1회. 그 시도 전체를 `GEMINI_RETRY_MAX` 번 더(대기 = d/2 + U(0,d/2), d = min(최대 대기, 기본×2^n))
+- 이중 재시도 방지: 자체 재시도가 있는 9곳은 `retry=False` — 캐릭터 텍스트·이미지(자체 3회), 커버 다듬기(자체 2회), MV 음악 분석 2·장면 이미지 2(429 30초 1회), 브레인스톰(상위 2회 루프), 시나리오(상위 재시도 경로). 공통 재시도 대상 4곳 = 커버 생성, MV 자산 이미지, 커버 인물 설명, 영상 프롬프트
+- 예비 모델은 `gemini-3.1-pro-preview`(캐릭터 텍스트 분석) → `gemini-2.5-pro`. 400·안전 차단은 넘기지 않음
+- Priority PayGo: 헤더는 공식 문서(2026-11-16)로 확인. 적용 여부는 응답 `usageMetadata.trafficType`(ON_DEMAND_PRIORITY/ON_DEMAND). **TODO**: 문서 예시는 서비스 계정 인증뿐 → 익스프레스 API 키에서도 되는지 시험 컨테이너 `gemini priority paygo header` 단계로 확인
+- Claude 모델 매핑: Vertex 클라이언트의 `messages.create/stream/count_tokens` 의 `model=` 만 치환. 비어 있으면 클라이언트를 건드리지 않음
+- 시험: `retry_test.py` 45항목(기본값=지금 동작, 재시도 횟수·대기 범위·상한, retry=False, 400·연결 오류 비재시도, 예비 모델 조건, 헤더 붙는 조건, 모델 매핑, SDK 횟수·호출부 값 우선, 호출 지점 표시 수)
+
 ## 일부러 안 건드린 것
 - Veo 함수·프롬프트 본문(도달 불가 코드)과 `VEO31_GENERATE_URL` 상수는 남겨 둠 — 정리는 나중에
 - 관리자 점검(admin_health) — 옛 경로 확인용 그대로.
-- 재시도: Claude·OpenAI SDK 기본 재시도(2회) + Gemini 호출 대부분 자체 재시도 이미 있음. 예비 모델·이미지 트랙 교차 예비는 동작이 바뀌므로 별도 작업.
+- 이미지 트랙 교차 예비 중 Gemini 이미지 → GPT 이미지 방향은 미구현(GPT → Gemini 만 있음).
 - `analyze_music_structure`(GEMINI_AUDIO_URL, MV 음악 구조 분석)는 v3.427 에도 있는 Gemini 오디오 호출 — 경로만 바뀜. 사용자 음원 외부 전송 금지 규칙과 맞는지 별도 확인 필요
 
 ## 새 경로 켤 때 확인할 것 → `RUNBOOK_testcontainer.md` 로 자동화

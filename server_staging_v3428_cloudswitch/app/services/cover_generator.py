@@ -444,7 +444,7 @@ async def generate_cover_image(
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await gemini_post(
             client,
-            GEMINI_API_URL,
+            GEMINI_API_URL, priority=True,
             json=payload,
         )
 
@@ -557,7 +557,7 @@ async def _refine_with_gemini(
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await gemini_post(
                     client,
-                    GEMINI_API_URL,
+                    GEMINI_API_URL, retry=False, priority=True,
                     json=payload,
                 )
             logger.info("[CoverRefine] gemini HTTP status=%d", resp.status_code)

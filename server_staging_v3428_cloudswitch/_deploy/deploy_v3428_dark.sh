@@ -25,7 +25,7 @@ LOGS=/home/ubuntu/maidol/logs
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 
 echo "[2/9] 사전 확인: 스위치 변수가 .env 에 없어야 함(이름만 출력)"
-SW=$(grep -E '^(CLAUDE_PROVIDER|GEMINI_PROVIDER|GEMINI_VERTEX_RATIO|OPENAI_PROVIDER|IMAGE_FALLBACK_GEMINI|AI_429_ALERT_EMAIL)=' .env | cut -d= -f1 || true)
+SW=$(grep -E '^(CLAUDE_PROVIDER|GEMINI_PROVIDER|GEMINI_VERTEX_RATIO|OPENAI_PROVIDER|IMAGE_FALLBACK_GEMINI|AI_429_ALERT_EMAIL|GEMINI_RETRY_MAX|GEMINI_MODEL_FALLBACK|VERTEX_PRIORITY_PAYGO|CLAUDE_MAX_RETRIES|OPENAI_MAX_RETRIES|VERTEX_CLAUDE_MODEL_MAP)=' .env | cut -d= -f1 || true)
 [ -z "$SW" ] || { echo "중단: .env 에 이미 스위치 변수가 있어요: $SW (사전 배포는 전부 기본값이어야 함)"; exit 1; }
 echo "  OK (스위치 변수 없음)"
 

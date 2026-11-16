@@ -1195,7 +1195,7 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await gemini_post(
                     client,
-                    GEMINI_TEXT_API_URL,
+                    GEMINI_TEXT_API_URL, retry=False, priority=True,
                     json=payload,
                 )
             if resp.status_code == 200:
@@ -1457,7 +1457,7 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await gemini_post(
                     client,
-                    GEMINI_IMAGE_API_URL,
+                    GEMINI_IMAGE_API_URL, retry=False, priority=True,
                     json=payload,
                 )
             if resp.status_code == 200:

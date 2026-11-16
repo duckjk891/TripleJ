@@ -1118,7 +1118,7 @@ async def analyze_music_structure(
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await gemini_post(
             client,
-            GEMINI_AUDIO_URL,
+            GEMINI_AUDIO_URL, retry=False,
             json=payload,
         )
 
@@ -1128,7 +1128,7 @@ async def analyze_music_structure(
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await gemini_post(
                 client,
-                GEMINI_AUDIO_URL,
+                GEMINI_AUDIO_URL, retry=False,
                 json=payload,
             )
 
@@ -1933,7 +1933,7 @@ async def _generate_brainstorm_gemini(
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await gemini_post(
-            client, url, json=payload,
+            client, url, json=payload, retry=False,  # 상위 _generate_brainstorm 2회 루프
         )
         resp.raise_for_status()
         data = resp.json()
@@ -3540,7 +3540,7 @@ async def _generate_scenario_gemini(
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await gemini_post(
             client,
-            url,
+            url, retry=False,  # 상위 시나리오 재시도 경로(temperature 상향)
             json=payload,
         )
         resp.raise_for_status()
@@ -5291,7 +5291,7 @@ async def generate_scene_image(
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await gemini_post(
             client,
-            GEMINI_IMAGE_URL,
+            GEMINI_IMAGE_URL, retry=False,
             json=payload,
         )
 
@@ -5302,7 +5302,7 @@ async def generate_scene_image(
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await gemini_post(
                 client,
-                GEMINI_IMAGE_URL,
+                GEMINI_IMAGE_URL, retry=False,
                 json=payload,
             )
 
