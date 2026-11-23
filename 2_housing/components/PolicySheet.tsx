@@ -109,8 +109,8 @@ export function CompanyFooter({ onOpenPolicy }: { onOpenPolicy?: (key: 'terms' |
         MAIDOL | My AI Idol{'\n'}
         AI로 만든 음악을 공유하는 플랫폼{'\n'}
         주식회사 로터스에이아이 | 대표 이재규 | 사업자등록번호 334-87-04045{'\n'}
-        서울시 중구 퇴계로36길 2, 10층 16호·18호{'\n'}
-        대표전화 02-2272-8952 | 이메일 maidol_official@lotusai.co.kr{'\n'}
+        #914, 9F, 293 Bupyeong-daero, Bupyeong-gu (Cheongcheon-dong, Incheon Content Business Support Center){'\n'}
+        대표전화 032-650-5823 | 이메일 maidol_official@lotusai.co.kr{'\n'}
         개인정보보호책임자 김진주{'\n'}
         © 2026 Lotus AI. All Rights Reserved.
       </AppText>
