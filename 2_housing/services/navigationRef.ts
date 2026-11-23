@@ -13,7 +13,7 @@ export function navigateGlobal(name: string, params?: object) {
 }
 
 /**
- * v3.419: 시작 화면(Splash, 5초 뒤 MainTabs 로 replace)이 끝날 때까지 대기 — 최대 timeoutMs.
+ * v3.419: 시작 화면(Splash, 약 2.5초·최대 4초 뒤 MainTabs 로 replace)이 끝날 때까지 대기 — 최대 timeoutMs.
  * Splash 중에 다른 화면으로 이동하면 Splash 의 replace 가 뒤이어 차트로 덮어쓴다
  * (첫 방문자 '무료로 한 곡 만들어보기' → 재료 담기 → 차트로 튕김, 대표 10-29).
  */
