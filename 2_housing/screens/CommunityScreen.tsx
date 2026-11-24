@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button, EmptyState, ScreenLayout, Tag } from '../components/ui';
+import CarolBanner from '../components/CarolBanner'; // v3.438
 import LoginPrompt from '../components/LoginPrompt';
 import { usePlayerStore } from '../stores/playerStore';
 import { useAuthStore } from '../stores/authStore';
@@ -193,6 +194,7 @@ export default function CommunityScreen() {
   // 상단 — 컴팩트 히어로 + 내 클럽 가로 카드 + 정렬 토글(사이즈는 파일 상단 감사 표 기준)
   const header = (
     <View>
+      <View style={{ marginTop: spacing.sm }}><CarolBanner /></View>{/* v3.438 */}
       <View style={styles.hero}>
         <View style={styles.heroIcon}>
           <Feather name="users" size={20} color={colors.accent.primary} />

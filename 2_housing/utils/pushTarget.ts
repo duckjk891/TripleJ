@@ -10,6 +10,7 @@ export function pushTargetFor(tag: string | null | undefined): PushTarget | null
   const t = String(tag || '');
   if (t === 'maidol-station' || t.startsWith('maidol-done-')) return null;
   if (t === 'maidol-social') return { name: 'MainTabs', params: { screen: 'Feed' } };
+  if (t.startsWith('maidol-carol-')) return { name: 'MainTabs', params: { screen: 'CarolEvent' } }; // v3.438
   let m = t.match(new RegExp(`^maidol-song-${ID}$`));
   if (m) return { name: 'Player', params: { track: { id: m[1] } } };
   m = t.match(new RegExp(`^maidol-(?:diary|notice)-${ID}$`));

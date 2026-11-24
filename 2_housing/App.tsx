@@ -99,6 +99,7 @@ import CommunityScreen from './screens/CommunityScreen';
 import ClubCreateScreen from './screens/ClubCreateScreen';
 import ClubHomeScreen from './screens/ClubHomeScreen';
 import ClubChatScreen from './screens/ClubChatScreen'; // v3.252 크루 단톡방
+import CarolEventScreen from './screens/CarolEventScreen'; // v3.438 캐롤 크루 이벤트
 import ClubAlbumScreen from './screens/ClubAlbumScreen'; // v3.305 크루 앨범(대표곡·참여 미션)
 import { captureWebClubLink, captureNativeClubLink, peekPendingClubLink, takePendingClubLink } from './utils/clubLink';
 import { processPendingClubJoin } from './utils/clubJoin';
@@ -604,6 +605,25 @@ function MainTabs() {
           headerShadowVisible: false,
           headerLeft: () => (
             <TouchableOpacity onPress={() => navigation.navigate('Community')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
+            </TouchableOpacity>
+          ),
+        })}
+      />
+      {/* v3.438 [Carol] 캐롤 크루 이벤트 — 숨김 탭(하단 탭바 유지) */}
+      <Tab.Screen
+        name="CarolEvent"
+        component={CarolEventScreen}
+        options={({ navigation }) => ({
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+          headerShown: true,
+          headerTitle: () => <AppText variant="subtitle">캐롤 이벤트</AppText>,
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Chart')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
               <Feather name="arrow-left" size={22} color={colors.text.primary} />
             </TouchableOpacity>
           ),

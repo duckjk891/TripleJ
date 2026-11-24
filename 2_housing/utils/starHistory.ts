@@ -27,6 +27,7 @@ const CREDIT_LABELS: Record<string, string> = {
   star_station: '스타 제작소', // v3.388
   diary_daily: '낙서하기', // v3.389
   club_create: '크루 만들기', // v3.395
+  carol_wheel: '캐롤 이벤트', // v3.438
 };
 
 // 사용·환불 대상(명사) — 표시 = '{명사} 사용' / '{명사} 환불'

@@ -26,6 +26,7 @@ import * as Clipboard from 'expo-clipboard';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button, EmptyState, ScreenLayout } from '../components/ui';
+import CarolBanner from '../components/CarolBanner'; // v3.438
 import LoginPrompt from '../components/LoginPrompt';
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
@@ -1236,6 +1237,7 @@ export default function ClubHomeScreen() {
   // ── 상단 정보 + 탭바(FlatList 헤더) ──
   const header = (
     <View>
+      <CarolBanner clubId={clubId ? String(clubId) : 'none'} />
       <View style={styles.infoBox}>
         <View style={styles.infoTopRow}>
           <View style={{ flex: 1 }}>

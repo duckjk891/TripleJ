@@ -17,6 +17,7 @@ import { parseServerTime } from '../utils/serverTime';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
+import CarolBanner from '../components/CarolBanner'; // v3.438
 import TrackRow, { trackRowStyles } from '../components/TrackRow';
 import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
@@ -393,6 +394,8 @@ export default function ChartScreen() {
           ))}
         </ScrollView>
       </View>
+
+      <CarolBanner />{/* v3.438 캐롤 이벤트(진행 중일 때만) */}
 
       {/* v3.303: 차트 기준 안내는 전체 담기와 한 줄(목록 머리)로 이동 — 왼쪽 차트 기준 · 오른쪽 전체 담기 */}
 
