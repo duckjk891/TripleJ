@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import api from './api';
+import { hideInForeground, nudgeDue, type NudgeRecord } from '../utils/pushTarget';
 
 // v3.298 [WebPush] 웹 푸시 구독 — 서버 /api/push/*. 웹 전용(안드로이드 APK 는 Firebase 설정 후 별도 지원).
 // 아이폰은 Safari '홈 화면에 추가' 한 웹앱(standalone)에서만 푸시 가능(Apple 정책).
@@ -134,12 +135,11 @@ export async function initNativePush(): Promise<void> {
   handlerReady = true;
   try {
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
+      handleNotification: async (n: any) => {
+        // v3.436: 완성·제작소는 앱 안에서 이미 알려 주므로 보고 있을 때는 배너·소리를 내지 않는다
+        const show = !hideInForeground(n?.request?.content?.data?.tag);
+        return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: show, shouldSetBadge: false };
+      },
     });
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
@@ -164,7 +164,7 @@ function clearLastOpen(): void {
   } catch {}
 }
 
-async function handleOpenOnce(r: any, cb: () => void, via: 'listener' | 'cold'): Promise<void> {
+async function handleOpenOnce(r: any, cb: (tag: string) => void, via: 'listener' | 'cold'): Promise<void> {
   const id = String(r?.notification?.request?.identifier || '');
   if (id && (await storageGet(HANDLED_OPEN_KEY)) === id) {
     if (__DEV__) console.info('[NativePush] 이미 처리한 알림 열기 — 건너뜀', { via });
@@ -173,11 +173,12 @@ async function handleOpenOnce(r: any, cb: () => void, via: 'listener' | 'cold'):
   }
   if (id) await storageSet(HANDLED_OPEN_KEY, id);
   clearLastOpen();
-  console.info('[NativePush] 알림 눌러 열기 → 알림함', { via });
-  cb();
+  const tag = String(r?.notification?.request?.content?.data?.tag || '');
+  console.info('[NativePush] 알림 눌러 열기', { via, tag: tag.split('-').slice(0, 2).join('-') });
+  cb(tag);
 }
 
-export function onNativePushOpened(cb: () => void): () => void {
+export function onNativePushOpened(cb: (tag: string) => void): () => void {
   if (!nativePushSupported()) return () => {};
   let sub: any = null;
   try {
@@ -297,6 +298,53 @@ export async function maybeAskNativePush(reason: string): Promise<void> {
   } catch (err: any) {
     console.error('[NativePush] 알림 받기 안내 실패', { reason, msg: err?.message });
   }
+}
+
+// v3.436 [PushNudge] 알림을 안 켠 회원이 들어오면 켜기 안내(대표 11-24)
+const NUDGE_KEY = 'maidol-push-nudge-v1';
+
+async function readNudge(): Promise<NudgeRecord> {
+  try {
+    const r = JSON.parse((await storageGet(NUDGE_KEY)) || '{}');
+    return { first: Number(r.first) || 0, last: Number(r.last) || 0, count: Number(r.count) || 0 };
+  } catch {
+    return { first: 0, last: 0, count: 0 };
+  }
+}
+
+/** 'ask' = OS 권한을 물을 수 있음 · 'settings' = OS 에서 꺼 둬 설정으로 안내 · null = 안내 안 함(이미 켬·직접 끔·아직 때가 아님) */
+export async function pushNudgeKind(): Promise<'ask' | 'settings' | null> {
+  try {
+    let kind: 'ask' | 'settings' | null = null;
+    if (Platform.OS === 'web') {
+      if (webPushSupport() !== 'supported' || w().Notification.permission !== 'default') return null;
+      kind = 'ask';
+    } else {
+      if (!nativePushSupported() || (await storageGet(NATIVE_OFF_KEY)) === '1') return null;
+      const perm = await Notifications.getPermissionsAsync();
+      if (perm?.granted) return null;
+      kind = perm?.canAskAgain === false ? 'settings' : 'ask';
+    }
+    const r = await readNudge();
+    if (!r.first) {
+      await storageSet(NUDGE_KEY, JSON.stringify({ ...r, first: Date.now() }));
+      return null;
+    }
+    return nudgeDue(r, Date.now()) ? kind : null;
+  } catch (err: any) {
+    console.error('[PushNudge] 확인 실패', { msg: err?.message });
+    return null;
+  }
+}
+
+export async function markPushNudged(): Promise<void> {
+  const r = await readNudge();
+  await storageSet(NUDGE_KEY, JSON.stringify({ ...r, last: Date.now(), count: r.count + 1 }));
+}
+
+/** 안내에서 '알림 켜기' — 앱은 OS 권한, 웹은 브라우저 권한 */
+export function enablePushFromNudge(): Promise<'ok' | 'denied' | 'unsupported' | 'failed'> {
+  return Platform.OS === 'web' ? enableWebPush() : enableNativePush(true);
 }
 
 /**

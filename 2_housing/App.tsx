@@ -70,7 +70,9 @@ import {
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import { waitModalTurn } from './utils/modalTurn'; // v3.384 [ModalTurn]
 import { getStarStationStatus, claimStarStationWithNotice, durationLabel } from './services/starStationService'; // v3.388
-import { initNativePush, onNativePushOpened, syncNativePushOnLogin, setNativePushAsker } from './services/pushService';
+import { initNativePush, onNativePushOpened, syncNativePushOnLogin, setNativePushAsker, pushNudgeKind, markPushNudged, enablePushFromNudge } from './services/pushService';
+import { pushTargetFor } from './utils/pushTarget'; // v3.436
+import { isChildNow } from './utils/kidsMode';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
@@ -684,6 +686,45 @@ async function promptStarStationIfFull(reason: string) {
   }
 }
 
+// v3.436 [PushNudge] 알림을 안 켠 회원이 들어오면 켜기 안내(대표 11-24) — 다른 자동 팝업이 모두 끝난 뒤(-1), 처음 쓴 날은 묻지 않음
+let pushNudgeBusy = false;
+async function promptPushNudge() {
+  if (pushNudgeBusy || !useAuthStore.getState().user || isChildNow()) return;
+  pushNudgeBusy = true;
+  try {
+    const kind = await pushNudgeKind();
+    if (!kind) return;
+    await waitModalTurn('push-nudge', -1).promise;
+    if (!useAuthStore.getState().user) return;
+    await markPushNudged();
+    console.info('[PushNudge] 알림 켜기 안내', { kind });
+    showAlert('알림을 켜 볼까요?', '곡·커버가 완성됐을 때, 스타가 다 만들어졌을 때, 팔로우한 분의 새 곡과 낙서, 공지를 바로 알려드려요. 설정에서 언제든 끌 수 있어요.', [
+      { text: '나중에', style: 'cancel' },
+      {
+        text: kind === 'settings' ? '설정 열기' : '알림 켜기',
+        onPress: () => {
+          if (kind === 'settings') {
+            // 설정에서 켜고 돌아오면 그때 등록한다
+            const sub = AppState.addEventListener('change', (st) => {
+              if (st !== 'active') return;
+              sub.remove();
+              void syncNativePushOnLogin();
+            });
+            void Linking.openSettings();
+            return;
+          }
+          void enablePushFromNudge().then((res) => {
+            if (res === 'ok') showAlert('알림', '알림을 켰어요.');
+            else if (res === 'failed') showAlert('알림', '알림을 켜지 못했어요. 설정 화면에서 다시 켜 주세요.');
+          });
+        },
+      },
+    ]);
+  } finally {
+    pushNudgeBusy = false;
+  }
+}
+
 // 전역 모달(출석/초대) + 최초 로그인 시 출석 팝업 자동 오픈
 function GlobalModals() {
   const user = useAuthStore((s) => s.user);
@@ -747,6 +788,12 @@ function GlobalModals() {
       }
     })();
   }, [user, fetchBalance]);
+  // v3.436 [PushNudge]: 들어왔을 때 알림이 꺼져 있으면 안내
+  useEffect(() => {
+    if (!user) return undefined;
+    const t = setTimeout(() => { void promptPushNudge(); }, 6000);
+    return () => clearTimeout(t);
+  }, [user]);
   // v3.388 [StarStation]: 앱으로 돌아왔을 때도 다 찼으면 1번(같은 주기는 다시 안 띄움)
   useEffect(() => {
     if (!user) return undefined;
@@ -1049,11 +1096,13 @@ export default function App() {
     const t = setTimeout(() => { void syncNativePushOnLogin(); }, 2500);
     return () => clearTimeout(t);
   }, [authUserId]);
-  // [FCM] 알림 채널·포그라운드 표시 1회 + 알림 탭 → 알림함(스플래시가 끝난 뒤 이동)
+  // [FCM] 알림 채널·포그라운드 표시 1회 + 알림 탭 → 해당 화면(스플래시가 끝난 뒤 이동)
   useEffect(() => {
     void initNativePush();
     let timer: ReturnType<typeof setInterval> | null = null;
-    const off = onNativePushOpened(() => {
+    const off = onNativePushOpened((tag) => {
+      const target = pushTargetFor(tag); // v3.436
+      if (!target) return;
       if (timer) clearInterval(timer);
       let tries = 0;
       timer = setInterval(() => {
@@ -1062,7 +1111,7 @@ export default function App() {
         if (route && route !== 'Splash') {
           if (timer) clearInterval(timer);
           timer = null;
-          if (route !== 'Notifications') (navigationRef.navigate as any)('Notifications');
+          if (route !== target.name || target.name !== 'Notifications') (navigationRef.navigate as any)(target.name, target.params);
         } else if (tries > 40) {
           if (timer) clearInterval(timer);
           timer = null;
