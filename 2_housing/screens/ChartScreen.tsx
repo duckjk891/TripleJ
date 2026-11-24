@@ -13,6 +13,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { playTrackNow } from '../services/playback';
+import { parseServerTime } from '../utils/serverTime';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -53,17 +54,17 @@ const TOPBAR_TUTORIAL_STEPS: TutorialStep[] = [
   { title: '아티스트 등급', desc: '아티스트는 연습생 → 신인 → 루키 → 라이징 → 아이돌 순으로 성장해요.\n각 등급 안에서는 5단계에서 시작해 1단계가 정점이에요. (예: 연습생 5 → 연습생 1 → 신인 5)' },
 ];
 
-// v3.207 ②: 신곡 탭 발매일 footer — created_at 상대 표기(서버 무수정, 필드 없으면 미표기)
+// v3.207 ②: 신곡 탭 발매일 footer — 차트에 올린 날(published_at, 없으면 created_at) 상대 표기 — 신곡 정렬 기준과 같게
+// v3.439(대표 11-24): '2026.10.15 발매'가 재생수·좋아요 칸을 침범 — 신곡 탭이라 '발매'를 빼고 짧게(올해는 월.일)
 const formatReleasedAgo = (iso?: string): string | null => {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  const diffDay = Math.floor((Date.now() - t) / 86400000);
-  if (diffDay <= 0) return '오늘 발매';
-  if (diffDay < 7) return `${diffDay}일 전 발매`;
-  if (diffDay < 30) return `${Math.floor(diffDay / 7)}주 전 발매`;
-  const d = new Date(t);
-  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} 발매`;
+  const d = parseServerTime(iso);
+  if (!d) return null;
+  const diffDay = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (diffDay <= 0) return '오늘';
+  if (diffDay < 7) return `${diffDay}일 전`;
+  if (diffDay < 30) return `${Math.floor(diffDay / 7)}주 전`;
+  const md = `${d.getMonth() + 1}.${d.getDate()}`;
+  return d.getFullYear() === new Date().getFullYear() ? md : `${String(d.getFullYear()).slice(2)}.${md}`;
 };
 
 interface ChartTrack {
@@ -85,6 +86,7 @@ interface ChartTrack {
   album_id?: string;
   // v3.207 ②: 신곡 탭 발매일 footer용 — /tracks/?sort=created_at 응답에 포함(차트 탭엔 없어도 무해)
   created_at?: string;
+  published_at?: string; // v3.439: 차트에 올린 시각(신곡 정렬 기준)
 }
 
 type ChartTab = 'top100' | 'daily' | 'weekly' | 'monthly' | 'new' | 'queue';
@@ -316,8 +318,8 @@ export default function ChartScreen() {
           : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
       : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
 
-    // v3.207 ②: 신곡 탭 발매일 footer (created_at 상대 표기 — 필드 없으면 미표기)
-    const releasedText = activeTab === 'new' ? formatReleasedAgo(item.created_at) : null;
+    // v3.207 ②: 신곡 탭 발매일 footer (차트에 올린 날 상대 표기 — 필드 없으면 미표기)
+    const releasedText = activeTab === 'new' ? formatReleasedAgo(item.published_at ?? item.created_at) : null;
 
     // v3.260 [MakeLike]: 차트 메인 리스트(신곡·TOP100·일간·주간·월간) 행에만 인라인 칩 노출 —
     // '내 재생목록' 탭·미니 차트 변형·앨범 섹션은 미적용(범위 한정). 행 우측(통계+⋮)은 공용 TrackRow
@@ -337,7 +339,7 @@ export default function ChartScreen() {
     const footer = makeLikeChip ? (
       <View style={styles.footerRow}>
         {makeLikeChip}
-        {releasedText ? <AppText variant="caption" tone="muted">{releasedText}</AppText> : null}
+        {releasedText ? <AppText variant="caption" tone="muted" numberOfLines={1} style={styles.releasedInline}>{releasedText}</AppText> : null}
       </View>
     ) : (releasedText
       ? <AppText variant="caption" tone="muted" style={styles.releasedFooter}>{releasedText}</AppText>
@@ -607,9 +609,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   releasedFooter: { marginTop: 3 }, // v3.207 ②: 신곡 탭 발매일 footer
+  releasedInline: { flexShrink: 1 }, // v3.439: 칸이 모자라면 줄어들게(옆 칸 침범 방지)
   // v3.260 [MakeLike]: 차트 행 인라인 칩 — criteriaBtn(Feather 13 + caption) 소형 텍스트 버튼 규격 준수,
   // 배경 pill 로 탭 가능함을 시각화. 발매일 footer(신곡 탭)와 한 줄 병치.
-  footerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  // v3.439: 큰 글씨·좁은 폰에서 자리가 모자라면 발매일이 다음 줄로 내려간다(재생수·좋아요 칸 침범 방지)
+  footerRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: 2, marginTop: spacing.xs },
   makeLikeChip: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start',
     paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill,
