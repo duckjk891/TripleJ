@@ -5,6 +5,7 @@
 //  · 떠 있는 루트 모달은 useRootModalOpen 으로 등록(사용자가 직접 연 창·다이얼로그 — 기다리지 않음)
 //  · 자동으로 뜨는 팝업은 차례(waitModalTurn / useModalTurn)를 받아서 띄운다 — 떠 있는 창이 없고 마지막 닫힘에서 GAP 지난 뒤,
 //    우선순위 높은 것부터 하나씩.
+//  · v3.434: 시작 화면(Splash)이 떠 있는 동안은 차례도 루트 다이얼로그도 내주지 않는다(holdModalTurns) — 끝나면 우선순위대로 하나씩.
 //  · 다이얼로그(showAlert)는 전체 화면 창 안에서 띄워야 iOS 에서 보인다 — useDialogOwner(AppDialogHost nested) 참고.
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -18,6 +19,7 @@ let lastChangeAt = 0;
 let reservedUntil = 0;
 let seq = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let held = false;
 
 interface Waiter {
   key: string;
@@ -36,7 +38,7 @@ function schedule(ms: number) {
 
 function pump() {
   timer = null;
-  if (!waiters.length) return;
+  if (held || !waiters.length) return; // 붙잡힌 동안은 한도(maxWait)도 넘기지 않는다 — 풀릴 때 다시 깨운다
   const now = Date.now();
   waiters.sort((a, b) => b.priority - a.priority || a.seq - b.seq);
   // 꼭 떠야 하는 창(가입 마무리 등)은 다른 창이 굳어 있어도 maxWait 뒤엔 띄운다(영영 안 뜨는 것 방지)
@@ -78,6 +80,21 @@ export function setRootModalOpen(key: string, isOpen: boolean): void {
 export function noteModalTransition(): void {
   lastChangeAt = Date.now();
   if (waiters.length) schedule(MODAL_GAP_MS);
+}
+
+/**
+ * v3.434 시작 화면이 끝날 때(until)까지 자동 팝업 차례와 루트 다이얼로그를 붙잡아 둔다.
+ * 풀리면 밀려 있던 다이얼로그가 먼저, 차례 대기 팝업은 GAP 뒤 우선순위대로(동시에 떠서 겹치지 않게).
+ */
+export function holdModalTurns(until: Promise<unknown>): void {
+  held = true;
+  const release = () => {
+    held = false;
+    lastChangeAt = Date.now();
+    emitHosts();
+    if (waiters.length) schedule(MODAL_GAP_MS);
+  };
+  until.then(release, release);
 }
 
 export interface ModalTurnTicket {
@@ -149,6 +166,7 @@ const subscribeHosts = (l: () => void) => {
   };
 };
 const topHost = () => hostStack[hostStack.length - 1] ?? null;
+const isHeld = () => held;
 
 function registerDialogHost(id: string): () => void {
   hostStack = [...hostStack.filter((h) => h !== id), id];
@@ -167,6 +185,7 @@ export function useDialogOwner(nestedId: string | null, active = true): boolean 
   const registered = nestedId && active ? nestedId : null;
   useEffect(() => (registered ? registerDialogHost(registered) : undefined), [registered]);
   const top = useSyncExternalStore(subscribeHosts, topHost, topHost);
+  const holding = useSyncExternalStore(subscribeHosts, isHeld, isHeld); // v3.434 시작 화면 동안 루트 다이얼로그 보류
   const rootFree = top === null;
   const [rootReady, setRootReady] = useState(rootFree);
   useEffect(() => {
@@ -179,5 +198,5 @@ export function useDialogOwner(nestedId: string | null, active = true): boolean 
     return () => clearTimeout(t);
   }, [nestedId, rootFree]);
   if (nestedId) return !!registered && top === registered;
-  return rootFree && rootReady;
+  return rootFree && rootReady && !holding;
 }

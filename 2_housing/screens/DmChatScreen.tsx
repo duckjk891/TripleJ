@@ -31,6 +31,7 @@ import { deleteDmMessage, editDmMessage } from '../services/dmService'; // v3.40
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar } from '../components/ui';
 import ReportModal from '../components/ReportModal';
+import { chatDayLabel, startsNewDay } from '../utils/chatDate'; // v3.434 날짜 구분선
 import { useIsChild, isChildRestrictedError } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -427,7 +428,10 @@ export default function DmChatScreen() {
     ? { onContextMenu: (e: any) => { e?.preventDefault?.(); if (!m.deleted) openMyMessageMenu(m); } }
     : {});
 
-  const renderMsg = ({ item }: { item: DmMessage }) => {
+  const renderMsg = ({ item, index }: { item: DmMessage; index: number }) => {
+    const at = parseUtc(item.created_at);
+    const prev = messages[index - 1];
+    const newDay = startsNewDay(at, prev ? parseUtc(prev.created_at) : null);
     const mine = user && String(item.sender_id) === String(user.id);
     const deleted = !!item.deleted;
     // v3.207(⑥)→v3.274: 이미지 메시지 — 한 말풍선에 이미지 세로 스택(최대 5장), 텍스트는 아래
@@ -458,7 +462,7 @@ export default function DmChatScreen() {
         ) : null}
       </View>
     );
-    return (
+    const row = (
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
         {onLong ? (
           <Pressable
@@ -485,6 +489,17 @@ export default function DmChatScreen() {
             </TouchableOpacity>
           ) : null}
         </View>
+      </View>
+    );
+    if (!newDay) return row;
+    return (
+      <View>
+        <View style={styles.dayRow} accessibilityRole="header">
+          <View style={styles.dayLine} />
+          <AppText variant="caption" tone="muted">{chatDayLabel(at)}</AppText>
+          <View style={styles.dayLine} />
+        </View>
+        {row}
       </View>
     );
   };
@@ -679,6 +694,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   reqBtn: { paddingVertical: 4, paddingHorizontal: spacing.sm },
+  // v3.434: 날짜가 바뀌는 곳 구분선
+  dayRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs, marginBottom: spacing.md },
+  dayLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle },
   msgRow: { marginBottom: spacing.md, maxWidth: '80%' },
   msgRowMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowPeer: { alignSelf: 'flex-start', alignItems: 'flex-start' },

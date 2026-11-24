@@ -29,7 +29,7 @@ import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
 import { NavigationContainer, LinkingOptions } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import { navigationRef, resetToChartTab } from './services/navigationRef';
+import { holdModalsUntilPastSplash, navigationRef, resetToChartTab } from './services/navigationRef';
 // v3.235 B5: 공유 링크 진입(`?track=`·`aidol://track/{id}`) → 곡 즉시 재생
 import {
   captureNativeTrackLink,
@@ -771,6 +771,7 @@ captureWebTrackLink();
 captureWebClubLink();
 captureWebIdentityReturn(); // v3.349 웹 본인확인 같은 탭 복귀(?identity=done&rid=&status=) 1회 캡처
 captureWebDmLink(); // v3.376 [DmLink] `?open=dm` 1회 캡처
+holdModalsUntilPastSplash(); // v3.434 시작 화면 위에 팝업이 뜨지 않게 — 첫 렌더 전에 붙잡아 둔다
 
 // v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
 //  로그인 복원(restoreQueueFor)이 재생목록을 계정 보관함으로 교체하므로 그 뒤에 붙여야 링크 곡이 남고,

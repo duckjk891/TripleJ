@@ -1,5 +1,5 @@
 import { CommonActions, createNavigationContainerRef } from '@react-navigation/native';
-import { noteModalTransition } from '../utils/modalTurn';
+import { holdModalTurns, noteModalTransition } from '../utils/modalTurn';
 
 // 전역 네비게이션 ref — 전역 모달 등 화면 밖 컨텍스트에서 이동에 사용.
 export const navigationRef = createNavigationContainerRef<any>();
@@ -37,6 +37,14 @@ export function whenPastSplash(timeoutMs = 8000): Promise<void> {
     const timer = setTimeout(finish, timeoutMs);
     try { off = navigationRef.addListener('state', () => { if (past()) finish(); }); } catch { /* 폴링으로 대체 */ }
   });
+}
+
+const SPLASH_HOLD_MAX_MS = 15000; // 시작 화면이 끝난 걸 못 알아채도 팝업이 영영 막히지 않게
+const SPLASH_FADE_MS = 300; // 시작 화면 → 차트 페이드
+
+/** v3.434(오리쟁이님 신고 6b01153b): 시작 화면 동안 자동 팝업(출석·제작소·새 소식 등)을 붙잡는다 — App.tsx 모듈 로드 시 1회 */
+export function holdModalsUntilPastSplash(): void {
+  holdModalTurns(whenPastSplash(SPLASH_HOLD_MAX_MS).then(() => new Promise<void>((r) => { setTimeout(r, SPLASH_FADE_MS); })));
 }
 
 // v3.216b F1: 로그인 성공 시 항상 차트 탭으로 리셋 착지 — 이메일·소셜·토큰 콜백 공용.
