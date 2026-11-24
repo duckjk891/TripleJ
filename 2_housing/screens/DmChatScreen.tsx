@@ -31,7 +31,8 @@ import { deleteDmMessage, editDmMessage } from '../services/dmService'; // v3.40
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar } from '../components/ui';
 import ReportModal from '../components/ReportModal';
-import { chatDayLabel, startsNewDay } from '../utils/chatDate'; // v3.434 날짜 구분선
+import ChatDayDivider from '../components/ChatDayDivider'; // v3.434 날짜 구분선
+import { startsNewDay } from '../utils/chatDate';
 import { useIsChild, isChildRestrictedError } from '../utils/kidsMode';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -494,11 +495,7 @@ export default function DmChatScreen() {
     if (!newDay) return row;
     return (
       <View>
-        <View style={styles.dayRow} accessibilityRole="header">
-          <View style={styles.dayLine} />
-          <AppText variant="caption" tone="muted">{chatDayLabel(at)}</AppText>
-          <View style={styles.dayLine} />
-        </View>
+        <ChatDayDivider date={at} />
         {row}
       </View>
     );
@@ -694,9 +691,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   reqBtn: { paddingVertical: 4, paddingHorizontal: spacing.sm },
-  // v3.434: 날짜가 바뀌는 곳 구분선
-  dayRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs, marginBottom: spacing.md },
-  dayLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle },
   msgRow: { marginBottom: spacing.md, maxWidth: '80%' },
   msgRowMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowPeer: { alignSelf: 'flex-start', alignItems: 'flex-start' },

@@ -21,6 +21,8 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button, EmptyState } from '../components/ui';
 import ReportModal from '../components/ReportModal';
+import ChatDayDivider from '../components/ChatDayDivider'; // v3.435 날짜 구분선
+import { startsNewDay } from '../utils/chatDate';
 import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import { useAuthStore } from '../stores/authStore';
 import { useIsChild, isChildRestrictedError } from '../utils/kidsMode';
@@ -197,9 +199,13 @@ export default function ClubChatScreen() {
     showAlert('메시지', `${m.sender_nickname || '멤버'}님의 메시지`, buttons);
   };
 
-  const renderMsg = ({ item }: { item: ClubChatMessage }) => {
+  const renderMsg = ({ item, index }: { item: ClubChatMessage; index: number }) => {
     const mine = !!user && String(item.sender_id) === String(user.id);
-    return (
+    // 최신순(inverted) 목록이라 화면에서 바로 위(더 오래된) 메시지 = index + 1
+    const older = messages[index + 1];
+    const at = item.created_at ? parseUtc(item.created_at) : null;
+    const newDay = !!at && startsNewDay(at, older?.created_at ? parseUtc(older.created_at) : null);
+    const row = (
       <View style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowPeer]}>
         {/* 발신자 — 아바타 없음, 닉네임 텍스트(타인만) */}
         {!mine ? (
@@ -222,6 +228,13 @@ export default function ClubChatScreen() {
           </View>
         </TouchableOpacity>
         <AppText variant="caption" tone="muted" style={styles.msgClock}>{fmtClock(item.created_at)}</AppText>
+      </View>
+    );
+    if (!at || !newDay) return row;
+    return (
+      <View>
+        <ChatDayDivider date={at} />
+        {row}
       </View>
     );
   };
