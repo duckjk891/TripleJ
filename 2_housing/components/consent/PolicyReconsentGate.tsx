@@ -19,18 +19,15 @@ import { markPolicyAgreed } from '../../utils/policyConsent';
 import AppDialogHost from '../AppDialogHost';
 import { useModalTurn } from '../../utils/modalTurn';
 
-export const POLICY_EFFECTIVE_DATE = '2026-10-19'; // 공고 10-12 + 7일(외부 연동 세션 게시 확정)
+export const POLICY_EFFECTIVE_DATE = '2026-12-01'; // 12-01 클라우드 전환 개정(10월 개정 시행일은 2026-10-19·20·21)
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 const snoozeKey = (uid: string) => `policy_reconsent_snooze:${CONSENT_VERSION}:${uid}`;
 
 export const POLICY_CHANGE_LINES = [
-  'AI 글 생성(가사·번역·아티스트 설명)을 위해 입력한 글이 Anthropic, PBC(미국)로 이전돼요.',
-  '음악 생성 협력사를 sunoapi.org Inc.(미국)로 밝히고, Wonder AI(미국)의 이용 목적에 작곡을 추가했어요.',
-  '앱 알림을 허용하면 기기 알림 토큰과 알림 내용이 Expo(650 Industries, Inc., 미국)를 거쳐 발송돼요(알림을 끄면 삭제).',
-  'Apple·네이버 계정으로도 가입할 수 있어요. 소셜 로그인으로는 닉네임·이메일·프로필 사진만 받고, 생년월일·성별 등은 받지 않아요.',
-  '문의처가 maidol_official@lotusai.co.kr 로 바뀌었어요.',
-  // v3.362 추가 개정(10-14 공고·10-21 시행) — 보존기간표(제3조)·자동화된 결정(제9조의2)
-  '개인정보 보유 기간을 항목별로 정리하고, 실사 아티스트 얼굴 대조(자동화된 결정)의 기준과 설명·이의 제기 방법을 안내해요(10월 21일 시행).',
+  'AI 글·이미지 생성, 문의 답변 보조, 검색·추천을 맡기는 곳에 Microsoft(Azure OpenAI)를 추가해요. 데이터는 미국에 저장되고, 처리는 Microsoft가 데이터센터를 운영하는 여러 나라에서 이뤄질 수 있어요.',
+  'Google(Vertex AI)에 맡기는 일에 낙서·사진으로 노래 만들기의 글·사진 분석과 공개 곡의 연령 등급 분류를 추가해요. 처리는 여러 나라에서 이뤄질 수 있어요.',
+  '낙서·사진으로 노래 만들기에 넣은 글·사진을 AI가 분석하는 것(Anthropic, 미국)을 개인정보 처리방침에도 적었어요.',
+  '10월에 바뀐 내용(Anthropic·Wonder AI·sunoapi.org·Expo, 보유 기간, 얼굴 대조 안내)도 처리방침 전문에서 볼 수 있어요.',
 ]
 
 /** 최신 판 동의 필요 여부(순수) — 국외 이전 동의 판이 다르거나 없으면 true */
