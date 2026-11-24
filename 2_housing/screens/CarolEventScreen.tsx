@@ -6,6 +6,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import AppModal from '../components/AppModal';
+import CarolHero from '../components/CarolHero'; // v3.440 반짝이는 트리·남은 시간
 import CarolReel, { REEL_BG } from '../components/CarolReel';
 import TrackRow from '../components/TrackRow';
 import { AppText, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -154,13 +155,18 @@ export default function CarolEventScreen() {
   return (
     <ScreenLayout>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: playerTrack ? 140 : 80, gap: spacing.lg }}>
+        <CarolHero
+          title={status.title}
+          subtitle={status.child
+            ? `새로 만든 캐롤이 승인되면 ${CURRENCY_ICON}${status.child_reward}을 드려요`
+            : `캐롤이 승인될 때마다 스타 스톱! 꽝 없이 ${CURRENCY}를 받아요`}
+          until={status.submit_open ? status.submit_until : status.spin_until}
+          untilName={status.submit_open ? '업로드 마감' : '스타 스톱 마감'}
+          onOver={refresh}
+        />
+
         <View style={styles.card}>
-          <AppText variant="title2">{status.title}</AppText>
-          <AppText variant="body" tone="secondary" style={{ marginTop: spacing.xs }}>
-            {status.child
-              ? `새로 만든 캐롤이 승인되면 ${CURRENCY_ICON}${status.child_reward}을 드려요.`
-              : `새로 만든 캐롤이 승인될 때마다 스타 스톱에 도전해 ${CURRENCY}를 받아요. 꽝은 없어요!`}
-          </AppText>
+          <AppText variant="subtitle">이렇게 참여해요</AppText>
           <View style={styles.steps}>
             <AppText variant="footnote">{`1. 작업실에서 캐롤을 만들어 발매해요`}</AppText>
             <AppText variant="footnote">{`2. 여기서 캐롤을 업로드하면 캐롤 크루에 함께 들어가요`}</AppText>
