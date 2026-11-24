@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Brand from '../components/Brand';
+import { AdRules } from '../components/AdRules';
 import { appAlert } from '../components/dialog';
 import { sendInquiry, friendlyError } from '../api';
 import { useAuth } from '../auth';
@@ -48,6 +49,7 @@ export default function Landing() {
     }
   };
 
+  const goRules = () => document.getElementById('rules')?.scrollIntoView({ behavior: 'smooth' });
   const goContact = () => document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' });
 
   return (
@@ -117,6 +119,14 @@ export default function Landing() {
         </div>
       </section>
 
+      <section className="lsec" id="rules">
+        <div className="container">
+          <h2>상품·사진 기준</h2>
+          <p className="lsec__sub">상품을 등록하기 전에 확인해 주세요. 모든 상품에 같은 기준을 써요.</p>
+          <AdRules />
+        </div>
+      </section>
+
       <section className="lsec" id="contact">
         <div className="container">
           <h2>입점·광고 문의</h2>
@@ -143,7 +153,7 @@ export default function Landing() {
       <footer className="lfoot">
         <div className="container lfoot__in">
           <span>© 로터스에이아이 · MAIDOL (MY AI IDOL)</span>
-          <span><a href="https://maidol.ai.kr" target="_blank" rel="noreferrer">maidol.ai.kr</a></span>
+          <span className="row"><button type="button" className="linkbtn" onClick={goRules}>상품·사진 기준</button><a href="https://maidol.ai.kr" target="_blank" rel="noreferrer">maidol.ai.kr</a></span>
         </div>
       </footer>
     </div>

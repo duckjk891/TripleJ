@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createItem, toggleItem, listItems, friendlyError, CATEGORIES } from '../api';
 import { appAlert, appConfirm, toast } from './dialog';
+import { RightsCheck, RIGHTS_MISSING_MSG } from './AdRules';
 import { isDemo, DEMO_SAVE_MSG } from '../demo/demoApi';
 
 // 사진 파일과 함께 올리기(10-20 피드백) — CSV 의 '사진 파일명' 칸과 고른 사진 파일을 이름으로 짝지어
@@ -112,6 +113,7 @@ export default function PhotoUpload() {
   const [csv, setCsv] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [activate, setActivate] = useState(true);
+  const [rights, setRights] = useState(false);
   const [check, setCheck] = useState(null);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -149,6 +151,7 @@ export default function PhotoUpload() {
     if (!csv) { appAlert('상품 정보를 적은 CSV 파일을 골라 주세요.'); return; }
     if (!photos.length) { appAlert('사진 파일을 골라 주세요. 사진이 든 폴더를 통째로 고르거나 끌어 놓아도 돼요.'); return; }
     setBusy(true);
+    setRights(false); // 검사할 때마다 다시 확인
     try {
       const table = parseCsv(await readText(csv));
       if (table.length < 2) { appAlert('CSV에 상품 줄이 없어요. 첫 줄은 제목, 둘째 줄부터 상품 하나씩 적어 주세요.'); return; }
@@ -198,6 +201,7 @@ export default function PhotoUpload() {
 
   const start = async () => {
     if (!check?.rows.length) return;
+    if (!rights) { appAlert(RIGHTS_MISSING_MSG); return; }
     if (isDemo()) { appAlert(DEMO_SAVE_MSG); return; }
     const ok = await appConfirm(`새 상품 ${check.rows.length.toLocaleString()}개를 등록할까요?\n사진을 이 컴퓨터에서 하나씩 올리니, 끝날 때까지 이 창을 닫지 말아 주세요.${activate ? '' : '\n등록한 상품은 숨김 상태로 들어가요.'}`, { okText: '등록 시작' });
     if (!ok) return;
@@ -338,6 +342,7 @@ export default function PhotoUpload() {
                     <ul>{check.errors.slice(0, 50).map((e) => <li key={`${e.line}-${e.error}`}><span>{e.line}번째 줄</span>{e.error}</li>)}</ul>
                   </div>
                 )}
+                {check.rows.length > 0 && <RightsCheck checked={rights} onChange={setRights} />}
                 <div className="row" style={{ marginTop: 12 }}>
                   <button className="btn btn--primary" disabled={uploading || !check.rows.length} onClick={start}>{check.rows.length ? `${check.rows.length.toLocaleString()}개 등록 시작` : '새로 등록할 상품이 없어요'}</button>
                 </div>

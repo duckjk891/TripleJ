@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createItem, updateItem, deleteItem, friendlyError, imageUrl, CATEGORIES, GENDERS } from '../api';
 import { appConfirm } from './dialog';
+import { RightsCheck, RIGHTS_MISSING_MSG } from './AdRules';
 
 const MAX_MB = 10;
 const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -14,6 +15,8 @@ export default function ItemDialog({ item, onClose, onSaved }) {
   const [preview, setPreview] = useState(item ? imageUrl(item.image_object_name) : null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [rights, setRights] = useState(false);
+  const needRights = isNew || Boolean(file); // 수정은 사진을 바꿀 때만 다시 확인
   const [drag, setDrag] = useState(false);
   const fileRef = useRef(null);
 
@@ -32,6 +35,7 @@ export default function ItemDialog({ item, onClose, onSaved }) {
     if (fl.size > MAX_MB * 1024 * 1024) { setError(`사진은 ${MAX_MB}MB 이하로 올려 주세요.`); return; }
     setError('');
     setFile(fl);
+    setRights(false); // 사진이 바뀌면 다시 확인
     setPreview(URL.createObjectURL(fl));
   };
 
@@ -41,6 +45,7 @@ export default function ItemDialog({ item, onClose, onSaved }) {
     if (!/^https?:\/\/\S+\.\S+/.test(f.product_url.trim())) return '상품 페이지 주소를 https:// 로 시작하게 입력해 주세요.';
     if (!CATEGORIES.includes(f.category) && !(item && f.category === item.category)) return '카테고리를 골라 주세요.';
     if (!GENDERS.includes(f.gender) && !(item && f.gender === item.gender)) return '대상(남성용·여성용·공용)을 골라 주세요.';
+    if (needRights && !rights) return RIGHTS_MISSING_MSG;
     return '';
   };
 
@@ -118,6 +123,7 @@ export default function ItemDialog({ item, onClose, onSaved }) {
         </div>
         <label className="field">판매 페이지 상품명 (선택)<input className="input" value={f.product_name} maxLength={120} onChange={(e) => set('product_name', e.target.value)} placeholder="쇼핑몰에 등록된 정식 상품명" /></label>
         <p className="footnote">세부 종류(아우터·니트·데님 등)는 이름을 보고 자동으로 나눠요. ‘오버핏 니트’처럼 종류가 드러나게 적으면 앱에서 찾기 쉬워요.</p>
+        {needRights && <RightsCheck checked={rights} onChange={(v) => { setRights(v); if (v && error === RIGHTS_MISSING_MSG) setError(''); }} />}
         {error && <div className="notice notice--err" role="alert">{error}</div>}
         <div className="dialog__actions dialog__actions--split">
           {!isNew ? <button className="btn btn--text-danger" disabled={busy} onClick={remove}>상품 삭제</button> : <span />}

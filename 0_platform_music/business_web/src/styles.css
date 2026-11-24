@@ -430,3 +430,14 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .song-chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(139, 92, 246, .1); color: var(--ink); font-size: 12px; text-decoration: none; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .song-chip:hover { border-color: var(--violet-soft); background: rgba(139, 92, 246, .22); }
 .song-chip i { font-style: normal; color: var(--violet-soft); font-size: 11px; }
+
+/* 상품·사진 기준(11-24) */
+#rules { scroll-margin-top: 64px; }
+.adrules { background: rgba(139, 92, 246, .06); border: 1px solid var(--line-soft); border-radius: 14px; padding: 18px 20px; font-size: 14px; line-height: 1.7; color: var(--ink-soft); }
+.adrules b { color: var(--ink); }
+.adrules ul { margin: 6px 0 14px; padding-left: 20px; }
+.adrules li { margin: 4px 0; }
+.adrules p { margin: 4px 0; }
+.rights { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.rights .check { font-size: 14px; color: var(--ink); line-height: 1.5; }
+.rights .adrules { margin-top: 8px; padding: 12px 14px; font-size: 13px; }

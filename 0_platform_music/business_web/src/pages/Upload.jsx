@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { importItems, listImportJobs, getImportJob, friendlyError } from '../api';
 import { appConfirm, appAlert, toast } from '../components/dialog';
 import PhotoUpload from '../components/PhotoUpload';
+import { RightsCheck, RIGHTS_MISSING_MSG } from '../components/AdRules';
 
 // v3.381 엑셀/CSV 대량 등록 — 양식 받기 → 파일 고르기 → 미리 검사 → 등록(서버가 사진을 받아 저장, 진행률 표시).
 // 서버: POST /api/business/ads/import(dry_run), GET /api/business/ads/import-jobs[/id]
@@ -35,6 +36,7 @@ export default function Upload() {
   const [mode, setMode] = useState('append');
   const [activate, setActivate] = useState(true);
   const [check, setCheck] = useState(null);
+  const [rights, setRights] = useState(false);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const [job, setJob] = useState(null);
@@ -73,6 +75,7 @@ export default function Upload() {
     if (fl.size > MAX_MB * 1024 * 1024) { appAlert(`파일은 ${MAX_MB}MB까지 올릴 수 있어요. 나눠서 올려 주세요.`); return; }
     setFile(fl);
     setCheck(null);
+    setRights(false); // 파일이 바뀌면 다시 확인
   };
 
   const runCheck = async (nextMode = mode) => {
@@ -93,6 +96,7 @@ export default function Upload() {
 
   const start = async () => {
     if (!check || !check.will_insert) return;
+    if (!rights) { appAlert(RIGHTS_MISSING_MSG); return; }
     const lines = [`새 상품 ${check.will_insert.toLocaleString()}개를 등록할까요?`];
     if (mode === 'replace') lines.push(`\n등록이 끝나면 예전에 한꺼번에 올린 상품 ${Number(check.will_replace || 0).toLocaleString()}개는 지워져요. 지운 상품의 성과는 더 볼 수 없어요. 한 개씩 직접 등록한 상품은 그대로 남아요.`);
     if (!activate) lines.push('\n등록한 상품은 숨김 상태로 들어가요. 내 상품에서 켜면 앱에 보여요.');
@@ -104,6 +108,7 @@ export default function Upload() {
       setJob({ job_id: r.data.job_id, status: 'running', total: r.data.will_insert, processed: 0, inserted: 0, skipped_count: 0, mode });
       setFile(null);
       setCheck(null);
+      setRights(false);
       if (fileRef.current) fileRef.current.value = '';
     } catch (err) {
       appAlert(friendlyError(err, '등록을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'));
@@ -208,7 +213,7 @@ export default function Upload() {
             {!check ? (
               <p className="muted small">파일을 올리고 ‘미리 검사하기’를 누르면 몇 개가 등록되는지, 고칠 줄이 있는지 알려 드려요. 이때는 아무것도 저장되지 않아요.</p>
             ) : (
-              <CheckResult check={check} mode={mode} busy={busy} onStart={start} />
+              <CheckResult check={check} mode={mode} busy={busy} onStart={start} rights={rights} setRights={setRights} />
             )}
           </div>
         </div>
@@ -241,7 +246,7 @@ export default function Upload() {
   );
 }
 
-function CheckResult({ check, mode, busy, onStart }) {
+function CheckResult({ check, mode, busy, onStart, rights, setRights }) {
   const cats = Object.entries(check.by_category || {});
   return (
     <div>
@@ -261,6 +266,7 @@ function CheckResult({ check, mode, busy, onStart }) {
           {check.error_count > 30 && <small className="muted">… 외 {(check.error_count - 30).toLocaleString()}개. 파일을 고쳐 다시 올리면 다시 검사해요.</small>}
         </div>
       )}
+      {check.will_insert > 0 && <RightsCheck checked={rights} onChange={setRights} />}
       <div className="row" style={{ marginTop: 12 }}>
         <button className={`btn ${mode === 'replace' ? 'btn--danger' : 'btn--primary'}`} disabled={busy || !check.will_insert} onClick={onStart}>
           {busy ? '시작하는 중…' : check.will_insert ? `${check.will_insert.toLocaleString()}개 등록 시작` : '새로 등록할 상품이 없어요'}
