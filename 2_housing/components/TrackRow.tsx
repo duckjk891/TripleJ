@@ -1,9 +1,10 @@
 // [TrackRow] 곡 목록 한 줄 — 차트·검색 등 곡을 나열하는 모든 화면이 같은 디자인을 쓰도록 공용화.
-// 구성: 좌측 슬롯(순위/NEW/▶/번호) | 커버 48 | 마퀴 제목 + 아티스트 | 재생수·좋아요수 | 더보기(⋮)
+// 구성: 좌측 슬롯(순위/NEW/▶/번호) | 커버 48 | 마퀴 제목 + 아티스트 · 기획사 | 재생수·좋아요수 | 더보기(⋮)
 import { ReactNode, useEffect, useRef } from 'react';
 import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { trackCoverUri } from '../utils/coverUri';
+import { artistLine } from '../utils/artistLine';
 // v3.207 ①: 튜토리얼 코치마크 anchor — 옵션 prop이 있을 때만 ⋮ 버튼 좌표를 등록(기본 무부하)
 import { TutorialAnchorKey, measureAndRegister, unregisterAnchor } from '../utils/tutorialAnchors';
 import { AppText } from './ui';
@@ -15,6 +16,8 @@ export interface RowTrack {
   id: string;
   title: string;
   artist_name?: string;
+  agency_name?: string;
+  uploader_nickname?: string;
   cover_image?: string;
   cover_image_url?: string;
   play_count?: number;
@@ -51,9 +54,11 @@ interface Props {
   playCountOverride?: number;
   /** v3.207 ①: 이 행의 더보기(⋮) 버튼을 튜토리얼 anchor로 등록(보통 첫 행 index 0만) */
   moreAnchorKey?: TutorialAnchorKey;
+  /** v3.437: 모든 곡의 기획사가 같은 목록(내 음악·한 사람의 채널·앨범)은 기획사 표기를 생략 */
+  hideAgency?: boolean;
 }
 
-export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge, moreAnchorKey, playCountOverride }: Props) {
+export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge, moreAnchorKey, playCountOverride, hideAgency }: Props) {
   // v3.207 ①: ⋮ anchor 등록 — onLayout 시 창 좌표 측정, unmount 시 해제(오버레이는 fallback으로 강등)
   const moreRef = useRef<View>(null);
   useEffect(() => {
@@ -74,7 +79,7 @@ export default function TrackRow({ track, left, liked, onPress, onMore, footer, 
       <View style={styles.info}>
         <Marquee text={track.title} variant="bodyStrong" tone="primary" />
         <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
-          {track.artist_name || '알 수 없는 아티스트'}
+          {artistLine(track, { hideAgency })}
         </AppText>
         {footer ?? null}
       </View>

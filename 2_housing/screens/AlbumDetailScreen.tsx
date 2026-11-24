@@ -467,6 +467,7 @@ export default function AlbumDetailScreen() {
           <TrackRow
             key={String(t.id)}
             track={toRowTrack(t)}
+            hideAgency
             left={<AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{i + 1}</AppText>}
             onPress={() => playFrom(t)}
             footer={isOwner && manageMode ? (

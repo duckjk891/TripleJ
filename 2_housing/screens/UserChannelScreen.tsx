@@ -317,6 +317,7 @@ export default function UserChannelScreen() {
               <TrackRow
                 key={String(t.id)}
                 track={{ ...t, id: String(t.id) }}
+                hideAgency
                 onPress={() => playTrack(t)}
               />
             ))
@@ -395,6 +396,7 @@ export default function UserChannelScreen() {
                         <TrackRow
                           key={String(t.id)}
                           track={{ ...t, id: String(t.id) }}
+                          hideAgency
                           onPress={() => playTrack(t)}
                         />
                       ))

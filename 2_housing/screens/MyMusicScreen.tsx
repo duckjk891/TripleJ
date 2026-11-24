@@ -692,6 +692,7 @@ export default function MyMusicScreen({ navigation }: any) {
   const renderTrack = ({ item }: { item: Track }) => (
     <TrackRow
       track={{ ...item, id: String(item.id) }}
+      hideAgency
       liked={!!likedMap[String(item.id)]}
       onPress={() => navigation.getParent()?.navigate('Player', { track: item })}
       onMore={() => setActionTrack(item)}

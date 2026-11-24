@@ -9,6 +9,7 @@ import { Feather } from '@expo/vector-icons';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
 import { spacing } from '../theme/spacing';
+import { artistLine } from '../utils/artistLine';
 
 const ROW_H = 60;
 
@@ -97,7 +98,7 @@ export default function DraggableQueue({ data, currentIndex, onReorder, onPress,
                 <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
                 <AppText variant="caption" tone="muted" numberOfLines={1}>
                   {q?.__reco ? <AppText variant="caption" tone="accent">추천 · </AppText> : null}
-                  {q?.artist_name || q?.uploader_nickname || '아티스트'}
+                  {artistLine(q, { fallback: '아티스트' })}
                 </AppText>
               </View>
             </TouchableOpacity>

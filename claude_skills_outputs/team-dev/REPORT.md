@@ -5062,3 +5062,10 @@ iOS 세션 요청(대표 10-27: 아이폰 6s 화면 끄고 재생 중 1분 뒤 �
 - 자막 시간: 로컬 음성 인식(faster-whisper large-v3-turbo, 음원 외부 전송 없음)으로 대조 — 서버 타이밍은 반복(4절·브릿지·브레이크) 포함 거의 정확. generations 6aa11cd7 variants.0.timestamps 2곳만 보정: [98] 「내 심장이 말하잖아」 start 167.473→169.3, [74] 「아직 끝난 게 아냐」 end 129.979→123.9 (API 표시 169.00 / 123.60). 백업 EC2 /home/ubuntu/maidol/logs/mv_attach_6aa11e86_20261112.json.
 - MV: 만화체 전곡 편집 v6(Kling 4.0 + Seedance 2.5, Real-ESRGAN 업스케일) → 스트리밍본 1280×720 2.3Mbps faststart 61MB, images 버킷 mv/manual/6aa11e86…/mv_v1_web.mp4 + 원본 mv_v1_original.mp4, mv_jobs 6af575a6(source=admin_upload, attached_track_id) — 김부장(6ad087dc)과 같은 형태. 공개 API has_music_video=true·MV URL 206 확인.
 - 공지: lovvepearl 피드 6af5787d(글+곡+2:12 장면 사진, notice_pinned=True) — 김부장 MV 글과 같은 방식, 대표 승인 문구. /feeds/notices 첫 글 확인. 팔로워 알림 팬아웃은 하지 않음(직접 삽입).
+
+## v3.437 — 2026-11-24 — 곡 목록에 '아티스트 · 기획사' 표시 (오리쟁이님 11-10 신고 6af2c535, 앱 커밋 · 웹/OTA 미반영)
+- 계기: 서로 다른 회원의 같은 이름 아티스트 '진주'가 차트에 나란히 보여 헷갈림. 대표 결정(11-11): 이름 중복 허용, 누구의 아티스트인지 구분 표시. 표시 방식은 대표 선택(11-24) '항상 기획사 함께 표시'.
+- 서버 변경 없음: 곡 응답에 agency_name(=업로더 닉네임)이 이미 있음(신곡·TOP100·일간·주간·월간 각 100곡 모두 확인).
+- 앱: utils/artistLine.ts + 공용 TrackRow·재생목록(DraggableQueue). 아티스트 없이 낸 곡(서버가 아티스트=기획사명으로 채움)은 이름 하나만. 내 음악·한 사람의 채널·앨범 수록곡은 hideAgency 로 생략. 외부 공유 문구는 그대로(닉네임 비노출).
+- 검증: tsc 0, 표기 규칙 9/9. 로컬 웹(운영 API 읽기 전용 중계, 휴대폰 폭) 신곡 탭에서 「세 캔 건배」 진주 · 오리쟁이 / 「소주 한 잔」 진주 · lovvepearl 구분 확인, 콘솔 오류 0. 설치 앱 실기기 미확인.
+- 남은 일: OTA(대표 승인), 웹 배포(맥에서만 가능 — v3.432~ 와 함께), 오리쟁이님 완료 안내 DM(대표 승인 후 운영·CS).
