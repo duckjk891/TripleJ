@@ -55,6 +55,16 @@
       body {
         touch-action: pan-x pan-y;
       }
+      /* v3.443 (대표 11-25): 스크롤은 그대로 되고 스크롤바 모양만 숨긴다 */
+      * {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      *::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+      }
       /* v3.356 [BootSplash]: 번들을 받는 동안 하얀 빈 화면 대신 어두운 배경 + 로고 + 안내(React 가 #root 를 채우면 사라짐).
          배포 직후 큰 번들(약 1MB 압축)을 받는 몇 초 동안 사용자가 고장으로 알고 새로고침을 반복하던 문제(10-12 실사례). */
       html,

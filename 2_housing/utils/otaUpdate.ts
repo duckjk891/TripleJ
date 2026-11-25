@@ -6,6 +6,10 @@
 //  · 네이티브가 바뀐 수정은 runtimeVersion(fingerprint)이 달라 옛 앱에 내려가지 않는다(스토어 빌드로만).
 //  · 웹·개발 서버·expo-updates 없는 옛 빌드: 전부 조용히 아무것도 안 함.
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { dmSocketDisconnect } from '../services/dmSocket';
+import { stopAllNativeShims } from '../services/nativeAudioShim';
+import { colors } from '../theme/colors';
 
 type UpdatesModule = typeof import('expo-updates');
 
@@ -57,11 +61,69 @@ export async function checkAndFetchOta(reason: string): Promise<string> {
   }
 }
 
-/** 받아 둔 업데이트로 지금 다시 켠다(사용자가 [지금 적용]을 눌렀을 때만 호출). */
-export async function applyOtaNow(): Promise<void> {
+// v3.443 (대표 11-25): 안드로이드에서 [지금 적용] 뒤 로딩만 돌고 다시 켜지지 않는 일이 있었다(라이브러리가 앱 안에서
+// JS 를 다시 만드는 동안 멈춤 — 원인 미확정). 다시 켜기 전에 붙잡고 있는 것(팝업 창·소켓·소리)을 먼저 놓고,
+// 멈추면 로딩을 걷고 안내하며, 결과를 다음 실행 때 원격 로그로 남겨 원인을 찾는다.
+const APPLY_MARK_KEY = 'maidol-ota-apply-v1';
+const APPLY_SETTLE_MS = 800; // 안내 팝업(Modal) 창이 완전히 닫힐 시간
+const APPLY_STALL_MS = 12000;
+
+/**
+ * 받아 둔 업데이트로 지금 다시 켠다(사용자가 [지금 적용]을 눌렀을 때만 호출).
+ * onStalled: 다시 켜지지 않고 멈췄거나 실패했을 때(앱이 아직 살아 있으면) 1회 호출 — 호출부가 안내한다.
+ */
+export async function applyOtaNow(onStalled?: () => void): Promise<void> {
   if (!Updates || !pendingId) return;
-  console.info('[OTA] 지금 적용 — 앱 다시 시작', { id: pendingId.slice(0, 8) });
-  await Updates.reloadAsync();
+  const id = pendingId;
+  console.info('[OTA] 지금 적용 — 앱 다시 시작', { id: id.slice(0, 8) });
+  try {
+    await AsyncStorage.setItem(APPLY_MARK_KEY, JSON.stringify({ id, from: String(Updates.updateId || ''), at: Date.now() }));
+  } catch {
+    /* 기록 실패는 적용에 영향 없음 */
+  }
+  try { dmSocketDisconnect(); } catch { /* 무시 */ }
+  try { stopAllNativeShims('ota-apply'); } catch { /* 무시 */ }
+  await new Promise((r) => setTimeout(r, APPLY_SETTLE_MS));
+  let reported = false;
+  const stalled = (why: string, message?: string) => {
+    if (reported) return;
+    reported = true;
+    console.warn('[OTA] 적용 멈춤·실패', { why, id: id.slice(0, 8), message });
+    void Updates?.hideReloadScreen?.().catch(() => undefined);
+    onStalled?.();
+  };
+  setTimeout(() => stalled('timeout'), APPLY_STALL_MS);
+  try {
+    await Updates.reloadAsync({
+      reloadScreenOptions: { backgroundColor: colors.bg.deepest, fade: false, spinner: { enabled: true, color: colors.accent.primary, size: 'medium' } },
+    });
+  } catch (err: any) {
+    stalled('error', err?.message);
+  }
+}
+
+/** 앱 시작 때 1회 — 지난번 [지금 적용]이 실제로 됐는지 원격 로그로 남긴다(안 됐으면 라이브러리 오류 기록 포함). */
+export async function reportLastOtaApply(): Promise<void> {
+  if (!isOtaEnabled() || !Updates) return;
+  try {
+    const raw = await AsyncStorage.getItem(APPLY_MARK_KEY);
+    if (!raw) return;
+    await AsyncStorage.removeItem(APPLY_MARK_KEY);
+    const mark = JSON.parse(raw) as { id: string; from: string; at: number };
+    const now = String(Updates.updateId || '');
+    const sec = Math.round((Date.now() - mark.at) / 1000);
+    let logs: string[] = [];
+    try {
+      const entries = await Updates.readLogEntriesAsync(Math.min(24 * 3600 * 1000, Date.now() - mark.at + 60000));
+      logs = entries.filter((e) => e.level !== 'info' && e.level !== 'debug' && e.level !== 'trace')
+        .slice(-6).map((e) => `${e.code}:${String(e.message).slice(0, 160)}`);
+    } catch {
+      /* 무시 */
+    }
+    console.warn('[OTA] 지난 적용 결과', { applied: now === mark.id, sec, want: mark.id.slice(0, 8), now: now.slice(0, 8), from: mark.from.slice(0, 8), logs });
+  } catch (err: any) {
+    console.warn('[OTA] 지난 적용 결과 확인 실패(무시)', { message: err?.message });
+  }
 }
 
 /** 지금 실행 중인 번들 정보(문의·로그용) */

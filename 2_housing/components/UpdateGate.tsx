@@ -16,7 +16,8 @@ import { colors } from '../theme/colors';
 import { useRootModalOpen } from '../utils/modalTurn';
 import AppDialogHost from './AppDialogHost'; // v3.384 창 안 다이얼로그(iOS)
 import { usePlayerStore } from '../stores/playerStore';
-import { applyOtaNow, checkAndFetchOta, isOtaEnabled } from '../utils/otaUpdate';
+import { applyOtaNow, checkAndFetchOta, isOtaEnabled, reportLastOtaApply } from '../utils/otaUpdate';
+import { showAlert } from '../utils/appAlert';
 import {
   APP_BUILD, APP_VERSION, WEB_BUILD, UPDATE_BUSY_ROUTES, decideUpdate, parseBundleName, versionLabel,
   type UpdateLevel, type VersionConfig,
@@ -147,7 +148,7 @@ export default function UpdateGate() {
   }, [maybeShow, maybeShowOta]);
 
   useEffect(() => {
-    const t = setTimeout(check, 3000);
+    const t = setTimeout(() => { void reportLastOtaApply(); void check(); }, 3000);
     const iv = setInterval(check, CHECK_INTERVAL_MS);
     let sub: any;
     let onVis: any;
@@ -217,7 +218,8 @@ export default function UpdateGate() {
   };
   const otaApply = () => {
     setOtaVisible(false);
-    void applyOtaNow().catch((err: any) => console.warn('[OTA] 적용 실패', { message: err?.message }));
+    otaDismissedRef.current = otaId; // v3.443: 적용이 멈춰도 같은 업데이트를 다시 묻지 않는다(다음에 앱을 켤 때 적용)
+    void applyOtaNow(() => showAlert('아직 적용되지 않았어요', '앱을 완전히 닫았다가 다시 열면 새 버전이 적용돼요.'));
   };
 
   const showOta = otaVisible && level === 'none' && !!otaId;
@@ -229,7 +231,7 @@ export default function UpdateGate() {
           <View style={styles.box}>
             <AppText style={styles.title}>새 기능이 준비됐어요</AppText>
             <AppText style={styles.body}>
-              업데이트를 미리 받아 두었어요. 지금 적용하면 MAIDOL이 잠깐 다시 켜져요. 나중에 하면 다음에 앱을 켤 때 자동으로 적용돼요.
+              업데이트를 미리 받아 두었어요. 지금 적용하면 MAIDOL이 잠깐 다시 켜져요. 10초 넘게 걸리면 앱을 완전히 닫았다가 다시 열어 주세요. 나중에 하면 다음에 앱을 켤 때 자동으로 적용돼요.
             </AppText>
             <AppText style={styles.ver}>{`현재 ${versionLabel()}`}</AppText>
             <View style={styles.btnRow}>
