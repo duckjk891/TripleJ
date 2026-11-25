@@ -14,6 +14,8 @@ import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { playTrackNow } from '../services/playback';
 import { parseServerTime } from '../utils/serverTime';
+import StringLights from '../components/winter/StringLights'; // v3.442 [Winter]
+import { isXmasSeason } from '../utils/winter';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
@@ -365,10 +367,11 @@ export default function ChartScreen() {
 
   return (
     <ScreenLayout>
+      <StringLights />
       {/* v3.243 Phase1a: 차트 상단 고정 검색 진입 — 검색 탭이 커뮤니티로 바뀌면서
           검색은 이 바 → 숨김 'Search' 탭(SearchScreen — 비로그인 게이트·느낌칩은 화면 내부 소관) */}
       <TouchableOpacity
-        style={styles.searchEntry}
+        style={[styles.searchEntry, isXmasSeason() && styles.searchUnderLights]}
         activeOpacity={0.7}
         onPress={() => {
           if (__DEV__) console.info('[ChartScreen] 상단 검색바 탭 → Search(숨김 탭) 이동');
@@ -642,5 +645,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     backgroundColor: colors.bg.surface1, borderRadius: radius.md,
   },
+  searchUnderLights: { marginTop: 26 }, // v3.442 [Winter]: 조명 장식이 검색창에 겹치지 않게
   // v3.196: 미사용 playlist sheet 스타일 삭제(TrackActionSheet 공용화 후 잔존 죽은 코드)
 });

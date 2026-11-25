@@ -4,6 +4,7 @@ import { View, StyleSheet, ViewProps } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '../../theme/colors';
+import SnowFall from '../winter/SnowFall'; // v3.442 [Winter]
 
 export interface ScreenLayoutProps extends ViewProps {
   gradient?: boolean;
@@ -19,6 +20,7 @@ export default function ScreenLayout({ gradient = true, safeTop = false, style, 
       {gradient ? (
         <LinearGradient colors={[colors.bg.surface2, 'transparent']} style={styles.grad} pointerEvents="none" />
       ) : null}
+      <SnowFall />
       {children}
     </Container>
   );

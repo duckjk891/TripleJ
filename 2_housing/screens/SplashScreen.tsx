@@ -17,6 +17,10 @@ import { versionLabel } from '../utils/appVersion';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
+import SnowFall from '../components/winter/SnowFall'; // v3.442 [Winter]
+import SnowGround from '../components/winter/SnowGround';
+import WinterLogo from '../components/winter/WinterLogo';
+import { isWinterSeason } from '../utils/winter';
 
 type RootStackParamList = {
   Splash: undefined;
@@ -72,6 +76,7 @@ export default function SplashScreen({ navigation }: Props) {
   }, []);
 
   const WORDS = ['MY', 'AI', 'IDOL'];
+  const winter = isWinterSeason(); // v3.442 [Winter]: 눈·눈 언덕·눈 쌓인 로고(기간이 지나면 원래대로)
 
   return (
     <LinearGradient
@@ -79,6 +84,9 @@ export default function SplashScreen({ navigation }: Props) {
       locations={[0, 0.35, 0.7, 1]}
       style={styles.container}
     >
+      {winter ? <SnowGround /> : null}
+      <SnowFall mode="splash" />
+
       {/* 1막 — MY / AI / IDOL (겹침 배치: 두 막이 같은 자리) */}
       <Animated.View style={[styles.act, { opacity: act1Opacity }]} pointerEvents="none">
         {WORDS.map((wd, i) => (
@@ -98,20 +106,23 @@ export default function SplashScreen({ navigation }: Props) {
 
       {/* 2막 — MAIDOL 로고 단독 (v3.265: 하단 태그라인 제거 — 로고 임팩트 + 스팅) */}
       <Animated.View style={[styles.act, { opacity: act2Opacity, transform: [{ scale: act2Scale }] }]}>
-        <View style={styles.logoRow}>
-          <AppText style={styles.title}>M</AppText>
-          <AppText style={[styles.title, styles.titleAi]}>AI</AppText>
-          <AppText style={styles.title}>DOL</AppText>
-        </View>
+        {winter ? <WinterLogo height={38} /> : (
+          <View style={styles.logoRow}>
+            <AppText style={styles.title}>M</AppText>
+            <AppText style={[styles.title, styles.titleAi]}>AI</AppText>
+            <AppText style={styles.title}>DOL</AppText>
+          </View>
+        )}
       </Animated.View>
 
       {/* v3.324 (대표 10-10): 하단 아주 작은 글씨로 앱 버전(웹은 배포 시각까지) */}
-      <AppText style={styles.versionText} pointerEvents="none">{versionLabel()}</AppText>
+      <AppText style={[styles.versionText, winter && styles.versionWinter]} pointerEvents="none">{versionLabel()}</AppText>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  versionWinter: { color: 'rgba(45,25,90,0.75)' },
   versionText: { position: 'absolute', bottom: 28, alignSelf: 'center', fontSize: 10, color: 'rgba(255,255,255,0.45)', letterSpacing: 0.3 },
   container: {
     flex: 1,

@@ -103,6 +103,8 @@ import CarolEventScreen from './screens/CarolEventScreen'; // v3.438 캐롤 크�
 import ClubAlbumScreen from './screens/ClubAlbumScreen'; // v3.305 크루 앨범(대표곡·참여 미션)
 import { captureWebClubLink, captureNativeClubLink, peekPendingClubLink, takePendingClubLink } from './utils/clubLink';
 import { processPendingClubJoin } from './utils/clubJoin';
+import WinterLogo from './components/winter/WinterLogo'; // v3.442 [Winter]
+import { isWinterSeason } from './utils/winter';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -387,6 +389,7 @@ function MiniPlayerWrapper() {
 //   SNS 공유 영상 로고와 같은 글꼴(OFL, 'MAIDOL' 6글자만 담은 2KB 부분 글꼴). 로드 전·실패 시 기존 기본 글꼴 굵게.
 function LogoTitle() {
   const [logoFontReady] = useFonts({ MaidolLogo: require('./assets/fonts/MaidolLogo-InterBold.ttf') });
+  if (isWinterSeason()) return <WinterLogo height={18} />; // v3.442 [Winter] 눈 쌓인 로고
   const logoFont = logoFontReady ? { fontFamily: 'MaidolLogo', fontWeight: 'normal' as const } : null;
   return (
     <AppText variant="title2" style={[{ letterSpacing: 1 }, logoFont]}>
