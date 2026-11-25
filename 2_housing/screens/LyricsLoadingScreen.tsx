@@ -30,7 +30,7 @@ import {
   markGenJobDone,
   discardGenJob,
   endGenRequest,
-  ackGenJob,
+  ackGenJobWhenSeen,
   guardGeneration,
   newRequestId,
   setViewerJob,
@@ -153,8 +153,8 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
           store.setError('가사를 불러오지 못했어요. 가사 보관함에서 확인해 주세요.');
           store.setIsLoading(false);
         }
-        ackGenJob(key);
-        navigation.replace('LyricsResult');
+        ackGenJobWhenSeen(key, route.key); // v3.441 [SeenAck]
+        navigation.replace('LyricsResult', { seenJobKey: key });
       })();
     } else if (watched.lastStatus === 'failed') {
       outcomeHandledRef.current = true;
@@ -162,8 +162,8 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
       // X-K1: 환불 안내는 서버 refunded=true(또는 서버 확정 문장)일 때만
       store.setError(failureBody(watched.error || '가사 생성에 실패했습니다.', watched.refunded, watched.notCharged));
       store.setIsLoading(false);
-      ackGenJob(watchKey);
-      navigation.replace('LyricsResult');
+      ackGenJobWhenSeen(watchKey, route.key); // v3.441 [SeenAck]
+      navigation.replace('LyricsResult', { seenJobKey: watchKey });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchKey, watched?.lastStatus, !!watched]);
@@ -272,11 +272,13 @@ export default function LyricsLoadingScreen({ navigation, route }: Props) {
           // v3.79 UX-2: 가사 생성은 ⭐차감 — 헤더 별 배지 즉시 갱신
           usePointsStore.getState().fetchBalance();
           // v3.228: 결과를 이 화면이 직접 받음 → 확인 처리(추적 정리 + 서버 ack)
-          markGenJobDone(key, { lyrics_id: result.lyrics_id ?? null, title: result.title ?? null }, {
+          // v3.441 [SeenAck]: 이 화면이 실제로 보일 때만 확인 처리 — 아니면 작업실 '완성' 알림으로
+          markGenJobDone(key, { lyrics_id: result.lyrics_id ?? null, title: result.title ?? null, lyrics: lyricsTextOf(result) }, {
             acked: true,
             serverJobId: ledger.genJobId,
+            seenRouteKey: route.key,
           });
-          navigation.replace('LyricsResult');
+          navigation.replace('LyricsResult', { seenJobKey: key });
         } else {
           // v3.228: 화면을 벗어난 뒤 도착한 결과 — 추적 레코드에 남겨 작업실 도착 알림으로 회수
           markGenJobDone(

@@ -1,4 +1,5 @@
 import { AppState, Platform } from 'react-native';
+import { isAppVisible } from '../utils/appVisible';
 import api, { BACKEND_BASE_URL } from './api';
 import { navigationRef, navigateGlobal } from './navigationRef';
 import {
@@ -26,6 +27,7 @@ import {
   genTrackerAdapterFor,
   hasGenKinds,
   mergeGenRecoverable,
+  flushSeenAcks,
   type TrackerKindAdapter,
 } from './genJobs/runtime';
 import { useAuthStore } from '../stores/authStore';
@@ -72,6 +74,7 @@ let _ticking = false;
 let _rerun = false;
 let _errorStreak = 0;
 let _hidden = false;
+let _notifyTimer: ReturnType<typeof setTimeout> | null = null;
 let _viewerJobId: string | null = null;
 let _capability: ServerCapability = 'unknown';
 let _lastRecoverableAt = 0;
@@ -817,6 +820,15 @@ bindGenTrackerHooks({
   scheduleSoon: () => scheduleTick(RESUME_DELAY_MS),
   notify: () => maybeNotifyDone(),
   viewerJob: () => _viewerJobId,
+  isRouteSeen: (key, routeKey) => {
+    if (!isAppVisible()) return false;
+    try {
+      const r = navigationRef.isReady() ? navigationRef.getCurrentRoute() : undefined;
+      return !!r && (r.key === routeKey || (r.params as any)?.seenJobKey === key);
+    } catch {
+      return false;
+    }
+  },
 });
 
 // v3.228 비아티스트 공개 API — 구현은 services/genJobs/runtime.ts(2조는 여기 또는 runtime에서 import)
@@ -827,6 +839,7 @@ export {
   adoptGenJob,
   markGenJobDone,
   ackGenJob,
+  ackGenJobWhenSeen,
   openGenJob,
   guardGeneration,
   discardGenJob,
@@ -842,6 +855,7 @@ function onResume(reason: string) {
   _hidden = false;
   _errorStreak = 0;
   if (!currentUserId() || !_hydrated) return;
+  flushSeenAcks(); // v3.441: 결과 화면을 켜 둔 채 돌아왔으면 지금 본 것
   console.info('[GenTracker] visible → refresh', { reason });
   clearTimer();
   _timer = setTimeout(() => {
@@ -938,7 +952,12 @@ export function startGenerationTracker(): void {
 
   // 화면 전환 시 미표시 완성 알림(작업실·마이페이지 계열 진입 때 1회)
   try {
-    navigationRef.addListener('state', () => maybeNotifyDone());
+    navigationRef.addListener('state', () => {
+      flushSeenAcks(); // v3.441: 보류 중인 결과 화면으로 왔으면 확인 처리(알림보다 먼저)
+      // v3.441: 화면 전환이 끝난 뒤 알림 — 웹은 되돌아가기(popstate)가 막 뜬 팝업을 닫아 버렸다
+      if (_notifyTimer) clearTimeout(_notifyTimer);
+      _notifyTimer = setTimeout(() => { _notifyTimer = null; maybeNotifyDone(); }, 700);
+    });
   } catch {
     /* 컨테이너 준비 전 — 다음 트리거에서 알림 */
   }

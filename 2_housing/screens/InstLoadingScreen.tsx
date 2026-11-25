@@ -129,19 +129,21 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
     let mounted = true;
     let interval: ReturnType<typeof setInterval> | null = null;
     const startedAt = Date.now();
+    let lateErrors = 0;
     if (__DEV__) console.info('[InstLoading] 폴링 시작', { trackId, nonce, resume });
     // v3.228: 추적 중인 이 곡의 Inst. job이면 뷰어로 등록(작업실 알림 대신 이 화면이 결과 표시)
     const trackedKey = findInstJobForTrack(trackId)?.jobId ?? null;
     if (trackedKey) setViewerJob(trackedKey);
 
     const pollOnce = async () => {
-      if (Date.now() - startedAt > 10 * 60 * 1000) {
+      // v3.441: 먼저 상태를 확인하고(화면이 꺼져 있던 동안 완성됐을 수 있음) 아직 진행 중일 때만 타임아웃
+      const timedOut = Date.now() - startedAt > 10 * 60 * 1000;
+      const giveUp = () => {
         if (interval) clearInterval(interval);
         if (!mounted) return;
         if (__DEV__) console.info('[InstLoading] 10분 타임아웃 — 수동 확인 안내', { trackId });
         setPhase('timeout');
-        return;
-      }
+      };
       try {
         const data = await getInstrumentalStatus(trackId);
         if (!mounted) return;
@@ -157,6 +159,7 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
           setPhase('done');
           settleGenJob('inst', data?.job_id ? String(data.job_id) : trackedKey, 'done', {
             result: { result_track_id: data?.result_track_id ?? null, track_id: trackId },
+            seenRouteKey: route.key, // v3.441 [SeenAck]
           });
         } else if (st === 'failed' || st === 'error') {
           if (interval) clearInterval(interval);
@@ -166,11 +169,15 @@ export default function InstLoadingScreen({ navigation, route }: Props) {
           settleGenJob('inst', data?.job_id ? String(data.job_id) : trackedKey, 'failed', {
             error: data?.error ?? null,
             refunded: typeof data?.refunded === 'boolean' ? data.refunded : null,
+            seenRouteKey: route.key,
           });
         }
+        if (timedOut && !['completed', 'success', 'done', 'failed', 'error'].includes(st)) giveUp();
       } catch (err: any) {
         // 일시 네트워크/서버 오류는 폴링 지속(생성 자체는 서버 백그라운드 진행 — 기존 관행)
         console.error('[InstLoading] 상태 조회 실패(계속 폴링)', { trackId, status: err?.response?.status });
+        // 돌아온 직후 1회 네트워크 오류로 포기하지 않게 1분 더 확인
+        if (Date.now() - startedAt > 10 * 60 * 1000 && ++lateErrors >= 12) giveUp();
       }
     };
 

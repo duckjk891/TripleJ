@@ -198,21 +198,25 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           store.setStatus('completed');
           store.setIsLoading(false);
           // v3.228: 결과를 이 화면이 직접 받음 → 확인 처리(추적 레코드 정리 + 서버 ack — 재배달 방지)
+          // v3.441 [SeenAck]: 이 화면이 실제로 보일 때만 — 다른 탭·화면 꺼짐이면 작업실 '완성' 알림으로 남긴다
+          const seenJobKey = findGenJob('music', genId)?.jobId;
           settleGenJob('music', genId, 'done', {
             result: { generation_id: genId, result_track_id: status.result_track_id ?? null },
+            seenRouteKey: route.key,
           });
           // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
           // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
           // v3.241 [P0-1]: 발매 완료 생성은 alreadySaved로 진입(재저장 중복 방지 — genJobs/music.ts:124 동일)
-          navigation.replace('MusicResult', trackId ? { alreadySaved: true } : undefined);
+          navigation.replace('MusicResult', { ...(trackId ? { alreadySaved: true } : {}), ...(seenJobKey ? { seenJobKey } : {}) });
         } else if (status.status === 'failed' || status.status === 'error') {
           if (pollInterval) clearInterval(pollInterval);
           // v3.228 X-K1: 서버 확정 실패 — 환불은 refunded=true(또는 서버 문장)일 때만 안내
           store.setError(failureBody(status.error_message || status.error || '음악 생성에 실패했습니다.', status.refunded));
           store.setStatus('failed');
           store.setIsLoading(false);
-          settleGenJob('music', genId, 'failed', { error: status.error_message || status.error || null, refunded: status.refunded });
-          navigation.replace('MusicResult');
+          const seenJobKey = findGenJob('music', genId)?.jobId;
+          settleGenJob('music', genId, 'failed', { error: status.error_message || status.error || null, refunded: status.refunded, seenRouteKey: route.key });
+          navigation.replace('MusicResult', seenJobKey ? { seenJobKey } : undefined);
         }
       } catch (err: any) {
         // v3.93: 기록이 사라졌거나 접근 불가(404/403/400)면 폴링을 멈추고 실패 처리.

@@ -62,6 +62,8 @@ export interface GenTrackerHooks {
   notify(): void;
   /** 추적 뷰어가 보고 있는 레코드 키 */
   viewerJob(): string | null;
+  /** v3.441: 앱이 화면에 떠 있고 지금 보이는 화면이 routeKey(또는 이 job 의 결과 화면)인가 */
+  isRouteSeen(key: string, routeKey: string): boolean;
 }
 
 /** 동기 kind 요청 후 이 시간 안의 404는 "아직 서버 도착 전"으로 보고 processing 유지 */
@@ -74,6 +76,7 @@ let _hooks: GenTrackerHooks = {
   scheduleSoon: () => {},
   notify: () => {},
   viewerJob: () => null,
+  isRouteSeen: () => true,
 };
 
 /** 추적기 본체가 모듈 로드 시 1회 호출 */
@@ -446,8 +449,15 @@ export function adoptGenJob(snap: GenJobSnapshot, opts: { replaceKey?: string | 
   return key;
 }
 
-/** 화면이 결과를 직접 받음 → done 기록. acked=true면 즉시 확인 처리(레코드 정리 + 서버 ack) */
-export function markGenJobDone(key: string, result: any, opts: { acked?: boolean; serverJobId?: string | null } = {}): void {
+/**
+ * 화면이 결과를 직접 받음 → done 기록. acked=true면 확인 처리(레코드 정리 + 서버 ack).
+ * v3.441: seenRouteKey 를 주면 그 화면이 실제로 보일 때만 확인 처리(다른 탭·화면 꺼짐이면 보류).
+ */
+export function markGenJobDone(
+  key: string,
+  result: any,
+  opts: { acked?: boolean; serverJobId?: string | null; seenRouteKey?: string | null } = {}
+): void {
   _liveRequests.delete(key);
   const cur = store().jobs[key];
   if (!cur || cur.kind === 'artist') return;
@@ -458,8 +468,40 @@ export function markGenJobDone(key: string, result: any, opts: { acked?: boolean
     serverJobId: opts.serverJobId ?? cur.serverJobId ?? null,
   });
   console.info('[GenTracker] 완성 기록(화면 수신)', { kind: cur.kind, jobId: key, acked: !!opts.acked });
-  if (opts.acked) ackGenJob(key);
+  if (opts.acked) ackGenJobWhenSeen(key, opts.seenRouteKey);
   else _hooks.notify();
+}
+
+// ── v3.441 [SeenAck]: 사용자가 결과를 실제로 봤을 때만 확인 처리 ─────────────────────
+// (대표 11-25) 커버를 만드는 동안 다른 탭으로 가거나 화면이 꺼지면, 뒤에 남아 있던 대기 화면이 결과를 받아
+// '확인함'으로 처리해 버렸다 → 작업실 '완성' 말풍선·알림이 사라지고 휴식만 보임(⭐ 쓴 이미지가 안 보이는 사고).
+// 보이지 않으면 done 으로 남겨 두고, 그 화면이 실제로 보이는 순간(화면 전환·앱 복귀) 확인 처리한다.
+const _seenWait = new Map<string, string>(); // key → 결과를 보여줄 화면 routeKey
+
+export function ackGenJobWhenSeen(key: string, routeKey?: string | null): boolean {
+  if (!routeKey || _hooks.isRouteSeen(key, routeKey)) return ackGenJob(key);
+  _seenWait.set(key, routeKey);
+  console.info('[GenTracker] 화면 밖 도착 — 확인 보류(작업실에서 알림)', { jobId: key });
+  _hooks.notify();
+  return false;
+}
+
+/** 결과 화면이 이만큼 계속 보여야 '봤다'로 친다 — 작업실 탭을 누르면 결과 화면을 순간 거쳐 맵으로 가기 때문 */
+const SEEN_DWELL_MS = 1000;
+let _seenTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 화면 전환·앱 복귀 때 호출 — 보류 중인 결과의 화면이 1초 뒤에도 보이면 확인 처리 */
+export function flushSeenAcks(): void {
+  if (_seenTimer) clearTimeout(_seenTimer);
+  _seenTimer = null;
+  if (_seenWait.size === 0) return;
+  _seenTimer = setTimeout(() => {
+    _seenTimer = null;
+    Array.from(_seenWait.entries()).forEach(([key, routeKey]) => {
+      if (!store().jobs[key]) _seenWait.delete(key);
+      else if (_hooks.isRouteSeen(key, routeKey)) ackGenJob(key);
+    });
+  }, SEEN_DWELL_MS);
 }
 
 /**
@@ -471,7 +513,7 @@ export function settleGenJob(
   kind: GenKind,
   id: string | null | undefined,
   outcome: 'done' | 'failed',
-  info: { result?: any; error?: string | null; refunded?: boolean | null } = {}
+  info: { result?: any; error?: string | null; refunded?: boolean | null; seenRouteKey?: string | null } = {}
 ): void {
   if (!id) return;
   const local = findGenJob(kind, id);
@@ -486,7 +528,11 @@ export function settleGenJob(
         ? { genResult: info.result ?? local.genResult ?? null }
         : { error: info.error ?? null, refunded: info.refunded ?? null }),
     });
-    ackGenJob(local.jobId);
+    ackGenJobWhenSeen(local.jobId, info.seenRouteKey);
+    return;
+  }
+  if (info.seenRouteKey && !_hooks.isRouteSeen(id, info.seenRouteKey)) {
+    console.info('[GenTracker] 화면 밖 도착(로컬 레코드 없음) — 확인 보류', { kind, id });
     return;
   }
   console.info('[GenTracker] 결과 확인(로컬 레코드 없음) — 서버 ack만', { kind, id, outcome });
@@ -520,6 +566,7 @@ export function ackGenJob(key: string): boolean {
   if (!cur || cur.kind === 'artist') return false;
   if (cur.lastStatus === 'processing') return false;
   _liveRequests.delete(key);
+  _seenWait.delete(key);
   store().patchJob(key, { ackedAt: Date.now() });
   store().removeJob(key, { dismissed: true });
   console.info('[GenTracker] 결과 확인(ack)', { kind: cur.kind, jobId: key, status: cur.lastStatus });

@@ -20,6 +20,7 @@ import { useCharacterTaskStore, takeCoverWardrobeReturn, type CharacterTaskMode 
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { useScreenSeen } from '../utils/appVisible';
 import { useTrackedJob, getBlockingArtistJob, type TrackedUsedItem } from '../stores/generationJobStore';
 import {
   registerArtistJob,
@@ -146,6 +147,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
   const [jobId, setJobId] = useState<string | null>(routeJobId);
   const tracked = useTrackedJob(jobId);
   const isViewer = !!jobId;
+  const seen = useScreenSeen(); // v3.441 [SeenAck]: 보이지 않을 땐 자동 저장·전환하지 않고 작업실 '완성' 알림으로 남긴다
   const mode: CharacterTaskMode | null = isViewer ? (tracked?.mode ?? 'sheet') : taskStore.mode;
   const meta = modeMeta(mode);
   const stages = LOADING_STEPS_BY_MODE[mode ?? 'sheet'];
@@ -206,6 +208,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
       }, 100);
       return;
     }
+    if (!seen) return; // 다른 탭·화면 꺼짐 — 돌아오면 이어서 처리
     if (tracked.lastStatus === 'done' && !finalizingRef.current && !saveFailed) {
       finalizingRef.current = true;
       console.info('[ArtistLoading] 완성 — finalize', { jobId });
@@ -232,7 +235,7 @@ export default function ArtistLoadingScreen({ navigation, route }: any) {
       setTimeout(() => showAlert('만들지 못했어요', msg), 100);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, tracked?.lastStatus, saveFailed]);
+  }, [jobId, tracked?.lastStatus, saveFailed, seen]);
 
   // 경과 시간 표시(30초마다)
   useEffect(() => {

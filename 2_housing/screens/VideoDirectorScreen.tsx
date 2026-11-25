@@ -1125,7 +1125,8 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
   }): Promise<VideoTrackOutcome> => {
     let deadline = t.startedAt + (t.fileUrl ? VIDEO_VERIFY_WINDOW_MS : VIDEO_CAP_MS);
     let ledgerSeen = false;
-    while (Date.now() <= deadline) {
+    let extra = 0; // v3.441: 화면이 꺼져 기한이 지났어도 돌아온 뒤 6회 더 확인
+    while (Date.now() <= deadline || extra++ < 6) {
       if (!mountedRef.current) return { kind: 'unmounted' };
       const rec = useGenerationJobStore.getState().jobs[t.key];
       // 회수·편입 추적 중 레코드 소멸 = 추적기가 정리(구서버·킬스위치 404 유예 경과 → 중립 안내) — 화면도 종료
@@ -1193,7 +1194,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
       const result = outcome.result ?? { video_url: outcome.videoUrl, format: outcome.format ?? ctx.fallbackFormat ?? null };
       if (useGenerationJobStore.getState().jobs[key]) {
         // 화면을 벗어난 뒤 도착했으면 ack 하지 않음 → 추적기가 작업실에서 도착 알림 1회
-        markGenJobDone(key, result, { acked: shown, serverJobId: outcome.serverJobId });
+        markGenJobDone(key, result, { acked: shown, serverJobId: outcome.serverJobId, seenRouteKey: route.key }); // v3.441 [SeenAck]
       } else if (shown && outcome.serverJobId) {
         void ackGenJobOnServer('video', outcome.serverJobId);
       }
@@ -1208,7 +1209,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
     if (outcome.kind === 'failed') {
       console.info('[GenJob:video] 서버 실패 확정', { jobId: key, refunded: outcome.refunded });
       pushDirector(`영상을 끝내지 못했어요. ${failureBody(outcome.error, outcome.refunded, outcome.notCharged)}`);
-      settleGenJob('video', key, 'failed', { error: outcome.error, refunded: outcome.refunded });
+      settleGenJob('video', key, 'failed', { error: outcome.error, refunded: outcome.refunded, seenRouteKey: route.key });
     } else if (outcome.kind === 'gone') {
       console.info('[GenJob:video] 추적 레코드 정리됨 — 추적 종료', { jobId: key });
       pushDirector(`영상 결과를 확인하지 못했어요. ${CHARGE_UNCONFIRMED_BODY}`);
@@ -1362,7 +1363,7 @@ export default function VideoDirectorScreen({ navigation, route }: any) {
         if (status >= 500 && genLedgerFields(data).genJobId) {
           // 서버 원장 실패 확정(서버가 환불 처리) — 화면이 실패를 안내하므로 도착 알림 중복 없이 확인 처리
           // (응답 직후 레코드는 아직 processing — 추적기가 failed 반영하는 즉시 ack)
-          settleGenJob('video', genKey, 'failed', { error: data?.error ?? null });
+          settleGenJob('video', genKey, 'failed', { error: data?.error ?? null, seenRouteKey: route.key });
         } else {
           // 400·402·403·404·429·409 request_already_failed · 원장 없는 502(구서버·킬스위치) — "만드는 중" 아님
           discardGenJob(genKey, isRequestAlreadyFailed(err) ? 'video-request-already-failed' : `video-${status}`);

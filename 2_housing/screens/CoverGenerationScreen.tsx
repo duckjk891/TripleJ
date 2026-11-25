@@ -208,6 +208,8 @@ interface ActiveCoverGen {
   charObjectName: string | null;
   /** 결과를 보여줄(부착된) 화면 인스턴스 토큰 — null = 화면 밖(추적기 도착 알림) */
   owner: number | null;
+  /** v3.441 [SeenAck]: 부착 화면의 routeKey — 이 화면이 실제로 보일 때만 확인 처리 */
+  ownerRouteKey: string | null;
   notice: string | null;
   onNotice: ((n: string | null) => void) | null;
   promise: Promise<CoverGenOutcome>;
@@ -242,7 +244,8 @@ async function recoverCoverResult(e: ActiveCoverGen): Promise<
   let deadline = Date.now() + 12 * POLL_INTERVAL_MS;
   let ledgerSeen = false;
   let attempt = 0;
-  while (Date.now() <= deadline) {
+  // v3.441: 화면이 꺼져 있던 동안 기한이 지났어도(타이머 정지) 최소 12회는 확인한다
+  while (Date.now() <= deadline || attempt < 12) {
     attempt++;
     await coverSleep(POLL_INTERVAL_MS);
     let snap: GenJobSnapshot | null | undefined;
@@ -302,7 +305,7 @@ async function runCoverGenerate(e: ActiveCoverGen, payload: Record<string, any>)
     markGenJobDone(e.genKey, {
       cover_session_id: data.sessionId, object_name: data.objectName,
       image_url: data.imageUrlPath, image_model: data.imageModel ?? null,
-    }, { acked: e.owner !== null, serverJobId: genLedgerFields(res.data).genJobId });
+    }, { acked: e.owner !== null, serverJobId: genLedgerFields(res.data).genJobId, seenRouteKey: e.ownerRouteKey });
     // v3.202(H-⑤): 컨텍스트 클리어는 성공 경로에서만
     if (!isAlbum) clearCoverContextStore();
     return { kind: 'success', data };
@@ -337,7 +340,7 @@ async function runCoverGenerate(e: ActiveCoverGen, payload: Record<string, any>)
       setGenNotice(e, null);
       if (r.kind === 'found') {
         // 완성본 회수 = 성공 처리 — 재생성 호출 없음(⭐ 재차감 없음)
-        markGenJobDone(e.genKey, r.result, { acked: e.owner !== null, serverJobId: r.serverJobId });
+        markGenJobDone(e.genKey, r.result, { acked: e.owner !== null, serverJobId: r.serverJobId, seenRouteKey: e.ownerRouteKey });
         if (!isAlbum) clearCoverContextStore();
         usePointsStore.getState().fetchBalance(); // 서버는 이미 처리 완료 — 잔액 표시 동기화
         return { kind: 'success', data: r.data };
@@ -348,7 +351,7 @@ async function runCoverGenerate(e: ActiveCoverGen, payload: Record<string, any>)
       usePointsStore.getState().fetchBalance();
       if (r.kind === 'failed') {
         // 화면이 보고 있으면 실패 확인 처리, 화면 밖이면 추적기가 도착 알림으로 안내
-        if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: r.error, refunded: r.refunded });
+        if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: r.error, refunded: r.refunded, seenRouteKey: e.ownerRouteKey });
         return { kind: 'failed', message: `${COVER_TEXT.failTitle}. ${failureBody(r.error, r.refunded, r.notCharged)}` };
       }
       console.warn('[Cover] 폴링 복구 실패 — 결과 미확정');
@@ -356,7 +359,7 @@ async function runCoverGenerate(e: ActiveCoverGen, payload: Record<string, any>)
     }
     // 서버가 명시적으로 답한 실패 — 원장 있는 5xx 는 서버 실패 확정(서버 환불 처리), 그 외는 원장 전 거절
     if (typeof status === 'number' && status >= 500 && genLedgerFields(data).genJobId) {
-      if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: data?.error ?? null });
+      if (e.owner !== null) settleGenJob('cover', e.genKey, 'failed', { error: data?.error ?? null, seenRouteKey: e.ownerRouteKey });
     } else {
       discardGenJob(e.genKey, isRequestAlreadyFailed(err) ? 'cover-request-already-failed' : `cover-${status ?? 'error'}`);
     }
@@ -490,7 +493,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.274 [44]: 저장 전 이탈한 결과 보존본 — 생성 성공 시 store 에 기록(영속), 저장·처음부터에서 비움.
   // 서버 cover_sessions 는 영구 보존이라 이 포인터만으로 복귀 시 이어서 다듬기 가능.
   const lastResultAtMount = useRef(
-    !albumMode && !hasPendingGeneration && !recoverAtMount && !attachAtMount && !hasResumableDialogue
+    // v3.441: 인사만 남은 대화(사용자 답 없음)는 저장 전 결과를 가리지 않는다
+    !albumMode && !hasPendingGeneration && !recoverAtMount && !attachAtMount
+      && !(hasResumableDialogue && hasCoverUserProgress(initialStore))
       ? initialStore.coverLastResult
       : null
   ).current;
@@ -869,6 +874,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       if (e && e.owner === tokenRef.current) {
         // 화면 이탈 — 요청은 계속, 완료는 전역 추적기 도착 알림(또는 재진입 화면이 합류)
         e.owner = null;
+        e.ownerRouteKey = null;
         e.onNotice = null;
       }
       if (viewerKeyRef.current) {
@@ -995,6 +1001,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.228 W2: 진행 중 요청에 합류 — 새 POST 없음. 결과는 이 화면(owner)이 반영.
   const attachCoverGen = async (e: ActiveCoverGen) => {
     e.owner = tokenRef.current;
+    e.ownerRouteKey = route.key;
     e.onNotice = (n) => {
       if (mountedRef.current && e.owner === tokenRef.current) setRecoveryNotice(n);
     };
@@ -1093,7 +1100,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     });
     const e = {
       genKey, requestId, startedAt: t0, albumId: albumMode?.albumId ?? null,
-      trackId, title, style, charObjectName, owner: null, notice: null, onNotice: null,
+      trackId, title, style, charObjectName, owner: null, ownerRouteKey: null, notice: null, onNotice: null,
     } as unknown as ActiveCoverGen;
     e.promise = runCoverGenerate(e, payload)
       .catch((err: any): CoverGenOutcome => {
@@ -1117,7 +1124,8 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const trackImageJob = async (key: string): Promise<ImageTrackOutcome> => {
     const start = useGenerationJobStore.getState().jobs[key]?.startedAt ?? Date.now();
     const deadline = Math.max(start + COVER_CAP_MS, Date.now() + 60 * 1000);
-    while (Date.now() <= deadline) {
+    let extra = 0; // v3.441: 화면이 꺼져 기한이 지났어도 돌아온 뒤 6회(1분) 더 확인
+    while (Date.now() <= deadline || extra++ < 6) {
       if (!mountedRef.current) return { kind: 'unmounted' };
       const rec = useGenerationJobStore.getState().jobs[key];
       if (!rec) return { kind: 'gone' }; // 추적기가 정리(원장 없음·확인 완료)
@@ -1161,7 +1169,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       console.info('[GenJob:cover] 결과 도착', { jobId: key, kind: o.jobKind });
       // 결과를 보여줌 = 확인(로컬 정리 + 서버 ack). 로컬 레코드가 없으면 서버 job id 로 ack 만
       const rec = useGenerationJobStore.getState().jobs[key];
-      settleGenJob(o.jobKind === 'cover_refine' ? 'cover_refine' : 'cover', rec ? key : o.serverJobId, 'done', { result: o.result });
+      settleGenJob(o.jobKind === 'cover_refine' ? 'cover_refine' : 'cover', rec ? key : o.serverJobId, 'done', { result: o.result, seenRouteKey: route.key });
       usePointsStore.getState().fetchBalance();
       applyCoverSuccess(data);
       return;
@@ -1170,7 +1178,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       const isRefine = useGenerationJobStore.getState().jobs[key]?.kind === 'cover_refine';
       const text = isRefine ? COVER_REFINE_TEXT : COVER_TEXT;
       console.info('[GenJob:cover] 서버 실패 확정', { jobId: key, refunded: o.refunded });
-      settleGenJob(isRefine ? 'cover_refine' : 'cover', key, 'failed', { error: o.error, refunded: o.refunded });
+      settleGenJob(isRefine ? 'cover_refine' : 'cover', key, 'failed', { error: o.error, refunded: o.refunded, seenRouteKey: route.key });
       usePointsStore.getState().fetchBalance();
       setErrorMsg(`${text.failTitle}. ${failureBody(o.error, o.refunded, o.notCharged)}`);
       setMode('result');
@@ -2280,7 +2288,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     const startedAt = Date.now();
     let deadline = startedAt + 12 * POLL_INTERVAL_MS;
     let ledgerSeen = false;
-    for (let attempt = 1; Date.now() <= deadline; attempt++) {
+    for (let attempt = 1; Date.now() <= deadline || attempt <= 12; attempt++) { // v3.441: 화면 꺼짐 대비 최소 12회
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       if (requestId) {
         let snap: GenJobSnapshot | null | undefined;
@@ -2420,7 +2428,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         markGenJobDone(genKey, {
           cover_session_id: coverSessionId, cover_object_name: newObj,
           image_url: res.data?.image_url ?? null, current_version: newVer,
-        }, { acked: mountedRef.current, serverJobId: genLedgerFields(res.data).genJobId });
+        }, { acked: mountedRef.current, serverJobId: genLedgerFields(res.data).genJobId, seenRouteKey: route.key });
       } catch (err: any) {
         console.error('[Cover] refine-cover FAIL', {
           cover_session_id: coverSessionId,
@@ -2451,7 +2459,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             setRefineInput(''); // 회수 = 성공 처리 (재요청 없음 = 재차감 없음)
             markGenJobDone(genKey, {
               cover_session_id: coverSessionId, cover_object_name: recovered.obj, current_version: recovered.version,
-            }, { acked: mountedRef.current });
+            }, { acked: mountedRef.current, seenRouteKey: route.key });
             return;
           }
           endGenRequest(genKey); // 화면 확인 종료 → 이후는 전역 추적기가 원장으로 판정

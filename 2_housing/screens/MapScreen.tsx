@@ -824,7 +824,7 @@ export default function MapScreen({ navigation }: Props) {
     const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[type];
     if (fatigueKey && fatigueKey !== 'artist' && fatigueRemain[fatigueKey] > 0) {
       console.log(`[Map] [fatigue:${fatigueKey}] 디렉터 휴식 중 — 남은`, fatigueRemain[fatigueKey], '초');
-      showFatigueCooldownDialog({
+      const openCooldown = () => showFatigueCooldownDialog({
         status: fatigueAll[fatigueKey] ?? null,
         remainingSec: fatigueRemain[fatigueKey],
         director: fatigueKey,
@@ -834,6 +834,17 @@ export default function MapScreen({ navigation }: Props) {
           proceedDirectorPress(type);
         },
       });
+      // v3.441: 저장하지 않은 완성 이미지가 있으면 휴식 중에도 볼 수 있게(보기는 무료)
+      if (type === 'image' && !tutorialVisible && useMusicStore.getState().coverLastResult) {
+        console.info('[Map] [image] 휴식 중 — 저장하지 않은 이미지 있음');
+        showAlert('저장하지 않은 이미지가 있어요', '지난번에 완성된 이미지를 바로 볼 수 있어요.', [
+          { text: '닫기', style: 'cancel' },
+          { text: '휴식 줄이기', onPress: openCooldown },
+          { text: '이미지 보기', onPress: () => openResumeTarget('image', { route: 'CoverGeneration', reason: 'cover-last-result' }) },
+        ]);
+        return;
+      }
+      openCooldown();
       return;
     }
 
