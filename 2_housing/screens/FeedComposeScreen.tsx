@@ -4,7 +4,7 @@ import { usePasteImages, type PastedAsset } from '../utils/usePasteImages'; // v
 // 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}|{type:'image',object_name}], is_public, kind:'feed' }
 // v3.111: 사진 첨부 — DocumentPicker image/* → POST /upload/feed-image(서버 재인코딩·15MB) → image 블록.
 // v3.273: 다중 선택(한 번에 최대 5장, 총 5장 — 서버 MAX_IMAGE_BLOCKS=5와 짝) — 각 파일 개별 검증·병렬 업로드.
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -40,7 +40,12 @@ import { usePointsStore } from '../stores/pointsStore';
 import { startDiarySongFlow, startStorySongFromFeed } from '../utils/makeLike'; // v3.395 [DiarySong] · v3.412 저장된 낙서
 import { useStorySongAvailable } from '../utils/storySong'; // v3.410 [StorySong]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 입력칸 손글씨
-import { LinedTextInput } from '../components/diary/LinedPaper'; // v3.403 줄 노트
+import { feedImageUri } from '../components/feed/FeedImageBlock';
+import DiaryEditor from '../components/diary/DiaryEditor'; // v3.446 줄 노트 위에 글·사진 이어 쓰기
+import {
+  Seg, SegCursor, textSeg, imageSeg, normalizeSegs, insertImages, removeImage, replaceImageKey, moveImage,
+  segsText, segsImageKeys, segsToBlocks, blocksToSegs,
+} from '../utils/feedBlocks';
 // v3.389 [Diary] 일기 쓰기 — 날짜·기분·공개 범위 3가지·글자 수 보상 안내
 import {
   DIARY_MOODS, VISIBILITY_OPTIONS, DIARY_REWARD, DIARY_MIN_CHARS, DiaryVisibility,
@@ -50,7 +55,9 @@ import {
 // v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
 const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const FEED_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
-const MAX_FEED_IMAGES = 5;
+const MAX_POST_IMAGES = 5;   // 크루 게시판 글
+const MAX_DIARY_IMAGES = 10; // v3.446 낙서 — 서버 MAX_IMAGE_BLOCKS(10)와 짝
+const MAX_BODY_LEN = 2000;
 
 interface AttachedImage {
   key: string;
@@ -90,6 +97,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   const isClub = kind === 'club';
   // v3.389 [Diary]: kind='feed' = 일기
   const isDiary = kind === 'feed';
+  const MAX_FEED_IMAGES = isDiary ? MAX_DIARY_IMAGES : MAX_POST_IMAGES;
   const nakseoFont = useNakseoFont(); // v3.400 [NakseoFont] 낙서 입력칸 손글씨(중학생체)
   const clubId: string | undefined = isEdit
     ? (editFeed.club_id ? String(editFeed.club_id) : undefined)
@@ -98,12 +106,19 @@ export default function FeedComposeScreen({ navigation, route }: any) {
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState<string>(isEdit ? (editFeed.title || '') : '');
-  const [body, setBody] = useState<string>(() => (isEdit
+  const [plainBody, setPlainBody] = useState<string>(() => (isEdit
     ? editBlocks
         .filter((b) => b?.type === 'text' && typeof b.text === 'string' && !b.text.startsWith('[item]'))
         .map((b) => b.text)
         .join('\n\n')
     : ''));
+  // v3.446 [DiaryInline] 낙서는 글·사진 조각(순서대로) — 사진은 커서 자리에 들어간다. 다른 글(공지·크루)은 종전 한 칸.
+  const [segs, setSegs] = useState<Seg[]>(() => (isEdit
+    ? blocksToSegs(editBlocks, (b, i) => `edit_${i}_${b.object_name}`)
+    : [textSeg()]));
+  const cursorRef = useRef<SegCursor | null>(null);
+  const body = isDiary ? segsText(segs) : plainBody;
+  const setBody = setPlainBody;
   const [attached, setAttached] = useState<RowTrack | null>(() => {
     if (!isEdit) return null;
     const tb = editBlocks.find((b) => b?.type === 'track' && (b.track?.id || b.track_id));
@@ -183,7 +198,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         .filter((b) => b?.type === 'image' && b.object_name)
         .map((b, i) => ({
           key: `edit_${i}_${b.object_name}`,
-          localUri: b.image_url || '',
+          localUri: feedImageUri(b) || '', // v3.446: 상대경로(/api/…)도 앱에서 보이게
           name: String(b.object_name).split('/').pop() || `image_${i}`,
           mime: 'image/jpeg',
           status: 'done' as const,
@@ -374,6 +389,25 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       source: opts.source || (pasted ? 'paste' : 'library'),
     }));
     setImages((prev) => [...prev.filter((i) => !replacing || i.key !== opts.replaceKey), ...entries]);
+    if (isDiary) {
+      const keys = entries.map((e) => e.key);
+      const at = cursorRef.current;
+      setSegs((prev) => {
+        let next = prev;
+        let rest = keys;
+        let where = at;
+        if (replacing && opts.replaceKey) {
+          next = replaceImageKey(prev, opts.replaceKey, keys[0]); // 다시 찍기 — 있던 자리 그대로
+          rest = keys.slice(1);
+          if (!rest.length) return next;
+          const idx = next.findIndex((x) => x.type === 'image' && x.imgKey === keys[0]);
+          where = idx >= 0 ? { key: next[idx + 1].key, start: 0 } : null;
+        }
+        const r = insertImages(next, where, rest);
+        cursorRef.current = r.cursor;
+        return r.segs;
+      });
+    }
     entries.forEach((e) => uploadImage(e));
   };
 
@@ -396,11 +430,15 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       showAlert('오류', '카메라를 열지 못했어요. 사진첩에서 골라 주세요.');
     }
   };
+  const dropImage = (key: string) => {
+    setImages((prev) => prev.filter((i) => i.key !== key));
+    if (isDiary) setSegs((prev) => removeImage(prev, key));
+  };
   // 사진 눌렀을 때(올라간 사진) — 다시 찍기 / 삭제
   const photoMenu = (img: AttachedImage) => {
     showAlert('사진', '이 사진을 다시 찍거나 삭제할 수 있어요.', [
       { text: '다시 찍기', onPress: () => { void shootPhoto(img.key); } },
-      { text: '삭제', style: 'destructive', onPress: () => setImages((prev) => prev.filter((i) => i.key !== img.key)) },
+      { text: '삭제', style: 'destructive', onPress: () => dropImage(img.key) },
       { text: '닫기', style: 'cancel' },
     ]);
   };
@@ -439,13 +477,27 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     uploadImage({ ...entry, status: 'uploading' });
   };
 
+  // v3.446: 올라간 사진을 글에 놓인 순서대로
+  const doneImagesInOrder = (): AttachedImage[] => {
+    const list = isDiary
+      ? segsImageKeys(segs).map((k) => images.find((i) => i.key === k)).filter(Boolean) as AttachedImage[]
+      : images;
+    return list.filter((i) => i.status === 'done' && i.objectName);
+  };
+
   // v3.394 [DiaryDraft] 임시저장 / 불러오기 / 지우기
   const saveDraft = async (silent = false) => {
     if (!useDraft || !draftKey) return;
     const draft = {
-      v: 1, saved_at: Date.now(), body, mood, diaryDate, visibility,
+      v: 2, saved_at: Date.now(), body, mood, diaryDate, visibility,
+      // v3.446: 글·사진 순서(v2) — 올라간 사진만. body·images 는 예전 앱이 읽을 수 있게 같이 둔다
+      segs: segs.map((s) => {
+        if (s.type === 'text') return { t: 'text', text: s.text };
+        const im = images.find((i) => i.key === s.imgKey);
+        return im?.status === 'done' && im.objectName ? { t: 'image', objectName: im.objectName } : null;
+      }).filter(Boolean),
       attached: attached ? { id: String(attached.id), title: attached.title, artist_name: (attached as any).artist_name, cover_image: (attached as any).cover_image } : null,
-      images: images.filter((i) => i.status === 'done' && i.objectName).map((i) => ({ objectName: i.objectName, localUri: i.localUri, name: i.name, source: i.source })),
+      images: doneImagesInOrder().map((i) => ({ objectName: i.objectName, localUri: i.localUri, name: i.name, source: i.source })),
       items: attachedItems,
     };
     try {
@@ -470,7 +522,6 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       try { d = JSON.parse(raw); } catch { return; }
       if (!d || (!d.body && !d.attached && !(d.images || []).length)) return;
       const applyDraft = () => {
-        setBody(d.body || '');
         if (d.mood) setMood(d.mood);
         // 날짜는 최근 7일 안일 때만 이어받음(지났으면 오늘)
         if (d.diaryDate && backdateOptions().some((o) => o.ymd === d.diaryDate)) setDiaryDate(d.diaryDate);
@@ -478,10 +529,26 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         if (d.attached?.id && !attachTrackId) setAttached(d.attached as RowTrack); // v3.396 공유 진입 곡 우선
         if (Array.isArray(d.images)) {
           setImages(d.images.slice(0, MAX_FEED_IMAGES).map((im: any, i: number) => ({
-            key: `draft_${i}_${im.objectName}`, localUri: im.localUri || '', name: im.name || `image_${i}`,
+            // v3.446: 기기 임시 사진은 다시 열 때 없을 수 있어 올려 둔 사진으로 보여 준다
+            key: `draft_${i}_${im.objectName}`, localUri: feedImageUri({ object_name: im.objectName }) || im.localUri || '', name: im.name || `image_${i}`,
             mime: 'image/jpeg', status: 'done' as const, objectName: im.objectName, source: im.source,
           })));
         }
+        // v3.446: 글·사진 순서 되살리기 — 예전 임시저장(v1)은 글 뒤에 사진
+        const draftImgs: any[] = Array.isArray(d.images) ? d.images.slice(0, MAX_FEED_IMAGES) : [];
+        const restored: Seg[] = [];
+        if (Array.isArray(d.segs) && d.segs.length) {
+          let n = 0;
+          for (const s of d.segs) {
+            if (s?.t === 'text') restored.push(textSeg(String(s.text || '')));
+            else if (s?.t === 'image' && draftImgs[n]?.objectName === s.objectName) { restored.push(imageSeg(`draft_${n}_${s.objectName}`)); n++; }
+          }
+        } else {
+          restored.push(textSeg(d.body || ''));
+          draftImgs.forEach((im: any, i: number) => restored.push(imageSeg(`draft_${i}_${im.objectName}`)));
+        }
+        cursorRef.current = null;
+        setSegs(normalizeSegs(restored));
         if (Array.isArray(d.items)) setAttachedItems(d.items);
         console.info('[DiaryDraft] 불러오기', { len: (d.body || '').length });
       };
@@ -507,7 +574,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
       return;
     }
     const text = body.trim();
-    const done = images.filter((i) => i.status === 'done' && i.objectName);
+    const done = doneImagesInOrder();
     if (!text && !done.length) { showAlert('알림', '먼저 낙서를 남겨 주세요. 쓴 글과 사진이 노래가 돼요.'); return; }
     // v3.410 [StorySong] 재료 담기로 — 쓰던 글·사진이 그대로 담기고, '낙서장에도 남기기'로 이 낙서를 저장할 수 있다
     showAlert('이 낙서로 노래 만들기', useDraft
@@ -565,11 +632,18 @@ export default function FeedComposeScreen({ navigation, route }: any) {
     if (posting) return;
     setPosting(true);
     const blocks: any[] = [];
-    if (text) blocks.push({ type: 'text', text });
-    if (attached) blocks.push({ type: 'track', track_id: String(attached.id) });
-    // v3.111: 업로드 완료된 사진 → image 블록
-    for (const img of readyImages) {
-      if (img.objectName) blocks.push({ type: 'image', object_name: img.objectName });
+    if (isDiary) {
+      // v3.446 [DiaryInline] 글·사진을 놓인 순서대로 → 곡 → 아이템
+      const ready = new Map(readyImages.filter((i) => i.objectName).map((i) => [i.key, i.objectName as string]));
+      blocks.push(...segsToBlocks(segs, (k) => ready.get(k)));
+      if (attached) blocks.push({ type: 'track', track_id: String(attached.id) });
+    } else {
+      if (text) blocks.push({ type: 'text', text });
+      if (attached) blocks.push({ type: 'track', track_id: String(attached.id) });
+      // v3.111: 업로드 완료된 사진 → image 블록
+      for (const img of readyImages) {
+        if (img.objectName) blocks.push({ type: 'image', object_name: img.objectName });
+      }
     }
     // v3.70: 아이템은 서버 블록 화이트리스트 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
@@ -726,14 +800,21 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         {/* v3.403 [LinedNote] 낙서는 줄 노트 입력칸(글 길이만큼 늘어나고 줄이 따라옴) */}
         {isDiary ? (
           <View style={{ marginTop: spacing.md }}>
-            <LinedTextInput
-              minLines={6}
-              style={nakseoFont ? { fontFamily: nakseoFont } : null}
+            <DiaryEditor
+              segs={segs}
+              images={images}
+              cursorRef={cursorRef}
+              fontFamily={nakseoFont}
               placeholder="오늘 하루를 끄적여 보세요. 들은 노래, 만든 곡, 있었던 일 무엇이든요."
-              value={body}
-              onChangeText={setBody}
-              maxLength={2000}
-              accessibilityLabel="낙서 내용"
+              maxTotal={MAX_BODY_LEN}
+              onChangeText={(key, t) => setSegs((prev) => prev.map((s) => (s.key === key && s.type === 'text' ? { ...s, text: t } : s)))}
+              onPressImage={(k) => {
+                const img = images.find((i) => i.key === k);
+                if (!img) return;
+                if (img.status === 'failed') retryImage(img); else photoMenu(img);
+              }}
+              onMoveImage={(k, dir) => setSegs((prev) => moveImage(prev, k, dir))}
+              onRemoveImage={dropImage}
             />
           </View>
         ) : (
@@ -799,18 +880,8 @@ export default function FeedComposeScreen({ navigation, route }: any) {
             v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
         {/* v3.232 K9: 어린이는 사진 첨부 없음(서버 /upload/feed-image 도 403) */}
         {/* v3.400 [Camera] 낙서: 사진 찍기·사진첩을 크게 나란히(여러 장 · 눌러서 다시 찍기/삭제) */}
-        {isDiary && !isChild ? (
-          <View style={styles.photoRow}>
-            <TouchableOpacity style={styles.photoBtn} onPress={() => { void shootPhoto(); }} accessibilityLabel="사진 찍기">
-              <Feather name="camera" size={22} color={colors.text.primary} />
-              <AppText variant="footnote" style={{ color: colors.text.primary, fontWeight: '700' }}>사진 찍기</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.photoBtn, styles.photoBtnAlt]} onPress={() => { void pickImage(); }} accessibilityLabel="사진첩에서 고르기">
-              <Feather name="image" size={22} color={colors.accent.primary} />
-              <AppText variant="footnote" tone="accent" style={{ fontWeight: '700' }}>사진첩{images.length ? ` ${images.length}/${MAX_FEED_IMAGES}` : ''}</AppText>
-            </TouchableOpacity>
-          </View>
-        ) : !isCommunity && !isChild ? (
+        {/* v3.446: 낙서의 사진 버튼은 화면 아래 고정 줄(글 쓰는 중에도 커서 자리에 바로) */}
+        {!isDiary && !isCommunity && !isChild ? (
           <TouchableOpacity style={styles.attachBtn} onPress={() => { void pickImage(); }} accessibilityLabel="사진 첨부">
             <Feather name="image" size={15} color={colors.accent.primary} />
             <AppText variant="footnote" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
@@ -818,7 +889,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         ) : null}
 
         {/* 첨부된 사진 미리보기 — 업로드 중 스피너 / 실패 시 탭하여 재시도, X로 제거 */}
-        {images.length ? (
+        {!isDiary && images.length ? (
           <View style={styles.imageRow}>
             {images.map((img) => (
               <View key={img.key} style={styles.imageThumbWrap}>
@@ -841,7 +912,7 @@ export default function FeedComposeScreen({ navigation, route }: any) {
                 ) : null}
                 <TouchableOpacity
                   style={styles.imageRemove}
-                  onPress={() => setImages((prev) => prev.filter((i) => i.key !== img.key))}
+                  onPress={() => dropImage(img.key)}
                   accessibilityLabel="사진 제거"
                 >
                   <Feather name="x" size={12} color={colors.text.primary} />
@@ -929,6 +1000,23 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         </View>
         )}
       </ScrollView>
+
+      {/* v3.446 [DiaryInline] 사진 넣기 줄 — 키보드 위에 붙는다 */}
+      {isDiary && !isChild ? (
+        <View style={[styles.photoBar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+          <TouchableOpacity style={styles.photoBarBtn} onPress={() => { void shootPhoto(); }} accessibilityRole="button" accessibilityLabel="사진 찍기">
+            <Feather name="camera" size={18} color={colors.accent.primary} />
+            <AppText variant="footnote" tone="accent" style={styles.photoBarText}>사진 찍기</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.photoBarBtn} onPress={() => { void pickImage(); }} accessibilityRole="button" accessibilityLabel="사진첩에서 고르기">
+            <Feather name="image" size={18} color={colors.accent.primary} />
+            <AppText variant="footnote" tone="accent" style={styles.photoBarText}>사진첩</AppText>
+          </TouchableOpacity>
+          <AppText variant="caption" tone="muted" style={styles.photoBarHint} numberOfLines={2}>
+            {images.length ? `${images.length}/${MAX_FEED_IMAGES}장` : '글 쓰던 자리에 들어가요'}
+          </AppText>
+        </View>
+      ) : null}
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
       <AppModal visible={pickerOpen} animationType="slide" onRequestClose={() => setPickerOpen(false)}>
@@ -1109,13 +1197,17 @@ const styles = StyleSheet.create({
   itemPreviewImg: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   // v3.111: 첨부 사진 미리보기 (썸네일 + 업로드 상태 오버레이 + 제거 버튼)
   imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.md },
-  // v3.400 [Camera] 사진 찍기·사진첩 큰 버튼
-  photoRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-  photoBtn: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xs, paddingVertical: spacing.md,
-    borderRadius: radius.lg, backgroundColor: colors.accent.primary,
+  // v3.446 [DiaryInline] 사진 넣기 줄(화면 아래 고정)
+  photoBar: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.sm,
+    backgroundColor: colors.bg.surface1, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
   },
-  photoBtnAlt: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.accent.primary },
+  photoBarBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40, paddingHorizontal: spacing.md,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  photoBarText: { fontWeight: '700' },
+  photoBarHint: { flex: 1, textAlign: 'right' },
   imageThumbWrap: { width: 72, height: 72 },
   imageThumb: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   imageThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },

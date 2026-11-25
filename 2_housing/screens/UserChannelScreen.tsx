@@ -18,7 +18,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Avatar, Button, EmptyState, Tag } from '../components/ui';
 import TrackRow from '../components/TrackRow';
 import FeedCard from '../components/feed/FeedCard';
-import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import FeedBody from '../components/feed/FeedBody'; // v3.446 글·사진 순서대로
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 // v3.251 [Recog]: 아티스트 탭 휘장(sm) — 구서버(recognition 부재)는 연습생 5 폴백
 import ArtistLevelBadge from '../components/ArtistLevelBadge';
@@ -183,10 +183,8 @@ export default function UserChannelScreen() {
   const renderFeed = (item: any) => {
     const blocks: any[] = item.blocks || [];
     const rawText = blocks.filter((b) => b.type === 'text' && b.text);
-    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     return (
       <TouchableOpacity
         key={String(item.id)}
@@ -204,13 +202,7 @@ export default function UserChannelScreen() {
           onPressAuthor={() => {}}
           renderBlocks={() => (
             <View>
-              {textBlocks.map((b, i) => (
-                <AppText key={`t${i}`} style={styles.feedBody}>{b.text}</AppText>
-              ))}
-              {imageBlocks.map((b, i) => {
-                const uri = feedImageUri(b);
-                return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
-              })}
+              <FeedBody blocks={blocks} variant="plain" textStyle={styles.feedBody} />
               {trackBlocks.map((b, i) => (
                 <View key={`tr${i}`} style={styles.feedTrackWrap}>
                   <TrackRow

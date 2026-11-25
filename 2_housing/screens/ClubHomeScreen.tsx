@@ -29,7 +29,7 @@ import { AppText, Button, EmptyState, ScreenLayout } from '../components/ui';
 import CarolBanner from '../components/CarolBanner'; // v3.438
 import LoginPrompt from '../components/LoginPrompt';
 import FeedCard from '../components/feed/FeedCard';
-import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import FeedBody from '../components/feed/FeedBody'; // v3.446 글·사진 순서대로
 import TrackRow from '../components/TrackRow';
 import ReportModal from '../components/ReportModal'; // v3.249 — 멤버 신고(targetType 'club_member') 재사용
 import ClubGenrePicker from '../components/ClubGenrePicker'; // v3.296 [ClubGenre]
@@ -958,8 +958,6 @@ export default function ClubHomeScreen() {
   // ── 게시판 카드 — UserChannel renderFeed 관행(FeedCard + 텍스트/이미지/트랙 블록) ──
   const renderFeed = ({ item }: { item: any }) => {
     const blocks: any[] = item.blocks || [];
-    const textBlocks = blocks.filter((b) => b.type === 'text' && b.text);
-    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     return (
       <View style={styles.feedWrap}>
@@ -977,13 +975,7 @@ export default function ClubHomeScreen() {
           }}
           renderBlocks={() => (
             <View>
-              {textBlocks.map((b: any, i: number) => (
-                <AppText key={`t${i}`} variant="body" style={styles.feedBody}>{b.text}</AppText>
-              ))}
-              {imageBlocks.map((b: any, i: number) => {
-                const uri = feedImageUri(b);
-                return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
-              })}
+              <FeedBody blocks={blocks} variant="plain" textStyle={styles.feedBody} />
               {trackBlocks.map((b: any, i: number) => (
                 <View key={`tr${i}`} style={styles.feedTrackWrap}>
                   <TrackRow

@@ -51,7 +51,7 @@ import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 // v3.114: 내 채널(피드·커뮤니티) — MAIDOL 내 채널 구성 반영. FeedCard·이미지 블록(v3.111) 재사용
 import FeedCard from '../components/feed/FeedCard';
-import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import FeedBody from '../components/feed/FeedBody'; // v3.446 글·사진 순서대로
 import { playTrackNow } from '../services/playback';
 // v3.228 W1: Inst. job 전역 추적(작업실 말풍선·도착 알림·재시작 환불 정리) — 곡별 서버 claim은 그대로
 import { registerGenJob } from '../services/generationTracker';
@@ -716,10 +716,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const renderFeed = ({ item }: { item: any }) => {
     const blocks: any[] = item.blocks || [];
     const rawText = blocks.filter((b) => b.type === 'text' && b.text);
-    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     const queue = trackBlocks.map((b) => b.track);
     return (
       <TouchableOpacity
@@ -737,13 +735,7 @@ export default function MyMusicScreen({ navigation }: any) {
           onPressAuthor={() => navigation.getParent()?.navigate('UserChannel', { authorId: user.id, name: user.nickname })}
           renderBlocks={() => (
             <View>
-              {textBlocks.map((b, i) => (
-                <AppText key={`t${i}`} style={styles.feedBody}>{b.text}</AppText>
-              ))}
-              {imageBlocks.map((b, i) => {
-                const uri = feedImageUri(b);
-                return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
-              })}
+              <FeedBody blocks={blocks} variant="plain" textStyle={styles.feedBody} />
               {trackBlocks.map((b, i) => (
                 <View key={`tr${i}`} style={styles.feedTrackWrap}>
                   <TrackRow

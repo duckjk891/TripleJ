@@ -1086,7 +1086,7 @@ function useOAuthCallback() {
 // v3.220 ②: 알림·메시지(목록·채팅방)도 설정처럼 미니플레이어 렌더만 숨김(재생은 유지)
 // v3.237: 공유 문구 화면(ShareCompose)도 숨김 — 하단 [공유하기] 버튼과 겹침 방지, 닫으면 복귀
 // v3.252: ClubChat(크루 채팅) — 입력바와 겹침 방지, DmChat 관행 동일
-const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat', 'ClubChat', 'ShareCompose'];
+const HIDE_MINIPLAYER_ROUTES = ['Settings', 'AudioSpike', 'Notifications', 'DmInbox', 'DmChat', 'ClubChat', 'ShareCompose', 'FeedCompose']; // v3.446: 낙서 쓰기 아래 사진 줄을 가리지 않게
 
 // v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
 // FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.

@@ -4,7 +4,6 @@
 // 블록 렌더(텍스트/트랙/[item] 마커)는 FeedScreen과 동일 규칙.
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400
-import LinedPaper, { noteTextStyle } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { View, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -17,7 +16,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, EmptyState } from '../components/ui';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
-import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import FeedBody from '../components/feed/FeedBody'; // v3.446 글·사진 순서대로
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import { playTrackNow } from '../services/playback';
@@ -201,11 +200,8 @@ export default function FeedDetailScreen() {
   const renderBlocks = () => {
     const blocks: FeedBlock[] = feed?.blocks || [];
     const rawText = blocks.filter((b) => b.type === 'text' && b.text);
-    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열 (FeedScreen과 동일 규칙)
-    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     // v3.389 [Diary]: 일기(서버 diary_date 동반)는 공책 종이 위에 — FeedScreen 과 같은 모양
     // ('이 일기로 노래 만들기' 버튼은 대표 결정 ④A — 기능이 나오면 이 아래에 켠다)
     const isDiary = (feed?.kind || 'feed') === 'feed' && !!feed?.diary_date;
@@ -219,18 +215,8 @@ export default function FeedDetailScreen() {
             <AppText style={styles.storySongText} numberOfLines={1}>이 낙서의 노래 듣기 · {diarySong?.title || ''}</AppText>
           </TouchableOpacity>
         ) : null}
-        {isDiary && textBlocks.length ? (
-          // v3.403 [LinedNote] 상세는 줄 노트 전체(글 길이만큼 줄이 늘어남)
-          <LinedPaper minLines={3} style={{ marginTop: spacing.sm }}>
-            <AppText style={[noteTextStyle, nakseoFont ? { fontFamily: nakseoFont } : null]}>{textBlocks.map((b) => b.text).join('\n')}</AppText>
-          </LinedPaper>
-        ) : textBlocks.map((b, i) => (
-          <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
-        ))}
-        {imageBlocks.map((b, i) => {
-          const uri = feedImageUri(b);
-          return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
-        })}
+        {/* v3.446 [DiaryInline] 글·사진을 쓴 순서대로 — 낙서는 줄 노트 전체 */}
+        <FeedBody blocks={blocks} variant="detail" diary={isDiary} fontFamily={nakseoFont} textStyle={[styles.body, { color: feedTheme.sub }]} />
         {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
         {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
         {/* v3.410 [StorySong] 내 낙서 → 재료 담기(글·사진·기분·날짜 그대로, 완성곡은 이 낙서에 붙는다) */}

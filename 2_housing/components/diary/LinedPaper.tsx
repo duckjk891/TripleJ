@@ -50,10 +50,11 @@ export default function LinedPaper({ children, minLines = 1, style }: PaperProps
 /** 줄 노트 입력칸 — 글 길이만큼 늘고 줄어드는 여러 줄 입력(내부 스크롤 없음).
  *  높이는 같은 글꼴·폭의 보이지 않는 글자 사본(Text)을 재서 정한다 — 웹 textarea 의 contentSize(scrollHeight)는
  *  상자 높이 아래로 줄지 않아(화면 폭이 잠깐 바뀌면 커진 채 남음) 쓰지 않는다. 웹·앱 공통, 되먹임 없음. */
-export function LinedTextInput({ minLines = 6, style, value, ...rest }: TextInputProps & { minLines?: number }) {
+/** spareLines: 글 아래 비워 두는 줄 수(기본 1) — v3.446 사진 바로 위 글 칸은 0 */
+export function LinedTextInput({ minLines = 6, spareLines = 1, style, value, ...rest }: TextInputProps & { minLines?: number; spareLines?: number }) {
   const [textH, setTextH] = useState(0);
   // 글 줄 수 + 빈 줄 1개(쓰는 줄 아래에 항상 여유 줄)
-  const lines = Math.max(minLines, Math.ceil(Math.round(textH) / NOTE.lineHeight) + 1);
+  const lines = Math.max(minLines, Math.ceil(Math.round(textH) / NOTE.lineHeight) + spareLines);
   const fontFamily = (StyleSheet.flatten(style) as any)?.fontFamily;
   return (
     <LinedPaper minLines={lines}>

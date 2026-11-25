@@ -13,7 +13,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
-import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import FeedBody from '../components/feed/FeedBody'; // v3.446 글·사진 순서대로
 import { playTrackNow } from '../services/playback';
 import Fab from '../components/Fab';
 import TrackRow, { RowTrack } from '../components/TrackRow';
@@ -25,7 +25,6 @@ import { registerAnchor, unregisterAnchor } from '../utils/tutorialAnchors';
 import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import DiaryCalendar from '../components/diary/DiaryCalendar'; // v3.389 [Diary]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 본문 손글씨
-import LinedPaper, { noteTextStyle } from '../components/diary/LinedPaper'; // v3.403 줄 노트
 import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, backdateOptions } from '../utils/diary';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
@@ -341,11 +340,8 @@ export default function FeedScreen() {
     const author = item.author_nickname || item.author_name || item.nickname || '익명';
     const blocks = item.blocks || [];
     const rawText = blocks.filter((b) => b.type === 'text' && b.text);
-    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열
-    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     // v3.389 [Diary]: 일기(kind='feed', 서버가 diary_date 내려줄 때) — 글은 공책 종이, 곡은 '오늘의 BGM'
     const isDiary = tab !== 'notice' && (item.kind || 'feed') === 'feed' && !!item.diary_date;
     return (
@@ -362,25 +358,15 @@ export default function FeedScreen() {
         onUpdated={() => fetchFeed()}
         renderBlocks={() => (
           <View>
-            {isDiary && textBlocks.length ? (() => {
-              // v3.403 [LinedNote] 카드는 줄 노트 최대 5줄 — 길면 '더 보기'(상세로)
-              const note = textBlocks.map((b) => b.text).join('\n');
-              const long = note.split('\n').length > 5 || note.length > 110;
-              return (
-                <TouchableOpacity activeOpacity={0.85} disabled={!long || !item.id} onPress={() => navigation.navigate('FeedDetail', { feedId: String(item.id) })} style={styles.noteWrap}>
-                  <LinedPaper>
-                    <AppText numberOfLines={5} style={[noteTextStyle, nakseoFont ? { fontFamily: nakseoFont } : null]}>{note}</AppText>
-                  </LinedPaper>
-                  {long ? <AppText variant="caption" tone="accent" style={styles.noteMore}>더 보기</AppText> : null}
-                </TouchableOpacity>
-              );
-            })() : textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
-            ))}
-            {imageBlocks.map((b, i) => {
-              const uri = feedImageUri(b);
-              return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
-            })}
+            {/* v3.446 [DiaryInline] 글·사진을 쓴 순서대로(예전 낙서는 글 → 사진 그대로) */}
+            <FeedBody
+              blocks={blocks}
+              variant="card"
+              diary={isDiary}
+              fontFamily={nakseoFont}
+              textStyle={[styles.body, { color: feedTheme.sub }]}
+              onMore={item.id ? () => navigation.navigate('FeedDetail', { feedId: String(item.id) }) : undefined}
+            />
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`, isDiary && i === 0))}
             {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
           </View>
@@ -655,8 +641,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm, paddingHorizontal: spacing.md, gap: spacing.xs,
   },
   paperText: { color: colors.bg.surface2, lineHeight: 24 },
-  noteWrap: { marginTop: spacing.sm },
-  noteMore: { alignSelf: 'flex-end', marginTop: spacing.xs },
   bgmLabel: { color: colors.accent.secondary, fontWeight: '700', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
   // v3.69: 트랙 블록 래퍼 — 카드 안 인셋 배경 위에 공용 TrackRow를 얹는다
   trackBlockWrap: {
