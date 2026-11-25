@@ -5,6 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
+import { carolTarget } from '../utils/pushTarget';
 import PushBanner from '../components/PushBanner';
 import { AppText, Avatar, EmptyState } from '../components/ui';
 import { colors } from '../theme/colors';
@@ -38,7 +39,7 @@ const TYPE_META: Record<string, { icon: any; label: (n: Notification) => string 
       : `스타 ${(n.amount ?? 0).toLocaleString()}개를 받았어요`),
   },
   // v3.305 [ClubAlbum] 크루 앨범 참여곡 제출(→크루장)·수록/미수록(→멤버) — 상세는 preview 줄
-  club_album: { icon: 'disc', label: (n) => (n.target_type === 'carol' ? '캐롤 이벤트 소식' : `크루 앨범 소식 · ${n.actor_nickname ?? ''}님`) }, // v3.438
+  club_album: { icon: 'disc', label: (n) => (n.target_type === 'carol' ? '크리스마스 이벤트 소식' : `크루 앨범 소식 · ${n.actor_nickname ?? ''}님`) }, // v3.438
 };
 
 const parseUtc = (iso: string) => new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z');
@@ -114,7 +115,7 @@ export default function NotificationsScreen() {
     } else if (n.type === 'star') {
       navigation.navigate('StarHistory');
     } else if (n.target_type === 'carol') { // v3.438 캐롤 승인·반려
-      navigation.navigate('MainTabs', { screen: 'CarolEvent' });
+      navigation.navigate('MainTabs', carolTarget(/승인됐어요/.test(n.preview ?? '') ? 'any' : undefined).params); // v3.444 승인이면 룰렛까지
     } else if ((n.target_type === 'club_promo' || n.target_type === 'club_album') && n.target_id) {
       // v3.261→v3.274 [39]②: ClubHome 은 MainTabs 숨김 탭 — RN7 은 중첩 네비게이션이 기본 꺼져 있어
       // 최상위 'ClubHome' 직접 navigate 가 조용히 무시됐다(알림 탭 무반응). 탭 경유로 명시.

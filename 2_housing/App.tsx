@@ -70,8 +70,10 @@ import {
 import { initRewardedAds } from './hooks/useRewardedSkipAd';
 import { waitModalTurn } from './utils/modalTurn'; // v3.384 [ModalTurn]
 import { getStarStationStatus, claimStarStationWithNotice, durationLabel } from './services/starStationService'; // v3.388
-import { initNativePush, onNativePushOpened, syncNativePushOnLogin, setNativePushAsker, pushNudgeKind, markPushNudged, enablePushFromNudge } from './services/pushService';
-import { pushTargetFor } from './utils/pushTarget'; // v3.436
+import { initNativePush, onNativePushOpened, onWebPushOpened, syncNativePushOnLogin, setNativePushAsker, pushNudgeKind, markPushNudged, enablePushFromNudge } from './services/pushService';
+import { pushTargetFor, carolTarget } from './utils/pushTarget'; // v3.436
+import { captureWebCarolLink, takeWebCarolLink, newReadyCarols, markCarolsTold } from './utils/carolLink'; // v3.444
+import { useCarolStore } from './stores/carolStore';
 import { isChildNow } from './utils/kidsMode';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
@@ -621,7 +623,7 @@ function MainTabs() {
           tabBarButton: () => null,
           tabBarItemStyle: { display: 'none' },
           headerShown: true,
-          headerTitle: () => <AppText variant="subtitle">캐롤 이벤트</AppText>,
+          headerTitle: () => <AppText variant="subtitle">크리스마스 이벤트</AppText>,
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
           headerShadowVisible: false,
@@ -706,6 +708,35 @@ async function promptStarStationIfFull(reason: string) {
     // 조회 실패는 조용히 — 별 안내 창 카드에서 다시 볼 수 있다
   } finally {
     starStationPromptBusy = false;
+  }
+}
+
+// v3.444 [Carol] 캐롤이 승인돼 스타룰렛을 돌릴 수 있게 되면 앱 안 팝업 1번(곡마다 기기당 1번) — 누르면 룰렛이 바로 열린다(대표 11-25)
+let carolPromptBusy = false;
+const onCarolScreen = () => navigationRef.isReady() && navigationRef.getCurrentRoute()?.name === 'CarolEvent';
+async function promptCarolReady() {
+  const uid = String(useAuthStore.getState().user?.id ?? '');
+  const st = useCarolStore.getState();
+  if (carolPromptBusy || !uid || !st.status?.active || st.uid !== uid || !st.status.ready) return;
+  carolPromptBusy = true;
+  try {
+    if (!(await newReadyCarols(st.status.submissions)).length) return;
+    await new Promise((r) => setTimeout(r, 900)); // 화면 전환 직후(웹 popstate)에 닫히지 않게
+    await waitModalTurn('carol-ready', 0.4).promise;
+    if (String(useAuthStore.getState().user?.id ?? '') !== uid) return;
+    const ready = await newReadyCarols(useCarolStore.getState().status?.submissions ?? []); // 기다리는 사이 돌렸으면 빠진다
+    if (!ready.length) return;
+    await markCarolsTold(ready);
+    if (onCarolScreen()) return; // 이벤트 화면에는 '돌리기' 버튼이 이미 보인다
+    console.info('[Carol] 스타룰렛 안내', { count: ready.length });
+    showAlert('스타룰렛을 돌릴 수 있어요', ready.length > 1
+      ? `캐롤 ${ready.length}곡이 승인됐어요. 곡마다 한 번씩 돌릴 수 있어요.`
+      : `「${(ready[0].title || '내 곡').slice(0, 30)}」이(가) 캐롤로 승인됐어요. 꽝 없이 ⭐를 받아요!`, [
+      { text: '나중에', style: 'cancel' },
+      { text: '룰렛 돌리기', onPress: () => { const t = carolTarget(ready[0].id); (navigationRef.navigate as any)(t.name, t.params); } },
+    ]);
+  } finally {
+    carolPromptBusy = false;
   }
 }
 
@@ -817,6 +848,17 @@ function GlobalModals() {
     const t = setTimeout(() => { void promptPushNudge(); }, 6000);
     return () => clearTimeout(t);
   }, [user]);
+  // v3.444 [Carol]: 이벤트 상태를 새로 받을 때마다 확인(배너·앱 복귀) → 돌릴 룰렛이 있으면 1번 안내
+  useEffect(() => {
+    if (!user) return undefined;
+    const uid = String(user.id);
+    void promptCarolReady();
+    const off = useCarolStore.subscribe((st, prev) => { if (st.status !== prev.status) void promptCarolReady(); });
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') void useCarolStore.getState().load(uid);
+    });
+    return () => { off(); sub.remove(); };
+  }, [user]);
   // v3.388 [StarStation]: 앱으로 돌아왔을 때도 다 찼으면 1번(같은 주기는 다시 안 띄움)
   useEffect(() => {
     if (!user) return undefined;
@@ -841,6 +883,7 @@ captureWebTrackLink();
 captureWebClubLink();
 captureWebIdentityReturn(); // v3.349 웹 본인확인 같은 탭 복귀(?identity=done&rid=&status=) 1회 캡처
 captureWebDmLink(); // v3.376 [DmLink] `?open=dm` 1회 캡처
+captureWebCarolLink(); // v3.444 `?carol=<신청id>` 1회 캡처(휴대폰 웹 푸시)
 holdModalsUntilPastSplash(); // v3.434 시작 화면 위에 팝업이 뜨지 않게 — 첫 렌더 전에 붙잡아 둔다
 
 // v3.235 B5: 링크 재생 소비 게이트 — 부팅 세션 정착(저장 토큰 복원 또는 웹 OAuth 콜백 로그인) 후에 소비한다.
@@ -1123,7 +1166,7 @@ export default function App() {
   useEffect(() => {
     void initNativePush();
     let timer: ReturnType<typeof setInterval> | null = null;
-    const off = onNativePushOpened((tag) => {
+    const openTarget = (tag: string) => {
       const target = pushTargetFor(tag); // v3.436
       if (!target) return;
       if (timer) clearInterval(timer);
@@ -1140,8 +1183,13 @@ export default function App() {
           timer = null;
         }
       }, 250);
-    });
-    return () => { off(); if (timer) clearInterval(timer); };
+    };
+    const off = onNativePushOpened(openTarget);
+    // v3.444 웹: 열린 창에서 승인 푸시를 눌렀거나(sw.js) 푸시가 새 창을 열었을 때(?carol=) — 다른 푸시는 예전처럼 창만 앞으로
+    const offWeb = onWebPushOpened((tag) => { if (tag.startsWith('maidol-carol-')) openTarget(tag); });
+    const carolId = takeWebCarolLink();
+    if (carolId) openTarget(`maidol-carol-${carolId}`);
+    return () => { off(); offWeb(); if (timer) clearInterval(timer); };
   }, []);
   // v3.208: AdMob MobileAds 초기화 + 테스트 기기 등록 1회 — Expo Go/web 은 내부에서 안전 no-op
   useEffect(() => { initRewardedAds(); }, []);

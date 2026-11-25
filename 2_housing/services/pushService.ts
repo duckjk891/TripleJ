@@ -86,6 +86,20 @@ export async function disableWebPush(): Promise<void> {
   }
 }
 
+/** v3.444 웹: 앱 창이 열려 있을 때 푸시를 누르면 서비스 워커(sw.js)가 tag 를 보내 준다(창을 새로 읽지 않아 재생이 안 끊김) */
+export function onWebPushOpened(cb: (tag: string) => void): () => void {
+  const sw: any = Platform.OS === 'web' ? w()?.navigator?.serviceWorker : null;
+  if (!sw?.addEventListener) return () => {};
+  const onMsg = (e: any) => {
+    if (e?.data?.type !== 'maidol-push-open') return;
+    const tag = String(e.data.tag || '');
+    console.info('[WebPush] 알림 눌러 열기', { tag: tag.split('-').slice(0, 2).join('-') });
+    cb(tag);
+  };
+  sw.addEventListener('message', onMsg);
+  return () => sw.removeEventListener('message', onMsg);
+}
+
 /** 로그아웃 — 서버 호출 없이 브라우저 구독만 해제(다음 발송 때 서버가 410 으로 정리) */
 export async function unsubscribeLocalOnLogout(): Promise<void> {
   if (Platform.OS !== 'web') return;

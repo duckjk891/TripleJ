@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
   snow: { position: 'absolute', top: 0, backgroundColor: '#ffffff' },
-  title: { textAlign: 'center' },
+  title: { textAlign: 'center', fontWeight: '600' }, // 다른 제목과 같은 굵기(대표 11-25)
   subtitle: { color: '#d8c8ff', textAlign: 'center', marginTop: 4, paddingHorizontal: 24 },
   tree: { width: TREE_W, height: TREE_H, marginTop: 14 },
   glow: { position: 'absolute', left: -PAD, top: -PAD },
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
   star: { position: 'absolute', left: TREE_W / 2 - 22, top: 0, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   starText: { fontSize: 32, lineHeight: 42 },
   count: { alignItems: 'center', marginTop: 20, width: '100%', paddingHorizontal: 22 },
-  countName: { color: '#d8b4fe', letterSpacing: 1 },
+  countName: { color: '#d8b4fe' },
   cells: { flexDirection: 'row', gap: 8, marginTop: 8, width: '100%', maxWidth: 360 },
   cell: {
     flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.07)',

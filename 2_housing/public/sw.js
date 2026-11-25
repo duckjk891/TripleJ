@@ -20,11 +20,16 @@ self.addEventListener('push', function (event) {
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
   var url = (event.notification.data && event.notification.data.url) || '/app';
+  var tag = event.notification.tag || '';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
       for (var i = 0; i < list.length; i++) {
         var c = list[i];
-        if (c.url && c.url.indexOf(self.location.origin) === 0 && 'focus' in c) return c.focus();
+        if (c.url && c.url.indexOf(self.location.origin) === 0 && 'focus' in c) {
+          // v3.444: 열려 있는 창에는 새로 읽지 않고 '어디로 갈지'만 알려 준다(재생 유지)
+          try { c.postMessage({ type: 'maidol-push-open', tag: tag }); } catch (e) { /* 이동만 못 함 */ }
+          return c.focus();
+        }
       }
       return self.clients.openWindow(url);
     })

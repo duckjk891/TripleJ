@@ -48,7 +48,7 @@ export async function cancelCarol(id: string): Promise<void> {
 }
 
 export async function spinCarol(id: string): Promise<{ amount: number; balance: number }> {
-  console.info('[Carol] 스타 스톱', { id: id.slice(0, 8) });
+  console.info('[Carol] 스타룰렛', { id: id.slice(0, 8) });
   const { data } = await api.post(`/carol/submissions/${id}/spin`);
   return data;
 }

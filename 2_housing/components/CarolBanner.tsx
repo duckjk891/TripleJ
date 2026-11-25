@@ -9,6 +9,7 @@ import { radius, spacing } from '../theme/spacing';
 import { useAuthStore } from '../stores/authStore';
 import { useCarolStore } from '../stores/carolStore';
 import { untilLabel } from '../utils/carolStop';
+import { carolTarget } from '../utils/pushTarget';
 
 /** clubId 를 주면 그 크루가 캐롤 크루일 때만 보인다 */
 export default function CarolBanner({ clubId }: { clubId?: string }) {
@@ -22,13 +23,13 @@ export default function CarolBanner({ clubId }: { clubId?: string }) {
   const ready = status.ready;
   if (!status.submit_open && !ready) return null;
   const sub = ready > 0
-    ? `스타 스톱 도전권이 ${ready}개 있어요`
-    : `캐롤을 업로드하고 스타 스톱 도전! ${untilLabel(status.submit_until)}까지`;
+    ? `스타룰렛을 ${ready}번 돌릴 수 있어요!`
+    : `캐롤을 업로드하고 스타룰렛을 돌려요! ${untilLabel(status.submit_until)}까지`;
   return (
     <TouchableOpacity
       style={[styles.row, ready > 0 && styles.ready]}
       activeOpacity={0.8}
-      onPress={() => navigation.navigate('MainTabs', { screen: 'CarolEvent' })}
+      onPress={() => navigation.navigate('MainTabs', carolTarget(ready > 0 ? 'any' : undefined).params)} // v3.444 돌릴 게 있으면 룰렛까지
       accessibilityRole="button"
       accessibilityLabel={`${status.title} 이벤트. ${sub}`}
     >

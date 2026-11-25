@@ -1,4 +1,4 @@
-// [CarolReel] v3.438 스타 스톱 — 숫자가 입체 원통처럼 위에서 아래로 빠르게 굴러가다가, result 가 오면 가운데에서 딱 멈춘다.
+// [CarolReel] v3.438 스타룰렛 — 숫자가 입체 원통처럼 위에서 아래로 빠르게 굴러가다가, result 가 오면 가운데에서 딱 멈춘다.
 // 줄무늬·굵은 테두리 없이 깊은 밤 배경 + 유리 칸 하나(대표 11-24 '세련되게'). 결과는 서버가 정한다.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, View } from 'react-native';
@@ -111,7 +111,7 @@ export default function CarolReel({ amounts, running, result, onDone }: Props) {
   const soft = blur.interpolate({ inputRange: [0, 1], outputRange: [1, 0.62] });
 
   return (
-    <View style={styles.stage} accessibilityLabel={done && result !== null ? `스타 ${result}개` : '스타 스톱'}>
+    <View style={styles.stage} accessibilityLabel={done && result !== null ? `스타 ${result}개` : '스타룰렛'}>
       <LinearGradient colors={['#1d1147', '#2b1458', REEL_BG]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
       {SNOW.map(([x, y, s, o], i) => (
         <Animated.View

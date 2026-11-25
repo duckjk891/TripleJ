@@ -1,9 +1,10 @@
 // [CarolEventScreen] v3.438 크리스마스 캐롤 크루 이벤트(대표 11-24)
-//  · 오늘(11-24) 이후 만든 캐롤을 업로드하면 MAIDOL 공식이 듣고 승인 → 곡마다 '스타 스톱' 1번(꽝 없음, 결과는 서버).
+//  · 오늘(11-24) 이후 만든 캐롤을 업로드하면 MAIDOL 공식이 듣고 승인 → 곡마다 '스타룰렛' 1번(꽝 없음, 결과는 서버).
+//  · v3.444 params.spin(푸시·알림함·배너·앱 안 팝업) → 룰렛을 바로 연다.
 //  · 규칙·기간·확률·금액은 서버 값. 팝업은 전부 showAlert.
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import AppModal from '../components/AppModal';
 import CarolHero from '../components/CarolHero'; // v3.440 반짝이는 트리·남은 시간
@@ -24,11 +25,12 @@ import { showAlert } from '../utils/appAlert';
 import { untilLabel } from '../utils/carolStop';
 import { startIdentityVerify } from '../utils/identityVerify';
 import { openLoginModal } from '../utils/loginModal';
+import { useRootModalOpen, waitModalTurn } from '../utils/modalTurn';
 
 function stateText(s: CarolSubmission): string {
   if (s.status === 'pending') return 'MAIDOL이 듣고 있어요';
   if (s.status === 'rejected') return `승인되지 않았어요 — ${s.reason || ''}`;
-  if (s.spin === 'ready') return '승인됐어요! 스타 스톱에 도전해 보세요';
+  if (s.spin === 'ready') return '승인됐어요! 스타룰렛을 돌려 보세요';
   return `승인됐어요 · ${CURRENCY_ICON}${s.amount ?? 0} 받음`;
 }
 
@@ -56,6 +58,29 @@ export default function CarolEventScreen() {
     }
   }, [load, uid]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
+
+  // v3.444 룰렛 바로 열기 — 서버에서 새로 받은 상태로 판단한다. 로그인 복원 전이면 기다렸다가 연다.
+  const route = useRoute<any>();
+  const spinParam: string | undefined = route.params?.spin;
+  const focused = useRef(false);
+  useFocusEffect(useCallback(() => { focused.current = true; return () => { focused.current = false; }; }, []));
+  useRootModalOpen('carol-reel', Platform.OS !== 'ios' && !!wheelSub); // 룰렛이 떠 있는 동안 자동 팝업은 기다린다(아이폰은 AppModal 이 한다)
+  useEffect(() => {
+    if (!spinParam || !uid) return undefined;
+    let alive = true;
+    void (async () => {
+      await refresh();
+      if (!alive) return;
+      const list = (useCarolStore.getState().status?.submissions ?? []).filter((s) => s.spin === 'ready');
+      const hit = list.find((s) => s.id === spinParam) ?? (spinParam === 'any' ? list[0] : undefined);
+      console.info('[Carol] 룰렛 바로 열기', { found: !!hit });
+      navigation.setParams({ spin: undefined });
+      if (!hit) return;
+      await waitModalTurn('carol-spin', 2).promise; // 앱을 막 열었을 때 출석 팝업 등과 겹치지 않게
+      if (focused.current) setWheelSub((cur) => cur ?? hit);
+    })();
+    return () => { alive = false; };
+  }, [spinParam, uid, refresh, navigation]);
 
   const goStudio = () => {
     setPickOpen(false);
@@ -159,9 +184,9 @@ export default function CarolEventScreen() {
           title={status.title}
           subtitle={status.child
             ? `새로 만든 캐롤이 승인되면 ${CURRENCY_ICON}${status.child_reward}을 드려요`
-            : `캐롤이 승인될 때마다 스타 스톱! 꽝 없이 ${CURRENCY}를 받아요`}
+            : `캐롤이 승인될 때마다 스타룰렛! 꽝 없이 ${CURRENCY}를 받아요`}
           until={status.submit_open ? status.submit_until : status.spin_until}
-          untilName={status.submit_open ? '업로드 마감' : '스타 스톱 마감'}
+          untilName={status.submit_open ? '업로드 마감' : '스타룰렛 마감'}
           onOver={refresh}
         />
 
@@ -171,7 +196,7 @@ export default function CarolEventScreen() {
             <AppText variant="footnote">{`1. 작업실에서 캐롤을 만들어 발매해요`}</AppText>
             <AppText variant="footnote">{`2. 여기서 캐롤을 업로드하면 캐롤 크루에 함께 들어가요`}</AppText>
             <AppText variant="footnote">{`3. MAIDOL이 듣고 캐롤로 승인해요`}</AppText>
-            <AppText variant="footnote">{status.child ? `4. 승인되면 ${CURRENCY_ICON}${status.child_reward}을 바로 받아요` : '4. 승인된 곡마다 스타 스톱에 한 번 도전해요'}</AppText>
+            <AppText variant="footnote">{status.child ? `4. 승인되면 ${CURRENCY_ICON}${status.child_reward}을 바로 받아요` : '4. 승인된 곡마다 스타룰렛을 한 번 돌려요'}</AppText>
           </View>
           {status.submit_open ? (
             <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
@@ -180,7 +205,7 @@ export default function CarolEventScreen() {
             </View>
           ) : (
             <AppText variant="footnote" tone="accent" style={{ marginTop: spacing.md }}>
-              {`업로드는 끝났어요. 승인된 곡은 ${untilLabel(status.spin_until)}까지 스타 스톱에 도전할 수 있어요.`}
+              {`업로드는 끝났어요. 승인된 곡은 ${untilLabel(status.spin_until)}까지 스타룰렛을 돌릴 수 있어요.`}
             </AppText>
           )}
           {status.club ? (
@@ -202,7 +227,7 @@ export default function CarolEventScreen() {
                   <AppText variant="bodyStrong" numberOfLines={1}>{s.title || '내 곡'}</AppText>
                   <AppText variant="caption" tone={s.spin === 'ready' ? 'accent' : 'secondary'}>{stateText(s)}</AppText>
                 </View>
-                {s.spin === 'ready' ? <Button label="도전" size="sm" onPress={() => setWheelSub(s)} /> : null}
+                {s.spin === 'ready' ? <Button label="돌리기" size="sm" onPress={() => setWheelSub(s)} /> : null}
                 {s.status === 'pending' ? <Button label="취소" size="sm" variant="text" onPress={() => cancel(s)} /> : null}
               </View>
             ))}
@@ -218,11 +243,11 @@ export default function CarolEventScreen() {
             <AppText variant="caption" tone="secondary">· 본인확인을 마친 회원만 참여할 수 있고, 만 14세 미만은 보호자 동의가 있어야 해요.</AppText>
             {status.child ? null : (
               <>
-                <AppText variant="caption" tone="secondary">{`· 만 14세 미만 회원은 스타 스톱 대신 승인되면 ${CURRENCY_ICON}${status.child_reward}을 바로 받아요.`}</AppText>
-                <AppText variant="caption" tone="secondary">{`· 스타 스톱 확률: ${status.wheel.map((w) => `${CURRENCY_ICON}${w.amount} ${w.percent}%`).join(' · ')}. 누르는 순간과 상관없이 이 확률로 정해져요.`}</AppText>
+                <AppText variant="caption" tone="secondary">{`· 만 14세 미만 회원은 스타룰렛 대신 승인되면 ${CURRENCY_ICON}${status.child_reward}을 바로 받아요.`}</AppText>
+                <AppText variant="caption" tone="secondary">{`· 스타룰렛 확률: ${status.wheel.map((w) => `${CURRENCY_ICON}${w.amount} ${w.percent}%`).join(' · ')}. 누르는 순간과 상관없이 이 확률로 정해져요.`}</AppText>
               </>
             )}
-            <AppText variant="caption" tone="secondary">{`· 업로드는 ${untilLabel(status.submit_until)}까지, 스타 스톱은 ${untilLabel(status.spin_until)}까지예요. 준비한 ${CURRENCY}가 모두 나가면 업로드를 일찍 마감할 수 있어요.`}</AppText>
+            <AppText variant="caption" tone="secondary">{`· 업로드는 ${untilLabel(status.submit_until)}까지, 스타룰렛은 ${untilLabel(status.spin_until)}까지예요. 준비한 ${CURRENCY}가 모두 나가면 업로드를 일찍 마감할 수 있어요.`}</AppText>
             <AppText variant="caption" tone="secondary">{`· ${CURRENCY}는 앱 안에서만 쓸 수 있고 돈으로 바꿀 수 없어요. Apple과 Google은 이 이벤트와 관계가 없어요.`}</AppText>
           </View>
         </View>
@@ -256,8 +281,8 @@ export default function CarolEventScreen() {
         <View style={styles.backdrop}>
           <View style={styles.reelCard}>
             <View style={styles.reelHead}>
-              <AppText variant="caption" style={styles.reelEyebrow}>스타 스톱</AppText>
-              <AppText variant="subtitle" numberOfLines={1}>{wheelSub?.title || '내 캐롤'}</AppText>
+              <AppText variant="title3">스타룰렛</AppText>
+              <AppText variant="footnote" tone="secondary" numberOfLines={1}>{wheelSub?.title || '내 캐롤'}</AppText>
             </View>
             <CarolReel amounts={amounts} running={running} result={result?.amount ?? null} onDone={() => setLanded(true)} />
             <View style={styles.reelFoot}>
@@ -308,7 +333,6 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
   reelHead: { alignItems: 'center', gap: 4, paddingTop: 22, paddingBottom: 14, paddingHorizontal: 24, backgroundColor: '#1d1147' },
-  reelEyebrow: { color: '#d8b4fe', letterSpacing: 2 },
   reelFoot: { paddingHorizontal: 24, paddingBottom: 20, gap: 6 },
   reelMsg: { alignItems: 'center', justifyContent: 'center', minHeight: 52 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
