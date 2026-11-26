@@ -137,3 +137,18 @@ export function bodyParts(blocks: any[]): BodyPart[] {
   }
   return out;
 }
+
+/**
+ * v3.449 [DiaryPhotoTop] 낙서장 목록 카드 — 인스타처럼 사진 전부 위, 글은 아래(오리쟁이 11-09 제안·대표 11-26).
+ * 사진은 쓴 순서대로 모으고, 사진 사이에 나뉘어 있던 글은 빈 줄로 이어 한 덩어리로. 상세 화면은 bodyParts(쓴 순서) 그대로.
+ */
+export function cardParts(blocks: any[]): { images: any[]; text: string } {
+  const parts = bodyParts(blocks);
+  const images = parts.filter((p): p is { kind: 'image'; block: any } => p.kind === 'image').map((p) => p.block);
+  const text = parts
+    .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
+    .map((p) => p.text.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  return { images, text };
+}

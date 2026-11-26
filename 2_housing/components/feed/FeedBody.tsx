@@ -1,11 +1,13 @@
 // v3.446 [DiaryInline] 글·사진을 저장 순서대로 보여 주는 공용 본문(곡·착장 아이템은 호출부가 아래에 따로 그린다).
 //  · detail: 낙서 상세 — 줄 노트 전체  · card: 낙서장 목록 — 글은 줄여 보이고 [더 보기]  · plain: 채널·마이페이지·크루 게시판
 // 예전 낙서(글 → 사진)는 순서가 그대로라 지금과 똑같이 보인다.
+// v3.449: card + 낙서 = 사진 전부 위·글 아래(인스타처럼). card 공지(낙서 아님)는 쓴 순서 그대로.
 import { StyleProp, StyleSheet, TextStyle, TouchableOpacity, View } from 'react-native';
 import { AppText } from '../ui';
 import LinedPaper, { NOTE, noteTextStyle } from '../diary/LinedPaper';
 import FeedImageBlock, { feedImageUri } from './FeedImageBlock';
-import { bodyParts } from '../../utils/feedBlocks';
+import { bodyParts, cardParts } from '../../utils/feedBlocks';
+import FeedPhotoGallery from './FeedPhotoGallery'; // v3.449 [DiaryPhotoTop]
 import { radius, spacing } from '../../theme/spacing';
 
 const CARD_FIRST_LINES = 5;
@@ -26,6 +28,26 @@ interface Props {
 const isLong = (t: string, lines: number, chars: number) => t.split('\n').length > lines || t.length > chars;
 
 export default function FeedBody({ blocks, variant, diary, fontFamily, textStyle, onMore }: Props) {
+  // v3.449 [DiaryPhotoTop] 낙서장 목록의 낙서 = 사진 전부 위(옆으로 넘기기)·글 아래(인스타처럼). 상세는 아래 쓴 순서 그대로.
+  if (variant === 'card' && diary) {
+    const { images, text } = cardParts(blocks);
+    const uris = images.map((b) => feedImageUri(b)).filter(Boolean) as string[];
+    const long = !!text && isLong(text, CARD_FIRST_LINES, 110);
+    const cardFont = fontFamily ? { fontFamily } : null;
+    return (
+      <View>
+        <FeedPhotoGallery uris={uris} />
+        {text ? (
+          <TouchableOpacity activeOpacity={0.85} disabled={!long || !onMore} onPress={onMore} style={uris.length ? styles.next : styles.first}>
+            <LinedPaper>
+              <AppText numberOfLines={CARD_FIRST_LINES} style={[noteTextStyle, cardFont]}>{text}</AppText>
+            </LinedPaper>
+            {long ? <AppText variant="caption" tone="accent" style={styles.more}>더 보기</AppText> : null}
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
   const parts = bodyParts(blocks);
   const imageCount = parts.filter((p) => p.kind === 'image').length;
   // 사진 뒤에 글이 이어지면 블로그형 — 짧은 글도 줄 수만큼만(예전 모양 글→사진은 최소 3줄 그대로)

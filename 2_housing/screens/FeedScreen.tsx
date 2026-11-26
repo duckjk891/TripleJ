@@ -26,6 +26,9 @@ import { useIsChild, useKidsPermission } from '../utils/kidsMode';
 import DiaryCalendar from '../components/diary/DiaryCalendar'; // v3.389 [Diary]
 import { useNakseoFont } from '../utils/nakseoFont'; // v3.400 낙서 본문 손글씨
 import { DIARY_REWARD, DIARY_MIN_CHARS, kstToday, shiftMonth, fmtDiaryDateLong, backdateOptions } from '../utils/diary';
+// v3.449 [DiaryAutoBGM] 보이는 낙서의 곡을 후렴부터 자동 미리듣기(따로 도는 플레이어 — 재생목록·재생수 무관)
+import { diaryPreview, useDiaryPreviewStore } from '../services/diaryPreview';
+import { diarySongOf, pickFocused } from '../utils/diaryPreviewLogic';
 
 // v3.204 ⑥ → v3.213: 사용자 확정 문안 1스텝(Fab) — 로그인 시에만 노출(enabled=!!user)
 // v3.389 [Diary]: 일기장 문구
@@ -141,6 +144,13 @@ export default function FeedScreen() {
   const syncLikes = useLikesStore((s) => s.sync);
   const nowId = usePlayerStore((s) => s.track?.id);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  // v3.449 [DiaryOutfitFold] 의상(착장 아이템) 목록은 접어 두고 '의상보기'로 펼침 — 낙서 id → 펼침
+  const [openItems, setOpenItems] = useState<Record<string, boolean>>({});
+  // v3.449 [DiaryAutoBGM] 소리 켬/끔·지금 미리듣는 낙서
+  const previewMuted = useDiaryPreviewStore((s) => s.muted);
+  const previewBlocked = useDiaryPreviewStore((s) => s.blocked);
+  const previewFeedId = useDiaryPreviewStore((s) => s.activeFeedId);
+  const previewOn = !!user && tab !== 'notice'; // 비로그인(로그인 안내가 덮음)·공지 탭은 미리듣기 없음
   // v3.207 ①: 글쓰기 Fab anchor — Fab은 ref를 내주지 않으므로(공용 컴포넌트 불변) 내부 아이콘을
   // 측정해 버튼 지름(56)으로 확장 등록한다. Fab이 숨는 조건(미니플레이어 표시)과 비로그인 땐 해제.
   const fabIconRef = useRef<View>(null);
@@ -234,6 +244,33 @@ export default function FeedScreen() {
 
   useFocusEffect(useCallback(() => { fetchFeed(); }, [fetchFeed]));
 
+  // v3.449 [DiaryAutoBGM] 낙서장에 있는 동안만 — 떠나면(다른 탭·상세) 미리듣기 정지 + 듣던 곡 이어 재생
+  useFocusEffect(useCallback(() => {
+    if (!previewOn) return undefined;
+    void diaryPreview.enter();
+    return () => diaryPreview.leave();
+  }, [previewOn]));
+
+  // 화면에 잡힌 낙서 = 카드의 60% 이상 보이거나(짧은 카드) 화면 절반 이상을 덮는(긴 카드) 것 중 가장 위
+  const viewItemsRef = useRef<any[][]>([[], []]);
+  const viewabilityPairs = useRef([
+    { viewabilityConfig: { itemVisiblePercentThreshold: 60, minimumViewTime: 150 }, onViewableItemsChanged: ({ viewableItems }: any) => { viewItemsRef.current[0] = viewableItems; reportFocus(); } },
+    { viewabilityConfig: { viewAreaCoveragePercentThreshold: 50, minimumViewTime: 150 }, onViewableItemsChanged: ({ viewableItems }: any) => { viewItemsRef.current[1] = viewableItems; reportFocus(); } },
+  ]).current;
+  const reportFocusRef = useRef<() => void>(() => {});
+  reportFocusRef.current = () => {
+    if (!previewOn) { diaryPreview.setFocused(null, null); return; }
+    const top = pickFocused(viewItemsRef.current);
+    const post = top?.item as FeedPost | undefined;
+    const song = post ? diarySongOf(post) : null;
+    diaryPreview.setFocused(post?.id != null ? String(post.id) : null, song);
+  };
+  function reportFocus() { reportFocusRef.current(); }
+  useEffect(() => {
+    if (!posts.length) viewItemsRef.current = [[], []]; // 탭 전환으로 목록이 비면 예전 탭의 낙서를 잡고 있지 않게
+    reportFocus();
+  }, [previewOn, posts]);
+
   // v3.389 [Diary]: [내 일기] 선택한 날의 일기만(선택 없으면 그 달 전체)
   const visiblePosts = tab === 'mine' && monthData && selectedDay
     ? posts.filter((p) => p.diary_date === selectedDay)
@@ -261,6 +298,8 @@ export default function FeedScreen() {
   // v3.69: 피드 내 재생 토글 — 현재 곡이면 일시정지/재개, 아니면 그 곡부터 재생(화면 유지)
   const handleTrackTap = async (track: FeedTrack) => {
     if (!track?.id) return;
+    // v3.449 [DiaryAutoBGM] 곡을 눌러 제대로 듣기 = 미리듣기는 비켜 줌(이번엔 음소거, 끈 선택 기억과는 별개)
+    diaryPreview.yieldToMain();
     const s = usePlayerStore.getState();
     if (String(s.track?.id) === String(track.id) && s.sound) {
       if (__DEV__) console.info('[FeedScreen] 트랙 토글', { id: track.id, pause: s.isPlaying });
@@ -280,14 +319,24 @@ export default function FeedScreen() {
   const goLogin = () => navigation.navigate('Settings');
 
   // v3.69: 트랙 블록 = 차트와 동일한 공용 TrackRow(커버·재생수·좋아요·⋮) + 재생 상태 표시
-  const renderTrackBlock = (track: FeedTrack, key: string, bgmLabel = false) => {
+  const renderTrackBlock = (track: FeedTrack, key: string, bgmLabel = false, previewing = false) => {
     const stats = trackStats[String(track.id)] || {};
     const rowTrack: RowTrack = { ...track, ...stats } as RowTrack;
     const isCurrent = String(nowId) === String(track.id);
     return (
       <View key={key} style={styles.trackBlockWrap}>
-        {/* v3.389 [Diary]: 일기에 붙인 곡 = 오늘의 BGM */}
-        {bgmLabel ? <AppText variant="caption" style={styles.bgmLabel}>오늘의 BGM</AppText> : null}
+        {/* v3.389 [Diary]: 일기에 붙인 곡 = 오늘의 BGM · v3.449: 자동 미리듣기 중이면 표시(누르면 처음부터 제대로 듣기) */}
+        {bgmLabel ? (
+          <View style={styles.bgmHead}>
+            <AppText variant="caption" style={styles.bgmLabel}>오늘의 BGM</AppText>
+            {previewing ? (
+              <View style={styles.previewChip} accessibilityLabel="후렴 미리듣는 중">
+                <Feather name="volume-2" size={11} color={colors.accent.primary} />
+                <AppText variant="caption" style={styles.previewChipText}>후렴 듣는 중</AppText>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         {/* v3.72: 재생 상태 표시는 커버 배지 하나로 통일(왼쪽 중복 아이콘 제거) */}
         <TrackRow
           track={rowTrack}
@@ -344,6 +393,8 @@ export default function FeedScreen() {
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     // v3.389 [Diary]: 일기(kind='feed', 서버가 diary_date 내려줄 때) — 글은 공책 종이, 곡은 '오늘의 BGM'
     const isDiary = tab !== 'notice' && (item.kind || 'feed') === 'feed' && !!item.diary_date;
+    const itemKey = String(item.id ?? '');
+    const itemsOpen = !!openItems[itemKey];
     return (
       <FeedCard
         feed={item}
@@ -367,8 +418,37 @@ export default function FeedScreen() {
               textStyle={[styles.body, { color: feedTheme.sub }]}
               onMore={item.id ? () => navigation.navigate('FeedDetail', { feedId: String(item.id) }) : undefined}
             />
-            {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`, isDiary && i === 0))}
-            {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
+            {/* v3.449: 본문 곡 없이 BGM 만 붙은 낙서 — 미리듣는 동안 곡 이름만 작게 */}
+            {isDiary && !trackBlocks.length && previewOn && !previewMuted && previewFeedId === itemKey ? (
+              <View style={[styles.previewChip, styles.previewChipSolo]}>
+                <Feather name="volume-2" size={11} color={colors.accent.primary} />
+                <AppText variant="caption" numberOfLines={1} style={styles.previewChipText}>
+                  {`${diarySongOf(item)?.title || '오늘의 BGM'} · 후렴 듣는 중`}
+                </AppText>
+              </View>
+            ) : null}
+            {trackBlocks.map((b, i) => renderTrackBlock(
+              b.track as FeedTrack, `tr${i}`, isDiary && i === 0,
+              isDiary && i === 0 && previewOn && !previewMuted && previewFeedId === String(item.id),
+            ))}
+            {/* v3.449 [DiaryOutfitFold] 의상은 접어 두고 '의상보기'로 펼침(오리쟁이 11-20 제안·대표 11-26) */}
+            {itemBlocks.length ? (
+              <>
+                <TouchableOpacity
+                  style={styles.itemToggle}
+                  activeOpacity={0.75}
+                  onPress={() => setOpenItems((m) => ({ ...m, [itemKey]: !m[itemKey] }))}
+                  accessibilityLabel={itemsOpen ? '의상 접기' : `의상보기 ${itemBlocks.length}개`}
+                >
+                  <Feather name="shopping-bag" size={14} color={colors.accent.primary} />
+                  <AppText variant="footnote" tone="accent" style={{ flex: 1, fontWeight: '700' }}>
+                    {itemsOpen ? '의상 접기' : `의상보기 (${itemBlocks.length})`}
+                  </AppText>
+                  <Feather name={itemsOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.accent.primary} />
+                </TouchableOpacity>
+                {itemsOpen ? itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`)) : null}
+              </>
+            ) : null}
           </View>
         )}
       />
@@ -442,6 +522,21 @@ export default function FeedScreen() {
               <AppText style={[styles.tabText, tab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
             </TouchableOpacity>
           ))}
+          {/* v3.449 [DiaryAutoBGM] 낙서장 소리 켬/끔 — 끄면 차트 플레이어 곡은 그대로(멈췄던 곡은 이어 재생) */}
+          {previewOn ? (
+            <TouchableOpacity
+              style={styles.soundBtn}
+              onPress={() => diaryPreview.toggleMute()}
+              accessibilityLabel={previewMuted || previewBlocked ? '낙서장 소리 켜기' : '낙서장 음소거'}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Feather
+                name={previewMuted || previewBlocked ? 'volume-x' : 'volume-2'}
+                size={18}
+                color={previewMuted || previewBlocked ? colors.text.muted : colors.accent.primary}
+              />
+            </TouchableOpacity>
+          ) : null}
         </View>
       )}
       {loading && posts.length === 0 && !(tab === 'mine' && monthData) ? (
@@ -453,6 +548,9 @@ export default function FeedScreen() {
           data={visiblePosts}
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
+          viewabilityConfigCallbackPairs={viewabilityPairs}
+          extraData={`${previewFeedId}|${previewMuted}|${Object.keys(openItems).filter((k) => openItems[k]).join(',')}`}
+          onTouchEnd={previewOn ? () => diaryPreview.unlockWeb() : undefined}
           ListHeaderComponent={listHeader}
           ListEmptyComponent={tab === 'mine' && loading ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: spacing.xl }} />
@@ -642,6 +740,19 @@ const styles = StyleSheet.create({
   },
   paperText: { color: colors.bg.surface2, lineHeight: 24 },
   bgmLabel: { color: colors.accent.secondary, fontWeight: '700', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  // v3.449 [DiaryAutoBGM] 소리 버튼·미리듣기 표시 · [DiaryOutfitFold] 의상보기 줄
+  soundBtn: { width: 44, alignItems: 'center', justifyContent: 'center' },
+  bgmHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: spacing.md },
+  previewChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.sm,
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: 'rgba(124,58,237,0.12)',
+  },
+  previewChipSolo: { alignSelf: 'flex-start', marginTop: spacing.md, maxWidth: '100%' },
+  previewChipText: { color: colors.accent.primary, fontWeight: '700', flexShrink: 1 },
+  itemToggle: {
+    marginTop: spacing.md, backgroundColor: feedTheme.field, borderRadius: radius.lg,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+  },
   // v3.69: 트랙 블록 래퍼 — 카드 안 인셋 배경 위에 공용 TrackRow를 얹는다
   trackBlockWrap: {
     marginTop: spacing.md, backgroundColor: feedTheme.field,
