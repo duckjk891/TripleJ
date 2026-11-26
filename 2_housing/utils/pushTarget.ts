@@ -1,6 +1,7 @@
 // v3.436 [PushTarget] 푸시를 눌렀을 때 갈 화면 — 서버 푸시의 tag 로 정한다(순수 함수).
 //  maidol-song-<곡id> · maidol-diary-<글id> · maidol-notice-<글id> · maidol-social · maidol-station · maidol-done-<종류>-<작업id>
 //  maidol-carol-<신청id>
+//  maidol-dm-<대화id> (v3.448) → 메시지함
 //  그 밖(팔로우·댓글·좋아요 등)과 옛 서버 푸시는 예전처럼 알림함.
 export interface PushTarget { name: string; params?: object }
 
@@ -15,6 +16,7 @@ export function carolTarget(spin?: string): PushTarget & { params: object } {
 export function pushTargetFor(tag: string | null | undefined): PushTarget | null {
   const t = String(tag || '');
   if (t === 'maidol-station' || t.startsWith('maidol-done-')) return null;
+  if (t.startsWith('maidol-dm-')) return { name: 'DmInbox' };
   if (t === 'maidol-social') return { name: 'MainTabs', params: { screen: 'Feed' } };
   // v3.444 승인 푸시를 누르면 그 곡의 스타룰렛까지 바로(돌릴 수 없는 곡이면 이벤트 화면만)
   if (t.startsWith('maidol-carol-')) return carolTarget(t.slice('maidol-carol-'.length));

@@ -38,7 +38,7 @@ import {
   peekPendingTrackLink,
 } from './utils/trackLink';
 // v3.376 [DmLink] 메일 등 외부 링크 `?open=dm` → 메시지함
-import { captureWebDmLink, peekPendingDmLink, takePendingDmLink, captureNativeDmLink } from './utils/dmLink';
+import { captureWebDmLink, peekPendingDmLink, takePendingDmLink, captureNativeDmLink, requestDmInbox } from './utils/dmLink';
 import { captureNativeReferral, captureInstallReferrerOnce } from './utils/pendingReferral'; // v3.391 [AppLinks]
 import { openLoginModal } from './utils/loginModal';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -1177,6 +1177,7 @@ export default function App() {
         if (route && route !== 'Splash') {
           if (timer) clearInterval(timer);
           timer = null;
+          if (target.name === 'DmInbox') { requestDmInbox(); tryConsumeDmLink(); return; } // v3.448 로그인 확인 뒤 메시지함
           if (route !== target.name || target.name !== 'Notifications') (navigationRef.navigate as any)(target.name, target.params);
         } else if (tries > 40) {
           if (timer) clearInterval(timer);
@@ -1185,8 +1186,9 @@ export default function App() {
       }, 250);
     };
     const off = onNativePushOpened(openTarget);
-    // v3.444 웹: 열린 창에서 승인 푸시를 눌렀거나(sw.js) 푸시가 새 창을 열었을 때(?carol=) — 다른 푸시는 예전처럼 창만 앞으로
-    const offWeb = onWebPushOpened((tag) => { if (tag.startsWith('maidol-carol-')) openTarget(tag); });
+    // v3.444 웹: 푸시가 새 창을 열었을 때(?carol=) 룰렛 바로 열기
+    // v3.448 웹: 열린 창에서 누른 푸시는 종류와 관계없이 앱과 같은 화면으로(sw.js 신호, 새로고침 없음)
+    const offWeb = onWebPushOpened(openTarget);
     const carolId = takeWebCarolLink();
     if (carolId) openTarget(`maidol-carol-${carolId}`);
     return () => { off(); offWeb(); if (timer) clearInterval(timer); };
@@ -1214,6 +1216,7 @@ export default function App() {
     // v3.235 B5: Splash 이탈 첫 시점(컨테이너 ready + 라우트 ≠ Splash)에 대기 중인 링크 재생 소비
     tryConsumeTrackLink();
     tryConsumeClubLink(); // v3.305 [ClubLink]
+    if (!dmLinkAuthUnsub) tryConsumeDmLink(); // v3.448 시작 화면이 끝나는 즉시(전에는 10초 뒤) — 로그인 창은 화면을 옮길 때마다 다시 띄우지 않음
   };
   return (
     <SafeAreaProvider>

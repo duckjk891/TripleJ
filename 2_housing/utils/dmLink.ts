@@ -46,6 +46,11 @@ export function peekPendingDmLink(): boolean {
   return pending;
 }
 
+/** v3.448 DM 푸시를 눌러 열었을 때 — 링크와 같은 길(로그인 확인 뒤 메시지함)로 보낸다 */
+export function requestDmInbox(): void {
+  pending = true;
+}
+
 export function takePendingDmLink(): boolean {
   const was = pending;
   pending = false;
