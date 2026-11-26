@@ -1001,21 +1001,33 @@ export default function FeedComposeScreen({ navigation, route }: any) {
         )}
       </ScrollView>
 
-      {/* v3.446 [DiaryInline] 사진 넣기 줄 — 키보드 위에 붙는다 */}
+      {/* v3.446 [DiaryInline] 사진 넣기 → v3.450(대표 11-26 "글쓰기 버튼처럼 오른쪽 아래 카메라 아이콘"):
+          아래 줄 대신 오른쪽 아래 둥근 카메라 버튼(키보드 위에 뜸) — 누르면 사진 찍기 / 사진첩 고르기. 넣은 장수는 배지로 */}
       {isDiary && !isChild ? (
-        <View style={[styles.photoBar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
-          <TouchableOpacity style={styles.photoBarBtn} onPress={() => { void shootPhoto(); }} accessibilityRole="button" accessibilityLabel="사진 찍기">
-            <Feather name="camera" size={18} color={colors.accent.primary} />
-            <AppText variant="footnote" tone="accent" style={styles.photoBarText}>사진 찍기</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.photoBarBtn} onPress={() => { void pickImage(); }} accessibilityRole="button" accessibilityLabel="사진첩에서 고르기">
-            <Feather name="image" size={18} color={colors.accent.primary} />
-            <AppText variant="footnote" tone="accent" style={styles.photoBarText}>사진첩</AppText>
-          </TouchableOpacity>
-          <AppText variant="caption" tone="muted" style={styles.photoBarHint} numberOfLines={2}>
-            {images.length ? `${images.length}/${MAX_FEED_IMAGES}장` : '글 쓰던 자리에 들어가요'}
-          </AppText>
-        </View>
+        <TouchableOpacity
+          style={[styles.cameraFab, { bottom: Math.max(insets.bottom, spacing.sm) + spacing.sm }]}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={images.length ? `사진 넣기, ${images.length}/${MAX_FEED_IMAGES}장` : '사진 넣기'}
+          onPress={() => {
+            if (images.length >= MAX_FEED_IMAGES) {
+              showAlert('사진 넣기', `사진은 ${MAX_FEED_IMAGES}장까지 넣을 수 있어요.`);
+              return;
+            }
+            showAlert('사진 넣기', '글 쓰던 자리에 들어가요.', [
+              { text: '사진 찍기', onPress: () => { void shootPhoto(); } },
+              { text: '사진첩에서 고르기', onPress: () => { void pickImage(); } },
+              { text: '취소', style: 'cancel' },
+            ]);
+          }}
+        >
+          <Feather name="camera" size={22} color="#fff" />
+          {images.length ? (
+            <View style={styles.cameraFabBadge} pointerEvents="none">
+              <AppText variant="caption" style={styles.cameraFabBadgeText}>{images.length}</AppText>
+            </View>
+          ) : null}
+        </TouchableOpacity>
       ) : null}
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
@@ -1197,17 +1209,19 @@ const styles = StyleSheet.create({
   itemPreviewImg: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   // v3.111: 첨부 사진 미리보기 (썸네일 + 업로드 상태 오버레이 + 제거 버튼)
   imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.md },
-  // v3.446 [DiaryInline] 사진 넣기 줄(화면 아래 고정)
-  photoBar: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.sm,
-    backgroundColor: colors.bg.surface1, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
+  // v3.450 사진 넣기 = 오른쪽 아래 둥근 카메라 버튼(공용 Fab 크기·그림자와 같게, 키보드 위에 뜸)
+  cameraFab: {
+    position: 'absolute', right: spacing.xl,
+    width: 56, height: 56, borderRadius: radius.pill,
+    backgroundColor: colors.accent.primary, justifyContent: 'center', alignItems: 'center',
+    shadowColor: colors.accent.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
   },
-  photoBarBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40, paddingHorizontal: spacing.md,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.accent.primary,
+  cameraFabBadge: {
+    position: 'absolute', top: -4, right: -4, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
+    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.accent.primary,
   },
-  photoBarText: { fontWeight: '700' },
-  photoBarHint: { flex: 1, textAlign: 'right' },
+  cameraFabBadgeText: { color: colors.accent.primary, fontWeight: '800', fontSize: 11, lineHeight: 14 },
   imageThumbWrap: { width: 72, height: 72 },
   imageThumb: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
   imageThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
