@@ -13,6 +13,7 @@ import AppModal from '../components/AppModal'; // v3.400 iOS 창 겹침·팝업 
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useAuthStore } from '../stores/authStore';
 import { getFatigueStatus } from '../services/fatigueService';
@@ -375,6 +376,16 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
         animationType="slide"
         onRequestClose={() => setEditingField(null)}
       >
+        {/* v3.451 (DDui 11-26 아이폰): 화면을 감싼 KeyboardAvoid 는 Modal(별도 창) 안까지 미치지 않아
+            입력칸을 누르면 키보드가 하단 시트를 통째로 덮었다("수정칸이 사라져요"). AnswerEditModal 패턴대로
+            keyboard-controller KAV 를 창 안에 두고, 시트 자체 하단 여백(insets.bottom+20)과의 이중 계상은
+            keyboardVerticalOffset=-insets.bottom 으로 상쇄. */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+          keyboardVerticalOffset={-insets.bottom}
+          pointerEvents="box-none"
+        >
         {/* v3.274 [49]: 시트가 닫기 터치영역의 자식이라 시트 안 비버튼 영역(제목·여백·웹 입력칸) 탭이
             닫기로 흡수돼 "창이 그냥 내려가서 입력 불가"가 됐다. AnswerEditModal(v3.246 T2) 패턴대로
             백드롭을 형제 absoluteFill 로 분리 — 시트 내부 탭은 백드롭에 닿지 않는다. */}
@@ -478,6 +489,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             )}
           </View>
         </View>
+        </KeyboardAvoidingView>
       </AppModal>
     </KeyboardAvoid>
   );

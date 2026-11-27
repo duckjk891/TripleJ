@@ -35,12 +35,13 @@ export default function PolicySheet({ visible, title, body, onClose, variant = '
     const maxHeight = Math.max(0, winH - topLimit - spacing.md);
     return (
       <AppModal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} accessibilityLabel="닫기 배경">
-          <TouchableOpacity
-            style={[styles.sheet, { maxHeight, paddingBottom: insets.bottom + spacing.xl }]}
-            activeOpacity={1}
-            onPress={() => {}}
-          >
+        {/* v3.451 (지유 11-26): 본문이 시트보다 길면 4번 이후가 잘리고 올려도 안 움직였다.
+            ① ScrollView 가 flexShrink 0(RN 기본)이라 내용 높이 그대로 커져 maxHeight 밖으로 잘림 → flexShrink:1.
+            ② 시트·배경이 TouchableOpacity 로 겹쳐 있어 스크롤 제스처를 가로챌 수 있음 → 배경은 형제 absoluteFill,
+               시트는 일반 View(LyricsPromptReview v3.274 [49] 패턴). */}
+        <View style={styles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} accessibilityLabel="닫기 배경" />
+          <View style={[styles.sheet, { maxHeight, paddingBottom: insets.bottom + spacing.xl }]}>
             <View style={[styles.header, styles.sheetHeader]}>
               <AppText variant="title3">{title}</AppText>
               <TouchableOpacity onPress={onClose} accessibilityLabel="닫기" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -52,8 +53,8 @@ export default function PolicySheet({ visible, title, body, onClose, variant = '
             <ScrollView style={styles.sheetBody} contentContainerStyle={{ paddingBottom: spacing.lg }}>
               <AppText variant="footnote" tone="secondary" style={styles.text}>{body}</AppText>
             </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
+          </View>
+        </View>
       </AppModal>
     );
   }
@@ -135,7 +136,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
   },
   sheetHeader: { paddingTop: 0 },
-  sheetBody: { flexGrow: 0, paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
+  sheetBody: { flexGrow: 0, flexShrink: 1, paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   text: { lineHeight: 20 },
   companyBox: {
     // v3.194: 소셜 로그인 버튼과의 간격 확대 — 고객센터 링크 오탭 방지

@@ -27,6 +27,8 @@ import { useMusicStore, type ComposeDraft, type ComposeDraftAnswers, type Refere
 import { lookupReferenceLink } from '../services/musicService';
 // v3.248 B2(A-6): 미니플레이어 실노출 시 하단 +70 패딩(작곡 사용례 — 숨김 대신 패딩 채택)
 import { useMiniPlayerVisible, MINI_PLAYER_HEIGHT } from '../stores/playerStore';
+import { creationPreview, useCreationPreviewStore } from '../services/creationPreview';
+import { keyMood } from '../utils/creationPreviewLogic';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -209,6 +211,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [showResumeNotice, setShowResumeNotice] = useState(!!resumeDraft);
 
   const [step, setStep] = useState(resumeDraft ? resumeDraft.step : 0);
+  // v3.451 [CreationPreview]: 키·BPM 미리 듣기 — 단계가 바뀌거나 화면을 떠나면 멈춤(듣던 곡은 이어 재생)
+  const previewPlaying = useCreationPreviewStore((s) => s.playing);
+  useEffect(() => { creationPreview.stop(); }, [step]);
+  useFocusEffect(useCallback(() => () => creationPreview.stop(), []));
   // v3.135(대표): 가사 다음·보컬 전 아티스트 선택 단계(step 200) — 선택은 선택사항.
   // 목소리(persona) 연결 아티스트면 작곡에 자동 반영(보컬·내 목소리 단계 스킵).
   const [artists, setArtists] = useState<ServerArtist[] | null>(null);
@@ -2602,6 +2608,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 step={5}
                 value={bpmValue}
                 onValueChange={setBpmValue}
+                // v3.451: 미리 듣는 중에 막대를 옮기면 새 빠르기로 바로 다시 들려준다
+                onSlidingComplete={(v: number) => { if (previewPlaying?.startsWith('bpm:')) void creationPreview.playBpm(v); }}
                 minimumTrackTintColor={colors.accent.primary}
                 maximumTrackTintColor={colors.border.subtle}
                 thumbTintColor={colors.accent.primary}
@@ -2609,6 +2617,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               <AppText style={styles.sliderEndLabel}>200</AppText>
             </View>
             <AppText style={styles.sliderValueCenter}>{Math.round(bpmValue)} BPM</AppText>
+            {/* v3.451 [CreationPreview] 오리쟁이 11-25 제안 — 고른 빠르기를 박자로 들어 보기 */}
+            <TouchableOpacity
+              style={styles.previewBtn}
+              onPress={() => (previewPlaying?.startsWith('bpm:') ? creationPreview.stop() : void creationPreview.playBpm(bpmValue))}
+              accessibilityLabel="BPM 미리 듣기"
+            >
+              <AppText style={styles.previewBtnText}>{previewPlaying?.startsWith('bpm:') ? '■ 멈추기' : '▶ 이 빠르기 들어 보기'}</AppText>
+            </TouchableOpacity>
+            <AppText style={styles.previewHint}>박자 예시예요. 실제 곡은 느낌을 참고해서 만들어져요.</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleBpmConfirm(false)}>
                 <AppText style={styles.skipBtnText}>자동 템포</AppText>
@@ -2629,12 +2646,24 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 <TouchableOpacity
                   key={k}
                   style={[styles.keyChip, musicalKey === k && styles.keyChipSelected]}
-                  onPress={() => setMusicalKey(musicalKey === k ? '' : k)}
+                  onPress={() => {
+                    // v3.451 [CreationPreview]: 고르면 그 키 화음을 바로 들려줌, 다시 누르면 선택 해제·멈춤
+                    if (musicalKey === k) {
+                      setMusicalKey('');
+                      creationPreview.stop();
+                    } else {
+                      setMusicalKey(k);
+                      void creationPreview.playKey(k);
+                    }
+                  }}
                 >
-                  <AppText style={[styles.keyChipText, musicalKey === k && styles.keyChipTextSelected]}>{k}</AppText>
+                  <AppText style={[styles.keyChipText, musicalKey === k && styles.keyChipTextSelected]}>
+                    {previewPlaying === `key:${k}` ? '♪ ' : ''}{k} · {keyMood(k)}
+                  </AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            <AppText style={styles.previewHint}>키를 누르면 화음으로 미리 들어 볼 수 있어요. 실제 곡은 느낌을 참고해서 만들어져요.</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleKeyConfirm(false)}>
                 <AppText style={styles.skipBtnText}>자동 키</AppText>
@@ -3226,6 +3255,18 @@ const styles = StyleSheet.create({
   },
   keyChipSelected: { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary },
   keyChipText: { color: colors.text.secondary, fontSize: 12 },
+  // v3.451 [CreationPreview] 키·BPM 미리 듣기
+  previewBtn: {
+    alignSelf: 'center' as const,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    marginBottom: 6,
+  },
+  previewBtnText: { color: colors.accent.primary, fontSize: 13, fontWeight: '600' as const },
+  previewHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' as const, marginBottom: 4 },
   keyChipTextSelected: { color: colors.text.primary, fontWeight: 'bold' },
   // v3.78: 내 목소리 페르소나 선택 (case 12)
   personaChip: {
