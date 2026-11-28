@@ -45,6 +45,25 @@ export async function applyPlaybackAudioMode(): Promise<void> {
         shouldPlayInBackground: true,
         interruptionMode: 'doNotMix',
       });
+      // v3.454 [ABPlay]: 안드로이드 — 결과 화면 A·B 미리 듣기 등은 아직 expo-av(Audio.Sound)로 재생한다.
+      //  expo-av 는 '앱이 백그라운드에 갔다' 표시가 남으면(복귀 신호를 놓치면) 재생 때마다
+      //  AudioFocusNotAcquiredException("currently in the background") 로 거절 → A·B 버튼 무반응(11-28 '별빛 퇴근길', 11-25 같은 증상).
+      //  staysActiveInBackground 를 켜 두면 그 검사를 건너뛴다. 전역 재생도 백그라운드 재생이 원래 정책이라 동작 차이 없음.
+      if (Platform.OS === 'android') {
+        try {
+          await Audio.setAudioModeAsync({
+            staysActiveInBackground: true,
+            interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+            shouldDuckAndroid: false,
+            playThroughEarpieceAndroid: false,
+            playsInSilentModeIOS: true,
+            allowsRecordingIOS: false,
+            interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+          });
+        } catch (err: any) {
+          console.warn('[audioMode] expo-av 백그라운드 모드 설정 실패', { message: err?.message });
+        }
+      }
       if (__DEV__) console.info('[audioMode] expo-audio 모드 적용(백그라운드 재생 on)');
       return;
     }
