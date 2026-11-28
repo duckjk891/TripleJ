@@ -43,7 +43,10 @@ import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
-import { FatigueDirector, FatigueStatus } from '../types';
+import { FatigueDirector, FatigueStatus, GenerationItem } from '../types';
+import { listGenerations } from '../services/musicService';
+import { hydrateMusicStoresFromGeneration } from '../utils/musicHydrate';
+import { settleGenJob } from '../services/generationTracker';
 // v3.227 A-보완: 생성 중 자유 이탈 — 아티스트 디렉터 상태 말풍선·디렉터 탭 분기
 import { useActiveArtistJob, useDirectorJob, type TrackedJob } from '../stores/generationJobStore';
 import { finalizeArtistJob, openJobViewer, openGenJob } from '../services/generationTracker';
@@ -844,11 +847,55 @@ export default function MapScreen({ navigation }: Props) {
         ]);
         return;
       }
+      // v3.455: 곡은 완성 순간부터 작곡 디렉터가 쉬는데, A·B 를 아직 안 골랐으면 휴식 중에도 고르러 갈 수 있게(고르기는 무료).
+      //  (11-28 대표 '별빛 퇴근길' — 결과 화면을 나온 뒤 작곡 디렉터를 누르면 휴식 창만 떠서 고를 길이 안 보였다)
+      if (fatigueKey === 'composer' && !tutorialVisible) {
+        void (async () => {
+          const unpicked = await findUnpickedSong();
+          if (!unpicked) {
+            openCooldown();
+            return;
+          }
+          console.info('[Map] [composer] 휴식 중 — 고르지 않은 곡 있음', { gen: unpicked.id.slice(0, 8) });
+          const title = unpicked.title ? `'${unpicked.title}'` : '지난번에 완성된 곡';
+          showAlert('아직 고르지 않은 곡이 있어요', `${title}의 A·B 중 하나를 골라 주세요.
+고르는 건 휴식 중에도 할 수 있어요.`, [
+            { text: '닫기', style: 'cancel' },
+            { text: '휴식 줄이기', onPress: openCooldown },
+            {
+              text: '곡 고르기',
+              onPress: () => {
+                hydrateMusicStoresFromGeneration(unpicked);
+                (navigation as any).navigate('MusicResult', { alreadySaved: false });
+                settleGenJob('music', unpicked.id, 'done', { result: { generation_id: unpicked.id } });
+              },
+            },
+          ]);
+        })();
+        return;
+      }
       openCooldown();
       return;
     }
 
     proceedDirectorPress(type);
+  };
+
+  // v3.455: 최근 완성됐는데 A·B 를 아직 안 고른 곡(트랙 미확정) — 하루 안에 완성된 가장 최근 것 1곡. 실패는 조용히 없음 처리.
+  const findUnpickedSong = async (): Promise<GenerationItem | null> => {
+    try {
+      const res = await listGenerations(1, 5, 'completed');
+      const list: GenerationItem[] = Array.isArray(res?.generations) ? res.generations : [];
+      const g = list.find((x) => x.status === 'completed' && !x.result_track_id);
+      if (!g) return null;
+      const raw = String(g.completed_at || g.created_at || '');
+      const t = Date.parse(raw.includes('T') ? raw : raw.replace(' ', 'T') + (/[zZ+]/.test(raw) ? '' : 'Z'));
+      if (Number.isFinite(t) && Date.now() - t > 24 * 3600 * 1000) return null;
+      return g;
+    } catch (err: any) {
+      console.warn('[Map] [composer] 고르지 않은 곡 조회 실패', { status: err?.response?.status });
+      return null;
+    }
   };
 
   // v3.368: 작사가 이미 끝난 상태(가사 있음)에서 작사가를 누르면 — 새 작사 대화 또는 지난 가사 보기.
