@@ -1,3 +1,5 @@
+// v3.453 휴대폰 글자 크기와 무관하게 기본 크기 고정 — 반드시 맨 첫 줄(다른 모듈이 Text 를 쓰기 전)
+import { fixedFontScaleResult } from './utils/fixedFontScale';
 import { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Text, TouchableOpacity, View, Platform, LogBox, AppState } from 'react-native';
@@ -18,6 +20,8 @@ if (Platform.OS === 'android') {
 // v3.91: 콘솔/오류 이벤트를 백엔드 /_logs/frontend 로 배치 전송 (MAIDOL main.jsx 관행 — 모듈 초기화 시 1회)
 import { initRemoteLogger } from './utils/remoteLogger';
 initRemoteLogger();
+// v3.453 글자 크기 고정이 안 걸렸으면 기록(정상이면 조용히)
+if (Platform.OS !== 'web' && !(fixedFontScaleResult.text && fixedFontScaleResult.input && fixedFontScaleResult.animated)) console.warn('[FixedFontScale] 적용 실패', fixedFontScaleResult);
 // 화면 사용 분석(관리자 대시보드 '사용 분석' — 화면별 체류시간·이탈률)
 import { initScreenAnalytics, trackScreen } from './utils/screenAnalytics';
 import { recordRoute } from './utils/routeHistory';
