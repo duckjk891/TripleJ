@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import * as WebBrowser from 'expo-web-browser';
+import { authBrowserOptions, logAuthBrowserClosed } from '../../utils/authBrowser';
 import { showAlert } from '../../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../../services/api';
 import { resetToChartTab } from '../../services/navigationRef';
@@ -311,7 +312,10 @@ export default function SocialLoginButtons({
 
       // 네이티브 — 인증 세션 브라우저를 열고 aidol://oauth/callback 복귀를 기다린다.
       // 백엔드 미지원(콜백 미수신) 시 사용자가 브라우저를 닫으면 dismiss 로 복귀 — 조용히 종료.
-      const result = await WebBrowser.openAuthSessionAsync(`${loginUrl}?client=app${refQuery ? `&${refQuery}` : ''}`, OAUTH_REDIRECT_URL);
+      const pick = await authBrowserOptions(provider);
+      const openedAt = Date.now();
+      const result = await WebBrowser.openAuthSessionAsync(`${loginUrl}?client=app${refQuery ? `&${refQuery}` : ''}`, OAUTH_REDIRECT_URL, pick.options);
+      logAuthBrowserClosed(provider, pick, result?.type ?? 'none', openedAt);
       if (result?.type === 'success' && result.url) {
         // 토큰 값은 로그 금지 — 수신 여부만 기록한다.
         const tokenMatch = result.url.match(/[#&?]token=([^&]+)/);

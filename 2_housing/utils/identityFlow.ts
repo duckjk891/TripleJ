@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { getIdentityResult, startIdentityVerification, type IdentityResult } from '../services/identityService';
 import { canUseSameTabReturn, WEB_IDENTITY_RETURN_URL } from './identityReturn';
+import { authBrowserOptions, logAuthBrowserClosed } from './authBrowser';
 
 const RETURN_URL = 'aidol://identity-done';
 const POLL_MS = 3000;
@@ -44,7 +45,10 @@ export async function runIdentityVerification(purpose: 'signup' | 'verify'): Pro
     window.open(url, '_blank');
     return { ...(await pollResult(rid, Date.now() + POLL_MAX_MS)), rid };
   }
-  const r = await WebBrowser.openAuthSessionAsync(url, RETURN_URL);
+  const pick = await authBrowserOptions('identity');
+  const openedAt = Date.now();
+  const r = await WebBrowser.openAuthSessionAsync(url, RETURN_URL, pick.options);
+  logAuthBrowserClosed('identity', pick, r.type, openedAt);
   console.info('[IdentityFlow] 인증 창 닫힘', { type: r.type });
   // 돌아왔든 닫았든 서버 결과가 정본 — 짧게 확인(닫은 경우 pending 이면 그대로 반환)
   return { ...(await pollResult(rid, Date.now() + (r.type === 'success' ? 15000 : 4000))), rid };
